@@ -1,5 +1,6 @@
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
+local value = require("@mod/value")
 local logger = require("@mod/logger")
 local modifiers = require("@mod/modifiers")
 local legacy_mods = require("@mod/legacy_mods")
@@ -88,9 +89,9 @@ local function baseOf(ref: Instance, source: string, name: string): any
   return if ok then current else nil
 end
 
--- randomizer and envelope values are drawn HERE, once, which is once per
--- emitted instance. that makes "one draw per instance" structural rather than
--- a rule every call site has to remember
+-- randomizer alphas, rand endpoints and the envelope offset are all drawn
+-- HERE, once, which is once per emitted instance. that makes "one draw per
+-- instance" structural rather than a rule every call site has to remember
 -- a caller that already read the queue, to span it or to test it, passes it
 -- back in rather than paying a second base64 plus buffer decode for the same
 -- attribute
@@ -109,10 +110,21 @@ function mods.sampler(
 
   local rng = Random.new()
   local draws = {}
+  local picks = {}
 
   for i, m in queue do
     if m.kind == "randomizer" then
       draws[i] = rng:NextNumber()
+    end
+
+    local startRand = m.start ~= nil and value.isRand(m.start)
+    local finishRand = m.finish ~= nil and value.isRand(m.finish)
+
+    if startRand or finishRand then
+      picks[i] = {
+        start = if startRand then rng:NextNumber() else nil,
+        finish = if finishRand then rng:NextNumber() else nil,
+      }
     end
   end
 
@@ -120,6 +132,7 @@ function mods.sampler(
     duration = duration,
     base = baseOf(ref, source, name),
     draws = draws,
+    picks = picks,
     envelope = rng:NextNumber() * 2 - 1,
   }
 

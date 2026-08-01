@@ -10,6 +10,19 @@ local ATTRIBUTE_TWEENER_TAG = "AttributeTweener"
 local PROPERTY_RANDOMIZER_TAG = "PropertyRandomizer"
 local ATTRIBUTE_RANDOMIZER_TAG = "AttributeRandomizer"
 
+-- the only quads whose _Start and _End hold a NumberRange the effect draws ONE
+-- scalar from per emitted instance, rather than two values to tween between.
+-- listed by name because a NumberRange is a legitimate target type too, and an
+-- attribute quad is the only place any of these is ever authored:
+-- bezier RotSpeed, mesh Part_RotSpeed, beam Length_Scale
+local DRAWN_RANGES = {
+  attribute = {
+    RotSpeed = true,
+    Length_Scale = true,
+    Part_RotSpeed = true,
+  },
+}
+
 -- omitted rather than wrapped when absent, so evaluate sees no endpoint at
 -- all instead of a lit nil it would try to lerp
 local function litOrNil(v: any): value.Value?
@@ -69,9 +82,19 @@ local function legacySource(child: Instance): string
   return "property"
 end
 
+-- a drawn-range endpoint, which is a rand rather than a lit so the sampler
+-- draws it once per emitted instance the way the effect used to itself
+local function endpointOf(v: any, drawn: boolean): value.Value?
+  if drawn and typeof(v) == "NumberRange" then
+    return value.rand(v.Min, v.Max)
+  end
+
+  return litOrNil(v)
+end
+
 -- the released-era quad. a nil _Duration is left nil rather than defaulted,
 -- because nil is what "runs over the effect's own duration" is spelled as
-function legacy_mods.readQuad(ref: Instance, name: string): { any }?
+function legacy_mods.readQuad(ref: Instance, source: string, name: string): { any }?
   local startV = ref:GetAttribute(`{name}_Start`)
   local finishV = ref:GetAttribute(`{name}_End`)
 
@@ -90,13 +113,16 @@ function legacy_mods.readQuad(ref: Instance, name: string): { any }?
   local durationV = durationOf(ref:GetAttribute(`{name}_Duration`))
   local curveV = curveOf(ref:GetAttribute(`{name}_Curve`))
 
+  local group = DRAWN_RANGES[source]
+  local drawn = group ~= nil and group[name] == true
+
   return {
     {
       kind = "tween",
       chain = false,
       duration = durationV,
-      start = value.lit(startV),
-      finish = value.lit(finishV),
+      start = endpointOf(startV, drawn),
+      finish = endpointOf(finishV, drawn),
       curve = curveV,
     },
   }
@@ -148,7 +174,7 @@ end
 
 function legacy_mods.read(ref: Instance, source: string, name: string): { any }?
   local ok, result = pcall(function()
-    return legacy_mods.readQuad(ref, name) or legacy_mods.readChildren(ref, source, name)
+    return legacy_mods.readQuad(ref, source, name) or legacy_mods.readChildren(ref, source, name)
   end)
 
   if not ok then

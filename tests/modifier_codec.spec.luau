@@ -212,5 +212,28 @@ harness.suite(function()
       expect(m.finish.custom_field).toBe(1)
       expect(buffer.tostring(m.envelope)).toBe("ENVBYTES")
     end)
+
+    -- the rand tag was added to value.luau with no codec change at all, which
+    -- only holds because a Value is stored self-describing. this pins that
+    test("round-trips a rand Value with no schema entry of its own", function()
+      local q = {
+        v = 1,
+        queue = {
+          {
+            kind = "tween",
+            chain = false,
+            start = { t = "rand", min = -2.5, max = 7 },
+            finish = { t = "rand", min = 0, max = 0 },
+          },
+        },
+      }
+      local m = codec.decode(codec.encode(q)).queue[1]
+      expect(m.start.t).toBe("rand")
+      expect(m.start.min).toBe(-2.5)
+      expect(m.start.max).toBe(7)
+      expect(m.finish.t).toBe("rand")
+      expect(m.finish.min).toBe(0)
+      expect(m.finish.max).toBe(0)
+    end)
   end)
 end)

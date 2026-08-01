@@ -219,5 +219,63 @@ harness.suite(function()
     test("empty queue returns ctx.base, which is nil when unset", function()
       expect(modifiers.evaluate({}, 0.5, { duration = 1 })).toBe(nil)
     end)
+
+    -- a legacy RotSpeed / Part_RotSpeed / Length_Scale quad authors a
+    -- NumberRange per endpoint and the effect used to draw a scalar from each
+    -- one per emitted part. the draws arrive the same way a randomizer's does
+    test("rand endpoints tween between the two values ctx.picks drew", function()
+      local queue = {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "rand", min = 0, max = 100 },
+          finish = { t = "rand", min = 200, max = 300 },
+          curve = linear,
+        },
+      }
+
+      local ctx = { duration = 1, picks = { [1] = { start = 0.25, finish = 0.5 } } }
+
+      expect(near(modifiers.evaluate(queue, 0, ctx) :: number, 25)).ok()
+      expect(near(modifiers.evaluate(queue, 1, ctx) :: number, 250)).ok()
+      expect(near(modifiers.evaluate(queue, 0.5, ctx) :: number, 137.5)).ok()
+    end)
+
+    test("a rand endpoint with no pick falls back to its midpoint", function()
+      local queue = {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "rand", min = 0, max = 100 },
+          finish = { t = "lit", v = 0 },
+          curve = linear,
+        },
+      }
+
+      expect(near(modifiers.evaluate(queue, 0, { duration = 1 }) :: number, 50)).ok()
+    end)
+
+    -- picks are keyed by queue index the way draws are, so one modifier's draw
+    -- can never leak into another's endpoint
+    test("picks are per modifier index", function()
+      local entry = function(min: number, max: number)
+        return {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "rand", min = min, max = max },
+          finish = { t = "rand", min = min, max = max },
+          curve = linear,
+        }
+      end
+
+      local queue = { entry(0, 10), entry(100, 200) }
+      local ctx = { duration = 1, picks = { [2] = { start = 1, finish = 1 } } }
+
+      -- entry 1 has no pick and takes its midpoint; entry 2 runs last and wins
+      expect(near(modifiers.evaluate(queue, 0, ctx) :: number, 200)).ok()
+    end)
   end)
 end)

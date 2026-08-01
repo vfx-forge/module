@@ -1,12 +1,18 @@
 local lerp = require("@mod/lerp")
 local path = require("@mod/common/path")
+local value = require("@mod/value")
 
 local modifiers = {}
+
+-- the [0,1] draw behind each rand endpoint of one modifier, made once per
+-- emitted instance beside ctx.draws
+export type Picks = { start: number?, finish: number? }
 
 export type Ctx = {
   duration: number,
   base: any?,
   draws: { [number]: number }?,
+  picks: { [number]: Picks }?,
   envelope: number?,
 }
 
@@ -82,15 +88,20 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
       continue
     end
 
+    -- endpoints go through value.resolve rather than a raw field read, so a
+    -- rand endpoint lands on the draw the sampler made for it and a var still
+    -- resolves to nothing
+    local picks = if ctx.picks then ctx.picks[i] else nil
+
     local startVal: any = nil
 
     if m.chain and haveOut then
       startVal = prevOut
     elseif m.start then
-      startVal = m.start.v
+      startVal = value.resolve(m.start, picks and picks.start)
     end
 
-    local finishVal = if m.finish then m.finish.v else startVal
+    local finishVal = if m.finish then value.resolve(m.finish, picks and picks.finish) else startVal
 
     local progress = progressOf(m, elapsed, ctx)
     local alpha: number
