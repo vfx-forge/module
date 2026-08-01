@@ -1,4 +1,5 @@
 local attr = require("@mod/attributes")
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
@@ -19,9 +20,6 @@ function spin.emit(ref: Model, scope: types.scope)
 
   local rotation = attr.get(ref, "SpinRotation", vector.zero) * utility.DEG_TO_RAD
 
-  local scaleStart = attr.get(ref, "Scale_Start", 1)
-  local scaleEnd = attr.get(ref, "Scale_End", 1)
-
   local emitDelay = attr.get(ref, "EmitDelay", 0)
   local resetDelay = attr.get(ref, "ResetDelay", 0)
   local resetOnFinish = attr.get(ref, "ResetOnFinish", true)
@@ -31,24 +29,18 @@ function spin.emit(ref: Model, scope: types.scope)
 
   local speedDuration = attr.get(ref, "SpinSpeed_Duration", 0.1)
 
-  local speedStart = attr.get(ref, "SpinSpeed_Start", 0)
-  local speedEnd = attr.get(ref, "SpinSpeed_End", 1)
-
-  local currentSpeed = speedStart
+  local currentSpeed = attr.get(ref, "SpinSpeed_Start", 0)
 
   task.wait(emitDelay)
 
+  local speed = mods.sampler(ref, "attribute", "SpinSpeed", speedDuration)
   local speedTween
 
-  if speedStart ~= speedEnd then
-    speedTween = tween.fromParams(
-      attr.get(ref, "SpinSpeed_Curve", utility.default_bezier),
-      speedDuration,
-      function(alpha, deltaTime)
-        currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
-        return deltaTime
-      end
-    )
+  if speed then
+    speedTween = tween.fromParams(utility.linear_bezier, speedDuration, function(_, deltaTime, elapsed)
+      currentSpeed = speed(elapsed)
+      return deltaTime
+    end)
 
     table.insert(scope, speedTween)
   end
@@ -56,16 +48,18 @@ function spin.emit(ref: Model, scope: types.scope)
   local originalPivot = ref:GetPivot()
   local originalScale = ref:GetScale()
 
-  if scaleStart ~= scaleEnd then
+  local scale = mods.sampler(ref, "attribute", "Scale", duration)
+
+  if scale then
     table.insert(
       scope,
-      tween.fromParams(attr.get(ref, "Scale_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
-        ref:ScaleTo(utility.lerp(scaleStart, scaleEnd, alpha))
+      tween.timer(duration, function(deltaTime, elapsed)
+        ref:ScaleTo(scale(elapsed))
         return deltaTime
       end)
     )
   else
-    ref:ScaleTo(scaleStart)
+    ref:ScaleTo(attr.get(ref, "Scale_Start", 1))
   end
 
   local parent = ref:FindFirstAncestorOfClass("Attachment") or ref:FindFirstAncestorWhichIsA("BasePart")
@@ -88,7 +82,9 @@ function spin.emit(ref: Model, scope: types.scope)
 
     ref:PivotTo(cf)
 
-    return if currentSpeed > 0 or (elapsed > 0 and speedTween.Connected) then deltaTime * currentSpeed else nil
+    return if currentSpeed > 0 or (speedTween ~= nil and elapsed > 0 and speedTween.Connected)
+      then deltaTime * currentSpeed
+      else nil
   end, speedTween, scope, utility.RENDER_PRIORITY + scope.depth)
 end
 
