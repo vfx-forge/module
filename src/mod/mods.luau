@@ -74,8 +74,17 @@ end
 -- randomizer and envelope values are drawn HERE, once, which is once per
 -- emitted instance. that makes "one draw per instance" structural rather than
 -- a rule every call site has to remember
-function mods.sampler(ref: Instance, source: string, name: string, duration: number): ((number) -> any)?
-  local queue = mods.read(ref, source, name)
+-- a caller that already read the queue, to span it or to test it, passes it
+-- back in rather than paying a second base64 plus buffer decode for the same
+-- attribute
+function mods.sampler(
+  ref: Instance,
+  source: string,
+  name: string,
+  duration: number,
+  preread: { any }?
+): ((number) -> any)?
+  local queue = preread or mods.read(ref, source, name)
 
   if queue == nil or #queue == 0 then
     return nil

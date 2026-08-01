@@ -17,9 +17,15 @@ local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
+local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 
 local Promise = require("@pkg/Promise")
+
+-- how many throwing writes a driven target gets before the applier gives up on
+-- it. an unguarded write throws from inside a render step binding, which never
+-- advances the timer that would otherwise end it
+local MAX_WRITE_FAILURES = 3
 
 local emitters = {}
 
@@ -45,6 +51,29 @@ local function processRandomizers(obj: Instance, scope: types.scope)
   end
 end
 
+local function writeTarget(obj: Instance, source: string, name: string, v: any)
+  if source == "property" then
+    (obj :: any)[name] = v
+  else
+    obj:SetAttribute(name, v)
+  end
+end
+
+-- the same bail the legacy tweener makes before it drives anything: a property
+-- whose current value is a different type will never accept the write, and one
+-- that does not exist throws on the read
+local function canDrive(obj: Instance, source: string, name: string, v: any): boolean
+  if source ~= "property" then
+    return true
+  end
+
+  local ok, current = pcall(function()
+    return (obj :: any)[name]
+  end)
+
+  return ok and typeof(current) == typeof(v)
+end
+
 -- drives every Forge*Mods_* target on an instance that no effect module
 -- claims, which is what makes a tween on Part.Transparency animate with
 -- nobody writing effect code for it
@@ -68,7 +97,16 @@ function emitters.applyMods(obj: Instance, scope: types.scope, duration: number,
       continue
     end
 
-    local sample = mods.sampler(obj, source :: string, name :: string, duration)
+    local queue = mods.read(obj, source :: string, name :: string)
+
+    if queue == nil or #queue == 0 then
+      continue
+    end
+
+    -- no effect module lends this queue a clock, so it runs for as long as its
+    -- own longest modifier asks for and only falls back when none of them says
+    local span = mods.span(queue, duration)
+    local sample = mods.sampler(obj, source :: string, name :: string, span, queue)
 
     if sample == nil then
       continue
@@ -77,15 +115,24 @@ function emitters.applyMods(obj: Instance, scope: types.scope, duration: number,
     local target = name :: string
     local write = source :: string
 
+    local first = sample(0)
+
+    if first ~= nil and not canDrive(obj, write, target, first) then
+      continue
+    end
+
     task.spawn(function()
-      tween.timer(duration, function(deltaTime, elapsed)
+      local failures = 0
+
+      tween.timer(span, function(deltaTime, elapsed)
         local v = sample(elapsed)
 
-        if v ~= nil then
-          if write == "property" then
-            (obj :: any)[target] = v
-          else
-            obj:SetAttribute(target, v)
+        if v ~= nil and not pcall(writeTarget, obj, write, target, v) then
+          failures += 1
+
+          if failures >= MAX_WRITE_FAILURES then
+            logger.warn(`stopped driving {target} on {obj:GetFullName()} after {failures} failed writes`)
+            return nil
           end
         end
 
@@ -342,6 +389,25 @@ local function ownedFor(obj: any, className: string): { [string]: boolean }?
   return nil
 end
 
+-- the clock the applier falls back to when no modifier on a queue names a
+-- duration of its own. no forge schema authors a bare Duration as an effect
+-- clock, but a legacy tweener RayValue carries one as its own span, stored as
+-- a NumberRange that collapses to Min. the read is soft because a fallback is
+-- not authored data and must never be stamped onto a dispatched instance
+local function fallbackDuration(obj: Instance): number
+  return attr.get(obj, "Duration", 1, true, function(v)
+    if typeof(v) == "NumberRange" and v.Min > 0 then
+      return v.Min
+    end
+
+    if typeof(v) == "number" and v > 0 then
+      return v
+    end
+
+    return 1
+  end)
+end
+
 -- Dispatch function to determine which emitter to use and call it
 function emitters.dispatch(
   obj: any, -- since we don't use IsA(...), we don't get type narrowing
@@ -354,7 +420,7 @@ function emitters.dispatch(
   local className = obj.ClassName
 
   processRandomizers(obj, scope)
-  emitters.applyMods(obj, scope, attr.get(obj, "Duration", 1), ownedFor(obj, className))
+  emitters.applyMods(obj, scope, fallbackDuration(obj), ownedFor(obj, className))
 
   if className == "ParticleEmitter" then
     emitters.particle(obj, scope, sharedUncMap, sharedRefMap, legacyScale)
