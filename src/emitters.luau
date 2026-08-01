@@ -458,6 +458,10 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
     return Spin.OWNS
   end
 
+  if className == "Sound" then
+    return Sound.OWNS
+  end
+
   return nil
 end
 

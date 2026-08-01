@@ -128,4 +128,24 @@ function mods.sampler(
   end
 end
 
+-- everything an effect module needs to drive one target: the sampler, and the
+-- span it should run over, which is the queue's own longest duration and falls
+-- back only when no modifier names one. nil when nothing is authored, so the
+-- caller keeps whatever legacy path it had.
+--
+-- Call this BEFORE any non-soft attr.get on that name's quad keys. attr.get
+-- writes its default back, so reading X_Start creates it, and readQuad then
+-- finds a quad nobody authored.
+function mods.driver(ref: Instance, source: string, name: string, fallback: number): (((number) -> any)?, number)
+  local queue = mods.read(ref, source, name)
+
+  if queue == nil or #queue == 0 then
+    return nil, fallback
+  end
+
+  local span = mods.span(queue, fallback)
+
+  return mods.sampler(ref, source, name, span, queue), span
+end
+
 return mods

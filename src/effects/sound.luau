@@ -3,6 +3,7 @@ local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
 
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
@@ -11,6 +12,16 @@ local Promise = require("@pkg/Promise")
 local rng = Random.new()
 
 local sound = {}
+
+-- the three knobs sound drives through samplers of its own, so
+-- emitters.applyMods leaves them alone rather than writing the same targets
+sound.OWNS = {
+  attribute = {
+    Volume = true,
+    Speed = true,
+    RollOff = true,
+  },
+}
 
 local soundWidget: DockWidgetPluginGui?
 
@@ -116,68 +127,115 @@ local function playSingleSound(
 ): RBXScriptConnection?
   local currentSpeed = clone.PlaybackSpeed
 
-  local volumeEnd = attr.get(src, "Volume_End", clone.Volume)
-  local volumeStart = attr.get(src, "Volume_Start", clone.Volume)
+  -- every driver is read before the legacy attr.get below it, and that ordering
+  -- is not cosmetic: attr.get writes its default back, so reading Volume_Start
+  -- would create it and readQuad would then find a quad nobody authored
+  local volume, volumeSpan = mods.driver(src, "attribute", "Volume", clone.TimeLength)
 
-  clone.Volume = volumeStart
-
-  if volumeStart ~= volumeEnd then
-    local volumeDuration = attr.get(src, "Volume_Duration", clone.TimeLength)
+  if volume then
+    clone.Volume = volume(0)
 
     table.insert(
       scope,
-      tween.fromParams(attr.get(src, "Volume_Curve", utility.default_bezier), volumeDuration, function(alpha, deltaTime)
-        clone.Volume = utility.lerp(volumeStart, volumeEnd, alpha)
+      tween.fromParams(utility.linear_bezier, volumeSpan, function(_, deltaTime, elapsed)
+        clone.Volume = volume(elapsed)
         return deltaTime * currentSpeed
       end)
     )
   else
+    local volumeEnd = attr.get(src, "Volume_End", clone.Volume)
+    local volumeStart = attr.get(src, "Volume_Start", clone.Volume)
+
     clone.Volume = volumeStart
+
+    if volumeStart ~= volumeEnd then
+      local volumeDuration = attr.get(src, "Volume_Duration", clone.TimeLength)
+
+      table.insert(
+        scope,
+        tween.fromParams(
+          attr.get(src, "Volume_Curve", utility.default_bezier),
+          volumeDuration,
+          function(alpha, deltaTime)
+            clone.Volume = utility.lerp(volumeStart, volumeEnd, alpha)
+            return deltaTime * currentSpeed
+          end
+        )
+      )
+    end
   end
 
-  local speedEnd = attr.get(src, "Speed_End", clone.PlaybackSpeed)
-  local speedStart = attr.get(src, "Speed_Start", clone.PlaybackSpeed)
-
-  currentSpeed = speedStart
-
+  local speed, speedSpan = mods.driver(src, "attribute", "Speed", clone.TimeLength)
   local speedTween: RBXScriptConnection? = nil
 
-  if speedStart ~= speedEnd then
-    local speedDuration = attr.get(src, "Speed_Duration", clone.TimeLength)
+  if speed then
+    currentSpeed = speed(0)
+    clone.PlaybackSpeed = currentSpeed
 
-    speedTween = tween.fromParams(
-      attr.get(src, "Speed_Curve", utility.default_bezier),
-      speedDuration,
-      function(alpha, deltaTime)
-        currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
-        clone.PlaybackSpeed = currentSpeed
-        return deltaTime
-      end
-    )
+    speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
+      currentSpeed = speed(elapsed)
+      clone.PlaybackSpeed = currentSpeed
+      return deltaTime
+    end)
 
     table.insert(scope, speedTween)
   else
-    clone.PlaybackSpeed = speedStart
+    local speedEnd = attr.get(src, "Speed_End", clone.PlaybackSpeed)
+    local speedStart = attr.get(src, "Speed_Start", clone.PlaybackSpeed)
+
+    currentSpeed = speedStart
+
+    if speedStart ~= speedEnd then
+      local speedDuration = attr.get(src, "Speed_Duration", clone.TimeLength)
+
+      speedTween = tween.fromParams(
+        attr.get(src, "Speed_Curve", utility.default_bezier),
+        speedDuration,
+        function(alpha, deltaTime)
+          currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
+          clone.PlaybackSpeed = currentSpeed
+          return deltaTime
+        end
+      )
+
+      table.insert(scope, speedTween)
+    else
+      clone.PlaybackSpeed = speedStart
+    end
   end
 
-  local rolloffEnd = attr.get(src, "RollOff_End", clone.RollOffMinDistance)
-  local rolloffStart = attr.get(src, "RollOff_Start", clone.RollOffMinDistance)
+  local rolloff, rolloffSpan = mods.driver(src, "attribute", "RollOff", clone.TimeLength)
 
-  if rolloffStart ~= rolloffEnd then
-    local rolloffDuration = attr.get(src, "RollOff_Duration", clone.TimeLength)
+  if rolloff then
+    clone.RollOffMinDistance = rolloff(0)
 
     table.insert(
       scope,
-      tween.fromParams(
-        attr.get(src, "RollOff_Curve", utility.default_bezier),
-        rolloffDuration,
-        function(alpha, deltaTime)
-          clone.RollOffMinDistance = utility.lerp(rolloffStart, rolloffEnd, alpha)
-          return deltaTime * currentSpeed
-        end,
-        speedTween
-      )
+      tween.fromParams(utility.linear_bezier, rolloffSpan, function(_, deltaTime, elapsed)
+        clone.RollOffMinDistance = rolloff(elapsed)
+        return deltaTime * currentSpeed
+      end, speedTween)
     )
+  else
+    local rolloffEnd = attr.get(src, "RollOff_End", clone.RollOffMinDistance)
+    local rolloffStart = attr.get(src, "RollOff_Start", clone.RollOffMinDistance)
+
+    if rolloffStart ~= rolloffEnd then
+      local rolloffDuration = attr.get(src, "RollOff_Duration", clone.TimeLength)
+
+      table.insert(
+        scope,
+        tween.fromParams(
+          attr.get(src, "RollOff_Curve", utility.default_bezier),
+          rolloffDuration,
+          function(alpha, deltaTime)
+            clone.RollOffMinDistance = utility.lerp(rolloffStart, rolloffEnd, alpha)
+            return deltaTime * currentSpeed
+          end,
+          speedTween
+        )
+      )
+    end
   end
 
   if clone.PlayOnRemove and not utility.PLUGIN_CONTEXT then
