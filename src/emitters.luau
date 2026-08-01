@@ -74,9 +74,13 @@ local function canDrive(obj: Instance, source: string, name: string, v: any): bo
   return ok and typeof(current) == typeof(v)
 end
 
--- drives every Forge*Mods_* target on an instance that no effect module
--- claims, which is what makes a tween on Part.Transparency animate with
--- nobody writing effect code for it
+-- drives every Forge*Mods_* target on an instance that no effect module claims,
+-- with no effect code written for that target. it only ever sees what
+-- emitters.dispatch is handed, and services/effects.luau's EffectSelectors
+-- never selects a plain descendant Part, so a tween authored on
+-- Part.Transparency runs only when that Part is already selected for some other
+-- reason. see the 2026-07-25 modifier accordion and runtime design spec,
+-- Section 3, "Known limitation, recorded 2026-08-01"
 function emitters.applyMods(obj: Instance, scope: types.scope, duration: number, owned: { [string]: boolean }?)
   for key in obj:GetAttributes() do
     local source: string? = nil
