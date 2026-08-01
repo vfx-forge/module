@@ -14,6 +14,8 @@ local ShockwaveLine = require("@vfx/shockwave_line")
 local ShockwaveDebris = require("@vfx/shockwave_debris")
 
 local attr = require("@mod/attributes")
+local mods = require("@mod/mods")
+local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
 
@@ -40,6 +42,56 @@ local function processRandomizers(obj: Instance, scope: types.scope)
 
   for _, obj in r_attr do
     utility.try(`failed to emit attribute randomizer with error: %s`, Randomizer.emit, obj, scope, true)
+  end
+end
+
+-- drives every Forge*Mods_* target on an instance that no effect module
+-- claims, which is what makes a tween on Part.Transparency animate with
+-- nobody writing effect code for it
+function emitters.applyMods(obj: Instance, scope: types.scope, duration: number, owned: { [string]: boolean }?)
+  for key in obj:GetAttributes() do
+    local source: string? = nil
+    local name: string? = nil
+
+    for candidate, prefix in mods.PREFIX do
+      if string.sub(key, 1, #prefix) == prefix then
+        source = candidate
+        name = string.sub(key, #prefix + 1)
+      end
+    end
+
+    if source == nil or name == nil then
+      continue
+    end
+
+    if owned and owned[name :: string] then
+      continue
+    end
+
+    local sample = mods.sampler(obj, source :: string, name :: string, duration)
+
+    if sample == nil then
+      continue
+    end
+
+    local target = name :: string
+    local write = source :: string
+
+    task.spawn(function()
+      tween.timer(duration, function(deltaTime, elapsed)
+        local v = sample(elapsed)
+
+        if v ~= nil then
+          if write == "property" then
+            (obj :: any)[target] = v
+          else
+            obj:SetAttribute(target, v)
+          end
+        end
+
+        return deltaTime
+      end, nil, scope, utility.RENDER_PRIORITY + scope.depth)
+    end)
   end
 end
 
@@ -279,6 +331,17 @@ function emitters.sound(obj: Sound, scope: types.scope)
   utility.try(`failed to emit sound with error: %s`, Sound.emit, obj, scope)
 end
 
+-- names a converted effect drives through its own sampler. this mirrors
+-- dispatch's branch selection below and has to move with it, which is what the
+-- ownership test in tests/roblox/mods.spec.luau exists to catch
+local function ownedFor(obj: any, className: string): { [string]: boolean }?
+  if className == "Model" and not utility.isMeshVFX(obj) then
+    return Spin.OWNS
+  end
+
+  return nil
+end
+
 -- Dispatch function to determine which emitter to use and call it
 function emitters.dispatch(
   obj: any, -- since we don't use IsA(...), we don't get type narrowing
@@ -291,6 +354,7 @@ function emitters.dispatch(
   local className = obj.ClassName
 
   processRandomizers(obj, scope)
+  emitters.applyMods(obj, scope, attr.get(obj, "Duration", 1), ownedFor(obj, className))
 
   if className == "ParticleEmitter" then
     emitters.particle(obj, scope, sharedUncMap, sharedRefMap, legacyScale)
