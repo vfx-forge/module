@@ -204,7 +204,14 @@ local SPIN_SAMPLED = { "Scale", "SpinSpeed" }
 
 function utility.isSpinModelStatic(model: Model)
   for _, name in SPIN_SAMPLED do
-    if model:GetAttribute(mods.attrName("attribute", name)) ~= nil then
+    -- decoded, not merely present: modifier_store.clear writes an EMPTY queue
+    -- as a tombstone, so presence alone judges a model whose only modifier was
+    -- authored and then deleted animated forever. the framed read is also why
+    -- mods.read is wrong here, because its legacy fallback finds a quad that an
+    -- earlier non-soft attr.get self-wrote
+    local queue = mods.framed(model, "attribute", name)
+
+    if queue ~= nil and #queue > 0 then
       return false
     end
   end

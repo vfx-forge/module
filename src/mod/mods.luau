@@ -36,23 +36,40 @@ function mods.span(queue: { any }, fallback: number): number
   return longest
 end
 
-function mods.read(ref: Instance, source: string, name: string): { any }?
+-- the framed attribute decoded on its own, with no legacy fallback. an EMPTY
+-- queue is a tombstone the authoring side writes deliberately, so a caller
+-- asking whether anything is authored here has to tell it apart from an absent
+-- attribute, which mods.read cannot once it has fallen through
+function mods.framed(ref: Instance, source: string, name: string): { any }?
   local raw = ref:GetAttribute(mods.attrName(source, name))
 
-  if frame.isFramed(raw) then
-    local body = frame.unframe(raw)
+  if not frame.isFramed(raw) then
+    return nil
+  end
 
-    if body == nil then
-      logger.warn(`{name} carries a framed modifier queue that could not be read`)
-    else
-      local ok, decoded = pcall(codec.decode, body)
+  local body = frame.unframe(raw)
 
-      if ok and decoded then
-        return decoded.queue
-      end
+  if body == nil then
+    logger.warn(`{name} carries a framed modifier queue that could not be read`)
+    return nil
+  end
 
-      logger.warn(`failed to decode the modifier queue on {name}`)
-    end
+  local ok, decoded = pcall(codec.decode, body)
+
+  if ok and decoded then
+    return decoded.queue
+  end
+
+  logger.warn(`failed to decode the modifier queue on {name}`)
+
+  return nil
+end
+
+function mods.read(ref: Instance, source: string, name: string): { any }?
+  local queue = mods.framed(ref, source, name)
+
+  if queue ~= nil then
+    return queue
   end
 
   return legacy_mods.read(ref, source, name)
