@@ -31,11 +31,11 @@ end
 
 -- Random-under-lune: confirmed absent entirely. `require("@lune/roblox")`
 -- does not expose `Random` (`roblox.Random == nil`), and the bare `Random`
--- global used by `modifiers.evaluate`'s randomizer branch is also absent
--- under plain `lune run` (`Random.new(...)` errors "attempt to index nil
--- with 'new'"). So `DATATYPE_NAMES` in tests/harness.luau is NOT extended
--- with "Random", and no randomizer test is added here -- it will be covered
--- via the ui-labs MCP path in real Studio, where `Random` genuinely exists.
+-- global is also absent under plain `lune run` (`Random.new(...)` errors
+-- "attempt to index nil with 'new'"). `modifiers.evaluate` never constructs
+-- one itself though: a randomizer's draw arrives from `ctx.draws`, made by
+-- the caller once per emitted instance, so the randomizer branch is tested
+-- here with plain injected numbers and no real `Random` is needed.
 
 harness.suite(function()
   harness.describe("path.serializePath / deserializePath", function()
@@ -75,22 +75,38 @@ harness.suite(function()
   end)
 
   harness.describe("modifiers.evaluate", function()
-    test("single tween lerps start->finish along a linear curve at progress 0.5", function()
+    test("a tween with its own duration reaches its finish at that duration", function()
       local queue = {
         {
           kind = "tween",
           chain = false,
-          duration = 1,
+          duration = 2,
           start = { t = "lit", v = 0 },
           finish = { t = "lit", v = 10 },
           curve = linear,
         },
       }
-      local out = modifiers.evaluate(queue, 0.5)
-      expect(near(out :: number, 5)).ok()
+
+      expect(near(modifiers.evaluate(queue, 1, { duration = 10 }) :: number, 5)).ok()
+      expect(near(modifiers.evaluate(queue, 2, { duration = 10 }) :: number, 10)).ok()
+      expect(near(modifiers.evaluate(queue, 4, { duration = 10 }) :: number, 10)).ok()
     end)
 
-    test("chain feeds previous end into next start", function()
+    test("a nil duration runs over the effect's own", function()
+      local queue = {
+        {
+          kind = "tween",
+          chain = false,
+          start = { t = "lit", v = 0 },
+          finish = { t = "lit", v = 10 },
+          curve = linear,
+        },
+      }
+
+      expect(near(modifiers.evaluate(queue, 2, { duration = 4 }) :: number, 5)).ok()
+    end)
+
+    test("chain feeds the previous output into the next start", function()
       local queue = {
         {
           kind = "tween",
@@ -103,13 +119,79 @@ harness.suite(function()
         {
           kind = "tween",
           chain = true,
+          duration = 1,
           finish = { t = "lit", v = 20 },
           curve = linear,
         },
       }
-      -- At progress 1.0 the first ends at 10; chained second starts at 10, ends 20.
-      local out = modifiers.evaluate(queue, 1.0)
-      expect(near(out :: number, 20)).ok()
+
+      expect(near(modifiers.evaluate(queue, 1, { duration = 1 }) :: number, 20)).ok()
+    end)
+
+    test("a base entry seeds the chain from ctx.base and contributes nothing itself", function()
+      local queue = {
+        {
+          kind = "sequence",
+          chain = false,
+          start = { t = "lit", v = 0 },
+          finish = { t = "lit", v = 99 },
+          curve = linear,
+        },
+        {
+          kind = "tween",
+          chain = true,
+          duration = 1,
+          finish = { t = "lit", v = 8 },
+          curve = linear,
+        },
+      }
+
+      expect(near(modifiers.evaluate(queue, 0, { duration = 1, base = 4 }) :: number, 4)).ok()
+      expect(near(modifiers.evaluate(queue, 1, { duration = 1, base = 4 }) :: number, 8)).ok()
+    end)
+
+    test("a base entry alone returns ctx.base untouched", function()
+      local queue = { { kind = "gradient", chain = false } }
+
+      expect(modifiers.evaluate(queue, 0.5, { duration = 1, base = "seeded" })).toBe("seeded")
+    end)
+
+    test("a randomizer reads its draw by queue index", function()
+      local queue = {
+        { kind = "randomizer", chain = false, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 100 } },
+      }
+
+      expect(near(modifiers.evaluate(queue, 0, { duration = 1, draws = { [1] = 0.25 } }) :: number, 25)).ok()
+    end)
+
+    test("a randomizer with no draw supplied falls back to the midpoint", function()
+      local queue = {
+        { kind = "randomizer", chain = false, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 100 } },
+      }
+
+      expect(near(modifiers.evaluate(queue, 0, { duration = 1 }) :: number, 50)).ok()
+    end)
+
+    test("an envelope deviates alpha in alpha units and clamps at both ends", function()
+      local env = buffer.create(8)
+      buffer.writef32(env, 0, 0.25)
+      buffer.writef32(env, 4, 0.25)
+
+      local queue = {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "lit", v = 0 },
+          finish = { t = "lit", v = 100 },
+          curve = linear,
+          envelope = env,
+        },
+      }
+
+      expect(near(modifiers.evaluate(queue, 0.5, { duration = 1, envelope = 1 }) :: number, 75)).ok()
+      expect(near(modifiers.evaluate(queue, 0.5, { duration = 1, envelope = -1 }) :: number, 25)).ok()
+      expect(near(modifiers.evaluate(queue, 1, { duration = 1, envelope = 1 }) :: number, 100)).ok()
     end)
 
     test("discrete types snap via lerp.Other", function()
@@ -123,17 +205,19 @@ harness.suite(function()
           curve = linear,
         },
       }
-      expect(modifiers.evaluate(queue, 0.2)).toBe(false)
-      expect(modifiers.evaluate(queue, 0.8)).toBe(true)
+
+      expect(modifiers.evaluate(queue, 0.2, { duration = 1 })).toBe(false)
+      expect(modifiers.evaluate(queue, 0.8, { duration = 1 })).toBe(true)
     end)
 
     test("unknown modifier kind passes its value through unchanged", function()
       local queue = { { kind = "future_kind", chain = false, start = { t = "lit", v = 42 } } }
-      expect(modifiers.evaluate(queue, 0.5)).toBe(42)
+
+      expect(modifiers.evaluate(queue, 0.5, { duration = 1 })).toBe(42)
     end)
 
-    test("empty queue returns nil", function()
-      expect(modifiers.evaluate({}, 0.5)).toBe(nil)
+    test("empty queue returns ctx.base, which is nil when unset", function()
+      expect(modifiers.evaluate({}, 0.5, { duration = 1 })).toBe(nil)
     end)
   end)
 end)
