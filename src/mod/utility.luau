@@ -4,6 +4,7 @@ local RunService = game:GetService("RunService")
 local PhysicsService = game:GetService("PhysicsService")
 
 local attr = require("@mod/attributes")
+local mods = require("@mod/mods")
 local logger = require("@mod/logger")
 
 local Promise = require("@pkg/Promise")
@@ -195,7 +196,19 @@ function utility.isMeshVFX(obj: Instance)
     and (obj :: any).End:IsA("BasePart")
 end
 
+-- the names src/effects/spin.luau drives through samplers of its own. a
+-- new-format queue on either is animation no legacy quad can express, and
+-- emitters.applyMods skips them precisely because the effect claims them, so
+-- an early return out of spin.emit leaves nothing driving them at all
+local SPIN_SAMPLED = { "Scale", "SpinSpeed" }
+
 function utility.isSpinModelStatic(model: Model)
+  for _, name in SPIN_SAMPLED do
+    if model:GetAttribute(mods.attrName("attribute", name)) ~= nil then
+      return false
+    end
+  end
+
   return attr.get(model, "SpinRotation", vector.zero, true) == vector.zero
     and attr.get(model, "Scale_Start", 1, true) == 1
     and attr.get(model, "Scale_End", 1, true) == 1
