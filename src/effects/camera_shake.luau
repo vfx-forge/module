@@ -1,6 +1,7 @@
 local RunService = game:GetService("RunService")
 
 local attr = require("@mod/attributes")
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
@@ -57,6 +58,15 @@ end
 
 local camera_shake = {}
 
+-- Speed is driven through a sampler of its own, so emitters.applyMods leaves it
+-- alone. it is a clock multiplier like sound's, not a property write: the shake
+-- reads its own elapsed, advanced by deltaTime * currentSpeed
+camera_shake.OWNS = {
+  attribute = {
+    Speed = true,
+  },
+}
+
 local conn
 local lastCameraCf
 
@@ -103,8 +113,9 @@ function camera_shake.emit(ref: RayValue, scope: types.scope)
   local posInfluence = attr.get(ref, "PositionInfluence", vector.one)
   local rotInfluence = attr.get(ref, "RotationInfluence", vector.one * 0.2)
 
-  local speedStart = attr.get(ref, "Speed_Start", 1)
-  local speedEnd = attr.get(ref, "Speed_End", 1)
+  -- read before the legacy attr.get below, because attr.get writes its default
+  -- back and reading Speed_Start would create the quad readQuad then finds
+  local speed, speedSpan = mods.driver(ref, "attribute", "Speed", 0.1)
 
   local sustained = emitDuration > 0
 
@@ -126,17 +137,32 @@ function camera_shake.emit(ref: RayValue, scope: types.scope)
     return elapsed
   end
 
-  if speedStart ~= speedEnd then
-    local speedTween = tween.fromParams(
-      attr.get(ref, "Speed_Curve", utility.default_bezier),
-      attr.get(ref, "Speed_Duration", 0.1),
-      function(alpha, deltaTime)
-        currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
-        return deltaTime
-      end
-    )
+  if speed then
+    currentSpeed = speed(0)
 
-    table.insert(scope, speedTween)
+    table.insert(
+      scope,
+      tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, sampledAt)
+        currentSpeed = speed(sampledAt)
+        return deltaTime
+      end)
+    )
+  else
+    local speedStart = attr.get(ref, "Speed_Start", 1)
+    local speedEnd = attr.get(ref, "Speed_End", 1)
+
+    if speedStart ~= speedEnd then
+      local speedTween = tween.fromParams(
+        attr.get(ref, "Speed_Curve", utility.default_bezier),
+        attr.get(ref, "Speed_Duration", 0.1),
+        function(alpha, deltaTime)
+          currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
+          return deltaTime
+        end
+      )
+
+      table.insert(scope, speedTween)
+    end
   end
 
   table.insert(
