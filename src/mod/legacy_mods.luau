@@ -1,7 +1,31 @@
+local path = require("@mod/common/path")
 local value = require("@mod/value")
 local logger = require("@mod/logger")
 
 local legacy_mods = {}
+
+-- a quad with no _Curve meant OUT CUBIC and not linear, because every effect
+-- read one as attr.get(ref, "X_Curve", utility.default_bezier). leaving the
+-- curve nil would have evaluate fall back to plain progress, so the default is
+-- spelled out. every _Start / _End quad in the package pairs with a _Curve of
+-- this default; the legacy curves that default to linear (Easing_Curve,
+-- Weight_Curve, Path_Curve) are never quad halves.
+--
+-- built from plain tables rather than Path2DControlPoint, which keeps this
+-- module loadable outside the engine, and pinned equal to
+-- utility.default_bezier by a spec
+local function control(x: number, y: number, lx: number, ly: number, rx: number, ry: number)
+  return {
+    Position = { X = { Scale = x }, Y = { Scale = y } },
+    LeftTangent = { X = { Scale = lx }, Y = { Scale = ly } },
+    RightTangent = { X = { Scale = rx }, Y = { Scale = ry } },
+  }
+end
+
+local QUAD_CURVE = buffer.tostring(path.serializePath({
+  control(0, 1, 0, 0, 0.215, -0.61),
+  control(1, 0, -0.645, 0, 0, 0),
+} :: any))
 
 -- the tags src/utility.luau puts on a RayValue to say which side of an
 -- instance it drives. kept as literals rather than a require, so the
@@ -111,7 +135,7 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string): { an
   end
 
   local durationV = durationOf(ref:GetAttribute(`{name}_Duration`))
-  local curveV = curveOf(ref:GetAttribute(`{name}_Curve`))
+  local curveV = curveOf(ref:GetAttribute(`{name}_Curve`)) or QUAD_CURVE
 
   local group = DRAWN_RANGES[source]
   local drawn = group ~= nil and group[name] == true
