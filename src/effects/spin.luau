@@ -15,8 +15,10 @@ local spin = {}
 -- both knobs spin drives through a sampler of its own, so emitters.applyMods
 -- leaves them alone. task 5 converts the effect to actually use them
 spin.OWNS = {
-  Scale = true,
-  SpinSpeed = true,
+  attribute = {
+    Scale = true,
+    SpinSpeed = true,
+  },
 }
 
 function spin.emit(ref: Model, scope: types.scope)

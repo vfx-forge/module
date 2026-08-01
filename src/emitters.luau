@@ -117,7 +117,18 @@ end
 -- Part.Transparency runs only when that Part is already selected for some other
 -- reason. see the 2026-07-25 modifier accordion and runtime design spec,
 -- Section 3, "Known limitation, recorded 2026-08-01"
-function emitters.applyMods(obj: Instance, scope: types.scope, duration: number, owned: { [string]: boolean }?)
+-- `owned` is keyed by source first, then name, because a name alone is not a
+-- target: an instance can carry both a property and an attribute called Scale,
+-- which is the ambiguity the two prefixes exist to remove. Returns one promise
+-- per driver, which emitters.dispatch waits on.
+function emitters.applyMods(
+  obj: Instance,
+  scope: types.scope,
+  duration: number,
+  owned: { [string]: { [string]: boolean } }?
+): { any }
+  local drivers = {}
+
   for key in obj:GetAttributes() do
     local source: string? = nil
     local name: string? = nil
@@ -133,7 +144,9 @@ function emitters.applyMods(obj: Instance, scope: types.scope, duration: number,
       continue
     end
 
-    if owned and owned[name :: string] then
+    local claimed = owned and owned[source :: string]
+
+    if claimed and claimed[name :: string] then
       continue
     end
 
@@ -163,31 +176,42 @@ function emitters.applyMods(obj: Instance, scope: types.scope, duration: number,
 
     local wants, restore = resetTo(queue, currentOf(obj, write, target))
 
-    task.spawn(function()
-      local failures = 0
+    table.insert(
+      drivers,
+      Promise.new(function(resolve)
+        -- task.spawn runs inline until the first yield, so the executor returns
+        -- as soon as tween.timer has bound its stepper
+        task.spawn(function()
+          local failures = 0
 
-      tween.timer(span, function(deltaTime, elapsed)
-        local v = sample(elapsed)
+          tween.timer(span, function(deltaTime, elapsed)
+            local v = sample(elapsed)
 
-        if v ~= nil and not pcall(writeTarget, obj, write, target, v) then
-          failures += 1
+            if v ~= nil and not pcall(writeTarget, obj, write, target, v) then
+              failures += 1
 
-          if failures >= MAX_WRITE_FAILURES then
-            logger.warn(`stopped driving {target} on {obj:GetFullName()} after {failures} failed writes`)
-            return nil
+              if failures >= MAX_WRITE_FAILURES then
+                logger.warn(`stopped driving {target} on {obj:GetFullName()} after {failures} failed writes`)
+                return nil
+              end
+            end
+
+            return deltaTime
+          end, nil, scope, utility.RENDER_PRIORITY + scope.depth)
+
+          -- tween.timer yields until its own span is up, so this is the finish
+          -- and nothing races the driver's last write
+          if wants and restore ~= nil then
+            pcall(writeTarget, obj, write, target, restore)
           end
-        end
 
-        return deltaTime
-      end, nil, scope, utility.RENDER_PRIORITY + scope.depth)
-
-      -- tween.timer yields until its own span is up, so this is the finish and
-      -- nothing races the driver's last write
-      if wants and restore ~= nil then
-        pcall(writeTarget, obj, write, target, restore)
-      end
-    end)
+          resolve()
+        end)
+      end)
+    )
   end
+
+  return drivers
 end
 
 function emitters.particle(
@@ -429,7 +453,7 @@ end
 -- names a converted effect drives through its own sampler. this mirrors
 -- dispatch's branch selection below and has to move with it, which is what the
 -- ownership test in tests/roblox/mods.spec.luau exists to catch
-local function ownedFor(obj: any, className: string): { [string]: boolean }?
+local function ownedFor(obj: any, className: string): { [string]: { [string]: boolean } }?
   if className == "Model" and not utility.isMeshVFX(obj) then
     return Spin.OWNS
   end
@@ -456,8 +480,9 @@ local function fallbackDuration(obj: Instance): number
   end)
 end
 
--- Dispatch function to determine which emitter to use and call it
-function emitters.dispatch(
+-- picks the emitter for an instance and calls it. wrapped by emitters.dispatch,
+-- which owns the prologue and the wait on the applier's drivers
+local function route(
   obj: any, -- since we don't use IsA(...), we don't get type narrowing
   scope: types.scope,
   sharedUncMap: { [Instance]: number },
@@ -466,9 +491,6 @@ function emitters.dispatch(
   legacyScale: number
 )
   local className = obj.ClassName
-
-  processRandomizers(obj, scope)
-  emitters.applyMods(obj, scope, fallbackDuration(obj), ownedFor(obj, className))
 
   if className == "ParticleEmitter" then
     emitters.particle(obj, scope, sharedUncMap, sharedRefMap, legacyScale)
@@ -546,6 +568,37 @@ function emitters.dispatch(
         emitters.shockwave_line(att, obj, scope)
       end
     end
+  end
+end
+
+-- Dispatch function to determine which emitter to use and call it.
+--
+-- The wait at the end is load bearing. createEmitPromise calls this and then
+-- cleanupScope synchronously, and the applier only spawns its drivers, so
+-- without it a driver lives exactly as long as the effect module happens to
+-- yield. Effects that never yield (trail is one line, screen is another) tore
+-- their drivers down before a single frame, and the applier's reset on finish
+-- could not fire anywhere.
+function emitters.dispatch(
+  obj: any,
+  scope: types.scope,
+  sharedUncMap: { [Instance]: number },
+  sharedRefMap: { [Instance]: Instance },
+  shared_part_cache: any,
+  legacyScale: number
+)
+  local className = obj.ClassName
+
+  processRandomizers(obj, scope)
+
+  local drivers = emitters.applyMods(obj, scope, fallbackDuration(obj), ownedFor(obj, className))
+
+  route(obj, scope, sharedUncMap, sharedRefMap, shared_part_cache, legacyScale)
+
+  -- the effect module above has already run, so anything still going is a
+  -- driver outliving it rather than one waiting its turn
+  if #drivers > 0 then
+    Promise.all(drivers):await()
   end
 end
 
