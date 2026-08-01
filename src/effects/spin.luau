@@ -29,20 +29,47 @@ function spin.emit(ref: Model, scope: types.scope)
 
   local speedDuration = attr.get(ref, "SpinSpeed_Duration", 0.1)
 
-  local currentSpeed = attr.get(ref, "SpinSpeed_Start", 0)
-
   task.wait(emitDelay)
 
+  -- read the sampler before any attr.get on SpinSpeed_Start/_End: attr.get's
+  -- non-soft read below self-writes its default back onto ref, and it must
+  -- not do that before legacy_mods.readQuad gets to see whether either
+  -- attribute was genuinely absent
   local speed = mods.sampler(ref, "attribute", "SpinSpeed", speedDuration)
   local speedTween
+  local currentSpeed
 
   if speed then
+    currentSpeed = speed(0)
+
     speedTween = tween.fromParams(utility.linear_bezier, speedDuration, function(_, deltaTime, elapsed)
       currentSpeed = speed(elapsed)
       return deltaTime
     end)
 
     table.insert(scope, speedTween)
+  else
+    -- nothing authored at all. the pre-conversion default was a 0 to 1 ramp
+    -- on default_bezier, and it was load-bearing: an unauthored model that
+    -- lost it returns nil from the rotation timer's counter and stops on
+    -- frame one
+    local speedStart = attr.get(ref, "SpinSpeed_Start", 0)
+    local speedEnd = attr.get(ref, "SpinSpeed_End", 1)
+
+    currentSpeed = speedStart
+
+    if speedStart ~= speedEnd then
+      speedTween = tween.fromParams(
+        attr.get(ref, "SpinSpeed_Curve", utility.default_bezier),
+        speedDuration,
+        function(alpha, deltaTime)
+          currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
+          return deltaTime
+        end
+      )
+
+      table.insert(scope, speedTween)
+    end
   end
 
   local originalPivot = ref:GetPivot()
