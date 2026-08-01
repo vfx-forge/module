@@ -507,6 +507,21 @@ function emitters.dispatch(
     return
   end
 
+  -- a screen effect reached as a DESCENDANT. the top-level loop in
+  -- services/effects.luau handles a directly emitted one and never calls
+  -- dispatch for it, so without this branch an Enabled BasePart is selected,
+  -- handed here, and falls through every case. the predicate mirrors that
+  -- loop's, including the shockwave exclusion, so the two paths agree on what
+  -- a screen effect is
+  if
+    obj:IsA("BasePart")
+    and obj:GetAttribute("Enabled")
+    and not utility.findFirstClassWithTag(obj, "Attachment", utility.SHOCKWAVE_TAG)
+  then
+    emitters.screen(obj, scope)
+    return
+  end
+
   if className == "Model" then
     if utility.isMeshVFX(obj) then
       emitters.mesh(obj, scope, shared_part_cache, legacyScale)

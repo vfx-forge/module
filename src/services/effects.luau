@@ -34,6 +34,10 @@ local EffectSelectors = table.concat({
 
 local effects = {}
 
+-- exposed so the selector spec can query against the real string instead of
+-- keeping a copy that drifts
+effects.SELECTORS = EffectSelectors
+
 local api_ref: types.Api?
 
 local NOOP = function() end
