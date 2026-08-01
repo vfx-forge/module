@@ -78,9 +78,13 @@ function spin.emit(ref: Model, scope: types.scope)
   local scale = mods.sampler(ref, "attribute", "Scale", duration)
 
   if scale then
+    -- fromParams, not timer: timer yields until it finishes, and the rotation
+    -- timer below is the last statement in this function. the curve is linear
+    -- and its alpha ignored, because the sampler owns the shaping and is fed
+    -- elapsed directly, exactly as the SpinSpeed branch above does
     table.insert(
       scope,
-      tween.timer(duration, function(deltaTime, elapsed)
+      tween.fromParams(utility.linear_bezier, duration, function(_, deltaTime, elapsed)
         ref:ScaleTo(scale(elapsed))
         return deltaTime
       end)
