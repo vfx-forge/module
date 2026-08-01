@@ -17,6 +17,7 @@ local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
+local value = require("@mod/value")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 
@@ -59,19 +60,54 @@ local function writeTarget(obj: Instance, source: string, name: string, v: any)
   end
 end
 
--- the same bail the legacy tweener makes before it drives anything: a property
--- whose current value is a different type will never accept the write, and one
--- that does not exist throws on the read
-local function canDrive(obj: Instance, source: string, name: string, v: any): boolean
+-- a property that does not exist throws on the read, so a failed read reports
+-- as nil and every caller treats that as "nothing there"
+local function currentOf(obj: Instance, source: string, name: string): any
   if source ~= "property" then
-    return true
+    return obj:GetAttribute(name)
   end
 
   local ok, current = pcall(function()
     return (obj :: any)[name]
   end)
 
-  return ok and typeof(current) == typeof(v)
+  return if ok then current else nil
+end
+
+-- the same bail the legacy tweener makes before it drives anything: a property
+-- whose current value is a different type will never accept the write
+local function canDrive(obj: Instance, source: string, name: string, v: any): boolean
+  if source ~= "property" then
+    return true
+  end
+
+  return typeof(currentOf(obj, source, name)) == typeof(v)
+end
+
+-- a legacy RayValue child carried a ResetOnFinish flag, default true, and both
+-- effects that played one restored on finish: the tweener to its authored
+-- _START_VALUE when it had one and otherwise to the value the target held at
+-- emit time, the randomizer always to that pre-drive value. legacy_mods lifts
+-- the flag onto its modifiers as `reset`, and those two collapse to one rule.
+-- a queue authored in the modifier panel carries no `reset` at all and gets no
+-- restore, because the panel presents a modifier as what the value IS, and
+-- there is no per-modifier control there to say otherwise
+local function resetTo(queue: { any }, snapshot: any): (boolean, any)
+  local wants = false
+  local restore = snapshot
+
+  -- legacy entries never chain, so the last of them is the one that actually
+  -- drove the target and its own flag is the one that decides
+  for _, m in queue do
+    if m.reset ~= true then
+      continue
+    end
+
+    wants = true
+    restore = if m.kind ~= "randomizer" and m.start ~= nil then value.resolve(m.start) else snapshot
+  end
+
+  return wants, restore
 end
 
 -- drives every Forge*Mods_* target on an instance that no effect module claims,
@@ -125,6 +161,8 @@ function emitters.applyMods(obj: Instance, scope: types.scope, duration: number,
       continue
     end
 
+    local wants, restore = resetTo(queue, currentOf(obj, write, target))
+
     task.spawn(function()
       local failures = 0
 
@@ -142,6 +180,12 @@ function emitters.applyMods(obj: Instance, scope: types.scope, duration: number,
 
         return deltaTime
       end, nil, scope, utility.RENDER_PRIORITY + scope.depth)
+
+      -- tween.timer yields until its own span is up, so this is the finish and
+      -- nothing races the driver's last write
+      if wants and restore ~= nil then
+        pcall(writeTarget, obj, write, target, restore)
+      end
     end)
   end
 end

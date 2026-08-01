@@ -157,6 +157,18 @@ harness.suite(function()
       expect(m.blend).toBe("linear")
     end)
 
+    -- legacy_mods lifts a legacy child's ResetOnFinish onto its modifier as
+    -- `reset`, a field the schema does not name, so the applier only sees it if
+    -- `extra` carries a boolean faithfully. false is the interesting one,
+    -- because a decoder that confused it with absence would silently reset
+    test("round-trips a boolean field the schema does not name", function()
+      local yes = { v = 1, queue = { { kind = "tween", chain = false, reset = true } } }
+      local no = { v = 1, queue = { { kind = "tween", chain = false, reset = false } } }
+
+      expect(codec.decode(codec.encode(yes :: any)).queue[1].reset).toBe(true)
+      expect(codec.decode(codec.encode(no :: any)).queue[1].reset).toBe(false)
+    end)
+
     test("round-trips field names and string values outside the dictionary", function()
       local q = {
         v = 1,

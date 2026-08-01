@@ -36,6 +36,18 @@ local function durationOf(v: any): number?
   return nil
 end
 
+-- both effects that play a legacy child honour a ResetOnFinish attribute on it
+-- and default it to true (src/effects/tweener.luau, src/effects/randomizer.luau).
+-- the modifier codec passes a field it does not know through its `extra` table,
+-- so `reset` round trips with no schema change
+local function resetOf(v: any): boolean
+  if typeof(v) == "boolean" then
+    return v
+  end
+
+  return true
+end
+
 local function curveOf(v: any): (string | buffer)?
   if typeof(v) == "string" or typeof(v) == "buffer" then
     return v
@@ -103,6 +115,7 @@ function legacy_mods.readChildren(ref: Instance, source: string, name: string): 
     end
 
     local isRandom = child:HasTag(PROPERTY_RANDOMIZER_TAG) or child:HasTag(ATTRIBUTE_RANDOMIZER_TAG)
+    local reset = resetOf(child:GetAttribute("ResetOnFinish"))
 
     if isRandom then
       table.insert(out, {
@@ -111,6 +124,7 @@ function legacy_mods.readChildren(ref: Instance, source: string, name: string): 
         start = litOrNil(child:GetAttribute("_START_VALUE")),
         finish = litOrNil(child:GetAttribute("_END_VALUE")),
         weight = curveOf(child:GetAttribute("Weight_Curve")),
+        reset = reset,
       })
     else
       table.insert(out, {
@@ -120,6 +134,7 @@ function legacy_mods.readChildren(ref: Instance, source: string, name: string): 
         start = litOrNil(child:GetAttribute("_START_VALUE")),
         finish = litOrNil(child:GetAttribute("_END_VALUE")),
         curve = curveOf(child:GetAttribute("Easing_Curve")),
+        reset = reset,
       })
     end
   end
