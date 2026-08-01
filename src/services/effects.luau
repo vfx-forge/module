@@ -26,6 +26,11 @@ local EffectSelectors = table.concat({
   -- Screen effects
   "BasePart[$Enabled=true]",
 
+  -- anything carrying a modifier queue, which is how the applier reaches a
+  -- target that is not otherwise an effect. overlaps every clause above on
+  -- purpose; queryAndEmitDescendants dedupes
+  `.{utility.MODIFIERS_TAG}`,
+
   -- Shockwave effects
   "#Rings > Part",
   "#Lines > Part",
@@ -82,10 +87,24 @@ local function emitWithContext(depth: number, context: { _promises: { any } }?, 
     local skipCache: { [Instance]: boolean } = {}
     local depthCache: { [Instance]: number } = {}
 
+    -- QueryDescendants returns one entry per MATCHING CLAUSE, not per instance,
+    -- and the clauses overlap: a bezier-tagged part that is also Enabled matches
+    -- both its tag and BasePart[$Enabled=true], and a shockwave ring part
+    -- matches both its group and that same clause. Without this the instance is
+    -- dispatched once per clause, which emits it twice and, since the applier
+    -- runs in dispatch's prologue, puts two drivers on every modifier target
+    local emitted: { [Instance]: boolean } = {}
+
     skipCache[obj] = false
     depthCache[obj] = baseDepth
 
     for _, desc in allDesc do
+      if emitted[desc] then
+        continue
+      end
+
+      emitted[desc] = true
+
       local ancestors = {}
       local current = desc.Parent
 

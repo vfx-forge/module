@@ -31,6 +31,12 @@ utility.PROPERTY_RANDOMIZER_TAG = "PropertyRandomizer"
 utility.ATTRIBUTE_TWEENER_TAG = "AttributeTweener"
 utility.ATTRIBUTE_RANDOMIZER_TAG = "AttributeRandomizer"
 
+-- carried by anything holding at least one non-empty modifier queue, so the
+-- applier reaches a target that is not otherwise an effect. the plugin adds it
+-- on the first queue and removes it with the last, so it is derived state and
+-- never authored by hand
+utility.MODIFIERS_TAG = "ForgeModifiers"
+
 utility.ENABLED_VFX_TAG = "ConstantVFX"
 utility.TEXTURE_LOAD_TAG = "LoadVFXTextures"
 
