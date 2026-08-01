@@ -462,6 +462,18 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
     return Sound.OWNS
   end
 
+  if className == "ParticleEmitter" then
+    return Particle.OWNS
+  end
+
+  if obj:HasTag(utility.BEZIER_TAG) then
+    return Bezier.OWNS
+  end
+
+  if className == "RayValue" and obj:HasTag(utility.SCREENSHAKE_TAG) then
+    return CameraShake.OWNS
+  end
+
   return nil
 end
 

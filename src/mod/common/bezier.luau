@@ -281,9 +281,11 @@ function common.readCommonAttributes(ref: Attachment)
     hitboxFilterType = attr.get(ref, "HitboxFilterType", "Exclude"),
     hitboxIgnoreCanCollide = attr.get(ref, "HitboxIgnoreCanCollide", false),
 
-    -- speed
-    speedStart = attr.get(ref, "Speed_Start", 1),
-    speedEnd = attr.get(ref, "Speed_End", 1),
+    -- speed. read soft so the defaults are not written back: this reader runs
+    -- before any caller can ask for a modifier queue, and a stamped Speed_Start
+    -- is a quad legacy_mods would then find that nobody authored
+    speedStart = attr.get(ref, "Speed_Start", 1, true),
+    speedEnd = attr.get(ref, "Speed_End", 1, true),
   }
 end
 

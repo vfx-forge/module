@@ -2,6 +2,7 @@
 local RunService = game:GetService("RunService")
 
 local attr = require("@mod/attributes")
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
@@ -12,6 +13,16 @@ local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
 
 local bezier = {}
+
+-- Speed is driven through a sampler of its own, so emitters.applyMods leaves it
+-- alone. RotSpeed is deliberately NOT claimed: its endpoints are NumberRanges
+-- that this effect draws a scalar from per emitted part, which is two
+-- independent draws feeding one tween, and no queue expresses that yet
+bezier.OWNS = {
+  attribute = {
+    Speed = true,
+  },
+}
 
 local part_cache: ObjectCache.ObjectCache?
 
@@ -256,8 +267,18 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
 
         -- Speed tween
         local speedTween
+        local speed, speedSpan = mods.driver(ref, "attribute", "Speed", attrs.speedDuration)
 
-        if common.speedStart ~= common.speedEnd and not attr.getState(ref, "SpeedOverride", nil) then
+        if speed and not attr.getState(ref, "SpeedOverride", nil) then
+          currentSpeed = speed(0)
+
+          speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, sampledAt)
+            currentSpeed = speed(sampledAt)
+            return deltaTime
+          end)
+
+          table.insert(scope, speedTween)
+        elseif common.speedStart ~= common.speedEnd and not attr.getState(ref, "SpeedOverride", nil) then
           speedTween = tween.fromParams(attrs.speedCurve, attrs.speedDuration, function(alpha, deltaTime)
             currentSpeed = utility.lerp(common.speedStart, common.speedEnd, alpha)
             return deltaTime
