@@ -14,13 +14,14 @@ local ObjectCache = require("@obj/ObjectCache")
 
 local bezier = {}
 
--- Speed is driven through a sampler of its own, so emitters.applyMods leaves it
--- alone. RotSpeed is deliberately NOT claimed: its endpoints are NumberRanges
--- that this effect draws a scalar from per emitted part, which is two
--- independent draws feeding one tween, and no queue expresses that yet
+-- both knobs are driven through samplers of their own, so emitters.applyMods
+-- leaves them alone. RotSpeed's endpoints are NumberRanges this effect used to
+-- draw a scalar from per emitted part; they read back as rand endpoints now and
+-- the sampler makes the same two draws
 bezier.OWNS = {
   attribute = {
     Speed = true,
+    RotSpeed = true,
   },
 }
 
@@ -40,9 +41,11 @@ local function readBezierAttributes(ref: Attachment)
     facePath = attr.get(ref, "FacePath", false),
     arcSpace = attr.get(ref, "ArcSpace", false),
 
-    -- rotation
-    rotSpeedStart = attr.getRange(ref, "RotSpeed_Start", NumberRange.new(0, 0)),
-    rotSpeedEnd = attr.getRange(ref, "RotSpeed_End", NumberRange.new(0, 0)),
+    -- rotation. read soft so the defaults are not written back: this runs
+    -- before any driver read, and a stamped RotSpeed_Start is a quad
+    -- legacy_mods would then find that nobody authored
+    rotSpeedStart = attr.getRange(ref, "RotSpeed_Start", NumberRange.new(0, 0), nil, true),
+    rotSpeedEnd = attr.getRange(ref, "RotSpeed_End", NumberRange.new(0, 0), nil, true),
     minInitRot = attr.get(ref, "MinInitRot", vector.zero),
     maxInitRot = attr.get(ref, "MaxInitRot", vector.zero),
 
@@ -147,9 +150,6 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
   local promises = {}
 
   for _ = 1, common.emitCount do
-    local rotSpeedStart = rng:NextNumber(attrs.rotSpeedStart.Min, attrs.rotSpeedStart.Max)
-    local rotSpeedEnd = rng:NextNumber(attrs.rotSpeedEnd.Min, attrs.rotSpeedEnd.Max)
-
     local initRot = vector.create(
       rng:NextNumber(attrs.minInitRot.x, attrs.maxInitRot.x),
       rng:NextNumber(attrs.minInitRot.y, attrs.maxInitRot.y),
@@ -159,6 +159,22 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
     local duration = rng:NextNumber(common.duration.Min, common.duration.Max)
     local lifetime = common.projectileEnabled
       and rng:NextNumber(common.projectileLifetime.Min, common.projectileLifetime.Max)
+
+    -- one driver per emitted part rather than one per emit, because the two
+    -- endpoints are drawn per part and a sampler is what draws them. the legacy
+    -- pair below is read only when nothing is authored, so the two paths never
+    -- both draw
+    local rotSpeed, rotSpeedSpan = mods.driver(ref, "attribute", "RotSpeed", duration)
+
+    local rotSpeedStart = 0
+    local rotSpeedEnd = 0
+
+    if rotSpeed then
+      rotSpeedStart = rotSpeed(0)
+    else
+      rotSpeedStart = rng:NextNumber(attrs.rotSpeedStart.Min, attrs.rotSpeedStart.Max)
+      rotSpeedEnd = rng:NextNumber(attrs.rotSpeedEnd.Min, attrs.rotSpeedEnd.Max)
+    end
 
     table.insert(
       promises,
@@ -296,11 +312,21 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
         end
 
         -- Rotation speed tween
-        bezier_common.createPropertyTween(scope, ref, "RotSpeed", duration, rotSpeedStart, rotSpeedEnd, function(v)
-          currentRotSpeed = v
-        end, function()
-          return getEffectiveSpeed()
-        end, speedTween)
+        if rotSpeed then
+          table.insert(
+            scope,
+            tween.fromParams(utility.linear_bezier, rotSpeedSpan, function(_, deltaTime, elapsed)
+              currentRotSpeed = rotSpeed(elapsed)
+              return deltaTime * getEffectiveSpeed()
+            end, speedTween)
+          )
+        else
+          bezier_common.createPropertyTween(scope, ref, "RotSpeed", duration, rotSpeedStart, rotSpeedEnd, function(v)
+            currentRotSpeed = v
+          end, function()
+            return getEffectiveSpeed()
+          end, speedTween)
+        end
 
         -- main animation
         table.insert(
