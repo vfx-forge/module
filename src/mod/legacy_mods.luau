@@ -6,17 +6,55 @@ local legacy_mods = {}
 -- the tags src/utility.luau puts on a RayValue to say which side of an
 -- instance it drives. kept as literals rather than a require, so the
 -- quarantine has no dependency that could pull a legacy name anywhere else
-local PROPERTY_TWEENER_TAG = "PropertyTweener"
 local ATTRIBUTE_TWEENER_TAG = "AttributeTweener"
 local PROPERTY_RANDOMIZER_TAG = "PropertyRandomizer"
 local ATTRIBUTE_RANDOMIZER_TAG = "AttributeRandomizer"
 
-local function tagsFor(source: string): (string, string)
-  if source == "property" then
-    return PROPERTY_TWEENER_TAG, PROPERTY_RANDOMIZER_TAG
+-- omitted rather than wrapped when absent, so evaluate sees no endpoint at
+-- all instead of a lit nil it would try to lerp
+local function litOrNil(v: any): value.Value?
+  if v == nil then
+    return nil
   end
 
-  return ATTRIBUTE_TWEENER_TAG, ATTRIBUTE_RANDOMIZER_TAG
+  return value.lit(v)
+end
+
+-- a NumberRange duration collapses to its Min. real authored data stores a
+-- range (src/effects/tweener.luau reads it via attr.getRange), while the new
+-- format carries a single number, the same collapse legacy_quad.luau makes
+-- for the plugin's own "show" side
+local function durationOf(v: any): number?
+  if typeof(v) == "NumberRange" then
+    return v.Min
+  end
+
+  if typeof(v) == "number" then
+    return v
+  end
+
+  return nil
+end
+
+local function curveOf(v: any): (string | buffer)?
+  if typeof(v) == "string" or typeof(v) == "buffer" then
+    return v
+  end
+
+  return nil
+end
+
+-- which side of an instance a legacy RayValue child drives, mirrored from
+-- modifier_store.luau's legacySource, the shipping reader for this same
+-- data: untagged means a real property, because emitters.dispatch falls back
+-- to property_tweener for old content and src/utility.luau's scan buckets an
+-- untagged child into tween_properties
+local function legacySource(child: Instance): string
+  if child:HasTag(ATTRIBUTE_TWEENER_TAG) or child:HasTag(ATTRIBUTE_RANDOMIZER_TAG) then
+    return "attribute"
+  end
+
+  return "property"
 end
 
 -- the released-era quad. a nil _Duration is left nil rather than defaulted,
@@ -37,55 +75,53 @@ function legacy_mods.readQuad(ref: Instance, name: string): { any }?
     finishV = startV
   end
 
-  local duration = ref:GetAttribute(`{name}_Duration`)
-  local curve = ref:GetAttribute(`{name}_Curve`)
+  local durationV = durationOf(ref:GetAttribute(`{name}_Duration`))
+  local curveV = curveOf(ref:GetAttribute(`{name}_Curve`))
 
   return {
     {
       kind = "tween",
       chain = false,
-      duration = if typeof(duration) == "number" then duration else nil,
+      duration = durationV,
       start = value.lit(startV),
       finish = value.lit(finishV),
-      curve = if typeof(curve) == "string" or typeof(curve) == "buffer" then curve else nil,
+      curve = curveV,
     },
   }
 end
 
 -- the RayValue children the tweener and randomizer effects still play. only
 -- children matching this source are read, so a property and an attribute of
--- the same name never see each other's authoring
+-- the same name never see each other's authoring, and an untagged child
+-- counts as a property, matching legacySource exactly
 function legacy_mods.readChildren(ref: Instance, source: string, name: string): { any }?
-  local tweenTag, randomTag = tagsFor(source)
-
   local out = {}
 
   for _, child in ref:GetChildren() do
-    if child.Name ~= name or not child:IsA("RayValue") then
+    if child.Name ~= name or not child:IsA("RayValue") or legacySource(child) ~= source then
       continue
     end
 
-    local isTween = child:HasTag(tweenTag)
-    local isRandom = child:HasTag(randomTag)
+    local isRandom = child:HasTag(PROPERTY_RANDOMIZER_TAG) or child:HasTag(ATTRIBUTE_RANDOMIZER_TAG)
 
-    if not isTween and not isRandom then
-      continue
+    if isRandom then
+      table.insert(out, {
+        kind = "randomizer",
+        chain = false,
+        start = litOrNil(child:GetAttribute("_START_VALUE")),
+        finish = litOrNil(child:GetAttribute("_END_VALUE")),
+        weight = curveOf(child:GetAttribute("Weight_Curve")),
+      })
+    else
+      table.insert(out, {
+        kind = "tween",
+        chain = false,
+        duration = durationOf(child:GetAttribute("Duration")),
+        start = litOrNil(child:GetAttribute("_START_VALUE")),
+        finish = litOrNil(child:GetAttribute("_END_VALUE")),
+        curve = curveOf(child:GetAttribute("Easing_Curve")),
+      })
     end
-
-    local startV = child:GetAttribute("Start")
-    local finishV = child:GetAttribute("End")
-    local duration = child:GetAttribute("Duration")
-    local curve = child:GetAttribute("Curve")
-
-    table.insert(out, {
-      kind = if isRandom then "randomizer" else "tween",
-      chain = false,
-      duration = if typeof(duration) == "number" then duration else nil,
-      start = value.lit(startV),
-      finish = value.lit(finishV),
-      curve = if isTween and typeof(curve) == "string" then curve else nil,
-      weight = if isRandom and typeof(curve) == "string" then curve else nil,
-    })
   end
 
   if #out == 0 then
