@@ -4,6 +4,12 @@ local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
 
+-- Model:ScaleTo is invalid at zero or below, and the runtime can reach that
+-- where the authoring UI cannot: a chained modifier or a randomizer with a bad
+-- range evaluates to whatever it evaluates to. the floor matches the bound the
+-- plugin's own schema already declares on Scale_Start and Scale_End
+local MIN_SCALE = 0.001
+
 local spin = {}
 
 -- both knobs spin drives through a sampler of its own, so emitters.applyMods
@@ -85,12 +91,12 @@ function spin.emit(ref: Model, scope: types.scope)
     table.insert(
       scope,
       tween.fromParams(utility.linear_bezier, duration, function(_, deltaTime, elapsed)
-        ref:ScaleTo(scale(elapsed))
+        ref:ScaleTo(math.max(scale(elapsed), MIN_SCALE))
         return deltaTime
       end)
     )
   else
-    ref:ScaleTo(attr.get(ref, "Scale_Start", 1))
+    ref:ScaleTo(math.max(attr.get(ref, "Scale_Start", 1), MIN_SCALE))
   end
 
   local parent = ref:FindFirstAncestorOfClass("Attachment") or ref:FindFirstAncestorWhichIsA("BasePart")
