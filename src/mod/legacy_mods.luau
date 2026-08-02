@@ -200,9 +200,57 @@ function legacy_mods.readChildren(ref: Instance, source: string, name: string): 
   return out
 end
 
+-- a value drawn ONCE per emitted instance, which is what a randomizer modifier
+-- already is. Legacy content spells it two ways: one NumberRange attribute
+-- (`Lifetime`, `Amount`, `Airtime`) or a pair of attributes (`MinSize` and
+-- `MaxSize`). Both mean the same thing, so both read as one entry.
+--
+-- The pair is looked for as `<name>_Min` and `<name>_Max` first, which is the
+-- spelling to author going forward, and only then as `Min<name>` and
+-- `Max<name>`, which is what the shockwaves have always written. Reading both
+-- means content already in the wild becomes an editable row without anyone
+-- having to rename an attribute on it.
+--
+-- Attribute source only. These are effect knobs, and a bare `<name>` lookup
+-- against a property source would collide with real property names: a Part
+-- carries MinSize-ish attributes and a `Size` property that mean nothing to
+-- each other.
+function legacy_mods.readRange(ref: Instance, source: string, name: string): { any }?
+  if source ~= "attribute" then
+    return nil
+  end
+
+  local range = ref:GetAttribute(name)
+
+  if typeof(range) == "NumberRange" then
+    return { { kind = "randomizer", chain = false, start = value.lit(range.Min), finish = value.lit(range.Max) } }
+  end
+
+  local min = ref:GetAttribute(`{name}_Min`)
+  local max = ref:GetAttribute(`{name}_Max`)
+
+  if min == nil and max == nil then
+    min = ref:GetAttribute(`Min{name}`)
+    max = ref:GetAttribute(`Max{name}`)
+  end
+
+  -- half a pair cannot say what the other half was, and that default belongs to
+  -- the effect. the same reason readQuad refuses to speak for a half quad
+  if min == nil or max == nil then
+    return nil
+  end
+
+  return { { kind = "randomizer", chain = false, start = value.lit(min), finish = value.lit(max) } }
+end
+
 function legacy_mods.read(ref: Instance, source: string, name: string): { any }?
   local ok, result = pcall(function()
-    return legacy_mods.readQuad(ref, source, name) or legacy_mods.readChildren(ref, source, name)
+    -- range last: it is the broadest of the three shapes, matching on a single
+    -- attribute named exactly for the row, so it must not shadow a quad or a
+    -- RayValue child that says something more specific
+    return legacy_mods.readQuad(ref, source, name)
+      or legacy_mods.readChildren(ref, source, name)
+      or legacy_mods.readRange(ref, source, name)
   end)
 
   if not ok then

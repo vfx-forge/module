@@ -68,11 +68,6 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   -- creates it and legacy_mods then finds a quad nobody authored
   local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", attr.get(ref, "Speed_Duration", 0.1, true))
 
-  -- sampled every frame of the dwell rather than once at emit, so a modifier on
-  -- Lifetime moves a dwell that is already running. with nothing authored this
-  -- is nil and each segment keeps the value it drew from the range
-  local lifetimeDrv = mods.driver(ref, "attribute", "Lifetime", 0)
-
   local speedStart = attr.get(ref, "Speed_Start", 1, true)
   local speedEnd = attr.get(ref, "Speed_End", 1, true)
 
@@ -243,7 +238,15 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     local env = scope.effects.emitNested(part, scope.depth + 1, scope)
     table.insert(promises, env.Finished)
 
-    local drawn = rng:NextNumber(lifetime.Min, lifetime.Max)
+    -- asked for per SEGMENT, not once for the ring: a lifetime is drawn per
+    -- emitted instance, and a driver asked for once would hand every segment the
+    -- same draw and break them apart into one synchronised flash.
+    --
+    -- legacy_mods reads the Lifetime NumberRange as a randomizer, so this covers
+    -- authored and unauthored alike and the manual draw is only left for a ring
+    -- carrying no Lifetime attribute at all
+    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", 0)
+    local drawn = if lifeDrv then lifeDrv(0) else rng:NextNumber(lifetime.Min, lifetime.Max)
 
     -- the dwell is part of the effect, not of the scheduler: its cleanup lives
     -- in the scope, so tearing the effect down cancels it rather than letting it
@@ -259,7 +262,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- resumes it is a render step, and emitOnFinish is not something to hand a
     -- render step
     tween.after(math.huge, function(deltaTime, elapsed)
-      local target = if lifetimeDrv then lifetimeDrv(elapsed) else nil
+      local target = if lifeDrv then lifeDrv(elapsed) else nil
 
       if typeof(target) ~= "number" then
         target = drawn
