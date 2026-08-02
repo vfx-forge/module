@@ -63,20 +63,6 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   local radius = attr.get(ref, "Radius", 5)
   local segments = attr.get(ref, "Segments", 7)
 
-  -- both drivers are asked for BEFORE any non-soft read of the quad keys they
-  -- would find, because attr.get writes its default back: reading Speed_Start
-  -- creates it and legacy_mods then finds a quad nobody authored
-  local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", attr.get(ref, "Speed_Duration", 0.1, true))
-
-  local speedStart = attr.get(ref, "Speed_Start", 1, true)
-  local speedEnd = attr.get(ref, "Speed_End", 1, true)
-
-  local currentSpeed = if speedDrv then speedDrv(0) else speedStart
-
-  local function getEffectiveSpeed(): number
-    return currentSpeed
-  end
-
   local lifetime = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
 
   local old_partOffset = attr.get(ref, "PartOffset", vector.zero, true)
@@ -107,6 +93,30 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   local tpStart = attr.get(ref, "Transparency_Start", 0)
   local tpEnd = attr.get(ref, "Transparency_End", 0)
+
+  -- the longest a segment can last, which is the ring's own clock: the longest
+  -- dwell it can draw, then the longest exit it can run
+  local runLength = lifetime.Max + math.max(sizeEndDuration, offsetEndDuration, tpDuration)
+
+  -- the driver is asked for BEFORE any non-soft read of the quad keys it would
+  -- find, because attr.get writes its default back: reading Speed_Start creates
+  -- it and legacy_mods then finds a quad nobody authored.
+  --
+  -- the fallback is the ring's own run, not Speed_Duration. it is only reached
+  -- when NO modifier in the queue names a duration, which is what the panel
+  -- calls a linked modifier, and linked means "as long as the effect runs". a
+  -- legacy quad never reaches it at all, since readQuad puts Speed_Duration on
+  -- the modifier itself
+  local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", runLength)
+
+  local speedStart = attr.get(ref, "Speed_Start", 1, true)
+  local speedEnd = attr.get(ref, "Speed_End", 1, true)
+
+  local currentSpeed = if speedDrv then speedDrv(0) else speedStart
+
+  local function getEffectiveSpeed(): number
+    return currentSpeed
+  end
 
   task.wait(emitDelay)
 
@@ -334,7 +344,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   -- stretches them past it and the scope tears down mid dwell. the transparency
   -- exit is one of the three a dwell starts, so it counts here too or a long one
   -- is cut off partway
-  tween.timer(lifetime.Max + math.max(sizeEndDuration, offsetEndDuration, tpDuration), function(deltaTime)
+  tween.timer(runLength, function(deltaTime)
     return deltaTime * getEffectiveSpeed()
   end, nil, scope)
 
