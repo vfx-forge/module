@@ -271,11 +271,18 @@ function emitters.beam(obj: Beam, scope: types.scope, legacyScale: number)
   clone.Archivable = false
   clone.Parent = workspace.Terrain
 
-  -- clone attachments for beams with scaled length
+  -- clone attachments for beams with scaled length. a Length_Scale QUEUE counts
+  -- too, and cannot be compared against unscaled without sampling it, so any
+  -- non-empty one is taken as scaling. getting this wrong is not cosmetic:
+  -- beam.emit's setLengthScale would move the real attachments instead of
+  -- throwaway clones, and the scope teardown that restores them runs on the
+  -- emitted beam
   local unscaled = NumberRange.new(1, 1)
+  local scaleQueue = mods.framed(obj, "attribute", "Length_Scale")
 
   if
-    attr.get(obj, "Length_Scale_Start", unscaled, true) ~= unscaled
+    (scaleQueue ~= nil and #scaleQueue > 0)
+    or attr.get(obj, "Length_Scale_Start", unscaled, true) ~= unscaled
     or attr.get(obj, "Length_Scale_End", unscaled, true) ~= unscaled
   then
     local a, b = att0:Clone(), att1:Clone()
@@ -456,6 +463,10 @@ end
 local function ownedFor(obj: any, className: string): { [string]: { [string]: boolean } }?
   if className == "Model" then
     return if utility.isMeshVFX(obj) then Mesh.OWNS else Spin.OWNS
+  end
+
+  if className == "Beam" then
+    return Beam.OWNS
   end
 
   if className == "Sound" then
