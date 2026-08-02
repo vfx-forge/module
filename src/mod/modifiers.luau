@@ -5,14 +5,15 @@ local value = require("@mod/value")
 local modifiers = {}
 
 -- the [0,1] draw behind each rand endpoint of one modifier, made once per
--- emitted instance beside ctx.draws
-export type Picks = { start: number?, finish: number? }
+-- emitted instance beside ctx.draws. a delay's wait is drawn the same way
+export type Picks = { start: number?, finish: number?, wait: number? }
 
 export type Ctx = {
   duration: number,
   base: any?,
   draws: { [number]: number }?,
   picks: { [number]: Picks }?,
+  offsets: { [number]: number }?,
   envelope: number?,
 }
 
@@ -73,6 +74,71 @@ local function progressOf(m: any, elapsed: number, ctx: Ctx): number
   return math.clamp(elapsed / d, 0, 1)
 end
 
+-- a delay carries its wait in `wait`, a Value, so a drawn one is the same rand
+-- tag every other randomizable number here uses, and so a runtime that predates
+-- the kind sees a modifier with no start and passes the previous value through
+-- untouched. a plain number in `duration` is honoured too, since that is how a
+-- delay reads if you write one by hand
+function modifiers.waitOf(m: any, picks: Picks?): number
+  local wait = m.wait
+
+  if type(wait) == "table" then
+    wait = value.resolve(wait, picks and picks.wait)
+  end
+
+  if typeof(wait) ~= "number" then
+    wait = m.duration
+  end
+
+  if typeof(wait) ~= "number" then
+    return 0
+  end
+
+  return math.max(wait, 0)
+end
+
+-- where each modifier begins once the delays before it are counted, and how far
+-- the queue reaches in all. one walk, so evaluate and mods.span can never
+-- disagree about when a delayed modifier starts.
+--
+-- the offsets come back nil for a queue that delays nothing, which is every
+-- queue authored so far, so the common path carries no table and reads none per
+-- frame. a modifier with no duration of its own runs over the effect's, and the
+-- effect's duration IS the reach, so it can never extend the reach either
+function modifiers.schedule(queue: { any }, picks: { [number]: Picks }?): ({ [number]: number }?, number)
+  local offsets: { [number]: number }? = nil
+  local offset = 0
+  local frontier = 0
+
+  for i, m in queue do
+    if modifiers.BASE_KINDS[m.kind] then
+      continue
+    end
+
+    -- a delay starts what follows it once everything BEFORE it has finished,
+    -- not at its own place on the clock, so an entry phase, a wait and an exit
+    -- phase read in the order they are written
+    if m.kind == "delay" then
+      offset = frontier + modifiers.waitOf(m, if picks then picks[i] else nil)
+      frontier = offset
+      offsets = offsets or {}
+      continue
+    end
+
+    -- nothing ahead of the first delay is moved, so its absence from the table
+    -- reads as the zero it is
+    if offsets then
+      offsets[i] = offset
+    end
+
+    if typeof(m.duration) == "number" and offset + m.duration > frontier then
+      frontier = offset + m.duration
+    end
+  end
+
+  return offsets, frontier
+end
+
 -- sample a serialized curve (a Path2D control-point buffer or string) at
 -- progress in [0,1], mirroring mod/tween.luau's runtime semantics exactly
 function modifiers.alphaFromCurve(curve: string | buffer, progress: number): number
@@ -82,9 +148,22 @@ end
 function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
   local prevOut: any = ctx.base
   local haveOut = ctx.base ~= nil
+  local offsets = ctx.offsets
 
   for i, m in queue do
     if modifiers.BASE_KINDS[m.kind] then
+      continue
+    end
+
+    -- a delay contributes no value at all, so it leaves prevOut alone and a
+    -- chain reaches across it. the offsets it imposes are worked out once per
+    -- emitted instance in mods.sampler; a caller evaluating a queue directly
+    -- pays for that walk here, and only if the queue actually delays something
+    if m.kind == "delay" then
+      if offsets == nil then
+        offsets = modifiers.schedule(queue, ctx.picks)
+      end
+
       continue
     end
 
@@ -103,7 +182,8 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
 
     local finishVal = if m.finish then value.resolve(m.finish, picks and picks.finish) else startVal
 
-    local progress = progressOf(m, elapsed, ctx)
+    local offset = if offsets then offsets[i] or 0 else 0
+    local progress = progressOf(m, elapsed - offset, ctx)
     local alpha: number
 
     if m.kind == "randomizer" then

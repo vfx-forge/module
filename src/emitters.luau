@@ -156,10 +156,11 @@ function emitters.applyMods(
       continue
     end
 
-    -- no effect module lends this queue a clock, so it runs for as long as its
-    -- own longest modifier asks for and only falls back when none of them says
-    local span = mods.span(queue, duration)
-    local sample = mods.sampler(obj, source :: string, name :: string, span, queue)
+    -- no effect module lends this queue a clock, so it runs to its own far end
+    -- and only falls back when no modifier in it names a duration
+    local rolls = mods.roll(queue)
+    local span = mods.span(queue, duration, rolls)
+    local sample = mods.sampler(obj, source :: string, name :: string, span, queue, rolls)
 
     if sample == nil then
       continue

@@ -19,22 +19,27 @@ function mods.attrName(source: string, name: string): string
   return mods.PREFIX[source] .. name
 end
 
--- how long a queue runs on its own terms, for a caller with no effect
--- duration to lend it
-function mods.span(queue: { any }, fallback: number): number
-  local longest = 0
+-- every random draw a queue needs, made once, which is once per emitted
+-- instance
+export type Rolls = {
+  draws: { [number]: number },
+  picks: { [number]: modifiers.Picks },
+  envelope: number,
+}
 
-  for _, m in queue do
-    if typeof(m.duration) == "number" and m.duration > longest then
-      longest = m.duration
-    end
-  end
+-- how long a queue runs on its own terms, for a caller with no effect duration
+-- to lend it. a delay pushes what follows it out, so the answer is the far end
+-- of the queue rather than its longest single duration, and a caller whose
+-- delay is drawn per instance passes the rolls in so the span is the one THIS
+-- instance will run
+function mods.span(queue: { any }, fallback: number, rolls: Rolls?): number
+  local _, frontier = modifiers.schedule(queue, if rolls then rolls.picks else nil)
 
-  if longest <= 0 then
+  if frontier <= 0 then
     return fallback
   end
 
-  return longest
+  return frontier
 end
 
 -- the framed attribute decoded on its own, with no legacy fallback. an EMPTY
@@ -89,25 +94,13 @@ local function baseOf(ref: Instance, source: string, name: string): any
   return if ok then current else nil
 end
 
--- randomizer alphas, rand endpoints and the envelope offset are all drawn
--- HERE, once, which is once per emitted instance. that makes "one draw per
--- instance" structural rather than a rule every call site has to remember
--- a caller that already read the queue, to span it or to test it, passes it
--- back in rather than paying a second base64 plus buffer decode for the same
--- attribute
-function mods.sampler(
-  ref: Instance,
-  source: string,
-  name: string,
-  duration: number,
-  preread: { any }?
-): ((number) -> any)?
-  local queue = preread or mods.read(ref, source, name)
-
-  if queue == nil or #queue == 0 then
-    return nil
-  end
-
+-- randomizer alphas, rand endpoints, delayed waits and the envelope offset are
+-- all drawn HERE, once, which is once per emitted instance. that makes "one
+-- draw per instance" structural rather than a rule every call site has to
+-- remember. it is its own function because a drawn delay moves the far end of
+-- the queue, so a caller that needs the SPAN first has to draw before it can
+-- ask for one, and then hand the same rolls to the sampler
+function mods.roll(queue: { any }): Rolls
   local rng = Random.new()
   local draws = {}
   local picks = {}
@@ -119,21 +112,48 @@ function mods.sampler(
 
     local startRand = m.start ~= nil and value.isRand(m.start)
     local finishRand = m.finish ~= nil and value.isRand(m.finish)
+    local waitRand = type(m.wait) == "table" and value.isRand(m.wait)
 
-    if startRand or finishRand then
+    if startRand or finishRand or waitRand then
       picks[i] = {
         start = if startRand then rng:NextNumber() else nil,
         finish = if finishRand then rng:NextNumber() else nil,
+        wait = if waitRand then rng:NextNumber() else nil,
       }
     end
   end
 
+  return { draws = draws, picks = picks, envelope = rng:NextNumber() * 2 - 1 }
+end
+
+-- a caller that already read the queue, to span it or to test it, passes it
+-- back in rather than paying a second base64 plus buffer decode for the same
+-- attribute, and passes its rolls back in so the span it computed and the
+-- sampler it gets are drawn from the same hat
+function mods.sampler(
+  ref: Instance,
+  source: string,
+  name: string,
+  duration: number,
+  preread: { any }?,
+  rolls: Rolls?
+): ((number) -> any)?
+  local queue = preread or mods.read(ref, source, name)
+
+  if queue == nil or #queue == 0 then
+    return nil
+  end
+
+  local rolled = rolls or mods.roll(queue)
+  local offsets = modifiers.schedule(queue, rolled.picks)
+
   local ctx: modifiers.Ctx = {
     duration = duration,
     base = baseOf(ref, source, name),
-    draws = draws,
-    picks = picks,
-    envelope = rng:NextNumber() * 2 - 1,
+    draws = rolled.draws,
+    picks = rolled.picks,
+    offsets = offsets,
+    envelope = rolled.envelope,
   }
 
   return function(elapsed: number)
@@ -142,8 +162,8 @@ function mods.sampler(
 end
 
 -- everything an effect module needs to drive one target: the sampler, and the
--- span it should run over, which is the queue's own longest duration and falls
--- back only when no modifier names one. nil when nothing is authored, so the
+-- span it should run over, which is the queue's own far end and falls back only
+-- when no modifier names a duration. nil when nothing is authored, so the
 -- caller keeps whatever legacy path it had.
 --
 -- Call this BEFORE any non-soft attr.get on that name's quad keys. attr.get
@@ -165,8 +185,11 @@ function mods.driver(ref: Instance, source: string, name: string, fallback: numb
     return nil, fallback
   end
 
-  local span = mods.span(queue, fallback)
-  local sample = mods.sampler(ref, source, name, span, queue)
+  -- drawn before the span rather than inside the sampler, because a delay whose
+  -- wait is drawn decides how far the queue reaches
+  local rolls = mods.roll(queue)
+  local span = mods.span(queue, fallback, rolls)
+  local sample = mods.sampler(ref, source, name, span, queue, rolls)
 
   -- a queue of nothing but base kinds evaluates to ctx.base and stops there,
   -- and for a forge knob like Speed that base is an attribute nobody ever

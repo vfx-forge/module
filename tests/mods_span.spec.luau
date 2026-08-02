@@ -25,5 +25,35 @@ harness.suite(function()
     test("falls back on an empty queue", function()
       expect(mods.span({}, 9)).toBe(9)
     end)
+
+    -- a delay pushes what follows it out, so the span is the far end of the
+    -- queue rather than its longest single duration
+    test("counts the wait a delay imposes", function()
+      local queue = {
+        { kind = "tween", duration = 1 },
+        { kind = "delay", wait = { t = "lit", v = 2 } },
+        { kind = "tween", duration = 0.5 },
+      }
+
+      expect(mods.span(queue, 9)).toBe(3.5)
+    end)
+
+    -- the span has to be the one THIS instance will run, so a drawn wait is
+    -- spanned at the value drawn for it rather than at its midpoint
+    test("spans a drawn wait at the value the rolls drew", function()
+      local queue = {
+        { kind = "delay", wait = { t = "rand", min = 0, max = 4 } },
+        { kind = "tween", duration = 1 },
+      }
+
+      local rolls = { draws = {}, picks = { [1] = { wait = 0.25 } }, envelope = 0 }
+
+      expect(mods.span(queue, 9)).toBe(3)
+      expect(mods.span(queue, 9, rolls)).toBe(2)
+    end)
+
+    test("a delay alone still spans its own wait", function()
+      expect(mods.span({ { kind = "delay", wait = { t = "lit", v = 2 } } }, 9)).toBe(2)
+    end)
   end)
 end)
