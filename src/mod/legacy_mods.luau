@@ -244,7 +244,7 @@ function legacy_mods.readRange(ref: Instance, source: string, name: string): { a
     return nil
   end
 
-  return { { kind = "randomizer", chain = false, start = value.lit(min), finish = value.lit(max) } }
+  return { { kind = "randomizer", chain = false, start = value.lit(min), finish = value.lit(max), perComponent = true } }
 end
 
 function legacy_mods.read(ref: Instance, source: string, name: string): { any }?

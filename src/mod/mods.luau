@@ -124,17 +124,26 @@ local function baseOf(ref: Instance, source: string, name: string): any
   return if ok then current else nil
 end
 
--- whether a modifier tweens between vectors, which is the only shape that wants
--- a draw per component. resolved rather than read raw, so a var endpoint is
--- judged on what it actually resolves to for this instance
-local function vectorEnds(m: any, env: { [string]: any }?): boolean
-  local startVal = if m.start then value.resolve(m.start, nil, env) else nil
-
-  if typeof(startVal) == "Vector3" then
-    return true
+-- whether a randomizer draws each axis on its own rather than one alpha for the
+-- whole vector. only the shape that ASKS for it does, which is a legacy Min/Max
+-- pair: a pair names a box, and a size drawn inside it keeps its own
+-- proportions, where one alpha would only ever scale a copy of the same shape.
+-- two endpoints name a segment instead, so a RayValue randomizer child and an
+-- authored one keep drawing along it, exactly as src/effects/randomizer.luau
+-- still does for the same data.
+--
+-- both ends have to resolve to vectors, because evaluate's per-component branch
+-- needs two to interpolate between. resolved rather than read raw, so a var
+-- endpoint is judged on what it holds for this instance
+local function componentEnds(m: any, env: { [string]: any }?): boolean
+  if not m.perComponent then
+    return false
   end
 
-  return typeof(if m.finish then value.resolve(m.finish, nil, env) else nil) == "Vector3"
+  local startVal = if m.start then value.resolve(m.start, nil, env) else nil
+  local finishVal = if m.finish then value.resolve(m.finish, nil, env) else nil
+
+  return typeof(startVal) == "Vector3" and typeof(finishVal) == "Vector3"
 end
 
 -- randomizer alphas, rand endpoints, delayed waits and the envelope offset are
@@ -152,11 +161,9 @@ function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
     if m.kind == "randomizer" then
       local first = rng:NextNumber()
 
-      -- a randomizer between two Vector3s draws once PER COMPONENT, which is
-      -- what a legacy Min/Max pair over a size has always meant: a part with
-      -- its own proportions rather than a scaled copy. the first draw stays the
-      -- first call either way, so nothing that was not a vector shifts
-      if vectorEnds(m, env) then
+      -- the first draw stays the first call either way, so a queue that does
+      -- not draw per component keeps the draw order it always had
+      if componentEnds(m, env) then
         draws[i] = { first, rng:NextNumber(), rng:NextNumber() }
       else
         draws[i] = first
