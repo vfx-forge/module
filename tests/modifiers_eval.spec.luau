@@ -5,6 +5,7 @@ local path = require("@mod/common/path")
 local harness = require("@tests/harness")
 local test, expect = harness.test, harness.expect
 local UDim2 = harness.datatypes.UDim2
+local Vector3 = harness.datatypes.Vector3
 
 -- `Path2DControlPoint` isn't constructible under lune (`@lune/roblox` doesn't
 -- expose it), but `path.serializePath` only ever reads `.Position` /
@@ -162,6 +163,53 @@ harness.suite(function()
       }
 
       expect(near(modifiers.evaluate(queue, 0, { duration = 1, draws = { [1] = 0.25 } }) :: number, 25)).ok()
+    end)
+
+    -- what a legacy MinSize / MaxSize pair has always meant: three independent
+    -- draws, so a part comes out with its own proportions. one alpha across all
+    -- three would only ever give scaled copies of one shape
+    test("a randomizer between vectors draws once per component", function()
+      local queue = {
+        {
+          kind = "randomizer",
+          chain = false,
+          start = { t = "lit", v = Vector3.new(0, 0, 0) },
+          finish = { t = "lit", v = Vector3.new(10, 100, 1000) },
+        },
+      }
+
+      local got = modifiers.evaluate(queue, 0, { duration = 1, draws = { [1] = { 0.25, 0.5, 0.75 } } })
+
+      expect(near(got.X, 2.5)).ok()
+      expect(near(got.Y, 50)).ok()
+      expect(near(got.Z, 750)).ok()
+    end)
+
+    test("a component with no draw of its own takes the midpoint", function()
+      local queue = {
+        {
+          kind = "randomizer",
+          chain = false,
+          start = { t = "lit", v = Vector3.new(0, 0, 0) },
+          finish = { t = "lit", v = Vector3.new(10, 10, 10) },
+        },
+      }
+
+      local got = modifiers.evaluate(queue, 0, { duration = 1, draws = { [1] = { 0.2 } } })
+
+      expect(near(got.X, 2)).ok()
+      expect(near(got.Y, 5)).ok()
+      expect(near(got.Z, 5)).ok()
+    end)
+
+    -- a per component draw handed to a randomizer over plain numbers has no
+    -- components to spend itself on, so it must not be read as one
+    test("a component draw over non-vector endpoints falls back to the midpoint", function()
+      local queue = {
+        { kind = "randomizer", chain = false, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 100 } },
+      }
+
+      expect(near(modifiers.evaluate(queue, 0, { duration = 1, draws = { [1] = { 0.25 } } }) :: number, 50)).ok()
     end)
 
     test("a randomizer with no draw supplied falls back to the midpoint", function()

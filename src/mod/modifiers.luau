@@ -8,10 +8,16 @@ local modifiers = {}
 -- emitted instance beside ctx.draws. a delay's wait is drawn the same way
 export type Picks = { start: number?, finish: number?, wait: number? }
 
+-- a randomizer's draw is one alpha, except over a Vector3, where it is one
+-- alpha PER COMPONENT: a legacy Min/Max pair over a size means three
+-- independent draws, so a part comes out with its own proportions rather than
+-- as a scaled copy of every other one
+export type Draw = number | { number }
+
 export type Ctx = {
   duration: number,
   base: any?,
-  draws: { [number]: number }?,
+  draws: { [number]: Draw }?,
   picks: { [number]: Picks }?,
   offsets: { [number]: number }?,
   env: { [string]: any }?,
@@ -187,6 +193,24 @@ function modifiers.alphaFromCurve(curve: string | buffer, progress: number): num
   return path.alphaAt(curve, progress)
 end
 
+-- a randomizer over two Vector3s, drawn once per component. a weight curve
+-- shapes each draw the same way it shapes a single one, so an axis is
+-- distributed the way the author asked, independently of the other two
+local function componentDraw(m: any, startVal: any, finishVal: any, draws: { number }): any
+  local out = {}
+
+  for axis = 1, 3 do
+    local draw = draws[axis] or 0.5
+    local alpha = if m.weight then modifiers.alphaFromCurve(m.weight, draw) else draw
+    local a = if axis == 1 then startVal.X elseif axis == 2 then startVal.Y else startVal.Z
+    local b = if axis == 1 then finishVal.X elseif axis == 2 then finishVal.Y else finishVal.Z
+
+    out[axis] = a + (b - a) * alpha
+  end
+
+  return Vector3.new(out[1], out[2], out[3])
+end
+
 function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
   local prevOut: any = ctx.base
   local haveOut = ctx.base ~= nil
@@ -233,11 +257,21 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
       -- arrives from the sampler, made once per emitted instance
       local draw = if ctx.draws then ctx.draws[i] else nil
 
-      if draw == nil then
+      -- one alpha per component, which is what a legacy Min/Max pair over a
+      -- size means: three independent draws rather than one scaling all three
+      -- together. the envelope has no say here, because it deviates a single
+      -- alpha and there is no single alpha to deviate
+      if type(draw) == "table" and typeof(startVal) == "Vector3" and typeof(finishVal) == "Vector3" then
+        prevOut = componentDraw(m, startVal, finishVal, draw)
+        haveOut = true
+        continue
+      end
+
+      if type(draw) ~= "number" then
         draw = 0.5
       end
 
-      alpha = if m.weight then modifiers.alphaFromCurve(m.weight, draw) else draw
+      alpha = if m.weight then modifiers.alphaFromCurve(m.weight, draw :: number) else draw :: number
     elseif m.kind == "tween" then
       alpha = if m.curve then modifiers.alphaFromCurve(m.curve, progress) else progress
     else
