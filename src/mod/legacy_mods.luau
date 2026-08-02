@@ -15,14 +15,26 @@ local ATTRIBUTE_RANDOMIZER_TAG = "AttributeRandomizer"
 -- scalar from per emitted instance, rather than two values to tween between.
 -- listed by name because a NumberRange is a legitimate target type too, and an
 -- attribute quad is the only place any of these is ever authored:
--- bezier RotSpeed, mesh Part_RotSpeed, beam Length_Scale
-local DRAWN_RANGES = {
+-- bezier RotSpeed, mesh Part_RotSpeed, beam Length_Scale.
+--
+-- exported rather than local because the plugin's own reader of this same
+-- format, src/ui/attributes/legacy_quad.luau, has to agree with it exactly. it
+-- writes what it reads back to the instance, so a lit NumberRange stored there
+-- becomes a lit NumberRange the runtime lerps into a NumberRange and hands an
+-- effect that wants a scalar
+legacy_mods.DRAWN_RANGES = {
   attribute = {
     RotSpeed = true,
     Length_Scale = true,
     Part_RotSpeed = true,
   },
 }
+
+function legacy_mods.isDrawnRange(source: string, name: string): boolean
+  local group = legacy_mods.DRAWN_RANGES[source]
+
+  return group ~= nil and group[name] == true
+end
 
 -- omitted rather than wrapped when absent, so evaluate sees no endpoint at
 -- all instead of a lit nil it would try to lerp
@@ -103,6 +115,15 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string): { an
     return nil
   end
 
+  -- a half-authored quad cannot be represented faithfully here, because the
+  -- missing half's default belongs to the EFFECT and differs per knob: 0 or 1
+  -- for a decal transparency, 1 for a speed, NumberRange(0, 0) for a rotation
+  -- speed, the clone's live Volume for a sound. copying the other half is the
+  -- best a generic reader can do and is what a caller with no effect behind it
+  -- gets, so the entry records that it happened and mods.driver hands the knob
+  -- back to its effect rather than pinning it to a constant
+  local partial = startV == nil or finishV == nil
+
   if startV == nil then
     startV = finishV
   end
@@ -120,8 +141,7 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string): { an
   local durationV = durationOf(ref:GetAttribute(`{name}_Duration`))
   local curveV = curveOf(ref:GetAttribute(`{name}_Curve`)) or curves.default()
 
-  local group = DRAWN_RANGES[source]
-  local drawn = group ~= nil and group[name] == true
+  local drawn = legacy_mods.isDrawnRange(source, name)
 
   return {
     {
@@ -131,6 +151,7 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string): { an
       start = endpointOf(startV, drawn),
       finish = endpointOf(finishV, drawn),
       curve = curveV,
+      partial = partial or nil,
     },
   }
 end

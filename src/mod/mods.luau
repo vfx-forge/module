@@ -156,9 +156,29 @@ function mods.driver(ref: Instance, source: string, name: string, fallback: numb
     return nil, fallback
   end
 
-  local span = mods.span(queue, fallback)
+  -- a legacy quad with only one half authored cannot say what the other half
+  -- was, because that default is the effect's own and legacy_mods copied the
+  -- authored half over it. handing back no driver runs the effect's legacy
+  -- branch, which still has the real default. this is the only shape where
+  -- refusing to drive is more faithful than driving
+  if #queue == 1 and queue[1].partial then
+    return nil, fallback
+  end
 
-  return mods.sampler(ref, source, name, span, queue), span
+  local span = mods.span(queue, fallback)
+  local sample = mods.sampler(ref, source, name, span, queue)
+
+  -- a queue of nothing but base kinds evaluates to ctx.base and stops there,
+  -- and for a forge knob like Speed that base is an attribute nobody ever
+  -- wrote. the curve editor stores exactly that shape when it authors a curve
+  -- on a target with no legacy quad behind it. handing an effect a sampler
+  -- that only ever returns nil is worse than handing it none, because every
+  -- conversion assigns the first sample straight into its own arithmetic
+  if sample == nil or sample(0) == nil then
+    return nil, fallback
+  end
+
+  return sample, span
 end
 
 return mods
