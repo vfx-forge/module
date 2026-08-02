@@ -24,6 +24,8 @@ line.OWNS = {
     Size = true,
     Speed = true,
     Lifetime = true,
+    OffsetIn = true,
+    SizeScaleIn = true,
   },
 }
 
@@ -134,6 +136,24 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
   -- than Speed_Duration: it is only reached when no modifier names a duration,
   -- which is what the panel calls linked, and linked means "as long as the
   -- effect runs"
+  -- the entry phases run from their own queues when they have one. the exit
+  -- phases carry only an _End, so they read as half quads and mods.driver stands
+  -- down, which is lightning's Fade_In and Fade_Out shape exactly.
+  --
+  -- the "ask before any non-soft read" rule does not bite here: what those reads
+  -- stamp is the value the old name already held, which is what the legacy
+  -- branch would have tweened anyway
+  local offsetInQueue = mods.framed(ref, "attribute", "OffsetIn")
+  local offsetInDrv, offsetInSpan = mods.driver(ref, "attribute", "OffsetIn", runLength)
+
+  local sizeInQueue = mods.framed(ref, "attribute", "SizeScaleIn")
+  local sizeInDrv, sizeInSpan = mods.driver(ref, "attribute", "SizeScaleIn", runLength)
+
+  -- a phase that starts where it already ends has nothing to do, and the legacy
+  -- branch skipped it outright. an authored queue is taken at its word
+  local offsetInMoves = offsetInDrv ~= nil and (offsetInQueue ~= nil or offsetInStart ~= offsetInEnd)
+  local sizeInMoves = sizeInDrv ~= nil and (sizeInQueue ~= nil or sizeInStart ~= sizeInEnd)
+
   local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", runLength)
 
   local speedStart = attr.get(ref, "Speed_Start", 1, true)
@@ -345,7 +365,16 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
 
         local currentOffset = Vector3.zero
 
-        if offsetInStart ~= offsetInEnd then
+        if offsetInMoves then
+          -- linear, because the queue's own curve is what shapes it
+          offsetTween = tween.fromParams(utility.linear_bezier, offsetInSpan, function(_, deltaTime, elapsed)
+            currentOffset = (offsetInDrv :: any)(elapsed)
+            part.CFrame = CFrame.new(currentOffset) * rotCF
+            return deltaTime * getEffectiveSpeed()
+          end)
+
+          table.insert(scope, offsetTween)
+        elseif offsetInStart ~= offsetInEnd then
           offsetTween = tween.fromParams(
             attr.get(ref, "OffsetIn_Curve", attr.get(ref, "Offset_Start_Curve", utility.default_bezier, true)),
             offsetInDuration,
@@ -361,7 +390,14 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
 
         local size = drawnSize * currentScale
 
-        if size * sizeInStart ~= size * sizeInEnd then
+        if sizeInMoves then
+          sizeTween = tween.fromParams(utility.linear_bezier, sizeInSpan, function(_, deltaTime, elapsed)
+            part.Size = size * (sizeInDrv :: any)(elapsed)
+            return deltaTime * getEffectiveSpeed()
+          end)
+
+          table.insert(scope, sizeTween)
+        elseif size * sizeInStart ~= size * sizeInEnd then
           sizeTween = tween.fromParams(sizeInCurve, sizeInDuration, function(alpha, deltaTime)
             part.Size = (size * sizeInStart):Lerp(size * sizeInEnd, alpha)
             return deltaTime * getEffectiveSpeed()

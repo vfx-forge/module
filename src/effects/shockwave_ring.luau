@@ -22,6 +22,8 @@ ring.OWNS = {
     Size = true,
     Speed = true,
     Lifetime = true,
+    OffsetIn = true,
+    SizeScaleIn = true,
   },
 }
 
@@ -127,6 +129,28 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   -- calls a linked modifier, and linked means "as long as the effect runs". a
   -- legacy quad never reaches it at all, since readQuad puts Speed_Duration on
   -- the modifier itself
+  -- the entry phases are rows a reader can derive now, so each runs from its own
+  -- queue when it has one. the exit phases carry only an _End: their start is
+  -- wherever the value got to, so they read as half quads and mods.driver stands
+  -- down on them, which is lightning's Fade_In and Fade_Out shape exactly.
+  --
+  -- the usual "ask before any non-soft read of the quad keys" rule does not bite
+  -- here. it exists because attr.get stamps a default the author never chose;
+  -- what these stamp is the value the old name already held, which is precisely
+  -- what the legacy branch below would have tweened, so the queue readQuad finds
+  -- says the same thing either way
+  local offsetInQueue = mods.framed(ref, "attribute", "OffsetIn")
+  local offsetInDrv, offsetInSpan = mods.driver(ref, "attribute", "OffsetIn", runLength)
+
+  local sizeInQueue = mods.framed(ref, "attribute", "SizeScaleIn")
+  local sizeInDrv, sizeInSpan = mods.driver(ref, "attribute", "SizeScaleIn", runLength)
+
+  -- a phase that starts where it already ends has nothing to do, and the legacy
+  -- branch skipped it outright rather than binding a stepper per piece to write
+  -- one value over itself. an authored queue is taken at its word
+  local offsetInMoves = offsetInDrv ~= nil and (offsetInQueue ~= nil or offsetInStart ~= offsetInEnd)
+  local sizeInMoves = sizeInDrv ~= nil and (sizeInQueue ~= nil or sizeInStart ~= sizeInEnd)
+
   local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", runLength)
 
   local speedStart = attr.get(ref, "Speed_Start", 1, true)
@@ -250,7 +274,16 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
     local currentOffset = Vector3.zero
 
-    if offsetInStart ~= offsetInEnd then
+    if offsetInMoves then
+      -- linear, because the queue's own curve is what shapes it
+      offsetTween = tween.fromParams(utility.linear_bezier, offsetInSpan, function(_, deltaTime, elapsed)
+        currentOffset = (offsetInDrv :: any)(elapsed)
+        part.CFrame = CFrame.new(currentOffset) * rotCF
+        return deltaTime * getEffectiveSpeed()
+      end)
+
+      table.insert(scope, offsetTween)
+    elseif offsetInStart ~= offsetInEnd then
       offsetTween = tween.fromParams(
         attr.get(ref, "OffsetIn_Curve", attr.get(ref, "Offset_Start_Curve", utility.default_bezier, true)),
         offsetInDuration,
@@ -264,7 +297,14 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
       table.insert(scope, offsetTween)
     end
 
-    if size * sizeInStart ~= size * sizeInEnd then
+    if sizeInMoves then
+      sizeTween = tween.fromParams(utility.linear_bezier, sizeInSpan, function(_, deltaTime, elapsed)
+        part.Size = size * (sizeInDrv :: any)(elapsed)
+        return deltaTime * getEffectiveSpeed()
+      end)
+
+      table.insert(scope, sizeTween)
+    elseif size * sizeInStart ~= size * sizeInEnd then
       sizeTween = tween.fromParams(sizeInCurve, sizeInDuration, function(alpha, deltaTime)
         part.Size = (size * sizeInStart):Lerp(size * sizeInEnd, alpha)
         return deltaTime * getEffectiveSpeed()
