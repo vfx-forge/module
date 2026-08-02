@@ -705,6 +705,218 @@ harness.suite(function()
     end)
   end)
 
+  -- a rate that ramps across the run, which is what "choppy at the start,
+  -- smooth by the end" is. The flat grid above cannot express it: recomputing
+  -- floor(elapsed * fps) as fps changes MOVES the grid, and a moved grid runs
+  -- backwards
+  harness.describe("modifiers.evaluate at a rate that ramps", function()
+    local function ramp(from: number, to: number, shape: buffer?)
+      return {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "lit", v = 0 },
+          finish = { t = "lit", v = 100 },
+          curve = linear,
+          fps = { from = from, to = to, curve = shape },
+        },
+      }
+    end
+
+    local function walk(queue: { any }, frames: number): { number }
+      local out = {}
+
+      for i = 0, frames do
+        table.insert(out, modifiers.evaluate(queue, i / frames, { duration = 1 }) :: number)
+      end
+
+      return out
+    end
+
+    local function flatAt(fps: number)
+      return {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "lit", v = 0 },
+          finish = { t = "lit", v = 100 },
+          curve = linear,
+          fps = fps,
+        },
+      }
+    end
+
+    local function distinct(values: { number }): number
+      local n = 1
+
+      for i = 2, #values do
+        if not near(values[i], values[i - 1]) then
+          n += 1
+        end
+      end
+
+      return n
+    end
+
+    -- THE test. Ramping 20fps to 22fps, the flat grid reads 0.600 at elapsed
+    -- 0.60 and 0.591 at 0.61, so the knob rewinds a hundredth of its travel;
+    -- on a ramp that happens at every rate change, which is every frame
+    test("never runs backwards", function()
+      local backwards = {}
+
+      for _, values in { walk(ramp(20, 22), 300), walk(ramp(10, 60), 300), walk(ramp(60, 10), 300) } do
+        for i = 2, #values do
+          if values[i] < values[i - 1] - 1e-9 then
+            table.insert(backwards, `{values[i - 1]} then {values[i]}`)
+          end
+        end
+      end
+
+      expect(table.concat(backwards, ", ")).toBe("")
+    end)
+
+    -- and it is genuinely stepping rather than merely not-rewinding: a run of
+    -- 300 frames lands on the number of steps the integral names, which for a
+    -- linear 8-to-20 ramp over a second is the average of the ends
+    test("holds for as many steps as the rate integrates to", function()
+      expect(distinct(walk(ramp(8, 20), 300))).toBe(15)
+    end)
+
+    -- the effect this exists for. The first hold outlasts the last one, because
+    -- the rate it was taken at is slower
+    test("its steps get shorter as the rate climbs", function()
+      local values = walk(ramp(4, 40), 600)
+      local first, last, run = 0, 0, 1
+
+      for i = 2, #values do
+        if near(values[i], values[i - 1]) then
+          run += 1
+        else
+          if first == 0 then
+            first = run
+          end
+
+          last = run
+          run = 1
+        end
+      end
+
+      expect(first > last * 3).toBe(true)
+    end)
+
+    -- a table whose ends agree is a constant rate however it was authored, and
+    -- has to read exactly like the plain number it means
+    test("equal ends are the constant rate they name", function()
+      local rampt = walk(ramp(12, 12), 200)
+      local flat = walk(flatAt(12), 200)
+      local apart = 0
+
+      for i, v in rampt do
+        if not near(v, flat[i]) then
+          apart += 1
+        end
+      end
+
+      expect(apart).toBe(0)
+    end)
+
+    -- `linear` is the IDENTITY alpha, so its integral is p squared over two --
+    -- the very closed form the no-curve path uses instead of a table. They have
+    -- to name the same number of steps.
+    --
+    -- Not the same VALUE at every frame, though: a sample landing within an
+    -- epsilon of a boundary floors to either side of it, and the two paths reach
+    -- that boundary by different arithmetic. One frame in a few hundred sits
+    -- there, and on it they are a whole step apart. That is inherent to
+    -- quantizing at all, not a disagreement about where the steps are
+    test("a linear shape names the same steps as the closed form", function()
+      local straight = walk(ramp(4, 40), 300)
+      local shaped = walk(ramp(4, 40, linear), 300)
+      local apart = 0
+
+      for i, v in straight do
+        if not near(v, shaped[i]) then
+          apart += 1
+        end
+      end
+
+      expect(distinct(shaped)).toBe(distinct(straight))
+      expect(apart <= 3).toBe(true)
+    end)
+
+    -- and they agree on WHERE each of those steps falls, which per-frame values
+    -- cannot say: a boundary-straddling frame swamps them. Comparing the held
+    -- values themselves is what pins the per-cell solve -- inverting the bracket
+    -- linearly instead lands a 4-to-40 ramp's boundaries up to 9% of the travel
+    -- out, because 32 cells is barely finer than the 22 steps it names
+    test("a linear shape lands its steps where the closed form does", function()
+      local function held(values: { number }): { number }
+        local out = { values[1] }
+
+        for i = 2, #values do
+          if not near(values[i], values[i - 1]) then
+            table.insert(out, values[i])
+          end
+        end
+
+        return out
+      end
+
+      local straight = held(walk(ramp(4, 40), 2000))
+      local shaped = held(walk(ramp(4, 40, linear), 2000))
+      local worst = 0
+
+      expect(#shaped).toBe(#straight)
+
+      for i, v in straight do
+        worst = math.max(worst, math.abs(v - shaped[i]))
+      end
+
+      expect(worst < 0.05).toBe(true)
+    end)
+
+    -- a shape that is NOT the identity does move the steps, which is the point
+    -- of being able to draw one
+    test("a shaped rate steps somewhere a straight ramp does not", function()
+      local ease = path.serializePath({
+        { Position = UDim2.fromScale(0, 1), LeftTangent = UDim2.new(), RightTangent = UDim2.fromScale(0.6, 0) },
+        { Position = UDim2.fromScale(1, 0), LeftTangent = UDim2.fromScale(-0.6, 0), RightTangent = UDim2.new() },
+      })
+
+      local straight = walk(ramp(4, 40), 300)
+      local shaped = walk(ramp(4, 40, ease), 300)
+      local apart = 0
+
+      for i, v in straight do
+        if not near(v, shaped[i]) then
+          apart += 1
+        end
+      end
+
+      expect(apart > 0).toBe(true)
+    end)
+
+    -- an end nobody can read is dropped rather than carried into the integral,
+    -- and what is left is the end that IS a rate. Only a start that is no rate
+    -- at all leaves nothing to step on
+    test("an unusable end falls back to the one that reads", function()
+      local ctx = { duration = 1 }
+
+      -- 4fps holds at zero for the first quarter second
+      expect(near(modifiers.evaluate(ramp(4, math.huge), 0.1, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(ramp(4, 0 / 0), 0.1, ctx) :: number, 0)).ok()
+
+      -- and a start of zero is not a rate either, so nothing steps
+      expect(near(modifiers.evaluate(ramp(0, 40), 0.1, ctx) :: number, 10)).ok()
+    end)
+
+    test("still reaches its finish", function()
+      expect(near(modifiers.evaluate(ramp(4, 40), 1, { duration = 1 }) :: number, 100)).ok()
+    end)
+  end)
+
   harness.describe("modifiers.schedule", function()
     test("reaches the far end of a delayed queue", function()
       local queue = {

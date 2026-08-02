@@ -74,15 +74,21 @@ end
 -- from where the delays before it put it, so a negative one means it has not
 -- started. a nil duration means it runs for ctx.linked, the delay-free span, so
 -- a delay moves a modifier without changing how long it takes once it starts
-local function progressOf(m: any, elapsed: number, ctx: Ctx): number
+local function durationOf(m: any, ctx: Ctx): number?
   local d = m.duration
 
   if typeof(d) ~= "number" then
     d = if typeof(ctx.linked) == "number" then ctx.linked else ctx.duration
   end
 
+  return if typeof(d) == "number" and d > 0 then d else nil
+end
+
+local function progressOf(m: any, elapsed: number, ctx: Ctx): number
+  local d = durationOf(m, ctx)
+
   -- a step function still steps where it was placed rather than at zero
-  if typeof(d) ~= "number" or d <= 0 then
+  if d == nil then
     return if elapsed < 0 then 0 else 1
   end
 
@@ -99,11 +105,313 @@ end
 -- 12fps steps at 0, and 1/12 is past the end, so the knob would sit at 83% of
 -- its travel and stay there. a modifier that never reaches what it was told to
 -- reach is worse than one that arrives a fraction of a step early
+-- a rate that CHANGES across the run cannot quantize that way. the grid moves
+-- with it, and a moved grid is not monotonic: ramping 20fps to 22fps, elapsed
+-- 0.60 floors to 0.600 and elapsed 0.61 floors to 0.591, so the knob rewinds a
+-- hundredth of its travel. It happens at every rate change, which on a ramp is
+-- continuously.
+--
+-- What is monotonic is the number of steps ELAPSED, which is the integral of the
+-- rate: phase(t) = integral of fps, strictly increasing while fps > 0, so
+-- floor(phase) only ever climbs. The step you are on is floor(phase), and the
+-- moment it began is phase inverted at that count.
+--
+-- The integral is separable, which is what makes it cheap. With fps ramping from
+-- `from` to `to` along a curve, fps(p) = from + (to - from) * alpha(p), so
+--
+--   Phase(p) = from * p + (to - from) * A(p),  A(p) = integral of alpha
+--
+-- and A depends on the CURVE ALONE. Not on the endpoints, not on the duration
+-- (which only scales the step count), so one table serves every instance
+-- sampling that curve whatever lifetime it drew. Cached here the way
+-- path.bezier_cache caches the curve itself: a memo, so evaluate stays a pure
+-- function of its inputs.
+local PHASE_SAMPLES = 32
+
+modifiers.phase_cache = {} :: { [string]: any }
+
+local function alphaIntegral(curve: string | buffer): { area: { number }, alpha: { number } }
+  local key = if typeof(curve) == "buffer" then buffer.tostring(curve) else curve
+  local cached = modifiers.phase_cache[key]
+
+  if cached then
+    return cached
+  end
+
+  -- the curve sampled on a uniform grid, and the trapezoid area up to each
+  -- node. Both are kept: the area brackets a step, and the samples either side
+  -- of it are what place it exactly inside that cell
+  local alpha = { modifiers.alphaFromCurve(curve, 0) }
+  local area = { 0 }
+
+  for i = 1, PHASE_SAMPLES do
+    alpha[i + 1] = modifiers.alphaFromCurve(curve, i / PHASE_SAMPLES)
+    area[i + 1] = area[i] + (alpha[i] + alpha[i + 1]) / 2 / PHASE_SAMPLES
+  end
+
+  local out = { area = area, alpha = alpha }
+  modifiers.phase_cache[key] = out
+
+  return out
+end
+
+-- the ramp a modifier names, or nil when its fps is a plain number or nothing at
+-- all. `to` alone is what separates a ramp from a flat rate: equal ends are a
+-- constant however it was authored, and take the cheap path
+local function fpsRamp(fps: any): { from: number, to: number, curve: (string | buffer)? }?
+  if type(fps) ~= "table" then
+    return nil
+  end
+
+  local from, to = fps.from, fps.to
+
+  if typeof(from) ~= "number" or typeof(to) ~= "number" or from <= 0 or to <= 0 or from == to then
+    return nil
+  end
+
+  if from ~= from or to ~= to or from == math.huge or to == math.huge then
+    return nil
+  end
+
+  return { from = from, to = to, curve = fps.curve }
+end
+
+-- the root of c2*u^2 + c1*u + c0 that lands in [0, 1]. Phase climbs, so exactly
+-- one does; a c2 of nothing is the straight-line case and divides out
+local function rootIn01(c2: number, c1: number, c0: number): number
+  if math.abs(c2) < 1e-12 then
+    return if math.abs(c1) < 1e-12 then 0 else math.clamp(-c0 / c1, 0, 1)
+  end
+
+  local disc = c1 * c1 - 4 * c2 * c0
+
+  if disc < 0 then
+    return 0
+  end
+
+  local root = math.sqrt(disc)
+  local a = (-c1 + root) / (2 * c2)
+  local b = (-c1 - root) / (2 * c2)
+
+  if a >= -1e-9 and a <= 1 + 1e-9 then
+    return math.clamp(a, 0, 1)
+  end
+
+  return math.clamp(b, 0, 1)
+end
+
+-- Phase(p): steps elapsed per unit of duration. Without a shape the rate is a
+-- straight line and its integral is closed form. With one, the area up to the
+-- cell plus the exact integral of the linear piece inside it, so Phase is
+-- piecewise QUADRATIC rather than piecewise linear -- which is what makes
+-- inverting it below exact rather than as coarse as the grid
+local function phaseAt(ramp: any, tbl: any, p: number): number
+  local span = ramp.to - ramp.from
+
+  if tbl == nil then
+    return ramp.from * p + span * p * p / 2
+  end
+
+  local pos = math.clamp(p, 0, 1) * PHASE_SAMPLES
+  local i = math.min(math.floor(pos), PHASE_SAMPLES - 1)
+  local u = pos - i
+  local a0 = tbl.alpha[i + 1]
+  local da = tbl.alpha[i + 2] - a0
+  local inside = (a0 * u + da * u * u / 2) / PHASE_SAMPLES
+
+  return ramp.from * (i / PHASE_SAMPLES) + span * tbl.area[i + 1] + (ramp.from * u) / PHASE_SAMPLES + span * inside
+end
+
+-- Phase inverted: the progress at which `steps` steps have elapsed. Solved, not
+-- searched -- a straight ramp is one quadratic over the whole run, and a shaped
+-- one is a quadratic per cell, so bracketing on the grid and solving inside it
+-- places a boundary exactly rather than to within a cell. Interpolating the
+-- bracket linearly instead put a 4-to-40 ramp's steps out by 9% of the travel,
+-- because 32 cells is barely finer than the 22 steps that ramp names
+local function progressAtPhase(ramp: any, tbl: any, steps: number): number
+  local span = ramp.to - ramp.from
+
+  if tbl == nil then
+    return rootIn01(span / 2, ramp.from, -steps)
+  end
+
+  local lo, hi = 0, PHASE_SAMPLES
+
+  while hi - lo > 1 do
+    local mid = (lo + hi) // 2
+
+    if phaseAt(ramp, tbl, mid / PHASE_SAMPLES) <= steps then
+      lo = mid
+    else
+      hi = mid
+    end
+  end
+
+  local a0 = tbl.alpha[lo + 1]
+  local da = tbl.alpha[lo + 2] - a0
+  local base = ramp.from * (lo / PHASE_SAMPLES) + span * tbl.area[lo + 1]
+
+  local u = rootIn01(span * da / (2 * PHASE_SAMPLES), (ramp.from + span * a0) / PHASE_SAMPLES, base - steps)
+
+  return (lo + u) / PHASE_SAMPLES
+end
+
+-- how often a modifier is allowed to move, in steps per second. a knob with no
+-- fps runs at whatever rate its effect steps at, which is the frame rate; naming
+-- one holds it on each step until the next is due, which is what a stylized
+-- flipbook-looking phase wants.
+--
+-- the LAST step is exempt, always. quantizing the whole run leaves a phase whose
+-- duration is not a whole number of steps short of its finish for good: 0.1s at
+-- 12fps steps at 0, and 1/12 is past the end, so the knob would sit at 83% of
+-- its travel and stay there. a modifier that never reaches what it was told to
+-- reach is worse than one that arrives a fraction of a step early
+-- a rate that CHANGES across the run cannot quantize that way. the grid moves
+-- with it, and a moved grid is not monotonic: ramping 20fps to 22fps, elapsed
+-- 0.60 floors to 0.600 and elapsed 0.61 floors to 0.591, so the knob rewinds a
+-- hundredth of its travel. It happens at every rate change, which on a ramp is
+-- continuously.
+--
+-- What is monotonic is the number of steps ELAPSED, which is the integral of the
+-- rate: phase(t) = integral of fps, strictly increasing while fps > 0, so
+-- floor(phase) only ever climbs. The step you are on is floor(phase), and the
+-- moment it began is phase inverted at that count.
+--
+-- The integral is separable, which is what makes it cheap. With fps ramping from
+-- `from` to `to` along a curve, fps(p) = from + (to - from) * alpha(p), so
+--
+--   Phase(p) = from * p + (to - from) * A(p),  A(p) = integral of alpha
+--
+-- and A depends on the CURVE ALONE. Not on the endpoints, not on the duration
+-- (which only scales the step count), so one table serves every instance
+-- sampling that curve whatever lifetime it drew. Cached here the way
+-- path.bezier_cache caches the curve itself: a memo, so evaluate stays a pure
+-- function of its inputs.
+local PHASE_SAMPLES = 32
+
+modifiers.phase_cache = {} :: { [string]: any }
+
+local function alphaIntegral(curve: string | buffer): { number }
+  local key = if typeof(curve) == "buffer" then buffer.tostring(curve) else curve
+  local table_ = modifiers.phase_cache[key]
+
+  if table_ then
+    return table_
+  end
+
+  -- trapezoid over a uniform grid. A[i] is the integral up to i / PHASE_SAMPLES,
+  -- so A[1] is zero and the last entry is the whole area
+  local out = { 0 }
+  local previous = modifiers.alphaFromCurve(curve, 0)
+
+  for i = 1, PHASE_SAMPLES do
+    local current = modifiers.alphaFromCurve(curve, i / PHASE_SAMPLES)
+
+    out[i + 1] = out[i] + (previous + current) / 2 / PHASE_SAMPLES
+    previous = current
+  end
+
+  modifiers.phase_cache[key] = out
+
+  return out
+end
+
+-- the ramp a modifier names, or nil when its fps is a plain number or nothing at
+-- all. `to` alone is what separates a ramp from a flat rate: equal ends are a
+-- constant however it was authored, and take the cheap path
+local function fpsRamp(fps: any): { from: number, to: number, curve: (string | buffer)? }?
+  if type(fps) ~= "table" then
+    return nil
+  end
+
+  local from, to = fps.from, fps.to
+
+  if typeof(from) ~= "number" or typeof(to) ~= "number" or from <= 0 or to <= 0 or from == to then
+    return nil
+  end
+
+  if from ~= from or to ~= to or from == math.huge or to == math.huge then
+    return nil
+  end
+
+  return { from = from, to = to, curve = fps.curve }
+end
+
+-- Phase(p), in steps per unit of duration. A linear ramp needs no table at all,
+-- since the integral of p is p squared over two
+local function phaseAt(ramp: any, area: { number }?, p: number): number
+  if area == nil then
+    return ramp.from * p + (ramp.to - ramp.from) * p * p / 2
+  end
+
+  local pos = math.clamp(p, 0, 1) * PHASE_SAMPLES
+  local i = math.min(math.floor(pos), PHASE_SAMPLES - 1)
+  local a = area[i + 1] + (area[i + 2] - area[i + 1]) * (pos - i)
+
+  return ramp.from * p + (ramp.to - ramp.from) * a
+end
+
+-- Phase inverted: the progress at which `steps` steps have elapsed. Phase climbs
+-- monotonically, so the grid it was sampled on brackets the answer and the
+-- interval it lands in is solved straight
+local function progressAtPhase(ramp: any, area: { number }?, steps: number): number
+  local lo, hi = 0, PHASE_SAMPLES
+
+  while hi - lo > 1 do
+    local mid = (lo + hi) // 2
+
+    if phaseAt(ramp, area, mid / PHASE_SAMPLES) <= steps then
+      lo = mid
+    else
+      hi = mid
+    end
+  end
+
+  local a = phaseAt(ramp, area, lo / PHASE_SAMPLES)
+  local b = phaseAt(ramp, area, hi / PHASE_SAMPLES)
+
+  if b <= a then
+    return lo / PHASE_SAMPLES
+  end
+
+  return (lo + (steps - a) / (b - a)) / PHASE_SAMPLES
+end
+
+-- how often a modifier is allowed to move, in steps per second. a knob with no
+-- fps runs at whatever rate its effect steps at, which is the frame rate; naming
+-- one holds it on each step until the next is due, which is what a stylized
+-- flipbook-looking phase wants.
+--
+-- the LAST step is exempt, always. quantizing the whole run leaves a phase whose
+-- duration is not a whole number of steps short of its finish for good: 0.1s at
+-- 12fps steps at 0, and 1/12 is past the end, so the knob would sit at 83% of
+-- its travel and stay there. a modifier that never reaches what it was told to
+-- reach is worse than one that arrives a fraction of a step early
 local function steppedProgress(m: any, elapsed: number, ctx: Ctx): number
   local progress = progressOf(m, elapsed, ctx)
   local fps = m.fps
 
-  if progress >= 1 or typeof(fps) ~= "number" or fps ~= fps or fps <= 0 or fps == math.huge then
+  if progress >= 1 then
+    return progress
+  end
+
+  if type(fps) == "table" then
+    local ramp = fpsRamp(fps)
+    local d = durationOf(m, ctx)
+
+    if ramp and d ~= nil then
+      local tbl = if ramp.curve then alphaIntegral(ramp.curve) else nil
+      local steps = math.floor(d * phaseAt(ramp, tbl, progress))
+
+      return progressAtPhase(ramp, tbl, steps / d)
+    end
+
+    -- a ramp whose ends agree is a constant rate however it was authored, and
+    -- takes the cheap grid below rather than a table integrating a flat line
+    fps = fps.from
+  end
+
+  if typeof(fps) ~= "number" or fps ~= fps or fps <= 0 or fps == math.huge then
     return progress
   end
 
