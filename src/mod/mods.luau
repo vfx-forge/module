@@ -39,7 +39,10 @@ function mods.span(queue: { any }, fallback: number, rolls: Rolls?): number
   local picks = if rolls then rolls.picks else nil
   local _, frontier = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil)
 
-  if frontier <= 0 then
+  -- an effect turns this straight into a tween's duration, and a tween that
+  -- never ends holds the emit open for good. nothing an author can mean by a
+  -- span is infinite, so an unusable one falls back the same way an empty one does
+  if frontier <= 0 or frontier == math.huge or frontier ~= frontier then
     return fallback
   end
 
@@ -230,6 +233,7 @@ function mods.driver(
   source: string,
   name: string,
   fallback: number,
+  want: string?,
   env: { [string]: any }?
 ): (((number) -> any)?, number)
   local queue = mods.read(ref, source, name)
@@ -263,7 +267,22 @@ function mods.driver(
   -- on a target with no legacy quad behind it. handing an effect a sampler
   -- that only ever returns nil is worse than handing it none, because every
   -- conversion assigns the first sample straight into its own arithmetic
-  if sample == nil or sample(0) == nil then
+  if sample == nil then
+    return nil, fallback
+  end
+
+  local first = sample(0)
+
+  if first == nil then
+    return nil, fallback
+  end
+
+  -- a knob that names the type it wants is handed no driver when the queue
+  -- samples another one. the effect assigns a sample straight into its own
+  -- arithmetic, and a stepper that throws is never cleaned up: tween only runs
+  -- its cleanup on a frame the counter returns from normally, so one wrong type
+  -- repeats the same error every frame for as long as the scope lives
+  if want ~= nil and typeof(first) ~= want then
     return nil, fallback
   end
 

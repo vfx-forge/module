@@ -91,6 +91,24 @@ harness.suite(function()
     test("a delay alone spans nothing of its own", function()
       expect(mods.span({ { kind = "delay", wait = { t = "lit", v = 2 } } }, 9)).toBe(9)
     end)
+
+    -- waitOf makes every wait finite one at a time, but a sum of finite waits
+    -- need not be, and an effect turns a span straight into a tween's duration
+    test("a delay sum that would overflow stays finite", function()
+      local wait = { t = "lit", v = 1e308 }
+
+      local queue = {
+        { kind = "delay", wait = wait },
+        { kind = "delay", wait = wait },
+        { kind = "tween", duration = 1 },
+      }
+
+      expect(mods.span(queue, 9) < math.huge).toBe(true)
+    end)
+
+    test("an endless span falls back rather than holding the emit open", function()
+      expect(mods.span({ { kind = "tween", duration = math.huge } }, 9)).toBe(9)
+    end)
   end)
 
   -- a queue that waits and does nothing else drives nothing, but on a property

@@ -229,7 +229,11 @@ function legacy_mods.readRange(ref: Instance, source: string, name: string): { a
   local min = ref:GetAttribute(`{name}_Min`)
   local max = ref:GetAttribute(`{name}_Max`)
 
-  if min == nil and max == nil then
+  -- the prefixed spelling is tried unless the underscore pair reads WHOLE. half
+  -- of a pair says nothing on its own, and gating this on "neither half is
+  -- there" would let one stray Size_Max suppress a complete MinSize and MaxSize,
+  -- which is the spelling every shockwave in the wild actually carries
+  if min == nil or max == nil then
     min = ref:GetAttribute(`Min{name}`)
     max = ref:GetAttribute(`Max{name}`)
   end

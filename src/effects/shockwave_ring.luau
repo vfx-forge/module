@@ -87,6 +87,15 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   local offsetInDuration = attr.get(ref, "OffsetIn_Duration", attr.get(ref, "Offset_Start_Duration", 0.5, true))
   local offsetOutDuration = attr.get(ref, "OffsetOut_Duration", attr.get(ref, "Offset_End_Duration", 0.5, true))
 
+  -- hoisted for the same reason the size curves are: read down in the legacy
+  -- branch this never runs when a driver exists, so an authored Offset_Start_Curve
+  -- would be dropped. reading it here also stamps the new name before the driver
+  -- asks, so the quad readQuad finds carries the migrated curve
+  local offsetInCurve =
+    attr.get(ref, "OffsetIn_Curve", attr.get(ref, "Offset_Start_Curve", utility.default_bezier, true))
+  local offsetOutCurve =
+    attr.get(ref, "OffsetOut_Curve", attr.get(ref, "Offset_End_Curve", utility.default_bezier, true))
+
   local minSize = attr.get(ref, "MinSize", vector.create(2, 1, 2))
   local maxSize = attr.get(ref, "MaxSize", vector.create(3, 2, 3))
 
@@ -140,10 +149,10 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   -- what the legacy branch below would have tweened, so the queue readQuad finds
   -- says the same thing either way
   local offsetInQueue = mods.framed(ref, "attribute", "OffsetIn")
-  local offsetInDrv, offsetInSpan = mods.driver(ref, "attribute", "OffsetIn", runLength)
+  local offsetInDrv, offsetInSpan = mods.driver(ref, "attribute", "OffsetIn", runLength, "Vector3")
 
   local sizeInQueue = mods.framed(ref, "attribute", "SizeScaleIn")
-  local sizeInDrv, sizeInSpan = mods.driver(ref, "attribute", "SizeScaleIn", runLength)
+  local sizeInDrv, sizeInSpan = mods.driver(ref, "attribute", "SizeScaleIn", runLength, "Vector3")
 
   -- a phase that starts where it already ends has nothing to do, and the legacy
   -- branch skipped it outright rather than binding a stepper per piece to write
@@ -151,15 +160,25 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   local offsetInMoves = offsetInDrv ~= nil and (offsetInQueue ~= nil or offsetInStart ~= offsetInEnd)
   local sizeInMoves = sizeInDrv ~= nil and (sizeInQueue ~= nil or sizeInStart ~= sizeInEnd)
 
-  local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", runLength)
+  local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", runLength, "number")
 
   local speedStart = attr.get(ref, "Speed_Start", 1, true)
   local speedEnd = attr.get(ref, "Speed_End", 1, true)
 
+  local speedTween
+
   local currentSpeed = if speedDrv then speedDrv(0) else speedStart
 
-  local function getEffectiveSpeed(): number
-    return currentSpeed
+  -- a speed of zero advances no stepper's elapsed, so nothing would ever reach
+  -- its end: the hold would never return and the parts would never come back to
+  -- the cache. every other effect bails on it the same way, and keeps stepping
+  -- while a speed tween could still raise it again
+  local function step(deltaTime: number, elapsed: number): number?
+    if currentSpeed > 0 or (speedTween ~= nil and elapsed > 0 and speedTween.Connected) then
+      return deltaTime * currentSpeed
+    end
+
+    return nil
   end
 
   task.wait(emitDelay)
@@ -167,25 +186,23 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   -- the speed tween is the clock itself, so it is the one stepper that does not
   -- scale by it
   if speedDrv then
-    table.insert(
-      scope,
-      tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
-        currentSpeed = speedDrv(elapsed)
-        return deltaTime
-      end)
-    )
+    speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
+      currentSpeed = speedDrv(elapsed)
+      return deltaTime
+    end)
+
+    table.insert(scope, speedTween)
   elseif speedStart ~= speedEnd then
-    table.insert(
-      scope,
-      tween.fromParams(
-        attr.get(ref, "Speed_Curve", utility.default_bezier),
-        attr.get(ref, "Speed_Duration", 0.1),
-        function(alpha, deltaTime)
-          currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
-          return deltaTime
-        end
-      )
+    speedTween = tween.fromParams(
+      attr.get(ref, "Speed_Curve", utility.default_bezier),
+      attr.get(ref, "Speed_Duration", 0.1),
+      function(alpha, deltaTime)
+        currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
+        return deltaTime
+      end
     )
+
+    table.insert(scope, speedTween)
   end
 
   local promises = {}
@@ -210,7 +227,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- legacy_mods reads the MinSize and MaxSize pair as a randomizer, and a
     -- randomizer between two Vector3s draws once per component, which is exactly
     -- the three NextNumber calls this replaces
-    local sizeDrv = mods.driver(ref, "attribute", "Size", runLength)
+    local sizeDrv = mods.driver(ref, "attribute", "Size", runLength, "Vector3")
     local size = if sizeDrv then sizeDrv(0) else nil
 
     if typeof(size) ~= "Vector3" then
@@ -277,37 +294,45 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     if offsetInMoves then
       -- linear, because the queue's own curve is what shapes it
       offsetTween = tween.fromParams(utility.linear_bezier, offsetInSpan, function(_, deltaTime, elapsed)
-        currentOffset = (offsetInDrv :: any)(elapsed)
-        part.CFrame = CFrame.new(currentOffset) * rotCF
-        return deltaTime * getEffectiveSpeed()
+        local at = (offsetInDrv :: any)(elapsed)
+
+        -- a queue that stops resolving partway would throw here every frame, and a
+        -- stepper that throws is never cleaned up
+        if typeof(at) == "Vector3" then
+          currentOffset = at
+          part.CFrame = CFrame.new(currentOffset) * rotCF
+        end
+
+        return step(deltaTime, elapsed)
       end)
 
       table.insert(scope, offsetTween)
     elseif offsetInStart ~= offsetInEnd then
-      offsetTween = tween.fromParams(
-        attr.get(ref, "OffsetIn_Curve", attr.get(ref, "Offset_Start_Curve", utility.default_bezier, true)),
-        offsetInDuration,
-        function(alpha, deltaTime)
-          currentOffset = offsetInStart:Lerp(offsetInEnd, alpha)
-          part.CFrame = CFrame.new(currentOffset) * rotCF
-          return deltaTime * getEffectiveSpeed()
-        end
-      )
+      offsetTween = tween.fromParams(offsetInCurve, offsetInDuration, function(alpha, deltaTime, elapsed)
+        currentOffset = offsetInStart:Lerp(offsetInEnd, alpha)
+        part.CFrame = CFrame.new(currentOffset) * rotCF
+        return step(deltaTime, elapsed)
+      end)
 
       table.insert(scope, offsetTween)
     end
 
     if sizeInMoves then
       sizeTween = tween.fromParams(utility.linear_bezier, sizeInSpan, function(_, deltaTime, elapsed)
-        part.Size = size * (sizeInDrv :: any)(elapsed)
-        return deltaTime * getEffectiveSpeed()
+        local scale = (sizeInDrv :: any)(elapsed)
+
+        if typeof(scale) == "Vector3" then
+          part.Size = size * scale
+        end
+
+        return step(deltaTime, elapsed)
       end)
 
       table.insert(scope, sizeTween)
     elseif size * sizeInStart ~= size * sizeInEnd then
-      sizeTween = tween.fromParams(sizeInCurve, sizeInDuration, function(alpha, deltaTime)
+      sizeTween = tween.fromParams(sizeInCurve, sizeInDuration, function(alpha, deltaTime, elapsed)
         part.Size = (size * sizeInStart):Lerp(size * sizeInEnd, alpha)
-        return deltaTime * getEffectiveSpeed()
+        return step(deltaTime, elapsed)
       end)
 
       table.insert(scope, sizeTween)
@@ -325,7 +350,12 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- legacy_mods reads the Lifetime NumberRange as a randomizer, so this covers
     -- authored and unauthored alike and the manual draw is only left for a ring
     -- carrying no Lifetime attribute at all
-    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", 0)
+    --
+    -- the fallback span is the dwell's own ceiling rather than the effect's run: a
+    -- Lifetime driver is sampled on the piece's dwell clock, which never reaches
+    -- the run. a zero there reads as fully elapsed, which would pin a linked
+    -- modifier at its end value from the first frame
+    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifetime.Max, "number")
     local drawn = if lifeDrv then lifeDrv(0) else rng:NextNumber(lifetime.Min, lifetime.Max)
 
     -- the dwell is part of the effect, not of the scheduler: its cleanup lives
@@ -348,11 +378,16 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         target = drawn
       end
 
+      -- attr.getRange clamped a Lifetime away from negatives and a queue read
+      -- straight off the attribute carries no clamp of its own, so a range authored
+      -- below zero would end the dwell before its exit tweens could run
+      target = math.max(target, 0)
+
       if elapsed >= target then
         return nil :: any
       end
 
-      return deltaTime * getEffectiveSpeed()
+      return step(deltaTime, elapsed)
     end, function()
       task.spawn(function()
         if sizeTween then
@@ -369,9 +404,9 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         if startSize ~= size * sizeOutEnd then
           table.insert(
             scope,
-            tween.fromParams(sizeOutCurve, sizeOutDuration, function(alpha, deltaTime)
+            tween.fromParams(sizeOutCurve, sizeOutDuration, function(alpha, deltaTime, elapsed)
               part.Size = startSize:Lerp(size * sizeOutEnd, alpha)
-              return deltaTime * getEffectiveSpeed()
+              return step(deltaTime, elapsed)
             end)
           )
         end
@@ -379,14 +414,10 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         if currentOffset ~= offsetOutEnd then
           table.insert(
             scope,
-            tween.fromParams(
-              attr.get(ref, "OffsetOut_Curve", attr.get(ref, "Offset_End_Curve", utility.default_bezier, true)),
-              offsetOutDuration,
-              function(alpha, deltaTime)
-                part.CFrame = CFrame.new(currentOffset:Lerp(offsetOutEnd, alpha)) * rotCF
-                return deltaTime * getEffectiveSpeed()
-              end
-            )
+            tween.fromParams(offsetOutCurve, offsetOutDuration, function(alpha, deltaTime, elapsed)
+              part.CFrame = CFrame.new(currentOffset:Lerp(offsetOutEnd, alpha)) * rotCF
+              return step(deltaTime, elapsed)
+            end)
           )
         end
 
@@ -396,9 +427,9 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
             tween.fromParams(
               attr.get(ref, "Transparency_Curve", utility.default_bezier),
               tpDuration,
-              function(alpha, deltaTime)
+              function(alpha, deltaTime, elapsed)
                 part.Transparency = utility.lerp(startTp, tpEnd, alpha)
-                return deltaTime * getEffectiveSpeed()
+                return step(deltaTime, elapsed)
               end
             )
           )
@@ -414,8 +445,8 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   -- stretches them past it and the scope tears down mid dwell. the transparency
   -- exit is one of the three a dwell starts, so it counts here too or a long one
   -- is cut off partway
-  tween.timer(runLength, function(deltaTime)
-    return deltaTime * getEffectiveSpeed()
+  tween.timer(runLength, function(deltaTime, elapsed)
+    return step(deltaTime, elapsed)
   end, nil, scope)
 
   Promise.all(promises):await()

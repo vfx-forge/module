@@ -158,7 +158,18 @@ function modifiers.schedule(
     -- instance needs, and it is also what lets a phase be delayed to a moment
     -- BEFORE the phase it chains from has finished
     if m.kind == "delay" then
-      offset += modifiers.waitOf(m, if picks then picks[i] else nil, env)
+      -- waitOf makes every wait finite on its own, but a sum of finite waits
+      -- need not be. an infinite offset would make the span infinite too, and a
+      -- knob whose span never ends holds its emit open for good, which is the
+      -- hang the per-wait guard exists to prevent. a sum that cannot grow leaves
+      -- the offset where it was rather than poisoning every modifier after it
+      local sum = offset + modifiers.waitOf(m, if picks then picks[i] else nil, env)
+
+      if sum == math.huge or sum ~= sum then
+        sum = offset
+      end
+
+      offset = sum
       offsets = offsets or {}
       continue
     end

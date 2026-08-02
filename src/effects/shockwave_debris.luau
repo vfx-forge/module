@@ -214,7 +214,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- reads the MinSize and MaxSize pair as a randomizer, and a randomizer
     -- between two Vector3s draws once per component, which is exactly the three
     -- NextNumber calls this replaces
-    local sizeDrv = mods.driver(ref, "attribute", "Size", lifetime.Max)
+    local sizeDrv = mods.driver(ref, "attribute", "Size", lifetime.Max, "Vector3")
     local size = if sizeDrv then sizeDrv(0) else nil
 
     if typeof(size) ~= "Vector3" then
@@ -271,7 +271,12 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- legacy_mods reads the Lifetime NumberRange as a randomizer, so this covers
     -- authored and unauthored alike and the manual draw is only left for a field
     -- carrying no Lifetime attribute at all
-    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", 0)
+    --
+    -- the fallback span is the dwell's own ceiling rather than the effect's run: a
+    -- Lifetime driver is sampled on the piece's dwell clock, which never reaches
+    -- the run. a zero there reads as fully elapsed, which would pin a linked
+    -- modifier at its end value from the first frame
+    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifetime.Max, "number")
     local drawn = if lifeDrv then lifeDrv(0) else rng:NextNumber(lifetime.Min, lifetime.Max)
 
     -- the dwell belongs to the effect rather than to the scheduler: its cleanup
@@ -285,6 +290,11 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
       if typeof(target) ~= "number" then
         target = drawn
       end
+
+      -- attr.getRange clamped a Lifetime away from negatives and a queue read
+      -- straight off the attribute carries no clamp of its own, so a range authored
+      -- below zero would end the dwell before its exit tweens could run
+      target = math.max(target, 0)
 
       if elapsed >= target then
         return nil :: any
