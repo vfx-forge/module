@@ -67,17 +67,23 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   local lifetime = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
 
+  -- the two phases are rows now, each a stem whose four keys legacy_mods can
+  -- derive: OffsetIn and OffsetOut, SizeScaleIn and SizeScaleOut. Every rename
+  -- reads the old name SOFT as the new one's default, which is what PartOffset
+  -- and Size_Curve already did here, so content in the wild keeps working and
+  -- nothing of it is overwritten
   local old_partOffset = attr.get(ref, "PartOffset", vector.zero, true)
 
-  local baseOffset = attr.get(ref, "BaseOffset", old_partOffset)
-  local offsetStart = attr.get(ref, "Offset_Start", old_partOffset)
-  local offsetEnd = attr.get(ref, "Offset_End", old_partOffset)
+  local old_baseOffset = attr.get(ref, "BaseOffset", old_partOffset, true)
+  local old_offsetStart = attr.get(ref, "Offset_Start", old_partOffset, true)
+  local old_offsetEnd = attr.get(ref, "Offset_End", old_partOffset, true)
 
-  local offsetStartDuration = attr.get(ref, "Offset_Start_Duration", 0.5)
-  local offsetEndDuration = attr.get(ref, "Offset_End_Duration", 0.5)
+  local offsetInStart = attr.get(ref, "OffsetIn_Start", old_offsetStart)
+  local offsetInEnd = attr.get(ref, "OffsetIn_End", old_baseOffset)
+  local offsetOutEnd = attr.get(ref, "OffsetOut_End", old_offsetEnd)
 
-  local sizeScaleStart = attr.get(ref, "SizeScaleStart", vector.zero)
-  local sizeScaleEnd = attr.get(ref, "SizeScaleEnd", vector.zero)
+  local offsetInDuration = attr.get(ref, "OffsetIn_Duration", attr.get(ref, "Offset_Start_Duration", 0.5, true))
+  local offsetOutDuration = attr.get(ref, "OffsetOut_Duration", attr.get(ref, "Offset_End_Duration", 0.5, true))
 
   local minSize = attr.get(ref, "MinSize", vector.create(2, 1, 2))
   local maxSize = attr.get(ref, "MaxSize", vector.create(3, 2, 3))
@@ -85,11 +91,23 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   local old_sizeCurve = attr.get(ref, "Size_Curve", utility.default_bezier, true)
   local old_sizeDuration = attr.get(ref, "Size_Duration", 0.5, true)
 
-  local sizeStartCurve = attr.get(ref, "Size_Start_Curve", old_sizeCurve)
-  local sizeEndCurve = attr.get(ref, "Size_End_Curve", old_sizeCurve)
+  local old_scaleStart = attr.get(ref, "SizeScaleStart", vector.zero, true)
+  local old_scaleEnd = attr.get(ref, "SizeScaleEnd", vector.zero, true)
 
-  local sizeStartDuration = attr.get(ref, "Size_Start_Duration", old_sizeDuration)
-  local sizeEndDuration = attr.get(ref, "Size_End_Duration", old_sizeDuration)
+  local sizeInStart = attr.get(ref, "SizeScaleIn_Start", old_scaleStart)
+  local sizeOutEnd = attr.get(ref, "SizeScaleOut_End", old_scaleEnd)
+
+  -- the entry phase always ended at exactly the drawn size, which is a factor of
+  -- one. naming it makes it authorable: a piece can overshoot and settle
+  local sizeInEnd = attr.get(ref, "SizeScaleIn_End", vector.one)
+
+  local sizeInCurve = attr.get(ref, "SizeScaleIn_Curve", attr.get(ref, "Size_Start_Curve", old_sizeCurve, true))
+  local sizeOutCurve = attr.get(ref, "SizeScaleOut_Curve", attr.get(ref, "Size_End_Curve", old_sizeCurve, true))
+
+  local sizeInDuration =
+    attr.get(ref, "SizeScaleIn_Duration", attr.get(ref, "Size_Start_Duration", old_sizeDuration, true))
+  local sizeOutDuration =
+    attr.get(ref, "SizeScaleOut_Duration", attr.get(ref, "Size_End_Duration", old_sizeDuration, true))
 
   local tpDuration = attr.get(ref, "Transparency_Duration", 0.5)
 
@@ -98,7 +116,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   -- the longest a segment can last, which is the ring's own clock: the longest
   -- dwell it can draw, then the longest exit it can run
-  local runLength = lifetime.Max + math.max(sizeEndDuration, offsetEndDuration, tpDuration)
+  local runLength = lifetime.Max + math.max(sizeOutDuration, offsetOutDuration, tpDuration)
 
   -- the driver is asked for BEFORE any non-soft read of the quad keys it would
   -- find, because attr.get writes its default back: reading Speed_Start creates
@@ -225,19 +243,19 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     local rotCF = CFrame.fromMatrix(result.Position, right, result.Normal)
       * CFrame.fromOrientation(-math.atan(size.Y / size.Z), 0, 0)
 
-    part.CFrame = CFrame.new(offsetStart) * rotCF
+    part.CFrame = CFrame.new(offsetInStart) * rotCF
 
     local sizeTween
     local offsetTween
 
     local currentOffset = Vector3.zero
 
-    if offsetStart ~= baseOffset then
+    if offsetInStart ~= offsetInEnd then
       offsetTween = tween.fromParams(
-        attr.get(ref, "Offset_Start_Curve", utility.default_bezier),
-        offsetStartDuration,
+        attr.get(ref, "OffsetIn_Curve", attr.get(ref, "Offset_Start_Curve", utility.default_bezier, true)),
+        offsetInDuration,
         function(alpha, deltaTime)
-          currentOffset = offsetStart:Lerp(baseOffset, alpha)
+          currentOffset = offsetInStart:Lerp(offsetInEnd, alpha)
           part.CFrame = CFrame.new(currentOffset) * rotCF
           return deltaTime * getEffectiveSpeed()
         end
@@ -246,15 +264,15 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
       table.insert(scope, offsetTween)
     end
 
-    if size * sizeScaleStart ~= size then
-      sizeTween = tween.fromParams(sizeStartCurve, sizeStartDuration, function(alpha, deltaTime)
-        part.Size = (size * sizeScaleStart):Lerp(size, alpha)
+    if size * sizeInStart ~= size * sizeInEnd then
+      sizeTween = tween.fromParams(sizeInCurve, sizeInDuration, function(alpha, deltaTime)
+        part.Size = (size * sizeInStart):Lerp(size * sizeInEnd, alpha)
         return deltaTime * getEffectiveSpeed()
       end)
 
       table.insert(scope, sizeTween)
     else
-      part.Size = size * sizeScaleStart
+      part.Size = size * sizeInStart
     end
 
     local env = scope.effects.emitNested(part, scope.depth + 1, scope)
@@ -308,24 +326,24 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         local startSize = part.Size
         local startTp = part.Transparency
 
-        if startSize ~= size * sizeScaleEnd then
+        if startSize ~= size * sizeOutEnd then
           table.insert(
             scope,
-            tween.fromParams(sizeEndCurve, sizeEndDuration, function(alpha, deltaTime)
-              part.Size = startSize:Lerp(size * sizeScaleEnd, alpha)
+            tween.fromParams(sizeOutCurve, sizeOutDuration, function(alpha, deltaTime)
+              part.Size = startSize:Lerp(size * sizeOutEnd, alpha)
               return deltaTime * getEffectiveSpeed()
             end)
           )
         end
 
-        if currentOffset ~= offsetEnd then
+        if currentOffset ~= offsetOutEnd then
           table.insert(
             scope,
             tween.fromParams(
-              attr.get(ref, "Offset_End_Curve", utility.default_bezier),
-              offsetEndDuration,
+              attr.get(ref, "OffsetOut_Curve", attr.get(ref, "Offset_End_Curve", utility.default_bezier, true)),
+              offsetOutDuration,
               function(alpha, deltaTime)
-                part.CFrame = CFrame.new(currentOffset:Lerp(offsetEnd, alpha)) * rotCF
+                part.CFrame = CFrame.new(currentOffset:Lerp(offsetOutEnd, alpha)) * rotCF
                 return deltaTime * getEffectiveSpeed()
               end
             )

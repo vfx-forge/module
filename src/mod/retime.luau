@@ -93,6 +93,19 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
   then
     utility.scaleAttribute(obj, invFactor, "EmitDelay")
     utility.scaleAttribute(obj, invFactor, "Size_Duration")
+
+    -- the phase rows, which retime never reached under their old names either.
+    -- scaleAttribute is a no-op on an attribute that is absent, so listing both
+    -- the new names and the ones they were renamed from costs nothing
+    utility.scaleAttribute(obj, invFactor, "SizeScaleIn_Duration")
+    utility.scaleAttribute(obj, invFactor, "SizeScaleOut_Duration")
+    utility.scaleAttribute(obj, invFactor, "OffsetIn_Duration")
+    utility.scaleAttribute(obj, invFactor, "OffsetOut_Duration")
+    utility.scaleAttribute(obj, invFactor, "Size_Start_Duration")
+    utility.scaleAttribute(obj, invFactor, "Size_End_Duration")
+    utility.scaleAttribute(obj, invFactor, "Offset_Start_Duration")
+    utility.scaleAttribute(obj, invFactor, "Offset_End_Duration")
+
     utility.scaleAttribute(obj, invFactor, "Transparency_Duration")
     utility.scaleAttribute(obj, invFactor, "Lifetime")
     utility.scaleAttribute(obj, invFactor, "Duration")

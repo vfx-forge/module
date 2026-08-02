@@ -107,7 +107,9 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
   local linmag = attr.getRange(ref, "LinearMagnitude", NumberRange.new(15, 25))
   local angmag = attr.getRange(ref, "AngularMagnitude", NumberRange.new(5, 15))
 
-  local sizeScaleEnd = attr.get(ref, "SizeScaleEnd", vector.zero)
+  -- one phase, so one row: the shrink after the dwell. the old name is read soft
+  -- as the new one's default, so content in the wild keeps working
+  local sizeOutEnd = attr.get(ref, "SizeScaleOut_End", attr.get(ref, "SizeScaleEnd", vector.zero, true))
 
   local minSize = attr.get(ref, "MinSize", vector.create(2, 1, 2))
   local maxSize = attr.get(ref, "MaxSize", vector.create(3, 2, 3))
@@ -117,11 +119,11 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   local count = rng:NextInteger(amount.Min, amount.Max)
 
-  local sizeCurve = attr.get(ref, "Size_Curve", utility.default_bezier)
+  local sizeCurve = attr.get(ref, "SizeScaleOut_Curve", attr.get(ref, "Size_Curve", utility.default_bezier, true))
   local tpCurve = attr.get(ref, "Transparency_Curve", utility.default_bezier)
 
   local tpDuration = attr.get(ref, "Transparency_Duration", 0.5)
-  local sizeDuration = attr.get(ref, "Size_Duration", 0.5)
+  local sizeDuration = attr.get(ref, "SizeScaleOut_Duration", attr.get(ref, "Size_Duration", 0.5, true))
 
   local tpStart = attr.get(ref, "Transparency_Start", 0)
   local tpEnd = attr.get(ref, "Transparency_End", 1)
@@ -294,11 +296,11 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
         local startSize = part.Size
         local startTp = part.Transparency
 
-        if startSize ~= size * sizeScaleEnd then
+        if startSize ~= size * sizeOutEnd then
           table.insert(
             scope,
             tween.fromParams(sizeCurve, sizeDuration, function(alpha, deltaTime)
-              part.Size = startSize:Lerp(size * sizeScaleEnd, alpha)
+              part.Size = startSize:Lerp(size * sizeOutEnd, alpha)
               return deltaTime
             end)
           )
