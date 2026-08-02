@@ -685,7 +685,7 @@ harness.suite(function()
     -- every knob on an instance would step on a grid it does not share
     test("steps from where a delay placed it", function()
       local queue = {
-        { kind = "delay", chain = false, wait = { t = "lit", v = 0.5 } },
+        { kind = "delay", chain = false, wait = { t = "lit", v = 0.6 } },
         {
           kind = "tween",
           chain = false,
@@ -699,9 +699,13 @@ harness.suite(function()
 
       local ctx = { duration = 9 }
 
-      expect(near(modifiers.evaluate(queue, 0.6, ctx) :: number, 0)).ok()
-      expect(near(modifiers.evaluate(queue, 0.75, ctx) :: number, 25)).ok()
+      -- the wait is deliberately not a whole number of steps: at 0.5 a grid
+      -- measured from zero and a grid measured from the wait agree everywhere,
+      -- and the test cannot tell which one ran
+      expect(near(modifiers.evaluate(queue, 0.7, ctx) :: number, 0)).ok()
       expect(near(modifiers.evaluate(queue, 0.9, ctx) :: number, 25)).ok()
+      expect(near(modifiers.evaluate(queue, 1, ctx) :: number, 25)).ok()
+      expect(near(modifiers.evaluate(queue, 1.15, ctx) :: number, 50)).ok()
     end)
   end)
 
@@ -820,6 +824,15 @@ harness.suite(function()
       end
 
       expect(apart).toBe(0)
+
+      -- and it reaches those readings by the cheap grid rather than by
+      -- integrating a flat line, which is the only part of this a value can
+      -- show: the two agree to the last decimal, so nothing but the phase table
+      -- itself says which path ran
+      table.clear(modifiers.phase_cache)
+      walk(ramp(12, 12, linear), 20)
+
+      expect(next(modifiers.phase_cache) == nil).toBe(true)
     end)
 
     -- `linear` is the IDENTITY alpha, so its integral is p squared over two --
@@ -844,37 +857,6 @@ harness.suite(function()
 
       expect(distinct(shaped)).toBe(distinct(straight))
       expect(apart <= 3).toBe(true)
-    end)
-
-    -- and they agree on WHERE each of those steps falls, which per-frame values
-    -- cannot say: a boundary-straddling frame swamps them. Comparing the held
-    -- values themselves is what pins the per-cell solve -- inverting the bracket
-    -- linearly instead lands a 4-to-40 ramp's boundaries up to 9% of the travel
-    -- out, because 32 cells is barely finer than the 22 steps it names
-    test("a linear shape lands its steps where the closed form does", function()
-      local function held(values: { number }): { number }
-        local out = { values[1] }
-
-        for i = 2, #values do
-          if not near(values[i], values[i - 1]) then
-            table.insert(out, values[i])
-          end
-        end
-
-        return out
-      end
-
-      local straight = held(walk(ramp(4, 40), 2000))
-      local shaped = held(walk(ramp(4, 40, linear), 2000))
-      local worst = 0
-
-      expect(#shaped).toBe(#straight)
-
-      for i, v in straight do
-        worst = math.max(worst, math.abs(v - shaped[i]))
-      end
-
-      expect(worst < 0.05).toBe(true)
     end)
 
     -- A shape that climbs sharply INSIDE one of the table's cells, which is
@@ -948,33 +930,134 @@ harness.suite(function()
 
       local straight = walk(ramp(4, 40), 300)
       local shaped = walk(ramp(4, 40, ease), 300)
-      local apart = 0
+      local apart, worst = 0, 0
 
       for i, v in straight do
+        local diff = math.abs(v - shaped[i])
+
         if not near(v, shaped[i]) then
           apart += 1
+          worst = math.max(worst, diff)
         end
       end
 
-      expect(apart > 0).toBe(true)
+      -- a MOVED step, not a boundary frame flooring to either side of itself:
+      -- one epsilon-differing frame out of 301 would satisfy a bare apart > 0,
+      -- and an ease this pronounced holds the knob a seventh of its travel away
+      expect(apart > 100).toBe(true)
+      expect(worst > 5).toBe(true)
     end)
 
     -- an end nobody can read is dropped rather than carried into the integral,
-    -- and what is left is the end that IS a rate. Only a start that is no rate
-    -- at all leaves nothing to step on
-    test("an unusable end falls back to the one that reads", function()
+    -- and what is left is the start, which is a rate the run can be held to.
+    -- A start that is no rate at all leaves nothing to step on, whatever the
+    -- far end says
+    test("an unusable end falls back to the rate it starts at", function()
       local ctx = { duration = 1 }
 
       -- 4fps holds at zero for the first quarter second
       expect(near(modifiers.evaluate(ramp(4, math.huge), 0.1, ctx) :: number, 0)).ok()
       expect(near(modifiers.evaluate(ramp(4, 0 / 0), 0.1, ctx) :: number, 0)).ok()
 
-      -- and a start of zero is not a rate either, so nothing steps
+      -- a rate that ramps to a standstill is unusable too: 4fps still has the
+      -- knob three quarters of the way over, where integrating a rate down to
+      -- zero would strand it at under a third
+      expect(near(modifiers.evaluate(ramp(4, 0), 0.9, ctx) :: number, 75)).ok()
+
+      -- and these step nothing, because the start is what the fallback reads
       expect(near(modifiers.evaluate(ramp(0, 40), 0.1, ctx) :: number, 10)).ok()
+      expect(near(modifiers.evaluate(ramp(math.huge, 40), 0.1, ctx) :: number, 10)).ok()
+      expect(near(modifiers.evaluate(ramp(0 / 0, 40), 0.1, ctx) :: number, 10)).ok()
     end)
 
+    -- 4 to 41 integrates to 22.5 steps over the second, so the run ends half a
+    -- step past its last one. 4 to 40 lands on exactly 22 and cannot tell
+    -- whether the last step is exempt or not
     test("still reaches its finish", function()
-      expect(near(modifiers.evaluate(ramp(4, 40), 1, { duration = 1 }) :: number, 100)).ok()
+      expect(near(modifiers.evaluate(ramp(4, 41), 1, { duration = 1 }) :: number, 100)).ok()
+    end)
+
+    -- a curve is free to overshoot, and one shaping a tween is often MEANT to:
+    -- anticipation dips below the start before it leaves. Read as a rate, an
+    -- alpha of -0.13 across a 2-to-60 ramp is -5 steps per second, and a phase
+    -- that falls is a floor that falls with it. Unclamped, this reads 84 at one
+    -- frame and 31 at the next
+    test("an overshooting shape never runs the knob backwards", function()
+      local back = path.serializePath({
+        { Position = UDim2.fromScale(0, 1), LeftTangent = UDim2.new(), RightTangent = UDim2.fromScale(0.3, 0.6) },
+        { Position = UDim2.fromScale(1, 0), LeftTangent = UDim2.fromScale(-0.3, 0), RightTangent = UDim2.new() },
+      })
+
+      local backwards = {}
+
+      -- a ramp that CLIMBS is the vulnerable one: a negative alpha subtracts
+      -- from the near end. Falling, the same alpha overshoots the fast end and
+      -- the rate stays positive, so 60-to-2 is included as the control
+      for _, values in { walk(ramp(2, 60, back), 400), walk(ramp(4, 400, back), 400), walk(ramp(60, 2, back), 400) } do
+        for i = 2, #values do
+          if values[i] < values[i - 1] - 1e-9 then
+            table.insert(backwards, `{values[i - 1]} then {values[i]}`)
+          end
+        end
+      end
+
+      expect(table.concat(backwards, ", ")).toBe("")
+
+      -- and it is still stepping, rather than clamped into holding still
+      expect(distinct(walk(ramp(2, 60, back), 400)) > 10).toBe(true)
+    end)
+
+    -- an endless run is nought percent through at every elapsed, and a rate has
+    -- no clock to divide: floor(inf * 0) is NaN, which reads as having reached
+    -- the finish, so the knob jumps to its end value and stays there
+    test("an endless duration steps nothing rather than reading as arrived", function()
+      local named = ramp(4, 40)
+      named[1].duration = math.huge
+
+      local lent = ramp(4, 40)
+      lent[1].duration = nil
+
+      local ctx = { duration = math.huge }
+
+      expect(near(modifiers.evaluate(named, 0.5, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(named, 500, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(lent, 0.5, ctx) :: number, 0)).ok()
+    end)
+
+    -- a rate needs a run to spread itself over. A modifier naming no duration,
+    -- in a queue lent none either, is a step function rather than a run, and
+    -- there is no span for the phase to divide
+    test("a rate over no duration at all steps nothing", function()
+      local none = ramp(4, 40)
+      none[1].duration = nil
+
+      local ctx = { duration = 0 }
+
+      expect(near(modifiers.evaluate(none, -1, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(none, 1, ctx) :: number, 100)).ok()
+    end)
+
+    -- and an elapsed that is not a number lands on no step at all. Naming a
+    -- rate must not turn a clock nobody can read into an error: the phase table
+    -- indexed at NaN is a nil, and the arithmetic on it throws
+    test("an elapsed that is not a number reads no worse than a rate-less one", function()
+      local ease = path.serializePath({
+        { Position = UDim2.fromScale(0, 1), LeftTangent = UDim2.new(), RightTangent = UDim2.fromScale(0.6, 0) },
+        { Position = UDim2.fromScale(1, 0), LeftTangent = UDim2.fromScale(-0.6, 0), RightTangent = UDim2.new() },
+      })
+
+      local shaped = ramp(4, 40, ease)
+      shaped[1].curve = nil
+
+      local rateless = ramp(4, 40)
+      rateless[1].curve = nil
+      rateless[1].fps = nil
+
+      local ctx = { duration = 1 }
+      local a = modifiers.evaluate(shaped, 0 / 0, ctx) :: number
+      local b = modifiers.evaluate(rateless, 0 / 0, ctx) :: number
+
+      expect(a ~= a and b ~= b).toBe(true)
     end)
   end)
 

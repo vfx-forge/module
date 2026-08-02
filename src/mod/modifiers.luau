@@ -95,31 +95,11 @@ local function progressOf(m: any, elapsed: number, ctx: Ctx): number
   return math.clamp(elapsed / d, 0, 1)
 end
 
--- how often a modifier is allowed to move, in steps per second. a knob with no
--- fps runs at whatever rate its effect steps at, which is the frame rate; naming
--- one holds it on each step until the next is due, which is what a stylized
--- flipbook-looking phase wants.
---
--- the LAST step is exempt, always. quantizing the whole run leaves a phase whose
--- duration is not a whole number of steps short of its finish for good: 0.1s at
--- 12fps steps at 0, and 1/12 is past the end, so the knob would sit at 83% of
--- its travel and stay there. a modifier that never reaches what it was told to
--- reach is worse than one that arrives a fraction of a step early
--- how often a modifier is allowed to move, in steps per second. a knob with no
--- fps runs at whatever rate its effect steps at, which is the frame rate; naming
--- one holds it on each step until the next is due, which is what a stylized
--- flipbook-looking phase wants.
---
--- the LAST step is exempt, always. quantizing the whole run leaves a phase whose
--- duration is not a whole number of steps short of its finish for good: 0.1s at
--- 12fps steps at 0, and 1/12 is past the end, so the knob would sit at 83% of
--- its travel and stay there. a modifier that never reaches what it was told to
--- reach is worse than one that arrives a fraction of a step early
--- a rate that CHANGES across the run cannot quantize that way. the grid moves
--- with it, and a moved grid is not monotonic: ramping 20fps to 22fps, elapsed
--- 0.60 floors to 0.600 and elapsed 0.61 floors to 0.591, so the knob rewinds a
--- hundredth of its travel. It happens at every rate change, which on a ramp is
--- continuously.
+-- a rate that CHANGES across the run cannot quantize onto a fixed grid. the
+-- grid moves with it, and a moved grid is not monotonic: ramping 20fps to
+-- 22fps, elapsed 0.60 floors to 0.600 and elapsed 0.61 floors to 0.591, so the
+-- knob rewinds a hundredth of its travel. It happens at every rate change,
+-- which on a ramp is continuously.
 --
 -- What is monotonic is the number of steps ELAPSED, which is the integral of the
 -- rate: phase(t) = integral of fps, strictly increasing while fps > 0, so
@@ -146,6 +126,17 @@ local PHASE_SAMPLES = 128
 
 modifiers.phase_cache = {} :: { [string]: any }
 
+-- the shaping alpha, held inside [0,1]. a curve is free to overshoot, and one
+-- shaping a tween is MEANT to: anticipation dips below its start before it
+-- leaves. a rate has no such reading. an alpha of -0.1 across a 2-to-60 ramp is
+-- a rate of -4 steps per second, and a phase that falls is a phase whose floor
+-- falls with it, so the knob reaches its finish a third of the way in and then
+-- rewinds two thirds of its travel in one frame. clamped, the rate stays
+-- between the two ends it was given, and the integral only ever climbs
+local function clampedAlpha(curve: string | buffer, progress: number): number
+  return math.clamp(modifiers.alphaFromCurve(curve, progress), 0, 1)
+end
+
 local function alphaIntegral(curve: string | buffer): { number }
   local key = if typeof(curve) == "buffer" then buffer.tostring(curve) else curve
   local table_ = modifiers.phase_cache[key]
@@ -157,10 +148,10 @@ local function alphaIntegral(curve: string | buffer): { number }
   -- trapezoid over a uniform grid. A[i] is the integral up to i / PHASE_SAMPLES,
   -- so A[1] is zero and the last entry is the whole area
   local out = { 0 }
-  local previous = modifiers.alphaFromCurve(curve, 0)
+  local previous = clampedAlpha(curve, 0)
 
   for i = 1, PHASE_SAMPLES do
-    local current = modifiers.alphaFromCurve(curve, i / PHASE_SAMPLES)
+    local current = clampedAlpha(curve, i / PHASE_SAMPLES)
 
     out[i + 1] = out[i] + (previous + current) / 2 / PHASE_SAMPLES
     previous = current
@@ -250,11 +241,23 @@ local function steppedProgress(m: any, elapsed: number, ctx: Ctx): number
     return progress
   end
 
+  -- a progress that is not a number lands on no step at all: the phase table
+  -- indexed at NaN is a nil, and the arithmetic on it throws. naming a rate
+  -- must not turn a clock nobody can read into an error, so the knob stays
+  -- where an unstepped progress would have put it
+  if progress ~= progress then
+    return progress
+  end
+
   if type(fps) == "table" then
     local ramp = fpsRamp(fps)
     local d = durationOf(m, ctx)
 
-    if ramp and d ~= nil then
+    -- an endless duration divides into nothing: floor(inf * 0) is NaN, and a
+    -- NaN step count inverts to a NaN progress, which lerps to a value nothing
+    -- can be set to. the flat grid below reads it correctly, as a run that is
+    -- nought percent through at every elapsed
+    if ramp and d ~= nil and d ~= math.huge then
       local tbl = if ramp.curve then alphaIntegral(ramp.curve) else nil
       local steps = math.floor(d * phaseAt(ramp, tbl, progress))
 
