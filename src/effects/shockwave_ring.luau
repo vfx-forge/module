@@ -13,11 +13,13 @@ local rng = Random.new()
 
 local ring = {}
 
--- both are driven here, so the applier must not drive them as well. Lifetime
--- especially: its attribute is a NumberRange and a queue samples numbers, so an
--- applier writing it back would replace the range with a scalar
+-- all three are driven here, so the applier must not drive them as well.
+-- Lifetime and Size especially: their legacy attributes are a NumberRange and a
+-- Min/Max pair, and an applier writing a sample back would replace the range
+-- with a scalar
 ring.OWNS = {
   attribute = {
+    Size = true,
     Speed = true,
     Lifetime = true,
   },
@@ -160,10 +162,22 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
       continue
     end
 
-    local width = rng:NextNumber(minSize.X, maxSize.X)
+    -- per SEGMENT, like the lifetime: a size is drawn per emitted instance, and
+    -- one driver for the ring would cut every piece to the same measurements.
+    --
+    -- legacy_mods reads the MinSize and MaxSize pair as a randomizer, and a
+    -- randomizer between two Vector3s draws once per component, which is exactly
+    -- the three NextNumber calls this replaces
+    local sizeDrv = mods.driver(ref, "attribute", "Size", runLength)
+    local size = if sizeDrv then sizeDrv(0) else nil
 
-    local height = rng:NextNumber(minSize.Y, maxSize.Y)
-    local length = rng:NextNumber(minSize.Z, maxSize.Z)
+    if typeof(size) ~= "Vector3" then
+      size = Vector3.new(
+        rng:NextNumber(minSize.X, maxSize.X),
+        rng:NextNumber(minSize.Y, maxSize.Y),
+        rng:NextNumber(minSize.Z, maxSize.Z)
+      )
+    end
 
     local id = utility.getRandomId()
 
@@ -209,7 +223,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     local right = dir:Cross(result.Normal).Unit
 
     local rotCF = CFrame.fromMatrix(result.Position, right, result.Normal)
-      * CFrame.fromOrientation(-math.atan(height / length), 0, 0)
+      * CFrame.fromOrientation(-math.atan(size.Y / size.Z), 0, 0)
 
     part.CFrame = CFrame.new(offsetStart) * rotCF
 
@@ -231,8 +245,6 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
       table.insert(scope, offsetTween)
     end
-
-    local size = Vector3.new(width, height, length)
 
     if size * sizeScaleStart ~= size then
       sizeTween = tween.fromParams(sizeStartCurve, sizeStartDuration, function(alpha, deltaTime)
