@@ -33,13 +33,36 @@ export type Rolls = {
 -- delay is drawn per instance passes the rolls in so the span is the one THIS
 -- instance will run
 function mods.span(queue: { any }, fallback: number, rolls: Rolls?): number
-  local _, frontier = modifiers.schedule(queue, if rolls then rolls.picks else nil)
+  local _, frontier = modifiers.schedule(queue, if rolls then rolls.picks else nil, fallback)
 
   if frontier <= 0 then
     return fallback
   end
 
   return frontier
+end
+
+-- a queue that waits and does nothing else. its delays still push a clock
+-- around, but nothing in it produces a value, so driving it writes the target's
+-- own value back every frame for the length of the waits and holds the emit
+-- open while it does. mods.driver's sample(0) guard catches the base-only case
+-- on an attribute, whose base is usually nil, but not on a property, whose base
+-- is whatever it currently holds
+function mods.inert(queue: { any }): boolean
+  local waits = false
+
+  for _, m in queue do
+    if m.kind == "delay" then
+      waits = true
+      continue
+    end
+
+    if not modifiers.BASE_KINDS[m.kind] then
+      return false
+    end
+  end
+
+  return waits
 end
 
 -- the framed attribute decoded on its own, with no legacy fallback. an EMPTY
@@ -182,6 +205,10 @@ function mods.driver(ref: Instance, source: string, name: string, fallback: numb
   -- branch, which still has the real default. this is the only shape where
   -- refusing to drive is more faithful than driving
   if #queue == 1 and queue[1].partial then
+    return nil, fallback
+  end
+
+  if mods.inert(queue) then
     return nil, fallback
   end
 

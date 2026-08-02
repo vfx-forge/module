@@ -283,6 +283,10 @@ harness.suite(function()
   -- the modifiers after it along the clock, which is what an effect with an
   -- entry phase, a wait and an exit phase needs
   harness.describe("modifiers.evaluate with a delay", function()
+    local function lit(v: number)
+      return { t = "lit", v = v }
+    end
+
     local function phase(startV: number?, finishV: number, chain: boolean)
       return {
         kind = "tween",
@@ -302,10 +306,13 @@ harness.suite(function()
       expect(near(modifiers.evaluate(queue, 2, { duration = 9 }) :: number, 10)).ok()
     end)
 
-    -- the wait is measured from where the queue had already reached, not from
-    -- the delay's own place on the clock, so the exit phase below starts at 2
-    -- rather than at 1: one second of entry, then one of wait
-    test("starts what follows once what came before has finished", function()
+    -- a modifier's offset is the SUM of the waits before it and nothing else.
+    -- the entry phase below runs for a second and the wait is a second, and the
+    -- exit still starts at 1 rather than at 2: how long a neighbour runs has no
+    -- say in where a delay puts things. that is what lets one wait mean the
+    -- same moment to knobs whose own phases differ in length, which is what an
+    -- effect drawing a single lifetime per emitted instance needs
+    test("offsets by the sum of the waits before it, not by its neighbours", function()
       local queue = {
         phase(0, 10, false),
         { kind = "delay", chain = false, wait = { t = "lit", v = 1 } },
@@ -315,9 +322,97 @@ harness.suite(function()
       local ctx = { duration = 9 }
 
       expect(near(modifiers.evaluate(queue, 1, ctx) :: number, 10)).ok()
+      expect(near(modifiers.evaluate(queue, 1.5, ctx) :: number, 15)).ok()
+      expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 20)).ok()
+    end)
+
+    -- the shape the frontier reading could not express at all: a wait shorter
+    -- than the phase it chains from. the legacy effect reads its target's live
+    -- value at the moment the wait is up, and mid-flight is a value the phase
+    -- is still moving through, so a delay has to be able to land there.
+    --
+    -- KNOWN DIVERGENCE. the legacy effect DISCONNECTS the entry tween when the
+    -- wait fires and lerps from a snapshot, while a chain here re-reads the
+    -- entry at the current elapsed, so the value it chains from keeps moving.
+    -- the two agree wherever the entry has already clamped, which is every wait
+    -- longer than the phase before it
+    test("a wait can land before the phase it chains from has finished", function()
+      local queue = {
+        { kind = "tween", chain = false, duration = 2, start = lit(0), finish = lit(10), curve = linear },
+        { kind = "delay", chain = false, wait = { t = "lit", v = 1 } },
+        { kind = "tween", chain = true, duration = 1, finish = lit(20), curve = linear },
+      }
+
+      local ctx = { duration = 9 }
+
+      -- at the wait the entry is halfway, and the exit starts from there
+      expect(near(modifiers.evaluate(queue, 1, ctx) :: number, 5)).ok()
+
+      -- half a second later the entry has reached 7.5 and the exit is halfway
+      -- from it, which is the divergence above: a snapshot would read 12.5
+      expect(near(modifiers.evaluate(queue, 1.5, ctx) :: number, 13.75)).ok()
+      expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 20)).ok()
+    end)
+
+    -- a delayed modifier that names no duration of its own gets what is LEFT of
+    -- the run, not another whole run. asking for the latter is asking for a
+    -- modifier that can never finish inside the span mods.span reports, which
+    -- is a knob frozen at its start value for the whole emit
+    test("a delayed modifier with no duration finishes by the end of the run", function()
+      local queue = {
+        { kind = "delay", chain = false, wait = { t = "lit", v = 2 } },
+        { kind = "tween", chain = false, start = lit(0), finish = lit(10), curve = linear },
+      }
+
+      -- mods.span lends 7 for this queue: the wait, then a full fallback of 5
+      local ctx = { duration = 7 }
+
+      expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(queue, 4.5, ctx) :: number, 5)).ok()
+      expect(near(modifiers.evaluate(queue, 7, ctx) :: number, 10)).ok()
+    end)
+
+    -- progressOf returns 1 outright for a duration of zero, which without the
+    -- offset would step the value at elapsed 0 no matter where it was placed
+    test("a zero duration steps where it was placed rather than at zero", function()
+      local queue = {
+        { kind = "delay", chain = false, wait = { t = "lit", v = 1 } },
+        { kind = "tween", chain = false, duration = 0, start = lit(0), finish = lit(10), curve = linear },
+      }
+
+      local ctx = { duration = 9 }
+
+      expect(modifiers.evaluate(queue, 0.5, ctx)).toBe(0)
+      expect(modifiers.evaluate(queue, 1, ctx)).toBe(10)
+    end)
+
+    -- a randomizer's alpha is its draw, so nothing about it varies with time
+    -- and a delay in front of it changes nothing. pinned because the delay
+    -- still moves the queue's reach, so the shape is not simply a no-op
+    test("a delay before a randomizer does not hold it back", function()
+      local queue = {
+        { kind = "delay", chain = false, wait = { t = "lit", v = 5 } },
+        { kind = "randomizer", chain = false, start = lit(0), finish = lit(100) },
+      }
+
+      local ctx = { duration = 9, draws = { [2] = 0.25 } }
+
+      expect(near(modifiers.evaluate(queue, 0, ctx) :: number, 25)).ok()
+      expect(near(modifiers.evaluate(queue, 9, ctx) :: number, 25)).ok()
+    end)
+
+    test("a base entry still seeds a chain whose first real phase is delayed", function()
+      local queue = {
+        { kind = "sequence", chain = false },
+        { kind = "delay", chain = false, wait = { t = "lit", v = 1 } },
+        phase(nil, 10, true),
+      }
+
+      local ctx = { duration = 9, base = 4 }
+
+      expect(near(modifiers.evaluate(queue, 0, ctx) :: number, 4)).ok()
+      expect(near(modifiers.evaluate(queue, 1, ctx) :: number, 4)).ok()
       expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 10)).ok()
-      expect(near(modifiers.evaluate(queue, 2.5, ctx) :: number, 15)).ok()
-      expect(near(modifiers.evaluate(queue, 3, ctx) :: number, 20)).ok()
     end)
 
     test("contributes no value of its own", function()
@@ -373,12 +468,6 @@ harness.suite(function()
       expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 0)).ok()
       expect(near(modifiers.evaluate(queue, 4.5, ctx) :: number, 5)).ok()
     end)
-
-    test("a queue with no delay is unmoved by the walk", function()
-      local queue = { phase(0, 10, false) }
-
-      expect(near(modifiers.evaluate(queue, 0.5, { duration = 9 }) :: number, 5)).ok()
-    end)
   end)
 
   harness.describe("modifiers.schedule", function()
@@ -394,15 +483,44 @@ harness.suite(function()
       -- nothing ahead of the first delay is moved, so it is absent rather than
       -- written down as the zero it is
       expect((offsets :: any)[1]).toBe(nil)
-      expect((offsets :: any)[3]).toBe(3)
-      expect(frontier).toBe(3.5)
+
+      -- the wait alone, not the wait plus the second the entry phase runs for
+      expect((offsets :: any)[3]).toBe(2)
+      expect(frontier).toBe(2.5)
     end)
 
-    -- a modifier with no duration of its own runs over the effect's, and the
-    -- effect's duration IS the reach, so it can never extend it
-    test("a modifier with no duration of its own reaches nowhere", function()
-      local _, frontier = modifiers.schedule({ { kind = "tween", chain = false } })
+    -- a modifier with no duration of its own runs over the effect's, and at
+    -- offset zero the effect's duration IS the reach, so it cannot extend it
+    test("an undelayed modifier with no duration of its own reaches nowhere", function()
+      local _, frontier = modifiers.schedule({ { kind = "tween", chain = false } }, nil, 5)
 
+      expect(frontier).toBe(0)
+    end)
+
+    -- once it starts late it can, because it still has to get a full turn
+    -- before the run is over, and mods.driver pumps for exactly this reach
+    test("a delayed modifier with no duration reaches a full lent duration past its wait", function()
+      local queue = {
+        { kind = "delay", chain = false, wait = { t = "lit", v = 2 } },
+        { kind = "tween", chain = false },
+      }
+
+      local _, frontier = modifiers.schedule(queue, nil, 5)
+
+      expect(frontier).toBe(7)
+    end)
+
+    -- a caller that only wants the offsets lends nothing, and gets no say in
+    -- the reach in exchange
+    test("a lent duration is only ever about the reach", function()
+      local queue = {
+        { kind = "delay", chain = false, wait = { t = "lit", v = 2 } },
+        { kind = "tween", chain = false },
+      }
+
+      local offsets, frontier = modifiers.schedule(queue)
+
+      expect((offsets :: any)[2]).toBe(2)
       expect(frontier).toBe(0)
     end)
 
@@ -415,7 +533,23 @@ harness.suite(function()
       expect(frontier).toBe(2)
     end)
 
-    test("a base entry is not on the clock at all", function()
+    -- a delay with nothing after it shifts nothing, so it must not pad the run
+    -- with a wait no modifier is waiting for
+    test("a delay last in the queue reaches nowhere", function()
+      local queue = {
+        { kind = "tween", chain = false, duration = 1 },
+        { kind = "delay", chain = false, wait = { t = "lit", v = 5 } },
+      }
+
+      local _, frontier = modifiers.schedule(queue, nil, 9)
+
+      expect(frontier).toBe(1)
+    end)
+
+    -- a base entry holds a value rather than running, so no delay moves it and
+    -- it takes no offset. a duration on one still lengthened the run before
+    -- delays existed, and has to keep doing so
+    test("a base entry takes no offset, and its duration still reaches", function()
       local queue = {
         { kind = "sequence", chain = false, duration = 5 },
         { kind = "delay", chain = false, wait = { t = "lit", v = 1 } },
@@ -424,8 +558,9 @@ harness.suite(function()
 
       local offsets, frontier = modifiers.schedule(queue)
 
+      expect((offsets :: any)[1]).toBe(nil)
       expect((offsets :: any)[3]).toBe(1)
-      expect(frontier).toBe(2)
+      expect(frontier).toBe(5)
     end)
   end)
 
@@ -444,6 +579,15 @@ harness.suite(function()
       expect(modifiers.waitOf({ kind = "delay" })).toBe(0)
       expect(modifiers.waitOf({ kind = "delay", wait = { t = "var", ref = "nope" } })).toBe(0)
       expect(modifiers.waitOf({ kind = "delay", duration = -5 })).toBe(0)
+    end)
+
+    -- the wait reaches mods.span and then tween.timer, which never satisfies
+    -- elapsed >= duration for either of these and so never finishes the emit.
+    -- the comparison this arithmetic replaced used to reject them for free
+    test("refuses a wait that is not finite", function()
+      expect(modifiers.waitOf({ kind = "delay", wait = { t = "lit", v = 0 / 0 } })).toBe(0)
+      expect(modifiers.waitOf({ kind = "delay", wait = { t = "lit", v = math.huge } })).toBe(0)
+      expect(modifiers.waitOf({ kind = "delay", duration = math.huge })).toBe(0)
     end)
   end)
 end)

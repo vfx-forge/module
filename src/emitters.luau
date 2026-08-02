@@ -152,7 +152,7 @@ function emitters.applyMods(
 
     local queue = mods.read(obj, source :: string, name :: string)
 
-    if queue == nil or #queue == 0 then
+    if queue == nil or #queue == 0 or mods.inert(queue) then
       continue
     end
 
