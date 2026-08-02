@@ -1,6 +1,7 @@
 local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local logger = require("@mod/logger")
@@ -13,6 +14,18 @@ local ObjectCache = require("@obj/ObjectCache")
 local rng = Random.new()
 
 local line = {}
+
+-- all three are driven here, so the applier must not drive them as well.
+-- Lifetime and Size especially: their legacy attributes are a NumberRange and a
+-- Min/Max pair, and an applier writing a sample back would replace the range
+-- with a scalar
+line.OWNS = {
+  attribute = {
+    Size = true,
+    Speed = true,
+    Lifetime = true,
+  },
+}
 
 local part_cache: ObjectCache.ObjectCache?
 
@@ -96,6 +109,26 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
   local tpStart = attr.get(ref, "Transparency_Start", 0)
   local tpEnd = attr.get(ref, "Transparency_End", 0)
 
+  -- the longest a piece emitted at the very end can last: the whole emission,
+  -- then the longest dwell it can draw, then the longest exit it can run
+  local runLength = duration + lifetime.Max + math.max(sizeEndDuration, offsetEndDuration, tpDuration)
+
+  -- asked for BEFORE any non-soft read of the quad keys it would find, because
+  -- attr.get writes its default back. the fallback is the line's own run rather
+  -- than Speed_Duration: it is only reached when no modifier names a duration,
+  -- which is what the panel calls linked, and linked means "as long as the
+  -- effect runs"
+  local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", runLength)
+
+  local speedStart = attr.get(ref, "Speed_Start", 1, true)
+  local speedEnd = attr.get(ref, "Speed_End", 1, true)
+
+  local currentSpeed = if speedDrv then speedDrv(0) else speedStart
+
+  local function getEffectiveSpeed(): number
+    return currentSpeed
+  end
+
   local sync = attr.get(ref, "SyncPosition", false)
 
   duration = math.max(duration, 0.001)
@@ -125,12 +158,36 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
   local currentRate = rateStart
   local currentScale = scaleStart
 
+  -- the speed tween is the clock itself, so it is the one stepper that does not
+  -- scale by it
+  if speedDrv then
+    table.insert(
+      scope,
+      tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
+        currentSpeed = speedDrv(elapsed)
+        return deltaTime
+      end)
+    )
+  elseif speedStart ~= speedEnd then
+    table.insert(
+      scope,
+      tween.fromParams(
+        attr.get(ref, "Speed_Curve", utility.default_bezier),
+        attr.get(ref, "Speed_Duration", 0.1),
+        function(alpha, deltaTime)
+          currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
+          return deltaTime
+        end
+      )
+    )
+  end
+
   if scaleStart ~= scaleEnd then
     table.insert(
       scope,
       tween.fromParams(attr.get(ref, "Scale_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
         currentScale = utility.lerp(scaleStart, scaleEnd, alpha)
-        return deltaTime
+        return deltaTime * getEffectiveSpeed()
       end)
     )
   end
@@ -140,7 +197,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
       scope,
       tween.fromParams(attr.get(ref, "Rate_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
         currentRate = utility.lerp(rateStart, rateEnd, alpha)
-        return deltaTime
+        return deltaTime * getEffectiveSpeed()
       end)
     )
   end
@@ -160,6 +217,10 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
   table.insert(
     scope,
     tween.fromParams(utility.linear_bezier, duration, function(_, deltaTime)
+      -- the emission runs on the effect's clock too, so a speed knob spaces the
+      -- pieces out and shortens the line's run by the same factor
+      deltaTime *= getEffectiveSpeed()
+
       last += deltaTime
 
       local threshold = 1 / currentRate
@@ -197,10 +258,21 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
           return deltaTime
         end
 
-        local width = rng:NextNumber(minSize.X, maxSize.X)
+        -- per emitted PIECE, like the lifetime below: a size is drawn per
+        -- instance, and one driver for the line would cut every piece to the
+        -- same measurements. legacy_mods reads the MinSize and MaxSize pair as
+        -- a randomizer, and a randomizer between two Vector3s draws once per
+        -- component, which is exactly the three NextNumber calls this replaces
+        local sizeDrv = mods.driver(ref, "attribute", "Size", runLength)
+        local drawnSize = if sizeDrv then sizeDrv(0) else nil
 
-        local height = rng:NextNumber(minSize.Y, maxSize.Y)
-        local length = rng:NextNumber(minSize.Z, maxSize.Z)
+        if typeof(drawnSize) ~= "Vector3" then
+          drawnSize = Vector3.new(
+            rng:NextNumber(minSize.X, maxSize.X),
+            rng:NextNumber(minSize.Y, maxSize.Y),
+            rng:NextNumber(minSize.Z, maxSize.Z)
+          )
+        end
 
         local id = utility.getRandomId()
 
@@ -248,7 +320,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
         local right = dir:Cross(result.Normal).Unit
 
         local rotCF = CFrame.fromMatrix(result.Position, right, result.Normal)
-          * CFrame.fromOrientation(-math.atan(height / length), 0, 0)
+          * CFrame.fromOrientation(-math.atan(drawnSize.Y / drawnSize.Z), 0, 0)
 
         part.CFrame = CFrame.new(offsetStart) * rotCF
 
@@ -264,19 +336,19 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
             function(alpha, deltaTime)
               currentOffset = offsetStart:Lerp(baseOffset, alpha)
               part.CFrame = CFrame.new(currentOffset) * rotCF
-              return deltaTime
+              return deltaTime * getEffectiveSpeed()
             end
           )
 
           table.insert(scope, offsetTween)
         end
 
-        local size = Vector3.new(width, height, length) * currentScale
+        local size = drawnSize * currentScale
 
         if size * sizeScaleStart ~= size then
           sizeTween = tween.fromParams(sizeStartCurve, sizeStartDuration, function(alpha, deltaTime)
             part.Size = (size * sizeScaleStart):Lerp(size, alpha)
-            return deltaTime
+            return deltaTime * getEffectiveSpeed()
           end)
 
           table.insert(scope, sizeTween)
@@ -287,59 +359,84 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
         local env = scope.effects.emitNested(realPart, scope.depth + 1, scope)
         table.insert(promises, env.Finished)
 
-        task.delay(rng:NextNumber(lifetime.Min, lifetime.Max), function()
-          if sizeTween then
-            sizeTween:Disconnect()
+        -- legacy_mods reads the Lifetime NumberRange as a randomizer, so this
+        -- covers authored and unauthored alike and the manual draw is only left
+        -- for a line carrying no Lifetime attribute at all
+        local lifeDrv = mods.driver(ref, "attribute", "Lifetime", 0)
+        local drawn = if lifeDrv then lifeDrv(0) else rng:NextNumber(lifetime.Min, lifetime.Max)
+
+        -- the dwell belongs to the effect rather than to the scheduler: its
+        -- cleanup lives in the scope, so tearing the line down cancels it rather
+        -- than firing exit tweens at a pooled part the cache has handed on, and
+        -- its length is the counter's to decide, so a Lifetime a modifier is
+        -- moving moves a dwell that is already running
+        tween.after(math.huge, function(deltaTime, elapsed)
+          local target = if lifeDrv then lifeDrv(elapsed) else nil
+
+          if typeof(target) ~= "number" then
+            target = drawn
           end
 
-          if offsetTween then
-            offsetTween:Disconnect()
+          if elapsed >= target then
+            return nil :: any
           end
 
-          local startSize = part.Size
-          local startTp = part.Transparency
+          return deltaTime * getEffectiveSpeed()
+        end, function()
+          task.spawn(function()
+            if sizeTween then
+              sizeTween:Disconnect()
+            end
 
-          if startSize ~= size * sizeScaleEnd then
-            table.insert(
-              scope,
-              tween.fromParams(sizeEndCurve, sizeEndDuration, function(alpha, deltaTime)
-                part.Size = startSize:Lerp(size * sizeScaleEnd, alpha)
-                return deltaTime
-              end)
-            )
-          end
+            if offsetTween then
+              offsetTween:Disconnect()
+            end
 
-          if currentOffset ~= offsetEnd then
-            table.insert(
-              scope,
-              tween.fromParams(
-                attr.get(ref, "Offset_End_Curve", utility.default_bezier),
-                offsetEndDuration,
-                function(alpha, deltaTime)
-                  part.CFrame = CFrame.new(currentOffset:Lerp(offsetEnd, alpha)) * rotCF
-                  return deltaTime
-                end
+            local startSize = part.Size
+            local startTp = part.Transparency
+
+            if startSize ~= size * sizeScaleEnd then
+              table.insert(
+                scope,
+                tween.fromParams(sizeEndCurve, sizeEndDuration, function(alpha, deltaTime)
+                  part.Size = startSize:Lerp(size * sizeScaleEnd, alpha)
+                  return deltaTime * getEffectiveSpeed()
+                end)
               )
-            )
-          end
+            end
 
-          if startTp ~= tpEnd then
-            table.insert(
-              scope,
-              tween.fromParams(
-                attr.get(ref, "Transparency_Curve", utility.default_bezier),
-                tpDuration,
-                function(alpha, deltaTime)
-                  part.Transparency = utility.lerp(startTp, tpEnd, alpha)
-                  return deltaTime
-                end
+            if currentOffset ~= offsetEnd then
+              table.insert(
+                scope,
+                tween.fromParams(
+                  attr.get(ref, "Offset_End_Curve", utility.default_bezier),
+                  offsetEndDuration,
+                  function(alpha, deltaTime)
+                    part.CFrame = CFrame.new(currentOffset:Lerp(offsetEnd, alpha)) * rotCF
+                    return deltaTime * getEffectiveSpeed()
+                  end
+                )
               )
-            )
-          end
+            end
 
-          local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
-          table.insert(promises, env.Finished)
-        end)
+            if startTp ~= tpEnd then
+              table.insert(
+                scope,
+                tween.fromParams(
+                  attr.get(ref, "Transparency_Curve", utility.default_bezier),
+                  tpDuration,
+                  function(alpha, deltaTime)
+                    part.Transparency = utility.lerp(startTp, tpEnd, alpha)
+                    return deltaTime * getEffectiveSpeed()
+                  end
+                )
+              )
+            end
+
+            local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
+            table.insert(promises, env.Finished)
+          end)
+        end, scope)
       end
 
       last %= threshold
@@ -348,7 +445,12 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
     end, nil, nil, true, utility.RENDER_PRIORITY + scope.depth)
   )
 
-  task.wait(lifetime.Max + duration + math.max(sizeEndDuration, offsetEndDuration))
+  -- the hold runs on the clock the dwells do, or a speed below one stretches
+  -- them past it and the scope tears down mid dwell. the transparency exit is
+  -- one of the three a dwell starts, so it counts here too
+  tween.timer(runLength, function(deltaTime)
+    return deltaTime * getEffectiveSpeed()
+  end, nil, scope)
 
   Promise.all(promises):await()
 end

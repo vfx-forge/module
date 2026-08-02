@@ -2,6 +2,7 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
@@ -12,6 +13,21 @@ local ObjectCache = require("@obj/ObjectCache")
 local rng = Random.new()
 
 local debris = {}
+
+-- both are driven here, so the applier must not drive them as well: their legacy
+-- attributes are a NumberRange and a Min/Max pair, and an applier writing a
+-- sample back would replace the range with a scalar.
+--
+-- no Speed. debris flies under physics impulses, so a speed multiplier would
+-- scale the dwell and the shrink and leave the flight alone, which reads worse
+-- than having no knob at all
+debris.OWNS = {
+  attribute = {
+    Size = true,
+    Lifetime = true,
+  },
+}
+
 local physicsParts = {}
 
 local part_cache: ObjectCache.ObjectCache?
@@ -191,11 +207,21 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
 
     part.CFrame = CFrame.new(originPosition)
 
-    local size = Vector3.new(
-      rng:NextNumber(minSize.X, maxSize.X),
-      rng:NextNumber(minSize.Y, maxSize.Y),
-      rng:NextNumber(minSize.Z, maxSize.Z)
-    )
+    -- per PIECE: a size is drawn per emitted instance, and one driver for the
+    -- whole field would cut every piece to the same measurements. legacy_mods
+    -- reads the MinSize and MaxSize pair as a randomizer, and a randomizer
+    -- between two Vector3s draws once per component, which is exactly the three
+    -- NextNumber calls this replaces
+    local sizeDrv = mods.driver(ref, "attribute", "Size", lifetime.Max)
+    local size = if sizeDrv then sizeDrv(0) else nil
+
+    if typeof(size) ~= "Vector3" then
+      size = Vector3.new(
+        rng:NextNumber(minSize.X, maxSize.X),
+        rng:NextNumber(minSize.Y, maxSize.Y),
+        rng:NextNumber(minSize.Z, maxSize.Z)
+      )
+    end
 
     part.Size = size
 
@@ -240,33 +266,58 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     local env = scope.effects.emitNested(realPart, scope.depth + 1, scope)
     table.insert(promises, env.Finished)
 
-    task.delay(rng:NextNumber(lifetime.Min, lifetime.Max), function()
-      local startSize = part.Size
-      local startTp = part.Transparency
+    -- legacy_mods reads the Lifetime NumberRange as a randomizer, so this covers
+    -- authored and unauthored alike and the manual draw is only left for a field
+    -- carrying no Lifetime attribute at all
+    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", 0)
+    local drawn = if lifeDrv then lifeDrv(0) else rng:NextNumber(lifetime.Min, lifetime.Max)
 
-      if startSize ~= size * sizeScaleEnd then
-        table.insert(
-          scope,
-          tween.fromParams(sizeCurve, sizeDuration, function(alpha, deltaTime)
-            part.Size = startSize:Lerp(size * sizeScaleEnd, alpha)
-            return deltaTime
-          end)
-        )
+    -- the dwell belongs to the effect rather than to the scheduler: its cleanup
+    -- lives in the scope, so tearing the field down cancels it rather than
+    -- firing a shrink at a pooled part the cache has already handed on, and its
+    -- length is the counter's to decide, so a Lifetime a modifier is moving
+    -- moves a dwell that is already running
+    tween.after(math.huge, function(deltaTime, elapsed)
+      local target = if lifeDrv then lifeDrv(elapsed) else nil
+
+      if typeof(target) ~= "number" then
+        target = drawn
       end
 
-      if startTp ~= tpEnd then
-        table.insert(
-          scope,
-          tween.fromParams(tpCurve, tpDuration, function(alpha, deltaTime)
-            part.Transparency = utility.lerp(startTp, tpEnd, alpha)
-            return deltaTime
-          end)
-        )
+      if elapsed >= target then
+        return nil :: any
       end
 
-      local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
-      table.insert(promises, env.Finished)
-    end)
+      return deltaTime
+    end, function()
+      task.spawn(function()
+        local startSize = part.Size
+        local startTp = part.Transparency
+
+        if startSize ~= size * sizeScaleEnd then
+          table.insert(
+            scope,
+            tween.fromParams(sizeCurve, sizeDuration, function(alpha, deltaTime)
+              part.Size = startSize:Lerp(size * sizeScaleEnd, alpha)
+              return deltaTime
+            end)
+          )
+        end
+
+        if startTp ~= tpEnd then
+          table.insert(
+            scope,
+            tween.fromParams(tpCurve, tpDuration, function(alpha, deltaTime)
+              part.Transparency = utility.lerp(startTp, tpEnd, alpha)
+              return deltaTime
+            end)
+          )
+        end
+
+        local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
+        table.insert(promises, env.Finished)
+      end)
+    end, scope)
   end
 
   task.wait(lifetime.Max + math.max(tpDuration, sizeDuration))
