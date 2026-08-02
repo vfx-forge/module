@@ -402,22 +402,53 @@ harness.suite(function()
       expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 20)).ok()
     end)
 
-    -- a delayed modifier that names no duration of its own gets what is LEFT of
-    -- the run, not another whole run. asking for the latter is asking for a
-    -- modifier that can never finish inside the span mods.span reports, which
-    -- is a knob frozen at its start value for the whole emit
-    test("a delayed modifier with no duration finishes by the end of the run", function()
+    -- a delayed modifier that names no duration runs for the delay-free span,
+    -- starting where the wait put it. the readings are the same ones the old
+    -- "what is left of the run" rule gave here, because the queue names no
+    -- duration of its own, so the span it runs for IS what the effect lent it
+    test("a delayed modifier with no duration runs a full lent duration from its wait", function()
       local queue = {
         { kind = "delay", chain = false, wait = { t = "lit", v = 2 } },
         { kind = "tween", chain = false, start = lit(0), finish = lit(10), curve = linear },
       }
 
-      -- mods.span lends 7 for this queue: the wait, then a full fallback of 5
-      local ctx = { duration = 7 }
+      -- mods.span lends 7 for this queue: the wait, then a full fallback of 5,
+      -- and the 5 is what the modifier itself runs for
+      local ctx = { duration = 7, linked = 5 }
 
       expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 0)).ok()
       expect(near(modifiers.evaluate(queue, 4.5, ctx) :: number, 5)).ok()
       expect(near(modifiers.evaluate(queue, 7, ctx) :: number, 10)).ok()
+    end)
+
+    -- the reason a linked modifier is measured against the delay-free span: a
+    -- delay must not reach BACKWARDS. the head names no duration, and putting a
+    -- delay after it lengthens the queue, which under a "what is left of the
+    -- run" reading stretched the head as well. a modifier re-timed by a wait it
+    -- never sits behind is the one thing a delay must never do
+    test("a delay does not re-time what runs before it", function()
+      local head = { kind = "tween", chain = false, start = lit(0), finish = lit(10), curve = linear }
+      local tail = { kind = "tween", chain = true, duration = 1, finish = lit(20), curve = linear }
+
+      local plain = { head, tail }
+      local delayed = { head, { kind = "delay", chain = false, wait = lit(3) }, tail }
+
+      local _, plainReach, plainLinked = modifiers.schedule(plain, nil, 9)
+      local _, delayedReach, delayedLinked = modifiers.schedule(delayed, nil, 9)
+
+      -- the head runs for the one second the queue names, either way. only the
+      -- reach moves, because only the tail waits
+      expect(plainLinked).toBe(1)
+      expect(delayedLinked).toBe(1)
+      expect(plainReach).toBe(1)
+      expect(delayedReach).toBe(4)
+
+      -- and the tail has not started at half a second, so what reads back is the
+      -- head alone, halfway through its own second rather than through the run
+      local ctx = { duration = delayedReach, linked = delayedLinked }
+
+      expect(near(modifiers.evaluate(delayed, 0.5, ctx) :: number, 5)).ok()
+      expect(near(modifiers.evaluate(delayed, 1, ctx) :: number, 10)).ok()
     end)
 
     -- progressOf returns 1 outright for a duration of zero, which without the
@@ -596,10 +627,14 @@ harness.suite(function()
 
     -- a modifier with no duration of its own runs over the effect's, and at
     -- offset zero the effect's duration IS the reach, so it cannot extend it
-    test("an undelayed modifier with no duration of its own reaches nowhere", function()
-      local _, frontier = modifiers.schedule({ { kind = "tween", chain = false } }, nil, 5)
+    test("an undelayed modifier with no duration reaches the duration it was lent", function()
+      local _, frontier, linked = modifiers.schedule({ { kind = "tween", chain = false } }, nil, 5)
 
-      expect(frontier).toBe(0)
+      -- it runs for the lent duration starting at zero, so that is how far it
+      -- reaches too. mods.span answers 5 either way, since a reach of nothing
+      -- falls back to the very same number
+      expect(frontier).toBe(5)
+      expect(linked).toBe(5)
     end)
 
     -- once it starts late it can, because it still has to get a full turn
@@ -617,16 +652,20 @@ harness.suite(function()
 
     -- a caller that only wants the offsets lends nothing, and gets no say in
     -- the reach in exchange
-    test("a lent duration is only ever about the reach", function()
+    test("with nothing lent, a modifier that names no duration runs for nothing", function()
       local queue = {
         { kind = "delay", chain = false, wait = { t = "lit", v = 2 } },
         { kind = "tween", chain = false },
       }
 
-      local offsets, frontier = modifiers.schedule(queue)
+      local offsets, frontier, linked = modifiers.schedule(queue)
 
+      -- a caller after the offsets alone lends nothing, and then a modifier
+      -- naming no duration has no run of its own: the reach is only where the
+      -- delays put it
       expect((offsets :: any)[2]).toBe(2)
-      expect(frontier).toBe(0)
+      expect(frontier).toBe(2)
+      expect(linked).toBe(0)
     end)
 
     -- a queue that delays nothing carries no table at all, so the frame path

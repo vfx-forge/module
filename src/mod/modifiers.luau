@@ -20,6 +20,7 @@ export type Ctx = {
   draws: { [number]: Draw }?,
   picks: { [number]: Picks }?,
   offsets: { [number]: number }?,
+  linked: number?,
   env: { [string]: any }?,
   envelope: number?,
 }
@@ -71,14 +72,13 @@ end
 
 -- how far through its own run a modifier is, given an elapsed already measured
 -- from where the delays before it put it, so a negative one means it has not
--- started. a nil duration means it runs over the effect's own, and a delayed
--- modifier gets what is LEFT of the effect's: it starts late and still has to
--- finish by the end of the run rather than that much past it
-local function progressOf(m: any, elapsed: number, ctx: Ctx, offset: number): number
+-- started. a nil duration means it runs for ctx.linked, the delay-free span, so
+-- a delay moves a modifier without changing how long it takes once it starts
+local function progressOf(m: any, elapsed: number, ctx: Ctx): number
   local d = m.duration
 
   if typeof(d) ~= "number" then
-    d = if typeof(ctx.duration) == "number" then ctx.duration - offset else nil
+    d = if typeof(ctx.linked) == "number" then ctx.linked else ctx.duration
   end
 
   -- a step function still steps where it was placed rather than at zero
@@ -134,7 +134,23 @@ function modifiers.schedule(
   picks: { [number]: Picks }?,
   fallback: number?,
   env: { [string]: any }?
-): ({ [number]: number }?, number)
+): ({ [number]: number }?, number, number)
+  -- the longest duration the queue NAMES, which is what a modifier that names
+  -- none runs for. taken from durations alone, with no offset in it: a delay
+  -- lengthens the run of the queue, but it must not stretch the modifier it
+  -- delays, and it must not reach backwards and stretch one that ran before it
+  local linked = 0
+
+  for _, m in queue do
+    if m.kind ~= "delay" and typeof(m.duration) == "number" and m.duration > linked then
+      linked = m.duration
+    end
+  end
+
+  if linked <= 0 then
+    linked = if typeof(fallback) == "number" then fallback else 0
+  end
+
   local offsets: { [number]: number }? = nil
   local offset = 0
   local frontier = 0
@@ -180,22 +196,16 @@ function modifiers.schedule(
       offsets[i] = offset
     end
 
-    local d = m.duration
+    -- a modifier naming no duration of its own runs for the delay-free span,
+    -- wherever a delay placed it, so its reach is that span past its own start
+    local d = if typeof(m.duration) == "number" then m.duration else linked
 
-    -- a modifier naming no duration of its own runs to the end of the run. at
-    -- offset zero that means it can never extend the run, which is what the
-    -- reach already said before delays existed. after a delay it starts late,
-    -- so the run has to be long enough for it to still get a full turn
-    if typeof(d) ~= "number" then
-      d = if offset > 0 then fallback else nil
-    end
-
-    if typeof(d) == "number" and offset + d > frontier then
+    if offset + d > frontier then
       frontier = offset + d
     end
   end
 
-  return offsets, frontier
+  return offsets, frontier, linked
 end
 
 -- sample a serialized curve (a Path2D control-point buffer or string) at
@@ -260,7 +270,7 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
     local finishVal = if m.finish then value.resolve(m.finish, picks and picks.finish, ctx.env) else startVal
 
     local offset = if offsets then offsets[i] or 0 else 0
-    local progress = progressOf(m, elapsed - offset, ctx, offset)
+    local progress = progressOf(m, elapsed - offset, ctx)
     local alpha: number
 
     if m.kind == "randomizer" then

@@ -205,7 +205,7 @@ function mods.sampler(
   end
 
   local rolled = rolls or mods.roll(queue)
-  local offsets = modifiers.schedule(queue, rolled.picks, nil, rolled.env)
+  local offsets, _, linked = modifiers.schedule(queue, rolled.picks, duration, rolled.env)
 
   local ctx: modifiers.Ctx = {
     duration = duration,
@@ -213,6 +213,7 @@ function mods.sampler(
     draws = rolled.draws,
     picks = rolled.picks,
     offsets = offsets,
+    linked = linked,
     env = rolled.env,
     envelope = rolled.envelope,
   }
