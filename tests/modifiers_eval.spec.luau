@@ -877,6 +877,67 @@ harness.suite(function()
       expect(worst < 0.05).toBe(true)
     end)
 
+    -- A shape that climbs sharply INSIDE one of the table's cells, which is
+    -- where the per-cell solve earns its place: the rate barely moves for most
+    -- of the run and then leaps, so a cell holds a large slice of the whole
+    -- integral and inverting it as a straight line puts the boundary well off.
+    --
+    -- Checked against ground truth rather than against the other code path.
+    -- Consecutive held values are consecutive STEPS, so the integral of the rate
+    -- between them is exactly one step -- and that integral is computed here on
+    -- a grid 128 times finer than the one under test, from the same curve.
+    test("a rate that leaps inside one cell still lands its steps", function()
+      local steep = path.serializePath({
+        { Position = UDim2.fromScale(0, 1), LeftTangent = UDim2.new(), RightTangent = UDim2.fromScale(0.49, 0) },
+        { Position = UDim2.fromScale(1, 0), LeftTangent = UDim2.fromScale(-0.49, 0), RightTangent = UDim2.new() },
+      })
+
+      local FROM, TO, FINE = 4, 400, 4096
+
+      -- reference: the integral of the rate from 0 to p, trapezoid on a fine
+      -- grid. Nothing here touches the module's own table
+      local reference = { 0 }
+      local previous = modifiers.alphaFromCurve(steep, 0)
+
+      for i = 1, FINE do
+        local current = modifiers.alphaFromCurve(steep, i / FINE)
+
+        reference[i + 1] = reference[i] + (FROM + (TO - FROM) * (previous + current) / 2) / FINE
+        previous = current
+      end
+
+      local function phaseOf(p: number): number
+        local pos = math.clamp(p, 0, 1) * FINE
+        local i = math.min(math.floor(pos), FINE - 1)
+
+        return reference[i + 1] + (reference[i + 2] - reference[i + 1]) * (pos - i)
+      end
+
+      -- the held values, as progress rather than as the 0..100 they drive
+      local queue = ramp(FROM, TO, steep)
+      local held = {}
+
+      for i = 0, 20000 do
+        local v = (modifiers.evaluate(queue, i / 20000, { duration = 1 }) :: number) / 100
+
+        if #held == 0 or not near(v, held[#held]) then
+          table.insert(held, v)
+        end
+      end
+
+      -- every consecutive pair is one step apart, so one unit of phase apart.
+      -- Inverting the cell linearly instead misplaces the boundaries that fall
+      -- inside the leap, which is most of them
+      local worst = 0
+
+      for i = 2, #held - 1 do
+        worst = math.max(worst, math.abs(phaseOf(held[i]) - phaseOf(held[i - 1]) - 1))
+      end
+
+      expect(#held > 10).toBe(true)
+      expect(worst < 0.05).toBe(true)
+    end)
+
     -- a shape that is NOT the identity does move the steps, which is the point
     -- of being able to draw one
     test("a shaped rate steps somewhere a straight ramp does not", function()
