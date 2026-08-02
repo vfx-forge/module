@@ -35,18 +35,18 @@ export type Rolls = {
 -- of the queue rather than its longest single duration, and a caller whose
 -- delay is drawn per instance passes the rolls in so the span is the one THIS
 -- instance will run
-function mods.span(queue: { any }, fallback: number, rolls: Rolls?): number
+function mods.span(queue: { any }, fallback: number, rolls: Rolls?): (number, number)
   local picks = if rolls then rolls.picks else nil
-  local _, frontier = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil)
+  local _, frontier, linked = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil)
 
   -- an effect turns this straight into a tween's duration, and a tween that
   -- never ends holds the emit open for good. nothing an author can mean by a
   -- span is infinite, so an unusable one falls back the same way an empty one does
-  if frontier <= 0 or frontier == math.huge or frontier ~= frontier then
-    return fallback
+  if frontier <= 0 or frontier == math.huge then
+    return fallback, linked
   end
 
-  return frontier
+  return frontier, linked
 end
 
 -- a queue that waits and does nothing else. its delays still push a clock
@@ -196,7 +196,8 @@ function mods.sampler(
   name: string,
   duration: number,
   preread: { any }?,
-  rolls: Rolls?
+  rolls: Rolls?,
+  linked: number?
 ): ((number) -> any)?
   local queue = preread or mods.read(ref, source, name)
 
@@ -205,7 +206,11 @@ function mods.sampler(
   end
 
   local rolled = rolls or mods.roll(queue)
-  local offsets, _, linked = modifiers.schedule(queue, rolled.picks, duration, rolled.env)
+  -- `duration` is the reach, which a delay inflates. seeding the linked run
+  -- from it would stretch every modifier that names no duration and leave a
+  -- delayed one short of its finish, so a caller that knows what it lent says so
+  local lent = if linked ~= nil then linked else duration
+  local offsets, _, resolved = modifiers.schedule(queue, rolled.picks, lent, rolled.env)
 
   local ctx: modifiers.Ctx = {
     duration = duration,
@@ -213,7 +218,7 @@ function mods.sampler(
     draws = rolled.draws,
     picks = rolled.picks,
     offsets = offsets,
-    linked = linked,
+    linked = resolved,
     env = rolled.env,
     envelope = rolled.envelope,
   }
@@ -266,8 +271,8 @@ function mods.driver(
   -- drawn before the span rather than inside the sampler, because a delay whose
   -- wait is drawn decides how far the queue reaches
   local rolls = mods.roll(queue, env)
-  local span = mods.span(queue, fallback, rolls)
-  local sample = mods.sampler(ref, source, name, span, queue, rolls)
+  local span, linked = mods.span(queue, fallback, rolls)
+  local sample = mods.sampler(ref, source, name, span, queue, rolls, linked)
 
   -- a queue of nothing but base kinds evaluates to ctx.base and stops there,
   -- and for a forge knob like Speed that base is an attribute nobody ever

@@ -142,7 +142,10 @@ function modifiers.schedule(
   local linked = 0
 
   for _, m in queue do
-    if m.kind ~= "delay" and typeof(m.duration) == "number" and m.duration > linked then
+    -- an infinite duration is excluded rather than allowed to win: it would
+    -- make every modifier that names no duration read a progress of zero and
+    -- sit on its start value for the whole run
+    if m.kind ~= "delay" and typeof(m.duration) == "number" and m.duration ~= math.huge and m.duration > linked then
       linked = m.duration
     end
   end
@@ -181,7 +184,7 @@ function modifiers.schedule(
       -- the offset where it was rather than poisoning every modifier after it
       local sum = offset + modifiers.waitOf(m, if picks then picks[i] else nil, env)
 
-      if sum == math.huge or sum ~= sum then
+      if sum == math.huge then
         sum = offset
       end
 

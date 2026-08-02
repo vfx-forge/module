@@ -174,10 +174,16 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   -- a speed of zero advances no stepper's elapsed, so nothing would ever reach
   -- its end: the hold would never return and the parts would never come back to
-  -- the cache. every other effect bails on it the same way, and keeps stepping
-  -- while a speed tween could still raise it again
+  -- the cache.
+  --
+  -- deliberately WITHOUT the `elapsed > 0` term the other effects carry. theirs
+  -- is safe because they hand the speed tween to tween.timer as its awaitTween
+  -- veto; these do not, and tween.after cannot take one at all. every counter is
+  -- called with elapsed == 0 on its first frame, so with that term a speed that
+  -- is merely zero FOR NOW, which is what a queue reads during a leading delay,
+  -- tears every stepper down on frame one and never rebuilds them
   local function step(deltaTime: number, elapsed: number): number?
-    if currentSpeed > 0 or (speedTween ~= nil and elapsed > 0 and speedTween.Connected) then
+    if currentSpeed > 0 or (speedTween ~= nil and speedTween.Connected) then
       return deltaTime * currentSpeed
     end
 
@@ -459,7 +465,13 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
         -- the run. a zero there reads as fully elapsed, which would pin a linked
         -- modifier at its end value from the first frame
         local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifetime.Max, "number")
-        local drawn = if lifeDrv then lifeDrv(0) else rng:NextNumber(lifetime.Min, lifetime.Max)
+        local drawn = if lifeDrv then lifeDrv(0) else nil
+
+        -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
+        -- ever and the piece dwells for the life of the session
+        if typeof(drawn) ~= "number" or drawn ~= drawn then
+          drawn = rng:NextNumber(lifetime.Min, lifetime.Max)
+        end
 
         -- the dwell belongs to the effect rather than to the scheduler: its
         -- cleanup lives in the scope, so tearing the line down cancels it rather
@@ -469,14 +481,9 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
         tween.after(math.huge, function(deltaTime, elapsed)
           local target = if lifeDrv then lifeDrv(elapsed) else nil
 
-          if typeof(target) ~= "number" then
+          if typeof(target) ~= "number" or target ~= target then
             target = drawn
           end
-
-          -- attr.getRange clamped a Lifetime away from negatives and a queue read
-          -- straight off the attribute carries no clamp of its own, so a range authored
-          -- below zero would end the dwell before its exit tweens could run
-          target = math.max(target, 0)
 
           if elapsed >= target then
             return nil :: any

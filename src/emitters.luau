@@ -159,8 +159,8 @@ function emitters.applyMods(
     -- no effect module lends this queue a clock, so it runs to its own far end
     -- and only falls back when no modifier in it names a duration
     local rolls = mods.roll(queue)
-    local span = mods.span(queue, duration, rolls)
-    local sample = mods.sampler(obj, source :: string, name :: string, span, queue, rolls)
+    local span, linked = mods.span(queue, duration, rolls)
+    local sample = mods.sampler(obj, source :: string, name :: string, span, queue, rolls, linked)
 
     if sample == nil then
       continue

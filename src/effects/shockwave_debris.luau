@@ -277,7 +277,13 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- the run. a zero there reads as fully elapsed, which would pin a linked
     -- modifier at its end value from the first frame
     local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifetime.Max, "number")
-    local drawn = if lifeDrv then lifeDrv(0) else rng:NextNumber(lifetime.Min, lifetime.Max)
+    local drawn = if lifeDrv then lifeDrv(0) else nil
+
+    -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
+    -- ever and the piece dwells for the life of the session
+    if typeof(drawn) ~= "number" or drawn ~= drawn then
+      drawn = rng:NextNumber(lifetime.Min, lifetime.Max)
+    end
 
     -- the dwell belongs to the effect rather than to the scheduler: its cleanup
     -- lives in the scope, so tearing the field down cancels it rather than
@@ -287,14 +293,9 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     tween.after(math.huge, function(deltaTime, elapsed)
       local target = if lifeDrv then lifeDrv(elapsed) else nil
 
-      if typeof(target) ~= "number" then
+      if typeof(target) ~= "number" or target ~= target then
         target = drawn
       end
-
-      -- attr.getRange clamped a Lifetime away from negatives and a queue read
-      -- straight off the attribute carries no clamp of its own, so a range authored
-      -- below zero would end the dwell before its exit tweens could run
-      target = math.max(target, 0)
 
       if elapsed >= target then
         return nil :: any

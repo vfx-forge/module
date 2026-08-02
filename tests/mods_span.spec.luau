@@ -103,7 +103,33 @@ harness.suite(function()
         { kind = "tween", duration = 1 },
       }
 
-      expect(mods.span(queue, 9) < math.huge).toBe(true)
+      local span = mods.span(queue, 9)
+
+      -- `< math.huge` alone cannot tell the guard from mods.span's OWN fallback:
+      -- without the guard the sum reaches inf, the frontier with it, and the
+      -- fallback returns 9, which satisfies it just as well as 1e308 does
+      expect(span < math.huge).toBe(true)
+      expect(span > 9).toBe(true)
+    end)
+
+    -- the sampler seeds a linked modifier's run from this, NOT from the span:
+    -- the span carries the delay, and seeding a linked run from it leaves a
+    -- delayed modifier short of its finish for the whole emit
+    test("hands back the run a linked modifier gets, beside the reach", function()
+      local queue = { { kind = "delay", wait = { t = "lit", v = 2 } }, { kind = "tween" } }
+      local span, linked = mods.span(queue, 5)
+
+      expect(span).toBe(7)
+      expect(linked).toBe(5)
+    end)
+
+    -- an infinite duration must not become the run every OTHER linked modifier
+    -- takes, or they all read a progress of zero and sit on their start value
+    test("an endless duration does not become the linked run", function()
+      local queue = { { kind = "tween", duration = math.huge }, { kind = "tween" } }
+      local _, linked = mods.span(queue, 4)
+
+      expect(linked).toBe(4)
     end)
 
     test("an endless span falls back rather than holding the emit open", function()
