@@ -481,6 +481,10 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
     return Bezier.OWNS
   end
 
+  if obj:HasTag(utility.LIGHTNING_TAG) then
+    return Lightning.OWNS
+  end
+
   if className == "RayValue" and obj:HasTag(utility.SCREENSHAKE_TAG) then
     return CameraShake.OWNS
   end
