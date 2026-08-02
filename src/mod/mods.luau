@@ -19,11 +19,14 @@ function mods.attrName(source: string, name: string): string
   return mods.PREFIX[source] .. name
 end
 
--- every random draw a queue needs, made once, which is once per emitted
--- instance
+-- everything a queue needs that belongs to ONE emitted instance: the draws,
+-- made here, and the environment a `var` resolves against, which the caller
+-- supplies because it is shared with the other queues on that instance. both
+-- travel together because both decide what the span is
 export type Rolls = {
   draws: { [number]: number },
   picks: { [number]: modifiers.Picks },
+  env: { [string]: any }?,
   envelope: number,
 }
 
@@ -33,7 +36,8 @@ export type Rolls = {
 -- delay is drawn per instance passes the rolls in so the span is the one THIS
 -- instance will run
 function mods.span(queue: { any }, fallback: number, rolls: Rolls?): number
-  local _, frontier = modifiers.schedule(queue, if rolls then rolls.picks else nil, fallback)
+  local picks = if rolls then rolls.picks else nil
+  local _, frontier = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil)
 
   if frontier <= 0 then
     return fallback
@@ -123,7 +127,7 @@ end
 -- remember. it is its own function because a drawn delay moves the far end of
 -- the queue, so a caller that needs the SPAN first has to draw before it can
 -- ask for one, and then hand the same rolls to the sampler
-function mods.roll(queue: { any }): Rolls
+function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
   local rng = Random.new()
   local draws = {}
   local picks = {}
@@ -146,7 +150,7 @@ function mods.roll(queue: { any }): Rolls
     end
   end
 
-  return { draws = draws, picks = picks, envelope = rng:NextNumber() * 2 - 1 }
+  return { draws = draws, picks = picks, env = env, envelope = rng:NextNumber() * 2 - 1 }
 end
 
 -- a caller that already read the queue, to span it or to test it, passes it
@@ -168,7 +172,7 @@ function mods.sampler(
   end
 
   local rolled = rolls or mods.roll(queue)
-  local offsets = modifiers.schedule(queue, rolled.picks)
+  local offsets = modifiers.schedule(queue, rolled.picks, nil, rolled.env)
 
   local ctx: modifiers.Ctx = {
     duration = duration,
@@ -176,6 +180,7 @@ function mods.sampler(
     draws = rolled.draws,
     picks = rolled.picks,
     offsets = offsets,
+    env = rolled.env,
     envelope = rolled.envelope,
   }
 
@@ -192,7 +197,18 @@ end
 -- Call this BEFORE any non-soft attr.get on that name's quad keys. attr.get
 -- writes its default back, so reading X_Start creates it, and readQuad then
 -- finds a quad nobody authored.
-function mods.driver(ref: Instance, source: string, name: string, fallback: number): (((number) -> any)?, number)
+--
+-- `env` is what a `var` in this queue resolves against, and an effect passes the
+-- SAME table to every knob it drives on one emitted instance. that is how one
+-- drawn lifetime means one moment to all of them: a rand in each queue would
+-- draw once per queue and break them apart.
+function mods.driver(
+  ref: Instance,
+  source: string,
+  name: string,
+  fallback: number,
+  env: { [string]: any }?
+): (((number) -> any)?, number)
   local queue = mods.read(ref, source, name)
 
   if queue == nil or #queue == 0 then
@@ -214,7 +230,7 @@ function mods.driver(ref: Instance, source: string, name: string, fallback: numb
 
   -- drawn before the span rather than inside the sampler, because a delay whose
   -- wait is drawn decides how far the queue reaches
-  local rolls = mods.roll(queue)
+  local rolls = mods.roll(queue, env)
   local span = mods.span(queue, fallback, rolls)
   local sample = mods.sampler(ref, source, name, span, queue, rolls)
 

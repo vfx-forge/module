@@ -17,6 +17,14 @@ function value.rand(min: number, max: number): Value
   return { t = "rand", min = min, max = max }
 end
 
+-- a value that belongs to the emitted instance rather than to this modifier,
+-- named so several rows can read the one thing. what a legacy reader reaches
+-- for when the value it is synthesizing was drawn ONCE by the effect and used
+-- by every knob on the instance, which no per-row rand can reproduce
+function value.var(ref: string): Value
+  return { t = "var", ref = ref }
+end
+
 function value.isLit(x: Value): boolean
   return x.t == "lit"
 end
@@ -25,10 +33,20 @@ function value.isRand(x: Value): boolean
   return x.t == "rand"
 end
 
--- a var resolves to nil in spec 1, so callers fall back to their own default.
+function value.isVar(x: Value): boolean
+  return x.t == "var"
+end
+
 -- a rand resolves at its draw, and at its midpoint when nobody drew one, which
--- is both what an editor showing the value wants and a sane pure evaluation
-function value.resolve(x: Value, draw: number?): any
+-- is both what an editor showing the value wants and a sane pure evaluation.
+--
+-- a var names a value that belongs to the whole emitted instance rather than to
+-- one modifier, so it resolves against an environment the caller supplies. that
+-- is the difference between a var and a rand: two rows each holding a rand draw
+-- twice, two rows naming the same var read one value. it stays nil when nobody
+-- supplies an environment or the name is not in it, which is what every caller
+-- already handled, since nil is all a var ever gave back
+function value.resolve(x: Value, draw: number?, env: { [string]: any }?): any
   if x.t == "lit" then
     return (x :: any).v
   end
@@ -36,6 +54,10 @@ function value.resolve(x: Value, draw: number?): any
   if x.t == "rand" then
     local r = x :: any
     return r.min + (r.max - r.min) * (draw or 0.5)
+  end
+
+  if x.t == "var" then
+    return if env then env[(x :: any).ref] else nil
   end
 
   return nil

@@ -431,6 +431,63 @@ harness.suite(function()
       expect(near(modifiers.evaluate(queue, 1, ctx) :: number, 5)).ok()
     end)
 
+    -- the shape a converted shockwave wants: the wait is not the knob's own
+    -- business, it is the instance's lifetime, and every knob on that instance
+    -- names the same one
+    test("a wait can name a value from the environment", function()
+      local queue = { { kind = "delay", chain = false, wait = { t = "var", ref = "Lifetime" } }, phase(0, 10, false) }
+
+      local ctx = { duration = 9, env = { Lifetime = 2 } }
+
+      expect(near(modifiers.evaluate(queue, 1.5, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(queue, 2.5, ctx) :: number, 5)).ok()
+      expect(near(modifiers.evaluate(queue, 3, ctx) :: number, 10)).ok()
+    end)
+
+    -- two knobs are two queues sampled independently, so a rand in each would
+    -- draw twice and break them apart. one env is what holds them together
+    test("two queues sharing one environment wait the same wait", function()
+      local named = { { kind = "delay", chain = false, wait = { t = "var", ref = "Lifetime" } }, phase(0, 10, false) }
+      local drawn = { { kind = "delay", chain = false, wait = { t = "rand", min = 0, max = 4 } }, phase(0, 10, false) }
+
+      local env = { Lifetime = 2 }
+      local a = { duration = 9, env = env }
+      local b = { duration = 9, env = env }
+
+      expect(modifiers.evaluate(named, 2.5, a)).toBe(modifiers.evaluate(named, 2.5, b))
+
+      -- and the same two queues on separate draws do not, which is the whole
+      -- reason the wait cannot just be a rand per knob
+      local one = { duration = 9, picks = { [1] = { wait = 0.25 } } }
+      local two = { duration = 9, picks = { [1] = { wait = 0.75 } } }
+
+      expect(modifiers.evaluate(drawn, 2.5, one) ~= modifiers.evaluate(drawn, 2.5, two)).ok()
+    end)
+
+    -- an environment nobody supplied leaves a var at nil, which waitOf reads as
+    -- no wait rather than as a reason to fail
+    test("a var wait with no environment waits for nothing", function()
+      local queue = { { kind = "delay", chain = false, wait = { t = "var", ref = "Lifetime" } }, phase(0, 10, false) }
+
+      expect(near(modifiers.evaluate(queue, 0.5, { duration = 9 }) :: number, 5)).ok()
+    end)
+
+    test("an endpoint can name the environment too", function()
+      local queue = {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "var", ref = "Base" },
+          finish = lit(10),
+          curve = linear,
+        },
+      }
+
+      expect(near(modifiers.evaluate(queue, 0, { duration = 1, env = { Base = 4 } }) :: number, 4)).ok()
+      expect(near(modifiers.evaluate(queue, 0.5, { duration = 1, env = { Base = 4 } }) :: number, 7)).ok()
+    end)
+
     test("a drawn wait with no pick takes its midpoint", function()
       local queue = { { kind = "delay", chain = false, wait = { t = "rand", min = 0, max = 2 } }, phase(0, 10, false) }
 

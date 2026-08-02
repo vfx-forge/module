@@ -77,6 +77,17 @@ harness.suite(function()
       expect(mods.span(queue, 9, rolls)).toBe(2)
     end)
 
+    -- a var wait decides the far end exactly as a drawn one does, so the
+    -- environment has to reach mods.span and not only the sampler
+    test("spans a var wait at what the environment carries", function()
+      local queue = { { kind = "delay", wait = { t = "var", ref = "Lifetime" } }, { kind = "tween", duration = 1 } }
+
+      local rolls = { draws = {}, picks = {}, env = { Lifetime = 2 }, envelope = 0 }
+
+      expect(mods.span(queue, 9, rolls)).toBe(3)
+      expect(mods.span(queue, 9)).toBe(1)
+    end)
+
     test("a delay alone spans nothing of its own", function()
       expect(mods.span({ { kind = "delay", wait = { t = "lit", v = 2 } } }, 9)).toBe(9)
     end)

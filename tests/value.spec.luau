@@ -11,10 +11,41 @@ harness.suite(function()
       expect(value.isLit(v)).toBe(true)
       expect(value.resolve(v)).toBe(Color3.new(1, 0, 0))
     end)
-    test("var resolves to nil in 1A but is a valid Value", function()
-      local v = { t = "var", ref = "MyVar" } :: any
+    test("var resolves to nil with no environment but is a valid Value", function()
+      local v = value.var("MyVar")
+      expect(v.t).toBe("var")
+      expect(value.isVar(v)).toBe(true)
       expect(value.isLit(v)).toBe(false)
+      expect(value.isRand(v)).toBe(false)
       expect(value.resolve(v)).toBe(nil)
+    end)
+    test("only a var is a var", function()
+      expect(value.isVar(value.lit(1))).toBe(false)
+      expect(value.isVar(value.rand(1, 2))).toBe(false)
+    end)
+    -- a var names a value belonging to the whole emitted instance, so it
+    -- resolves against what the caller drew ONCE for that instance
+    test("var resolves against an environment", function()
+      local v = { t = "var", ref = "Lifetime" } :: any
+      expect(value.resolve(v, nil, { Lifetime = 2.5 })).toBe(2.5)
+      expect(value.resolve(v, nil, { Lifetime = false })).toBe(false)
+    end)
+    test("var resolves to nil for a name the environment does not carry", function()
+      local v = { t = "var", ref = "Lifetime" } :: any
+      expect(value.resolve(v, nil, { Something = 2.5 })).toBe(nil)
+      expect(value.resolve(v, nil, {})).toBe(nil)
+    end)
+    -- that is the whole difference between the two tags: two rows each holding
+    -- a rand draw twice, two rows naming one var read one value
+    test("two vars naming one entry resolve to the same value", function()
+      local env = { Lifetime = 1.75 }
+      local a = { t = "var", ref = "Lifetime" } :: any
+      local b = { t = "var", ref = "Lifetime" } :: any
+      expect(value.resolve(a, nil, env)).toBe(value.resolve(b, nil, env))
+    end)
+    test("a lit and a rand ignore an environment", function()
+      expect(value.resolve(value.lit(7), nil, { v = 9 })).toBe(7)
+      expect(value.resolve(value.rand(10, 20), 0, { min = 99 })).toBe(10)
     end)
     test("rand resolves at the draw it is handed", function()
       local v = value.rand(10, 20)

@@ -14,6 +14,7 @@ export type Ctx = {
   draws: { [number]: number }?,
   picks: { [number]: Picks }?,
   offsets: { [number]: number }?,
+  env: { [string]: any }?,
   envelope: number?,
 }
 
@@ -87,11 +88,11 @@ end
 -- the kind sees a modifier with no start and passes the previous value through
 -- untouched. a plain number in `duration` is honoured too, since that is how a
 -- delay reads if you write one by hand
-function modifiers.waitOf(m: any, picks: Picks?): number
+function modifiers.waitOf(m: any, picks: Picks?, env: { [string]: any }?): number
   local wait = m.wait
 
   if type(wait) == "table" then
-    wait = value.resolve(wait, picks and picks.wait)
+    wait = value.resolve(wait, picks and picks.wait, env)
   end
 
   if typeof(wait) ~= "number" then
@@ -125,7 +126,8 @@ end
 function modifiers.schedule(
   queue: { any },
   picks: { [number]: Picks }?,
-  fallback: number?
+  fallback: number?,
+  env: { [string]: any }?
 ): ({ [number]: number }?, number)
   local offsets: { [number]: number }? = nil
   local offset = 0
@@ -150,7 +152,7 @@ function modifiers.schedule(
     -- instance needs, and it is also what lets a phase be delayed to a moment
     -- BEFORE the phase it chains from has finished
     if m.kind == "delay" then
-      offset += modifiers.waitOf(m, if picks then picks[i] else nil)
+      offset += modifiers.waitOf(m, if picks then picks[i] else nil, env)
       offsets = offsets or {}
       continue
     end
@@ -201,7 +203,7 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
     -- pays for that walk here, and only if the queue actually delays something
     if m.kind == "delay" then
       if offsets == nil then
-        offsets = modifiers.schedule(queue, ctx.picks)
+        offsets = modifiers.schedule(queue, ctx.picks, nil, ctx.env)
       end
 
       continue
@@ -217,10 +219,10 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
     if m.chain and haveOut then
       startVal = prevOut
     elseif m.start then
-      startVal = value.resolve(m.start, picks and picks.start)
+      startVal = value.resolve(m.start, picks and picks.start, ctx.env)
     end
 
-    local finishVal = if m.finish then value.resolve(m.finish, picks and picks.finish) else startVal
+    local finishVal = if m.finish then value.resolve(m.finish, picks and picks.finish, ctx.env) else startVal
 
     local offset = if offsets then offsets[i] or 0 else 0
     local progress = progressOf(m, elapsed - offset, ctx, offset)
