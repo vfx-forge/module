@@ -12,8 +12,7 @@ local MIN_SCALE = 0.001
 
 local spin = {}
 
--- both knobs spin drives through a sampler of its own, so emitters.applyMods
--- leaves them alone. task 5 converts the effect to actually use them
+-- both knobs spin drives itself, so emitters.applyMods leaves them alone
 spin.OWNS = {
   attribute = {
     Scale = true,
@@ -43,14 +42,23 @@ function spin.emit(ref: Model, scope: types.scope)
   -- non-soft read below self-writes its default back onto ref, and it must
   -- not do that before legacy_mods.readQuad gets to see whether either
   -- attribute was genuinely absent
-  local speed = mods.sampler(ref, "attribute", "SpinSpeed", speedDuration)
+  --
+  -- driver rather than sampler: the sampler drives ANY non-empty queue, so a
+  -- half quad pinned the knob to whichever endpoint happened to exist instead of
+  -- handing it back to the legacy branch below, which carries the real default,
+  -- and a base-only queue (what the curve editor stores over a target with no
+  -- quad behind it) sampled nil into `currentSpeed > 0` and threw every frame
+  local speed, speedSpan = mods.driver(ref, "attribute", "SpinSpeed", speedDuration, "number")
   local speedTween
   local currentSpeed
 
   if speed then
     currentSpeed = speed(0)
 
-    speedTween = tween.fromParams(utility.linear_bezier, speedDuration, function(_, deltaTime, elapsed)
+    -- the queue's own reach, not the attribute duration: a queue that names a
+    -- longer run than SpinSpeed_Duration would otherwise be cut off partway, and
+    -- one carrying a delay needs the room the wait pushes it out by
+    speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
       currentSpeed = speed(elapsed)
       return deltaTime
     end)
@@ -83,7 +91,7 @@ function spin.emit(ref: Model, scope: types.scope)
   local originalPivot = ref:GetPivot()
   local originalScale = ref:GetScale()
 
-  local scale = mods.sampler(ref, "attribute", "Scale", duration)
+  local scale, scaleSpan = mods.driver(ref, "attribute", "Scale", duration, "number")
 
   if scale then
     -- fromParams, not timer: timer yields until it finishes, and the rotation
@@ -92,8 +100,15 @@ function spin.emit(ref: Model, scope: types.scope)
     -- elapsed directly, exactly as the SpinSpeed branch above does
     table.insert(
       scope,
-      tween.fromParams(utility.linear_bezier, duration, function(_, deltaTime, elapsed)
-        ref:ScaleTo(math.max(scale(elapsed), MIN_SCALE))
+      tween.fromParams(utility.linear_bezier, scaleSpan, function(_, deltaTime, elapsed)
+        local at = (scale :: any)(elapsed)
+
+        -- a queue that stops resolving partway would throw here every frame, and
+        -- tween only runs its cleanup on a frame the counter returns from
+        if typeof(at) == "number" then
+          ref:ScaleTo(math.max(at, MIN_SCALE))
+        end
+
         return deltaTime
       end)
     )
