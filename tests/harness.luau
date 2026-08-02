@@ -41,6 +41,50 @@ local datatypes: { [string]: any } = {
   NumberSequenceKeypoint = roblox.NumberSequenceKeypoint,
 }
 
+-- Random is absent under lune outright: @lune/roblox exposes none and there is
+-- no bare global either. mods.roll builds its own rather than taking a seam, so
+-- everything downstream of it, which is mods.driver and every effect, is
+-- unreachable headlessly without a stand-in. a fixed LCG, so a spec that reaches
+-- it is never flaky; the spread of the real thing is pinned in the plugin's
+-- Studio lane, where a real Random exists
+-- selene: allow(unscoped_variables, incorrect_standard_library_use)
+do
+  local function lcg(seed: number): () -> number
+    local state = seed % 2147483647
+
+    if state <= 0 then
+      state += 2147483646
+    end
+
+    return function(): number
+      state = (state * 48271) % 2147483647
+
+      return (state - 1) / 2147483646
+    end
+  end
+
+  Random = {
+    -- NextNumber alone, because it is all mods.roll calls. a method this does
+    -- not have errors where a stubbed one would answer something plausible
+    new = function(seed: number?)
+      local draw = lcg(if seed then seed else 20260802)
+      local rng = {}
+
+      function rng.NextNumber(_: any, min: number?, max: number?): number
+        local n = draw()
+
+        if min == nil or max == nil then
+          return n
+        end
+
+        return min + (max - min) * n
+      end
+
+      return rng
+    end,
+  }
+end
+
 --------------------------------------------------------------------------------
 -- tiniest pin
 --------------------------------------------------------------------------------
@@ -90,6 +134,34 @@ local harness = {}
 -- side-effecting constructor, and vendored code under test has dead
 -- Instance.new branches that must not become reachable
 harness.datatypes = datatypes
+
+-- stand-in for EncodingService's base64. hex is enough to prove the framing
+-- round-trips without reimplementing base64 in a test, and it lives here rather
+-- than in the one spec that first needed it because modifier_frame.configure is
+-- module state: a second spec configuring a codec of its own would decide the
+-- first one's expectations by load order
+harness.fakeEncoding = {
+  encode = function(buf: buffer): buffer
+    local out = {}
+
+    for i = 0, buffer.len(buf) - 1 do
+      table.insert(out, string.format("%02x", buffer.readu8(buf, i)))
+    end
+
+    return buffer.fromstring(table.concat(out))
+  end,
+
+  decode = function(buf: buffer): buffer
+    local s = buffer.tostring(buf)
+    local out = buffer.create(#s // 2)
+
+    for i = 1, #s, 2 do
+      buffer.writeu8(out, (i - 1) // 2, tonumber(string.sub(s, i, i + 1), 16) :: number)
+    end
+
+    return out
+  end,
+}
 
 -- stand-in for EncodingService's zstd, for specs that exercise modifier_frame's
 -- compressed encoding. a toy run-length coder: like zstd it shrinks repetitive
