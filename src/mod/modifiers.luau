@@ -89,6 +89,27 @@ local function progressOf(m: any, elapsed: number, ctx: Ctx): number
   return math.clamp(elapsed / d, 0, 1)
 end
 
+-- how often a modifier is allowed to move, in steps per second. a knob with no
+-- fps runs at whatever rate its effect steps at, which is the frame rate; naming
+-- one holds it on each step until the next is due, which is what a stylized
+-- flipbook-looking phase wants.
+--
+-- the LAST step is exempt, always. quantizing the whole run leaves a phase whose
+-- duration is not a whole number of steps short of its finish for good: 0.1s at
+-- 12fps steps at 0, and 1/12 is past the end, so the knob would sit at 83% of
+-- its travel and stay there. a modifier that never reaches what it was told to
+-- reach is worse than one that arrives a fraction of a step early
+local function steppedProgress(m: any, elapsed: number, ctx: Ctx): number
+  local progress = progressOf(m, elapsed, ctx)
+  local fps = m.fps
+
+  if progress >= 1 or typeof(fps) ~= "number" or fps ~= fps or fps <= 0 or fps == math.huge then
+    return progress
+  end
+
+  return progressOf(m, math.floor(elapsed * fps) / fps, ctx)
+end
+
 -- a delay carries its wait in `wait`, a Value, so a drawn one is the same rand
 -- tag every other randomizable number here uses, and so a runtime that predates
 -- the kind sees a modifier with no start and passes the previous value through
@@ -273,7 +294,7 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
     local finishVal = if m.finish then value.resolve(m.finish, picks and picks.finish, ctx.env) else startVal
 
     local offset = if offsets then offsets[i] or 0 else 0
-    local progress = progressOf(m, elapsed - offset, ctx)
+    local progress = steppedProgress(m, elapsed - offset, ctx)
     local alpha: number
 
     if m.kind == "randomizer" then

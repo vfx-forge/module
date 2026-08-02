@@ -606,6 +606,105 @@ harness.suite(function()
     end)
   end)
 
+  -- an fps holds a modifier on each step until the next is due, so a phase moves
+  -- in a countable number of jumps rather than every frame. what a stylized
+  -- flipbook-looking knob wants, and what nothing else in the queue can express
+  harness.describe("modifiers.evaluate at a named fps", function()
+    local function phase(fps: number?)
+      return {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "lit", v = 0 },
+          finish = { t = "lit", v = 100 },
+          curve = linear,
+          fps = fps,
+        },
+      }
+    end
+
+    test("holds each step until the next one is due", function()
+      local queue = phase(4)
+      local ctx = { duration = 1 }
+
+      -- 4 steps per second over a second: 0, 0.25, 0.5, 0.75 and then the finish
+      expect(near(modifiers.evaluate(queue, 0.1, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(queue, 0.24, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(queue, 0.25, ctx) :: number, 25)).ok()
+      expect(near(modifiers.evaluate(queue, 0.49, ctx) :: number, 25)).ok()
+      expect(near(modifiers.evaluate(queue, 0.5, ctx) :: number, 50)).ok()
+    end)
+
+    -- the same readings without an fps are the continuous ones, so the test
+    -- above is measuring the stepping rather than the curve
+    test("naming no fps moves every frame", function()
+      local queue = phase(nil)
+      local ctx = { duration = 1 }
+
+      expect(near(modifiers.evaluate(queue, 0.1, ctx) :: number, 10)).ok()
+      expect(near(modifiers.evaluate(queue, 0.24, ctx) :: number, 24)).ok()
+      expect(near(modifiers.evaluate(queue, 0.49, ctx) :: number, 49)).ok()
+    end)
+
+    -- the whole reason the last step is exempt: 0.1s at 12fps steps once, at
+    -- zero, and the next step is past the end. quantizing the finish too would
+    -- leave the knob at 83% of its travel for the rest of the emit
+    test("still reaches its finish when the run is not a whole number of steps", function()
+      local queue = {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 0.1,
+          start = { t = "lit", v = 0 },
+          finish = { t = "lit", v = 100 },
+          curve = linear,
+          fps = 12,
+        },
+      }
+
+      local ctx = { duration = 0.1 }
+
+      expect(near(modifiers.evaluate(queue, 0.05, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(queue, 0.1, ctx) :: number, 100)).ok()
+      expect(near(modifiers.evaluate(queue, 0.2, ctx) :: number, 100)).ok()
+    end)
+
+    -- an fps nobody can step at is no fps at all. zero would divide the run into
+    -- nothing, and a NaN or an infinity would carry straight into the floor
+    test("an unusable fps is ignored rather than obeyed", function()
+      local ctx = { duration = 1 }
+
+      expect(near(modifiers.evaluate(phase(0), 0.1, ctx) :: number, 10)).ok()
+      expect(near(modifiers.evaluate(phase(-4), 0.1, ctx) :: number, 10)).ok()
+      expect(near(modifiers.evaluate(phase(0 / 0), 0.1, ctx) :: number, 10)).ok()
+      expect(near(modifiers.evaluate(phase(math.huge), 0.1, ctx) :: number, 10)).ok()
+    end)
+
+    -- a delayed modifier steps from where the wait put it, not from zero, or
+    -- every knob on an instance would step on a grid it does not share
+    test("steps from where a delay placed it", function()
+      local queue = {
+        { kind = "delay", chain = false, wait = { t = "lit", v = 0.5 } },
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "lit", v = 0 },
+          finish = { t = "lit", v = 100 },
+          curve = linear,
+          fps = 4,
+        },
+      }
+
+      local ctx = { duration = 9 }
+
+      expect(near(modifiers.evaluate(queue, 0.6, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(queue, 0.75, ctx) :: number, 25)).ok()
+      expect(near(modifiers.evaluate(queue, 0.9, ctx) :: number, 25)).ok()
+    end)
+  end)
+
   harness.describe("modifiers.schedule", function()
     test("reaches the far end of a delayed queue", function()
       local queue = {
