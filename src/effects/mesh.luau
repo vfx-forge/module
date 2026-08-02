@@ -116,19 +116,23 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
   local speedStart = 1
   local speedEnd = 1
 
+  -- the fallback reads are soft for the same reason the driver is read first:
+  -- a non-soft read writes its default back, so an unauthored mesh would gain a
+  -- quad on its first emit and take the DRIVER branch on its second, flipping
+  -- behaviour between two emits of the same effect
   if speed then
     speedStart = speed(0)
   else
-    speedStart = attr.get(ref, "Speed_Start", 1)
-    speedEnd = attr.get(ref, "Speed_End", 1)
+    speedStart = attr.get(ref, "Speed_Start", 1, true)
+    speedEnd = attr.get(ref, "Speed_End", 1, true)
   end
 
   local tpStart = 0
   local tpEnd = 0
 
   if not partTp then
-    tpStart = attr.get(ref, "Part_Transparency_Start", legacy_meshST)
-    tpEnd = attr.get(ref, "Part_Transparency_End", legacy_meshET)
+    tpStart = attr.get(ref, "Part_Transparency_Start", legacy_meshST, true)
+    tpEnd = attr.get(ref, "Part_Transparency_End", legacy_meshET, true)
   end
 
   local spreadAngle = attr.get(ref, "SpreadAngle", vector.zero)
