@@ -490,6 +490,15 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
     return CameraShake.OWNS
   end
 
+  -- the same discriminator dispatch uses for a shockwave: a Part carrying a
+  -- tagged Attachment, told apart by the folder it sits in. only the ring drives
+  -- anything of its own so far
+  if className == "Part" and utility.findFirstClassWithTag(obj, "Attachment", utility.SHOCKWAVE_TAG) then
+    if obj.Parent and obj.Parent.Name == "Rings" then
+      return ShockwaveRing.OWNS
+    end
+  end
+
   return nil
 end
 

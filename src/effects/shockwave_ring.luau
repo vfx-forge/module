@@ -1,6 +1,7 @@
 local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
@@ -11,6 +12,16 @@ local ObjectCache = require("@obj/ObjectCache")
 local rng = Random.new()
 
 local ring = {}
+
+-- both are driven here, so the applier must not drive them as well. Lifetime
+-- especially: its attribute is a NumberRange and a queue samples numbers, so an
+-- applier writing it back would replace the range with a scalar
+ring.OWNS = {
+  attribute = {
+    Speed = true,
+    Lifetime = true,
+  },
+}
 
 local part_cache: ObjectCache.ObjectCache?
 
@@ -52,6 +63,25 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   local radius = attr.get(ref, "Radius", 5)
   local segments = attr.get(ref, "Segments", 7)
 
+  -- both drivers are asked for BEFORE any non-soft read of the quad keys they
+  -- would find, because attr.get writes its default back: reading Speed_Start
+  -- creates it and legacy_mods then finds a quad nobody authored
+  local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", attr.get(ref, "Speed_Duration", 0.1, true))
+
+  -- sampled every frame of the dwell rather than once at emit, so a modifier on
+  -- Lifetime moves a dwell that is already running. with nothing authored this
+  -- is nil and each segment keeps the value it drew from the range
+  local lifetimeDrv = mods.driver(ref, "attribute", "Lifetime", 0)
+
+  local speedStart = attr.get(ref, "Speed_Start", 1, true)
+  local speedEnd = attr.get(ref, "Speed_End", 1, true)
+
+  local currentSpeed = if speedDrv then speedDrv(0) else speedStart
+
+  local function getEffectiveSpeed(): number
+    return currentSpeed
+  end
+
   local lifetime = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
 
   local old_partOffset = attr.get(ref, "PartOffset", vector.zero, true)
@@ -84,6 +114,30 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   local tpEnd = attr.get(ref, "Transparency_End", 0)
 
   task.wait(emitDelay)
+
+  -- the speed tween is the clock itself, so it is the one stepper that does not
+  -- scale by it
+  if speedDrv then
+    table.insert(
+      scope,
+      tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
+        currentSpeed = speedDrv(elapsed)
+        return deltaTime
+      end)
+    )
+  elseif speedStart ~= speedEnd then
+    table.insert(
+      scope,
+      tween.fromParams(
+        attr.get(ref, "Speed_Curve", utility.default_bezier),
+        attr.get(ref, "Speed_Duration", 0.1),
+        function(alpha, deltaTime)
+          currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
+          return deltaTime
+        end
+      )
+    )
+  end
 
   local promises = {}
   local originCFrame = utility.getTransformedOriginExtents(origin)
@@ -166,7 +220,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         function(alpha, deltaTime)
           currentOffset = offsetStart:Lerp(baseOffset, alpha)
           part.CFrame = CFrame.new(currentOffset) * rotCF
-          return deltaTime
+          return deltaTime * getEffectiveSpeed()
         end
       )
 
@@ -178,7 +232,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     if size * sizeScaleStart ~= size then
       sizeTween = tween.fromParams(sizeStartCurve, sizeStartDuration, function(alpha, deltaTime)
         part.Size = (size * sizeScaleStart):Lerp(size, alpha)
-        return deltaTime
+        return deltaTime * getEffectiveSpeed()
       end)
 
       table.insert(scope, sizeTween)
@@ -189,17 +243,33 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     local env = scope.effects.emitNested(part, scope.depth + 1, scope)
     table.insert(promises, env.Finished)
 
+    local drawn = rng:NextNumber(lifetime.Min, lifetime.Max)
+
     -- the dwell is part of the effect, not of the scheduler: its cleanup lives
     -- in the scope, so tearing the effect down cancels it rather than letting it
-    -- fire into a part the cache has already handed to someone else. what the
-    -- counter returns is what time does here, so a speed knob would scale the
-    -- dwell the day this effect grows one.
+    -- fire into a part the cache has already handed to someone else, and it runs
+    -- on the effect's clock, so speed scales it.
     --
-    -- the body still runs on its own thread, the way task.delay ran it: it is a
-    -- render step that resumes this, and emitOnFinish is not something to hand a
+    -- the length is the counter's to decide rather than the duration's, so a
+    -- Lifetime a modifier is moving is read every frame instead of being baked
+    -- at emit. with nothing authored that reads the value this segment drew and
+    -- the two are the same thing.
+    --
+    -- the body still runs on its own thread, the way task.delay ran it: what
+    -- resumes it is a render step, and emitOnFinish is not something to hand a
     -- render step
-    tween.after(rng:NextNumber(lifetime.Min, lifetime.Max), function(deltaTime)
-      return deltaTime
+    tween.after(math.huge, function(deltaTime, elapsed)
+      local target = if lifetimeDrv then lifetimeDrv(elapsed) else nil
+
+      if typeof(target) ~= "number" then
+        target = drawn
+      end
+
+      if elapsed >= target then
+        return nil :: any
+      end
+
+      return deltaTime * getEffectiveSpeed()
     end, function()
       task.spawn(function()
         if sizeTween then
@@ -218,7 +288,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
             scope,
             tween.fromParams(sizeEndCurve, sizeEndDuration, function(alpha, deltaTime)
               part.Size = startSize:Lerp(size * sizeScaleEnd, alpha)
-              return deltaTime
+              return deltaTime * getEffectiveSpeed()
             end)
           )
         end
@@ -231,7 +301,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
               offsetEndDuration,
               function(alpha, deltaTime)
                 part.CFrame = CFrame.new(currentOffset:Lerp(offsetEnd, alpha)) * rotCF
-                return deltaTime
+                return deltaTime * getEffectiveSpeed()
               end
             )
           )
@@ -245,7 +315,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
               tpDuration,
               function(alpha, deltaTime)
                 part.Transparency = utility.lerp(startTp, tpEnd, alpha)
-                return deltaTime
+                return deltaTime * getEffectiveSpeed()
               end
             )
           )
@@ -257,9 +327,13 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     end, scope)
   end
 
-  -- the transparency exit is one of the three the dwell starts, so the hold has
-  -- to outlast it too or it is cut off partway
-  task.wait(lifetime.Max + math.max(sizeEndDuration, offsetEndDuration, tpDuration))
+  -- the hold has to run on the same clock the dwells do, or a speed below one
+  -- stretches them past it and the scope tears down mid dwell. the transparency
+  -- exit is one of the three a dwell starts, so it counts here too or a long one
+  -- is cut off partway
+  tween.timer(lifetime.Max + math.max(sizeEndDuration, offsetEndDuration, tpDuration), function(deltaTime)
+    return deltaTime * getEffectiveSpeed()
+  end, nil, scope)
 
   Promise.all(promises):await()
 end
