@@ -170,7 +170,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         end
       )
 
-      table.insert(scope, sizeTween)
+      table.insert(scope, offsetTween)
     end
 
     local size = Vector3.new(width, height, length)
@@ -189,62 +189,77 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     local env = scope.effects.emitNested(part, scope.depth + 1, scope)
     table.insert(promises, env.Finished)
 
-    task.delay(rng:NextNumber(lifetime.Min, lifetime.Max), function()
-      if sizeTween then
-        sizeTween:Disconnect()
-      end
+    -- the dwell is part of the effect, not of the scheduler: its cleanup lives
+    -- in the scope, so tearing the effect down cancels it rather than letting it
+    -- fire into a part the cache has already handed to someone else. what the
+    -- counter returns is what time does here, so a speed knob would scale the
+    -- dwell the day this effect grows one.
+    --
+    -- the body still runs on its own thread, the way task.delay ran it: it is a
+    -- render step that resumes this, and emitOnFinish is not something to hand a
+    -- render step
+    tween.after(rng:NextNumber(lifetime.Min, lifetime.Max), function(deltaTime)
+      return deltaTime
+    end, function()
+      task.spawn(function()
+        if sizeTween then
+          sizeTween:Disconnect()
+        end
 
-      if offsetTween then
-        offsetTween:Disconnect()
-      end
+        if offsetTween then
+          offsetTween:Disconnect()
+        end
 
-      local startSize = part.Size
-      local startTp = part.Transparency
+        local startSize = part.Size
+        local startTp = part.Transparency
 
-      if startSize ~= size * sizeScaleEnd then
-        table.insert(
-          scope,
-          tween.fromParams(sizeEndCurve, sizeEndDuration, function(alpha, deltaTime)
-            part.Size = startSize:Lerp(size * sizeScaleEnd, alpha)
-            return deltaTime
-          end)
-        )
-      end
-
-      if currentOffset ~= offsetEnd then
-        table.insert(
-          scope,
-          tween.fromParams(
-            attr.get(ref, "Offset_End_Curve", utility.default_bezier),
-            offsetEndDuration,
-            function(alpha, deltaTime)
-              part.CFrame = CFrame.new(currentOffset:Lerp(offsetEnd, alpha)) * rotCF
+        if startSize ~= size * sizeScaleEnd then
+          table.insert(
+            scope,
+            tween.fromParams(sizeEndCurve, sizeEndDuration, function(alpha, deltaTime)
+              part.Size = startSize:Lerp(size * sizeScaleEnd, alpha)
               return deltaTime
-            end
+            end)
           )
-        )
-      end
+        end
 
-      if startTp ~= tpEnd then
-        table.insert(
-          scope,
-          tween.fromParams(
-            attr.get(ref, "Transparency_Curve", utility.default_bezier),
-            tpDuration,
-            function(alpha, deltaTime)
-              part.Transparency = utility.lerp(startTp, tpEnd, alpha)
-              return deltaTime
-            end
+        if currentOffset ~= offsetEnd then
+          table.insert(
+            scope,
+            tween.fromParams(
+              attr.get(ref, "Offset_End_Curve", utility.default_bezier),
+              offsetEndDuration,
+              function(alpha, deltaTime)
+                part.CFrame = CFrame.new(currentOffset:Lerp(offsetEnd, alpha)) * rotCF
+                return deltaTime
+              end
+            )
           )
-        )
-      end
+        end
 
-      local env = scope.effects.emitOnFinish(emitOnFinish, part, scope.depth + 1, scope)
-      table.insert(promises, env.Finished)
-    end)
+        if startTp ~= tpEnd then
+          table.insert(
+            scope,
+            tween.fromParams(
+              attr.get(ref, "Transparency_Curve", utility.default_bezier),
+              tpDuration,
+              function(alpha, deltaTime)
+                part.Transparency = utility.lerp(startTp, tpEnd, alpha)
+                return deltaTime
+              end
+            )
+          )
+        end
+
+        local env = scope.effects.emitOnFinish(emitOnFinish, part, scope.depth + 1, scope)
+        table.insert(promises, env.Finished)
+      end)
+    end, scope)
   end
 
-  task.wait(lifetime.Max + math.max(sizeEndDuration, offsetEndDuration))
+  -- the transparency exit is one of the three the dwell starts, so the hold has
+  -- to outlast it too or it is cut off partway
+  task.wait(lifetime.Max + math.max(sizeEndDuration, offsetEndDuration, tpDuration))
 
   Promise.all(promises):await()
 end
