@@ -106,6 +106,7 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
     utility.scaleAttribute(obj, invFactor, "Offset_Start_Duration")
     utility.scaleAttribute(obj, invFactor, "Offset_End_Duration")
 
+    utility.scaleAttribute(obj, invFactor, "Speed_Duration")
     utility.scaleAttribute(obj, invFactor, "Transparency_Duration")
     utility.scaleAttribute(obj, invFactor, "Lifetime")
     utility.scaleAttribute(obj, invFactor, "Duration")
