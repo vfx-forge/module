@@ -454,8 +454,8 @@ end
 -- dispatch's branch selection below and has to move with it, which is what the
 -- ownership test in tests/roblox/mods.spec.luau exists to catch
 local function ownedFor(obj: any, className: string): { [string]: { [string]: boolean } }?
-  if className == "Model" and not utility.isMeshVFX(obj) then
-    return Spin.OWNS
+  if className == "Model" then
+    return if utility.isMeshVFX(obj) then Mesh.OWNS else Spin.OWNS
   end
 
   if className == "Sound" then
