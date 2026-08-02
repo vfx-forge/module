@@ -5,6 +5,7 @@ local PhysicsService = game:GetService("PhysicsService")
 
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
+local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 
 local Promise = require("@pkg/Promise")
@@ -778,17 +779,10 @@ local flipbook_common = require("@mod/common/flipbook")
 utility.serializeFlipbook = flipbook_common.serialize
 utility.deserializeFlipbook = flipbook_common.deserialize
 
--- out cubic
-utility.default_bezier = buffer.tostring(utility.serializePath({
-  Path2DControlPoint.new(UDim2.fromScale(0, 1), UDim2.new(), UDim2.fromScale(0.215, -0.61)),
-  Path2DControlPoint.new(UDim2.fromScale(1, 0), UDim2.fromScale(-0.645, 0), UDim2.new()),
-}))
-
--- linear
-utility.linear_bezier = buffer.tostring(utility.serializePath({
-  Path2DControlPoint.new(UDim2.fromScale(0, 1)),
-  Path2DControlPoint.new(UDim2.fromScale(1, 0)),
-}))
+-- out cubic. both live in @mod/curves so legacy_mods can reach the same bytes
+-- without requiring this module, which would close a cycle through mods
+utility.default_bezier = curves.default()
+utility.linear_bezier = curves.linear()
 
 function utility.scaleAttribute(obj: Instance, factor: number, name: string)
   local value = attr.get(obj, name, nil)
