@@ -169,6 +169,29 @@ harness.suite(function()
       expect(codec.decode(codec.encode(no :: any)).queue[1].reset).toBe(false)
     end)
 
+    -- a rate is not one of the schema's KNOWN fields, deliberately: adding one
+    -- would append to a positional layout and fail every queue already
+    -- authored's read-the-whole-buffer check. So it rides `extra`, in both
+    -- spellings -- a plain number for a constant, and a nested table carrying a
+    -- shape BUFFER for one that ramps. Nothing else in the format nests a
+    -- buffer inside a table, so the two together are the shape to pin
+    test("round-trips a rate, constant and ramped", function()
+      local constant = { v = 1, queue = { { kind = "tween", chain = false, fps = 30 } } }
+
+      expect(codec.decode(codec.encode(constant :: any)).queue[1].fps).toBe(30)
+
+      local ramped = {
+        v = 1,
+        queue = { { kind = "tween", chain = false, fps = { from = 12, to = 60, curve = curve() } } },
+      }
+
+      local out = codec.decode(codec.encode(ramped :: any)).queue[1].fps
+
+      expect(out.from).toBe(12)
+      expect(out.to).toBe(60)
+      expect(buffer.tostring(out.curve)).toBe("CURVEBYTES")
+    end)
+
     test("round-trips field names and string values outside the dictionary", function()
       local q = {
         v = 1,
