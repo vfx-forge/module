@@ -97,15 +97,17 @@ function tween.fromParams(
   end
 end
 
-function tween.timer(
+-- the stepper half of a timer, with no opinion about what finishing means:
+-- tween.timer resumes the thread that called it, tween.after calls a function
+-- and never yields at all
+local function runTimer(
   duration: number,
   counter: (deltaTime: number, elapsed: number) -> number,
   awaitTween: RBXScriptConnection?,
   scope: {}?,
-  stepAtPriority: number?
+  stepAtPriority: number?,
+  onDone: () -> ()
 )
-  local main = coroutine.running()
-
   local elapsed = 0
 
   local cleanupStepper
@@ -118,7 +120,7 @@ function tween.timer(
       and (not awaitTween or not awaitTween.Connected)
     then
       cleanupStepper()
-      task.spawn(main)
+      onDone()
       return
     end
 
@@ -154,8 +156,40 @@ function tween.timer(
   if scope then
     table.insert(scope, cleanupStepper)
   end
+end
+
+function tween.timer(
+  duration: number,
+  counter: (deltaTime: number, elapsed: number) -> number,
+  awaitTween: RBXScriptConnection?,
+  scope: {}?,
+  stepAtPriority: number?
+)
+  local main = coroutine.running()
+
+  runTimer(duration, counter, awaitTween, scope, stepAtPriority, function()
+    task.spawn(main)
+  end)
 
   coroutine.yield()
+end
+
+-- a wait that belongs to the effect rather than to the scheduler, for a caller
+-- that cannot yield: it steps on the effect's own clock, so whatever the counter
+-- returns is what time does, and its cleanup goes in the scope, so tearing the
+-- effect down cancels it.
+--
+-- task.delay does neither. It keeps wall-clock time whatever the effect's speed
+-- is doing, and it fires into whatever is left of an effect that has already
+-- been destroyed, which for a pooled part is whoever holds it next
+function tween.after(
+  duration: number,
+  counter: (deltaTime: number, elapsed: number) -> number,
+  onFinish: () -> (),
+  scope: {}?,
+  stepAtPriority: number?
+)
+  runTimer(duration, counter, nil, scope, stepAtPriority, onFinish)
 end
 
 return tween
