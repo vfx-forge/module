@@ -1,4 +1,5 @@
 local RunService = game:GetService("RunService")
+local PluginGuiService = game:GetService("PluginGuiService")
 local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
@@ -23,7 +24,18 @@ sound.OWNS = {
   },
 }
 
+-- process wide rather than per plugin instance: the launcher keeps two payload
+-- generations alive at once, so init runs while the outgoing one still holds a
+-- widget under this id
+local WIDGET_ID = "VFXForgeSoundPlayer"
+
 local soundWidget: DockWidgetPluginGui?
+
+local function clearClones(widget: DockWidgetPluginGui)
+  for _, child in widget:GetChildren() do
+    child:Destroy()
+  end
+end
 
 local function selectRandomSound(ref: Sound): Sound?
   local poolTag = attr.get(ref, "SoundPoolTag", "")
@@ -284,19 +296,36 @@ function sound.init()
     return
   end
 
+  -- adopt before creating: a widget still standing belongs to the generation on
+  -- its way out, and creating over it throws out of the require, which the
+  -- launcher reports as the whole bundle failing to boot
+  local existing = PluginGuiService:FindFirstChild(WIDGET_ID)
+
+  if existing and existing:IsA("DockWidgetPluginGui") then
+    soundWidget = existing
+
+    clearClones(existing)
+
+    return
+  end
+
   soundWidget = plugin:CreateDockWidgetPluginGui(
-    "VFXForgeSoundPlayer",
+    WIDGET_ID,
     DockWidgetPluginGuiInfo.new(Enum.InitialDockState.Float, false, true, 200, 100, 100, 50)
   )
 
   if soundWidget then
-    soundWidget.Name = "VFXForgeSoundPlayer"
+    soundWidget.Name = WIDGET_ID
   end
 end
 
 function sound.deinit()
+  -- clones only, never the widget: the incoming generation has already adopted
+  -- it by the time this runs, and destroying it would leave that generation
+  -- with a dead parent and no audible sound
   if soundWidget then
-    soundWidget:Destroy()
+    clearClones(soundWidget)
+
     soundWidget = nil
   end
 end
