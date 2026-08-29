@@ -113,7 +113,22 @@ function spin.emit(ref: Model, scope: types.scope)
       end)
     )
   else
-    ref:ScaleTo(math.max(attr.get(ref, "Scale_Start", 1), MIN_SCALE))
+    local scaleStart = attr.get(ref, "Scale_Start", 1)
+    local scaleEnd = attr.get(ref, "Scale_End", 1)
+
+    if scaleStart ~= scaleEnd then
+      table.insert(
+        scope,
+        tween.fromParams(attr.get(ref, "Scale_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
+          -- ScaleTo accepts values >= 0.001
+          ref:ScaleTo(math.max(utility.lerp(scaleStart, scaleEnd, alpha), MIN_SCALE))
+
+          return deltaTime
+        end)
+      )
+    else
+      ref:ScaleTo(math.max(scaleStart, MIN_SCALE))
+    end
   end
 
   local parent = ref:FindFirstAncestorOfClass("Attachment") or ref:FindFirstAncestorWhichIsA("BasePart")
