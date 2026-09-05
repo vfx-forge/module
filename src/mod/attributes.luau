@@ -1,8 +1,17 @@
 local RunService = game:GetService("RunService")
 
 local logger = require("./logger")
+local context_common = require("./common/context")
 
-local IS_SERVER = RunService:IsServer()
+local SERVER_CONTEXT = context_common.serverContext(
+  RunService:IsServer(),
+  context_common.pluginContext(
+    script:FindFirstAncestorOfClass("Plugin") ~= nil,
+    RunService:IsStudio(),
+    RunService:IsRunning()
+  )
+)
+
 local ATTR_CACHE_ID = "U"
 
 type AttrCache = {
@@ -99,7 +108,7 @@ function attr.get<T>(obj: Instance, key: string, default: T, soft: boolean?, val
     value = default
   end
 
-  if not soft and IS_SERVER then
+  if not soft and SERVER_CONTEXT then
     obj:SetAttribute(key, value)
   end
 

@@ -11,13 +11,17 @@ local logger = require("@mod/logger")
 local Promise = require("@pkg/Promise")
 
 local path = require("@mod/common/path")
+local context_common = require("@mod/common/context")
 
 local utility = {}
 
-utility.PLUGIN_CONTEXT = script:FindFirstAncestorOfClass("Plugin")
-  or (RunService:IsStudio() and not RunService:IsRunning())
+utility.PLUGIN_CONTEXT = context_common.pluginContext(
+  script:FindFirstAncestorOfClass("Plugin") ~= nil,
+  RunService:IsStudio(),
+  RunService:IsRunning()
+)
 
-utility.SERVER_CONTEXT = RunService:IsServer() or utility.PLUGIN_CONTEXT
+utility.SERVER_CONTEXT = context_common.serverContext(RunService:IsServer(), utility.PLUGIN_CONTEXT)
 
 utility.DEG_TO_RAD = math.pi / 180
 
