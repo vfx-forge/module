@@ -20,6 +20,10 @@ do
   NumberSequence = roblox.NumberSequence
   ColorSequenceKeypoint = roblox.ColorSequenceKeypoint
   NumberSequenceKeypoint = roblox.NumberSequenceKeypoint
+
+  -- not a datatype: @mod/lifetime spawns through task, which Studio has as a
+  -- global and lune has only as a library
+  task = require("@lune/task")
 end
 
 -- specs destructure from here rather than relying on the globals, which keeps
