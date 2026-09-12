@@ -2,8 +2,8 @@ local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
-local timing = require("@mod/common/timing")
 local utility = require("@mod/utility")
+local timing_common = require("@mod/common/timing")
 
 -- Model:ScaleTo is invalid at zero or below, and the runtime can reach that
 -- where the authoring UI cannot: a chained modifier or a randomizer with a bad
@@ -144,7 +144,7 @@ function spin.emit(ref: Model, scope: types.scope)
   rotation *= duration
 
   tween.timer(duration + resetDelay, function(deltaTime, elapsed)
-    local alpha = timing.progress(elapsed, duration)
+    local alpha = timing_common.progress(elapsed, duration)
 
     local r = rotation * alpha
     local cf = (if parent and sync then utility.getTransformedOriginExtents(parent) else originalPivot)

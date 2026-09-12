@@ -1,8 +1,8 @@
 local RunService = game:GetService("RunService")
 
 local logger = require("@mod/logger")
-local timing = require("@mod/common/timing")
 local utility = require("@mod/utility")
+local timing_common = require("@mod/common/timing")
 
 local Bezier = require("@obj/Bezier")
 
@@ -35,7 +35,7 @@ function tween.fromParams(
     tween.bezier_cache[params] = bezier
   end
 
-  duration = timing.duration(duration)
+  duration = timing_common.duration(duration)
 
   local elapsed = 0
 
@@ -47,12 +47,12 @@ function tween.fromParams(
       elapsed = math.clamp(elapsed + deltaTime, 0, math.max(duration, 0))
     end
 
-    local t = timing.progress(elapsed, duration)
+    local t = timing_common.progress(elapsed, duration)
     local alpha = 1 - bezier:getEase(t).y
 
     local result = animator(alpha, deltaTime, elapsed)
 
-    if (result == nil or timing.done(elapsed, duration)) and (not awaitTween or not awaitTween.Connected) then
+    if (result == nil or timing_common.done(elapsed, duration)) and (not awaitTween or not awaitTween.Connected) then
       cleanupStepper()
 
       if onFinish then
@@ -108,7 +108,7 @@ local function runTimer(
   stepAtPriority: number?,
   onDone: () -> ()
 )
-  duration = timing.duration(duration)
+  duration = timing_common.duration(duration)
 
   local elapsed = 0
 
@@ -117,7 +117,7 @@ local function runTimer(
   local function step(deltaTime)
     local result = counter(deltaTime, elapsed)
 
-    if (result == nil or timing.done(elapsed, duration)) and (not awaitTween or not awaitTween.Connected) then
+    if (result == nil or timing_common.done(elapsed, duration)) and (not awaitTween or not awaitTween.Connected) then
       cleanupStepper()
       onDone()
       return
