@@ -37,12 +37,20 @@ export type Rolls = {
 -- instance will run
 function mods.span(queue: { any }, fallback: number, rolls: Rolls?): (number, number)
   local picks = if rolls then rolls.picks else nil
+
+  -- schedule seeds a linked modifier's run from the fallback, so a nan one
+  -- poisons every offset in the queue and the span comes back nan. zero makes
+  -- the frontier the far end of the authored durations instead
+  if fallback ~= fallback then
+    fallback = 0
+  end
+
   local _, frontier, linked = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil)
 
   -- an effect turns this straight into a tween's duration, and a tween that
   -- never ends holds the emit open for good. nothing an author can mean by a
   -- span is infinite, so an unusable one falls back the same way an empty one does
-  if frontier <= 0 or frontier == math.huge then
+  if frontier ~= frontier or frontier <= 0 or frontier == math.huge then
     return fallback, linked
   end
 

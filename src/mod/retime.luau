@@ -1,3 +1,5 @@
+local logger = require("@mod/logger")
+local numeric = require("@mod/common/numeric")
 local utility = require("@mod/utility")
 
 local retime = {}
@@ -124,6 +126,11 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
 end
 
 function retime.batch(factor: number, ...: Instance)
+  if not numeric.finite(factor) or factor <= 0 then
+    logger.warn(`retime ignores a factor of {factor}`)
+    return
+  end
+
   local invFactor = 1 / factor
 
   for _, instance in { ... } do

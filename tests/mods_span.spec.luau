@@ -137,6 +137,23 @@ harness.suite(function()
     end)
   end)
 
+  -- a nan EffectDuration reaches mods.span as the fallback, and the fallback is
+  -- what a modifier naming no duration of its own runs for, so one unusable
+  -- attribute used to poison the span and the linked run together
+  harness.describe("mods.span with unusable input", function()
+    test("a nan fallback reaches neither the span nor the linked run", function()
+      local queue = { { kind = "delay", wait = { t = "lit", v = 2 } }, { kind = "tween" } }
+      local span, linked = mods.span(queue, 0 / 0)
+
+      expect(span).toBe(2)
+      expect(linked).toBe(0)
+    end)
+
+    test("a nan duration in the queue falls back rather than spanning nan", function()
+      expect(mods.span({ { kind = "tween", duration = 0 / 0 } }, 3)).toBe(3)
+    end)
+  end)
+
   -- a queue that waits and does nothing else drives nothing, but on a property
   -- source its base is the property's live value rather than nil, so nothing
   -- downstream notices unless the shape is named here

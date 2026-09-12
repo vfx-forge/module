@@ -1,6 +1,7 @@
 local RunService = game:GetService("RunService")
 
 local logger = require("./logger")
+local numeric = require("./common/numeric")
 local context_common = require("./common/context")
 
 local SERVER_CONTEXT = context_common.serverContext(
@@ -97,7 +98,9 @@ function attr.get<T>(obj: Instance, key: string, default: T, soft: boolean?, val
   local value = cache and cache[key]
 
   if value ~= nil then
-    return if validate then validate(value) else if value == nil then default else value
+    local resolved = if validate then validate(value) else value
+
+    return if numeric.usable(resolved) then resolved else default
   end
 
   value = obj:GetAttribute(key)
@@ -105,6 +108,12 @@ function attr.get<T>(obj: Instance, key: string, default: T, soft: boolean?, val
   if validate then
     value = validate(value)
   elseif value == nil then
+    value = default
+  end
+
+  -- before the write-back, so an authored value that cannot be used reads as
+  -- the default without that default being written over what the author set
+  if not numeric.usable(value) then
     value = default
   end
 

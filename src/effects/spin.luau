@@ -2,6 +2,7 @@ local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
+local timing = require("@mod/common/timing")
 local utility = require("@mod/utility")
 
 -- Model:ScaleTo is invalid at zero or below, and the runtime can reach that
@@ -143,7 +144,7 @@ function spin.emit(ref: Model, scope: types.scope)
   rotation *= duration
 
   tween.timer(duration + resetDelay, function(deltaTime, elapsed)
-    local alpha = math.clamp(elapsed / duration, 0, 1)
+    local alpha = timing.progress(elapsed, duration)
 
     local r = rotation * alpha
     local cf = (if parent and sync then utility.getTransformedOriginExtents(parent) else originalPivot)

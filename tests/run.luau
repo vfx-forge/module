@@ -8,6 +8,8 @@ require("@tests/modifiers_eval.spec")
 require("@tests/mods_span.spec")
 require("@tests/mods_driver.spec")
 require("@tests/value.spec")
+require("@tests/numeric.spec")
+require("@tests/timing.spec")
 require("@tests/modifier_codec.spec")
 require("@tests/modifier_frame.spec")
 
