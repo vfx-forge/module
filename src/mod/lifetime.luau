@@ -30,6 +30,9 @@ export type emit = {
 export type effect = {
   emit: emit,
   depth: number,
+
+  -- the effects service the old scope carried for the scope.effects.emitNested
+  -- call sites, kept until the promise removal
   effects: any,
 
   state: number,
@@ -44,8 +47,10 @@ export type effect = {
 }
 
 -- keyed by the locked instance for as long as one effect holds it, and cleared
--- by that effect's release, so a cancelled effect can no longer leak one
-local LOCKS: { [Instance]: boolean } = {}
+-- by that effect's release, so a cancelled effect can no longer leak one. weak
+-- keyed like the registry in utility, so a lock never pins an instance whose
+-- effect never releases
+local LOCKS = setmetatable({} :: { [Instance]: boolean }, { __mode = "k" })
 
 function lifetime.emit(parent: emit?): emit
   local emit: emit = {

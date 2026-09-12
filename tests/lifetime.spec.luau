@@ -1,11 +1,11 @@
-local lifetime = require("@mod/lifetime")
 local harness = require("@tests/harness")
+local lifetime = require("@mod/lifetime")
 local test, expect = harness.test, harness.expect
 local Instance = harness.datatypes.Instance
 
 -- a body that parks itself until the test resumes it, so a spec never yields
 local function parked(log: { string }, name: string)
-  return function(fx)
+  return function(_: lifetime.effect)
     table.insert(log, `{name}:start`)
     coroutine.yield()
     table.insert(log, `{name}:after`)
@@ -28,10 +28,12 @@ harness.suite(function()
       lifetime.hold(fx, function()
         table.insert(log, "first")
       end)
+
       lifetime.hold(fx, a)
       lifetime.hold(fx, function()
         table.insert(log, `second:{#folder:GetChildren()}`)
       end)
+
       lifetime.hold(fx, b)
 
       lifetime.release(fx)
@@ -57,9 +59,11 @@ harness.suite(function()
       lifetime.hold(fx, function()
         table.insert(log, "ran")
       end)
+
       lifetime.hold(fx, function()
         error("boom")
       end)
+
       lifetime.hold(fx, function()
         table.insert(log, "also ran")
       end)
@@ -112,6 +116,37 @@ harness.suite(function()
 
       expect(log).toEqual({ "nested" })
     end)
+
+    -- lune has no RBXScriptConnection, so only the thread half of the threads
+    -- list is reachable here
+    test("a suspended thread is closed when the effect releases", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local worker = coroutine.create(function()
+        coroutine.yield()
+      end)
+
+      task.spawn(worker)
+      lifetime.hold(fx, worker)
+
+      expect(coroutine.status(worker)).toBe("suspended")
+
+      lifetime.release(fx)
+
+      expect(coroutine.status(worker)).toBe("dead")
+    end)
+
+    test("an effect holding its own thread releases without closing itself", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.run(fx, function(self: lifetime.effect)
+        lifetime.hold(self, coroutine.running())
+      end)
+
+      expect(fx.state).toBe(lifetime.RELEASED)
+      expect(coroutine.status(fx.thread :: thread)).toBe("dead")
+    end)
   end)
 
   harness.describe("lifetime.defer", function()
@@ -124,6 +159,7 @@ harness.suite(function()
       lifetime.defer(natural, function(flag)
         table.insert(seen, `natural:{flag}`)
       end)
+
       lifetime.defer(cancelled, function(flag)
         table.insert(seen, `cancelled:{flag}`)
       end)
