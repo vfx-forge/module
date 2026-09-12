@@ -12,6 +12,11 @@ local Promise = require("@pkg/Promise")
 
 local rng = Random.new()
 
+-- an asset that has not loaded reports a TimeLength of 0, which ends the
+-- clone's timer about two frames in; the wait is bounded so a missing asset
+-- still lets the emit finish
+local LOAD_TIMEOUT = 5
+
 local sound = {}
 
 -- the three knobs sound drives through samplers of its own, so
@@ -137,6 +142,18 @@ local function playSingleSound(
   scope: types.scope,
   emitDuration: number
 ): RBXScriptConnection?
+  if not clone.IsLoaded then
+    local waited = 0
+
+    while not clone.IsLoaded and waited < LOAD_TIMEOUT and clone.Parent do
+      waited += task.wait(0.05)
+    end
+
+    if not clone.Parent then
+      return nil
+    end
+  end
+
   local currentSpeed = clone.PlaybackSpeed
 
   -- every driver is read before the legacy attr.get below it, and that ordering

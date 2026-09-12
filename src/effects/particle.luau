@@ -88,8 +88,8 @@ function particle.emit(ref: ParticleEmitter, obj: ParticleEmitter, scope: types.
   end
 
   tween.timer(ref.Lifetime.Max, function(deltaTime, elapsed)
-    return if ref.TimeScale > 0 or (elapsed > 0 and speedTween and speedTween.Connected)
-      then deltaTime * ref.TimeScale
+    return if obj.TimeScale > 0 or (elapsed > 0 and speedTween and speedTween.Connected)
+      then deltaTime * obj.TimeScale
       else nil
   end, speedTween, scope)
 end
