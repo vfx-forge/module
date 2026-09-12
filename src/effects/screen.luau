@@ -3,6 +3,7 @@ local RunService = game:GetService("RunService")
 local attr = require("@mod/attributes")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local screen_common = require("@mod/common/screen")
 
 local screen = {}
 
@@ -39,7 +40,7 @@ function screen.emit(ref: BasePart, scope: types.scope)
 
     local cf = camera.CFrame * CFrame.new(0, 0, -distance)
 
-    ref.Size = Vector3.new(width, height, ref.Size.Z) * scale
+    ref.Size = screen_common.size(width, height, ref.Size.Z, scale)
     ref.CFrame = cf * CFrame.new(pos) * CFrame.fromOrientation(rot.x, rot.y, rot.z)
   end
 

@@ -12,5 +12,6 @@ require("@tests/numeric.spec")
 require("@tests/timing.spec")
 require("@tests/modifier_codec.spec")
 require("@tests/modifier_frame.spec")
+require("@tests/screen.spec")
 
 process.exit(harness.run())
