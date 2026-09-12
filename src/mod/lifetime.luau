@@ -269,7 +269,148 @@ function lifetime.run(fx: effect, body: (effect) -> ())
   task.spawn(thread)
 end
 
--- the emit tree lands here next: seal, await and clear
-settle = function(emit: emit) end
+local clearing = 0
+local wakes: { thread } = {}
+
+-- a wake resumes at once, the same timing the promises had, except during a
+-- clear: a thread resumed halfway through one would see a tree half released
+local function flushWakes()
+  if clearing > 0 then
+    return
+  end
+
+  while #wakes > 0 do
+    local batch = wakes
+    wakes = {}
+
+    for _, thread in batch do
+      if coroutine.status(thread) == "suspended" then
+        task.spawn(thread)
+      end
+    end
+  end
+end
+
+local function wake(emit: emit)
+  local waiters = emit.waiters
+
+  if #waiters == 0 then
+    return
+  end
+
+  emit.waiters = {}
+
+  for _, thread in waiters do
+    table.insert(wakes, thread)
+  end
+
+  flushWakes()
+end
+
+settle = function(emit: emit)
+  if emit.pending > 0 then
+    return
+  end
+
+  wake(emit)
+
+  if not emit.sealed or emit.done then
+    return
+  end
+
+  emit.done = true
+
+  local parent = emit.parent
+
+  if parent then
+    swapRemove(parent.children, emit)
+    parent.pending -= 1
+    settle(parent)
+  end
+end
+
+-- the caller has added every effect it will add directly. children an effect
+-- starts later still count, because that effect is pending until it returns
+function lifetime.seal(emit: emit)
+  emit.sealed = true
+  settle(emit)
+end
+
+function lifetime.await(emit: emit)
+  if emit.pending == 0 then
+    return
+  end
+
+  table.insert(emit.waiters, coroutine.running())
+  coroutine.yield()
+end
+
+local function ownsThread(emit: emit, thread: thread): boolean
+  for _, fx in emit.effects do
+    if fx.thread == thread then
+      return true
+    end
+  end
+
+  for _, child in emit.children do
+    if ownsThread(child, thread) then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- pass one: every thread in the subtree stops before anything is released, so
+-- no body resumes into a half-released tree. the running thread cannot be
+-- closed and is parked at the end of clear instead
+local function stopTree(emit: emit, running: thread)
+  for _, fx in emit.effects do
+    if fx.state ~= RUNNING then
+      continue
+    end
+
+    fx.state = STOPPED
+
+    local thread = fx.thread
+
+    if thread and thread ~= running and coroutine.status(thread) == "suspended" then
+      coroutine.close(thread)
+    end
+  end
+
+  for _, child in emit.children do
+    stopTree(child, running)
+  end
+end
+
+-- pass two: children before parents, over copies because release edits both lists
+local function releaseTree(emit: emit)
+  for _, child in table.clone(emit.children) do
+    releaseTree(child)
+  end
+
+  for _, fx in table.clone(emit.effects) do
+    lifetime.release(fx, true)
+  end
+end
+
+function lifetime.clear(emit: emit)
+  local running = coroutine.running()
+  local self = ownsThread(emit, running)
+
+  clearing += 1
+
+  stopTree(emit, running)
+  releaseTree(emit)
+
+  clearing -= 1
+
+  flushWakes()
+
+  if self then
+    coroutine.yield()
+  end
+end
 
 return lifetime

@@ -229,4 +229,148 @@ harness.suite(function()
       expect(fx.state).toBe(lifetime.RELEASED)
     end)
   end)
+
+  harness.describe("emit tree", function()
+    test("an emit is done once sealed with nothing pending", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.seal(emit)
+      expect(emit.done).toBe(false)
+
+      lifetime.release(fx)
+      expect(emit.done).toBe(true)
+      expect(emit.pending).toBe(0)
+    end)
+
+    test("a child emit keeps its parent pending until the child is done", function()
+      local parent = lifetime.emit(nil)
+      local pfx = lifetime.effect(parent, 0, nil)
+      lifetime.seal(parent)
+
+      local child = lifetime.emit(parent)
+      local cfx = lifetime.effect(child, 1, nil)
+      lifetime.seal(child)
+
+      lifetime.release(pfx)
+      expect(parent.done).toBe(false)
+
+      lifetime.release(cfx)
+      expect(child.done).toBe(true)
+      expect(parent.done).toBe(true)
+      expect(#parent.children).toBe(0)
+    end)
+
+    test("await returns at once when nothing is pending and wakes when the last effect ends", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      lifetime.seal(emit)
+
+      local waiter = coroutine.create(function()
+        lifetime.await(emit)
+        table.insert(log, "woke")
+      end)
+      task.spawn(waiter)
+
+      expect(log).toEqual({})
+
+      lifetime.release(fx)
+      expect(log).toEqual({ "woke" })
+
+      local empty = lifetime.emit(nil)
+      lifetime.seal(empty)
+      lifetime.await(empty)
+      table.insert(log, "immediate")
+      expect(log).toEqual({ "woke", "immediate" })
+    end)
+  end)
+
+  harness.describe("lifetime.clear", function()
+    test("closes a parked effect, releases what it acquired, and never runs the code after its yield", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      lifetime.seal(emit)
+
+      lifetime.run(fx, function(scope)
+        lifetime.hold(scope, function()
+          table.insert(log, "released")
+        end)
+        coroutine.yield()
+        table.insert(log, "after")
+      end)
+
+      lifetime.clear(emit)
+
+      expect(log).toEqual({ "released" })
+      expect(coroutine.status(fx.thread :: thread)).toBe("dead")
+      expect(fx.cancelled).toBe(true)
+      expect(emit.done).toBe(true)
+
+      lifetime.clear(emit)
+      expect(log).toEqual({ "released" })
+    end)
+
+    test("releases children before parents", function()
+      local log = {}
+      local parent = lifetime.emit(nil)
+      local pfx = lifetime.effect(parent, 0, nil)
+      lifetime.seal(parent)
+      local child = lifetime.emit(parent)
+      local cfx = lifetime.effect(child, 1, nil)
+      lifetime.seal(child)
+
+      lifetime.hold(pfx, function()
+        table.insert(log, "parent")
+      end)
+      lifetime.hold(cfx, function()
+        table.insert(log, "child")
+      end)
+
+      lifetime.clear(parent)
+
+      expect(log).toEqual({ "child", "parent" })
+      expect(parent.done).toBe(true)
+    end)
+
+    test("wakes a waiter once, after everything is released", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      lifetime.seal(emit)
+
+      lifetime.hold(fx, function()
+        table.insert(log, "released")
+      end)
+
+      task.spawn(function()
+        lifetime.await(emit)
+        table.insert(log, "woke")
+      end)
+
+      lifetime.clear(emit)
+
+      expect(log).toEqual({ "released", "woke" })
+    end)
+
+    test("an effect that clears its own emit stops running", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      lifetime.seal(emit)
+
+      lifetime.run(fx, function(scope)
+        lifetime.hold(scope, function()
+          table.insert(log, "released")
+        end)
+        lifetime.clear(emit)
+        table.insert(log, "after")
+      end)
+
+      expect(log).toEqual({ "released" })
+      expect(fx.state).toBe(lifetime.RELEASED)
+      expect(coroutine.status(fx.thread :: thread)).toBe("suspended")
+    end)
+  end)
 end)
