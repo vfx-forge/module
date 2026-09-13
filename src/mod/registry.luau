@@ -16,9 +16,12 @@ type Owned = { [string]: { [string]: boolean } }
 local modules: { Module } = {}
 local byId: { [string]: Module } = {}
 
--- per module, computed once at register: the rows the effect drives itself,
--- and what its classifier says about where to run it from
+-- per module, computed once at register: the rows the effect drives itself. a
+-- property row's old queues lived on the attribute side too, so the applier
+-- must leave both alone
 local owned: { [Module]: Owned } = {}
+
+-- what a module's classifier says about where to run it from
 local shape: { [Module]: { depth: number, subjects: { string }? } } = {}
 
 -- the selector engine is the engine's; a test host hands one in
@@ -221,18 +224,27 @@ local function freezeRows(rows: { [string]: any })
   table.freeze(rows)
 end
 
+local function mark(out: { [string]: boolean }, name: string, row: any)
+  out[name] = true
+
+  for _, alias in row.names do
+    out[alias] = true
+  end
+end
+
 local function ownedOf(module: Module): Owned
   local out = { attribute = {}, property = {} }
 
   for name, row in module.attributes do
     if row.isMod then
-      out.attribute[name] = true
+      mark(out.attribute, name, row)
     end
   end
 
   for name, row in module.properties do
     if row.isMod then
-      out.property[name] = true
+      mark(out.property, name, row)
+      mark(out.attribute, name, row)
     end
   end
 

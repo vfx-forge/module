@@ -180,6 +180,22 @@ harness.suite(function()
       expect(registry.owned(registry.get("ok")).attribute.A).toBe(true)
       expect(registry.owned(registry.get("ok")).attribute.EmitDelay).toBe(nil)
     end)
+
+    test("a property mod row is owned on both sides, aliases included", function()
+      registry.clear()
+
+      registry.register(stub("beam-ish", { properties = { Width = knob():aliases("OldWidth"):mod() } }))
+
+      local owned = registry.owned(registry.get("beam-ish"))
+
+      expect(owned.property.Width).toBe(true)
+      expect(owned.property.OldWidth).toBe(true)
+      expect(owned.attribute.Width).toBe(true)
+      expect(owned.attribute.OldWidth).toBe(true)
+
+      expect(owned.attribute.EmitDelay).toBe(nil)
+      expect(owned.property.EmitDelay).toBe(nil)
+    end)
   end)
 
   harness.describe("registry.depth and registry.subjects", function()
