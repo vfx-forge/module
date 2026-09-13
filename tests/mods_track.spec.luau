@@ -90,6 +90,19 @@ harness.suite(function()
     expect(#warnings).toBe(1)
   end)
 
+  test("a native vector default and a Vector3 queue are one kind", function()
+    local obj = authored("Size", { tween(Vector3.new(0, 0, 0), Vector3.new(2, 2, 2), 1) })
+
+    local warnings = harness.captureWarnings(function()
+      local track = mods.track(obj, "attribute", "Size", vector.create(0, 0, 0), 2)
+
+      expect(track.animated).toBe(true)
+      expect(track.at(1)).toEqual(Vector3.new(2, 2, 2))
+    end)
+
+    expect(#warnings).toBe(0)
+  end)
+
   test("a default given as a queue runs when nothing is authored", function()
     local obj = Instance.new("Attachment")
     local track = mods.track(obj, "attribute", "SpinSpeed", { tween(0, 1) }, 0.5)
