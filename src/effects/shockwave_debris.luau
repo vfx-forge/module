@@ -1,13 +1,13 @@
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
+local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
-local mods = require("@mod/mods")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
-local legacy_mods = require("@mod/legacy_mods")
 
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
@@ -16,20 +16,59 @@ local rng = Random.new()
 
 local debris = {}
 
--- every one of these is driven here, so the applier must not drive them as
--- well: Lifetime and Size carry a NumberRange and a Min/Max pair, and an
--- applier writing a sample back would replace the range with a scalar.
---
--- no Speed. debris flies under physics impulses, so a speed multiplier would
--- scale the dwell and the shrink and leave the flight alone, which reads worse
--- than having no knob at all
-debris.OWNS = {
-  attribute = {
-    Size = true,
-    Lifetime = true,
-    Transparency = true,
+debris.id = "shockwave_debris"
+debris.display = { name = "Shockwave Debris", icon = "shockwave_debris", order = 62 }
+debris.classifier = ".Shockwave > #Debris > BasePart"
+
+-- no Speed row. debris flies under physics impulses, so a speed multiplier
+-- would scale the dwell and the shrink and leave the flight alone, which reads
+-- worse than having no knob at all
+debris.attributes = {
+  EmitDelay = knob(0):min(0):unit("seconds"),
+  Amount = knob(NumberRange.new(5, 10)):min(0),
+  Lifetime = knob(NumberRange.new(2, 3)):min(0):unit("seconds"):mod(),
+  Airtime = knob(NumberRange.new(0.5, 0.5)):min(0):unit("seconds"),
+  LinearMagnitude = knob(NumberRange.new(15, 25)),
+  AngularMagnitude = knob(NumberRange.new(5, 15)),
+  InheritanceEnabled = knob(true),
+  InheritanceRadius = knob(5):unit("studs"),
+  InheritanceMaxResults = knob(5),
+  MinDirection = knob(-vector.one),
+  MaxDirection = knob(vector.one),
+  Size = knob(vector.create(2.5, 1.5, 2.5)):unit("studs"):mod(),
+  ShrinkScale = knob(vector.zero):aliases("SizeScaleOut_End", "SizeScaleEnd"),
+  ShrinkDuration = knob(0.5)
+    :min(0)
+    :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
+    :unit("seconds"),
+  ShrinkCurve = knob(function()
+    return utility.default_bezier
+  end):aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve"),
+  Transparency = knob(0):aliases("Transparency_Start"):mod(mod.to(1):duration(0.5)),
+}
+
+debris.properties = {}
+
+debris.layout = {
+  { title = "Emit", entries = { "EmitDelay", "Amount", "Lifetime", "Airtime" } },
+  { title = "Launch", entries = { "LinearMagnitude", "AngularMagnitude", "MinDirection", "MaxDirection" } },
+  { title = "Look", entries = { "Size", "Transparency", "ShrinkScale", "ShrinkDuration", "ShrinkCurve" } },
+  {
+    title = "Inheritance",
+    entries = {
+      "InheritanceEnabled",
+      "InheritanceRadius",
+      "InheritanceMaxResults",
+      { action = "toggle_paths", label = "Show Paths" },
+    },
   },
 }
+
+-- the dwell's ceiling: a piece's own lifetime is drawn below it, and a queue
+-- naming no duration runs over it
+function debris.duration(_, attrs: any): number
+  return attrs.Lifetime.value.Max
+end
 
 local physicsParts = {}
 
@@ -69,16 +108,19 @@ function debris.deinit()
   table.clear(physicsParts)
 end
 
-function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
-  if not part_cache then
+function debris.emit(ctx: reader.Ctx, attrs: any)
+  local ref = ctx.ref :: Part
+  local scope = ctx.scope
+  local origin = utility.findFirstClassWithTag(ref, "Attachment", utility.SHOCKWAVE_TAG)
+
+  if not part_cache or not origin then
     return
   end
 
   local params
 
-  local inherit = attr.get(ref, "InheritanceEnabled", true)
-  local inheritRadius = attr.get(ref, "InheritanceRadius", 5)
-
+  -- the origin's rows belong to the shockwave attachment, which has no module
+  -- yet, so they are still read here
   local rayColGroup = attr.get(origin, "RayCollisionGroup", "Default")
 
   local rayFilterTag = attr.get(origin, "FilterTag", "")
@@ -86,11 +128,9 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   local rayIgnoreCanCollide = attr.get(origin, "IgnoreCanCollide", false)
 
-  if inherit then
-    local inheritMaxResults = attr.get(ref, "InheritanceMaxResults", 5)
-
+  if attrs.InheritanceEnabled then
     params = OverlapParams.new()
-    params.MaxParts = inheritMaxResults
+    params.MaxParts = attrs.InheritanceMaxResults
     params.CollisionGroup = rayColGroup
     params.RespectCanCollide = not rayIgnoreCanCollide
     params.FilterType = Enum.RaycastFilterType[rayFilterType]
@@ -101,38 +141,23 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     end
   end
 
-  local emitDelay = attr.get(ref, "EmitDelay", 0)
+  local amount = attrs.Amount
+  local airtime = attrs.Airtime
 
-  local amount = attr.getRange(ref, "Amount", NumberRange.new(5, 10), NumberRange.new(0, math.huge))
-  local lifeRange = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
-  local airtime = attr.getRange(ref, "Airtime", NumberRange.new(0.5, 0.5), NumberRange.new(0, math.huge))
+  local linmag = attrs.LinearMagnitude
+  local angmag = attrs.AngularMagnitude
 
-  local linmag = attr.getRange(ref, "LinearMagnitude", NumberRange.new(15, 25))
-  local angmag = attr.getRange(ref, "AngularMagnitude", NumberRange.new(5, 15))
+  local minDir = attrs.MinDirection
+  local maxDir = attrs.MaxDirection
 
-  -- one phase, so one row: the shrink after the dwell. the old name is read
-  -- through the alias, so content in the wild keeps working and nothing of it
-  -- is written back
-  local sizeOutEnd = legacy_mods.alias(ref, "SizeScaleOut_End", Vector3.zero)
+  local shrinkTo = attrs.ShrinkScale
+  local shrinkCurve = attrs.ShrinkCurve
+  local shrinkDuration = attrs.ShrinkDuration
 
-  local minSize = attr.get(ref, "MinSize", vector.create(2, 1, 2))
-  local maxSize = attr.get(ref, "MaxSize", vector.create(3, 2, 3))
-
-  local minDir = attr.get(ref, "MinDirection", -vector.one)
-  local maxDir = attr.get(ref, "MaxDirection", vector.one)
+  local lifeMax = attrs.Lifetime.value.Max
+  local fadeSeed = attrs.Transparency.value
 
   local count = rng:NextInteger(amount.Min, amount.Max)
-
-  local sizeCurve = legacy_mods.alias(ref, "SizeScaleOut_Curve", utility.default_bezier)
-  local sizeDuration = legacy_mods.alias(ref, "SizeScaleOut_Duration", 0.5)
-
-  local tpDuration = attr.get(ref, "Transparency_Duration", 0.5, true)
-
-  -- an old row's start was only ever a seed for a piece carrying nothing of its
-  -- own, so it is read here and applied per piece. a framed queue says where the
-  -- fade starts itself, and a piece takes it at its word
-  local framedTp = mods.framed(ref, "attribute", "Transparency") ~= nil
-  local tpSeed = legacy_mods.alias(ref, "Transparency_Start", 0)
 
   local partData = {}
   local promises = {}
@@ -143,7 +168,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
   local originPosition = originCFrame.Position
 
   if params then
-    local parts = workspace:GetPartBoundsInRadius(originPosition, inheritRadius, params)
+    local parts = workspace:GetPartBoundsInRadius(originPosition, attrs.InheritanceRadius, params)
 
     for _, p in parts do
       if p.Transparency == 1 then
@@ -154,7 +179,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     end
   end
 
-  task.wait(emitDelay)
+  task.wait(attrs.EmitDelay)
 
   for _ = 1, count do
     local iref = #partData ~= 0 and partData[rng:NextInteger(1, #partData)]
@@ -215,12 +240,8 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
 
     part.CFrame = CFrame.new(originPosition)
 
-    -- per PIECE: a size is drawn per emitted instance, and one track for the
-    -- whole field would cut every piece to the same measurements. the track's
-    -- queue default is the Min and Max pair, a randomizer between two Vector3s
-    -- that draws once per component, which is exactly the three NextNumber
-    -- calls this replaces
-    local size = mods.track(ref, "attribute", "Size", mods.draw(minSize, maxSize), lifeRange.Max).at(0)
+    -- per PIECE: the row is called again so a drawn size is this piece's own
+    local size = attrs.Size().at(0)
 
     part.Size = size
 
@@ -229,28 +250,15 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
       part.Color = iref.Color
       part.Transparency = iref.Transparency
     else
-      part.Transparency = tpSeed
+      part.Transparency = fadeSeed
     end
 
-    -- the fade a piece runs after its dwell goes from where the piece rests,
-    -- which a piece that inherits a nearby part knows only now, to where the row
-    -- ends. debris fades all the way out by default, which is what its two old
-    -- defaults spelled. a framed queue names both ends and is taken at its word
-    local transparency = mods.track(
-      ref,
-      "attribute",
-      "Transparency",
-      mods.ramp(part.Transparency, 1),
-      tpDuration,
-      nil,
-      { ownStart = true }
-    )
+    -- the fade a piece runs after its dwell continues from where the piece
+    -- rests, which a piece inheriting a nearby part knows only now. a framed
+    -- queue names its own start and is taken at its word
+    local fade = attrs.Transparency(part.Transparency)
 
-    if framedTp then
-      part.Transparency = transparency.at(0)
-    end
-
-    local tpMoves = transparency.animated and (framedTp or transparency.at(0) ~= transparency.at(transparency.span))
+    part.Transparency = fade.at(0)
 
     lifetime.hold(scope, function()
       local index = table.find(physicsParts, realPart)
@@ -285,24 +293,21 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     local env = scope.effects.emitNested(realPart, scope.depth + 1, scope)
     table.insert(promises, env.Finished)
 
-    -- the span is the dwell's own ceiling rather than the effect's run: a
-    -- Lifetime track is sampled on the piece's dwell clock, which never reaches
-    -- the run. a zero there reads as fully elapsed, which would pin a linked
-    -- modifier at its end value from the first frame
-    local life = mods.track(ref, "attribute", "Lifetime", mods.draw(lifeRange.Min, lifeRange.Max), lifeRange.Max)
+    -- a piece's own dwell, drawn from the row's range, sampled on the piece's
+    -- clock so a modifier moving the row moves a dwell already running
+    local life = attrs.Lifetime()
     local drawn = life.at(0)
 
     -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
     -- ever and the piece dwells for the life of the session
     if typeof(drawn) ~= "number" or drawn ~= drawn then
-      drawn = rng:NextNumber(lifeRange.Min, lifeRange.Max)
+      drawn = rng:NextNumber(attrs.Lifetime.value.Min, lifeMax)
     end
 
     -- the dwell belongs to the effect rather than to the scheduler: its cleanup
     -- lives in the scope, so tearing the field down cancels it rather than
     -- firing a shrink at a pooled part the cache has already handed on, and its
-    -- length is the counter's to decide, so a Lifetime a modifier is moving
-    -- moves a dwell that is already running
+    -- length is the counter's to decide
     tween.after(math.huge, function(deltaTime, elapsed)
       local target = life.at(elapsed)
 
@@ -319,21 +324,21 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
       task.spawn(function()
         local startSize = part.Size
 
-        if startSize ~= size * sizeOutEnd then
+        if startSize ~= size * shrinkTo then
           lifetime.hold(
             scope,
-            tween.fromParams(sizeCurve, sizeDuration, function(alpha, deltaTime)
-              part.Size = startSize:Lerp(size * sizeOutEnd, alpha)
+            tween.fromParams(shrinkCurve, shrinkDuration, function(alpha, deltaTime)
+              part.Size = startSize:Lerp(size * shrinkTo, alpha)
               return deltaTime
             end)
           )
         end
 
-        if tpMoves then
+        if fade.animated then
           lifetime.hold(
             scope,
-            tween.fromParams(utility.linear_bezier, transparency.span, function(_, deltaTime, elapsed)
-              local v = transparency.at(elapsed)
+            tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
+              local v = fade.at(elapsed)
 
               if typeof(v) == "number" then
                 part.Transparency = v
@@ -350,7 +355,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     end, scope)
   end
 
-  task.wait(lifeRange.Max + math.max(tpDuration, sizeDuration))
+  task.wait(lifeMax + math.max(attrs.Transparency.duration, shrinkDuration))
 
   Promise.all(promises):await()
 end

@@ -8,7 +8,6 @@ local Lightning = require("@vfx/lightning")
 local CameraShake = require("@vfx/camera_shake")
 local ShockwaveRing = require("@vfx/shockwave_ring")
 local ShockwaveLine = require("@vfx/shockwave_line")
-local ShockwaveDebris = require("@vfx/shockwave_debris")
 
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
@@ -536,10 +535,6 @@ function emitters.shockwave_ring(att: Attachment, obj: Part, scope: types.scope)
   utility.try(`failed to emit shockwave ring with error: %s`, ShockwaveRing.emit, att, obj, scope)
 end
 
-function emitters.shockwave_debris(att: Attachment, obj: Part, scope: types.scope)
-  utility.try(`failed to emit shockwave debris with error: %s`, ShockwaveDebris.emit, att, obj, scope)
-end
-
 function emitters.shockwave_line(att: Attachment, obj: Part, scope: types.scope)
   utility.try(`failed to emit shockwave line with error: %s`, ShockwaveLine.emit, att, obj, scope)
 end
@@ -589,8 +584,6 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
 
     if folder == "Rings" then
       return ShockwaveRing.OWNS
-    elseif folder == "Debris" then
-      return ShockwaveDebris.OWNS
     elseif folder == "Lines" then
       return ShockwaveLine.OWNS
     end
@@ -673,8 +666,6 @@ local function route(
 
       if name == "Rings" then
         emitters.shockwave_ring(att, obj, scope)
-      elseif name == "Debris" then
-        emitters.shockwave_debris(att, obj, scope)
       elseif name == "Lines" then
         emitters.shockwave_line(att, obj, scope)
       end

@@ -120,6 +120,7 @@ api.setup = false
 
 -- the built-ins register once, when the module loads
 registry.register(Beam)
+registry.register(ShockwaveDebris)
 
 function api.init(params: params?)
   if api.setup then
