@@ -505,7 +505,7 @@ harness.suite(function()
     test("apply hands the track and the scope to the driver", function()
       local seen = {}
 
-      reader.drive = function(scope, track, write)
+      reader.bind = function(scope, track, write)
         seen.scope, seen.track, seen.write = scope, track, write
       end
 
@@ -523,7 +523,7 @@ harness.suite(function()
         expect(seen.write).toBe(write)
       end)
 
-      reader.drive = nil
+      reader.bind = nil
 
       if not ok then
         error(err, 0)

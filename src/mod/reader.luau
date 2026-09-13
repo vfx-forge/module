@@ -47,7 +47,7 @@ reader.source = reader.defaultSource
 
 -- what apply binds a track with. the engine helper is out of this module's
 -- reach, so the dispatcher hands it in at load
-reader.drive = nil :: ((scope: any, track: mods.Track, write: (v: any) -> ()) -> ())?
+reader.bind = nil :: ((scope: any, track: mods.Track, write: (v: any) -> ()) -> ())?
 
 local function propertyOf(obj: Instance, name: string): any
   local ok, v = pcall(function()
@@ -272,13 +272,13 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     }
 
     function track.apply(_, write: (v: any) -> ())
-      if reader.drive == nil or ctx.scope == nil then
+      if reader.bind == nil or ctx.scope == nil then
         logger.error(`{name} cannot be applied without a running effect`)
       end
 
-      local drive = reader.drive :: any
+      local bind = reader.bind :: any
 
-      drive(ctx.scope, inner, write)
+      bind(ctx.scope, inner, write)
     end
 
     -- a piece calls the row for a track of its own: rules run again, and a

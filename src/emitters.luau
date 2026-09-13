@@ -33,7 +33,7 @@ local emitters = {}
 
 -- the reader binds a track on an effect's scope through the same helper every
 -- effect steps with, handed in here because the reader stays engine-free
-reader.drive = tween.drive
+reader.bind = tween.drive
 
 -- the attribute arm goes through the cache-aware write, so a driven or restored
 -- attribute lands where every reader on this path looks for it
