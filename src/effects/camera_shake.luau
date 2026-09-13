@@ -114,10 +114,6 @@ function camera_shake.emit(ref: RayValue, scope: types.scope)
   local posInfluence = attr.get(ref, "PositionInfluence", vector.one)
   local rotInfluence = attr.get(ref, "RotationInfluence", vector.one * 0.2)
 
-  -- read before the legacy attr.get below, because attr.get writes its default
-  -- back and reading Speed_Start would create the quad readQuad then finds
-  local speed, speedSpan = mods.driver(ref, "attribute", "Speed", 0.1)
-
   local sustained = emitDuration > 0
 
   local shake = Shake.new()
@@ -138,32 +134,18 @@ function camera_shake.emit(ref: RayValue, scope: types.scope)
     return elapsed
   end
 
-  if speed then
-    currentSpeed = speed(0)
+  local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
 
+  currentSpeed = speed.at(0)
+
+  if speed.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, sampledAt)
-        currentSpeed = speed(sampledAt)
+      tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, sampledAt)
+        currentSpeed = speed.at(sampledAt)
         return deltaTime
       end)
     )
-  else
-    local speedStart = attr.get(ref, "Speed_Start", 1)
-    local speedEnd = attr.get(ref, "Speed_End", 1)
-
-    if speedStart ~= speedEnd then
-      local speedTween = tween.fromParams(
-        attr.get(ref, "Speed_Curve", utility.default_bezier),
-        attr.get(ref, "Speed_Duration", 0.1),
-        function(alpha, deltaTime)
-          currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
-          return deltaTime
-        end
-      )
-
-      lifetime.hold(scope, speedTween)
-    end
   end
 
   lifetime.hold(

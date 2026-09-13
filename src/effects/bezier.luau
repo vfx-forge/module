@@ -42,16 +42,11 @@ local function readBezierAttributes(ref: Attachment)
     facePath = attr.get(ref, "FacePath", false),
     arcSpace = attr.get(ref, "ArcSpace", false),
 
-    -- rotation. read soft so the defaults are not written back: this runs
-    -- before any driver read, and a stamped RotSpeed_Start is a quad
-    -- legacy_mods would then find that nobody authored
-    rotSpeedStart = attr.getRange(ref, "RotSpeed_Start", NumberRange.new(0, 0), nil, true),
-    rotSpeedEnd = attr.getRange(ref, "RotSpeed_End", NumberRange.new(0, 0), nil, true),
+    -- rotation
     minInitRot = attr.get(ref, "MinInitRot", vector.zero),
     maxInitRot = attr.get(ref, "MaxInitRot", vector.zero),
 
     -- curves
-    speedCurve = attr.get(ref, "Speed_Curve", utility.default_bezier),
     speedDuration = attr.get(ref, "Speed_Duration", 0.1),
     easingCurve = attr.get(ref, "Easing_Curve", utility.linear_bezier),
   }
@@ -90,16 +85,18 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
       end
     end)
 
-    if common.speedStart ~= common.speedEnd then
+    local speed = mods.track(ref, "attribute", "Speed", 1, attrs.speedDuration)
+
+    if speed.animated then
       attr.setState(ref, "SpeedTweening", true)
 
       lifetime.hold(
         scope,
         tween.fromParams(
-          attrs.speedCurve,
-          attrs.speedDuration,
-          function(alpha, deltaTime)
-            attr.setState(ref, "SpeedOverride", utility.lerp(common.speedStart, common.speedEnd, alpha))
+          utility.linear_bezier,
+          speed.span,
+          function(_, deltaTime, elapsed)
+            attr.setState(ref, "SpeedOverride", speed.at(elapsed))
             return deltaTime
           end,
           nil,
@@ -161,21 +158,10 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
     local projectileLifetime = common.projectileEnabled
       and rng:NextNumber(common.projectileLifetime.Min, common.projectileLifetime.Max)
 
-    -- one driver per emitted part rather than one per emit, because the two
-    -- endpoints are drawn per part and a sampler is what draws them. the legacy
-    -- pair below is read only when nothing is authored, so the two paths never
-    -- both draw
-    local rotSpeed, rotSpeedSpan = mods.driver(ref, "attribute", "RotSpeed", duration)
-
-    local rotSpeedStart = 0
-    local rotSpeedEnd = 0
-
-    if rotSpeed then
-      rotSpeedStart = rotSpeed(0)
-    else
-      rotSpeedStart = rng:NextNumber(attrs.rotSpeedStart.Min, attrs.rotSpeedStart.Max)
-      rotSpeedEnd = rng:NextNumber(attrs.rotSpeedEnd.Min, attrs.rotSpeedEnd.Max)
-    end
+    -- one track per emitted part rather than one per emit, because the two
+    -- endpoints are drawn per part and a sampler is what draws them
+    local rotSpeed = mods.track(ref, "attribute", "RotSpeed", 0, duration)
+    local rotSpeedStart = rotSpeed.at(0)
 
     table.insert(
       promises,
@@ -238,7 +224,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
         local finished = false
 
         local prevCF = CFrame.identity
-        local currentSpeed = common.speedStart
+        local currentSpeed = 1
 
         local currentRot = CFrame.fromOrientation(initRot.x, initRot.y, initRot.z)
         local currentRotSpeed = rotSpeedStart
@@ -284,24 +270,19 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
 
         -- Speed tween
         local speedTween
-        local speed, speedSpan = mods.driver(ref, "attribute", "Speed", attrs.speedDuration)
+        local speed = mods.track(ref, "attribute", "Speed", 1, attrs.speedDuration)
 
-        if speed and not attr.getState(ref, "SpeedOverride", nil) then
-          currentSpeed = speed(0)
+        if not attr.getState(ref, "SpeedOverride", nil) then
+          currentSpeed = speed.at(0)
 
-          speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, sampledAt)
-            currentSpeed = speed(sampledAt)
-            return deltaTime
-          end)
+          if speed.animated then
+            speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, sampledAt)
+              currentSpeed = speed.at(sampledAt)
+              return deltaTime
+            end)
 
-          lifetime.hold(scope, speedTween)
-        elseif common.speedStart ~= common.speedEnd and not attr.getState(ref, "SpeedOverride", nil) then
-          speedTween = tween.fromParams(attrs.speedCurve, attrs.speedDuration, function(alpha, deltaTime)
-            currentSpeed = utility.lerp(common.speedStart, common.speedEnd, alpha)
-            return deltaTime
-          end)
-
-          lifetime.hold(scope, speedTween)
+            lifetime.hold(scope, speedTween)
+          end
         end
 
         local function getEffectiveSpeed()
@@ -313,21 +294,9 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
         end
 
         -- Rotation speed tween
-        if rotSpeed then
-          lifetime.hold(
-            scope,
-            tween.fromParams(utility.linear_bezier, rotSpeedSpan, function(_, deltaTime, elapsed)
-              currentRotSpeed = rotSpeed(elapsed)
-              return deltaTime * getEffectiveSpeed()
-            end, speedTween)
-          )
-        else
-          bezier_common.createPropertyTween(scope, ref, "RotSpeed", duration, rotSpeedStart, rotSpeedEnd, function(v)
-            currentRotSpeed = v
-          end, function()
-            return getEffectiveSpeed()
-          end, speedTween)
-        end
+        bezier_common.drivePropertyTrack(scope, rotSpeed, function(v)
+          currentRotSpeed = v
+        end, getEffectiveSpeed, speedTween)
 
         -- main animation
         lifetime.hold(

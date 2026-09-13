@@ -53,18 +53,10 @@ local function readLightningAttributes(ref: Attachment)
     colorEasingData = attr.get(ref, "Color_Curve", utility.linear_bezier),
     colorDuration = attr.get(ref, "Color_Duration", 1),
 
-    -- transparency. every quad half here is read soft, because this runs once
-    -- before the per-bolt loop where the drivers are read, and a non-soft read
-    -- would write its default back and fabricate a quad legacy_mods then finds
-    transparencyStart = attr.get(ref, "Transparency_Start", 0, true),
-    transparencyEnd = attr.get(ref, "Transparency_End", 0, true),
-
     -- fill
     fillColorSequence = attr.get(ref, "Fill_Color", ColorSequence.new(Color3.new(1, 1, 1))),
     fillColorEasingData = attr.get(ref, "Fill_Color_Curve", utility.linear_bezier),
     fillColorDuration = attr.get(ref, "Fill_Color_Duration", 1),
-    fillTransparencyStart = attr.get(ref, "Fill_Transparency_Start", 1, true),
-    fillTransparencyEnd = attr.get(ref, "Fill_Transparency_End", 1, true),
     fillDepthMode = attr.getEnum(ref, "Fill_DepthMode", "Occluded", { "AlwaysOnTop", "Occluded" }),
 
     -- fade-in
@@ -77,18 +69,10 @@ local function readLightningAttributes(ref: Attachment)
     fadeOutDuration = attr.get(ref, "Fade_Out_Duration", 0),
     fadeOutCurveData = attr.get(ref, "Fade_Out_Curve", utility.default_bezier),
 
-    -- length
-    lengthStart = attr.get(ref, "Length_Start", 1, true),
-    lengthEnd = attr.get(ref, "Length_End", 1, true),
-
     -- dissipation
     dissipateMode = attr.getEnum(ref, "Dissipate_Mode", "None", { "None", "Retract", "Scale" }),
     dissipateDuration = attr.get(ref, "Dissipate_Duration", 0.5),
     dissipateCurveData = attr.get(ref, "Dissipate_Curve", utility.default_bezier),
-
-    -- width
-    widthStart = attr.get(ref, "Width_Start", 2, true),
-    widthEnd = attr.get(ref, "Width_End", 0.2, true),
   }
 end
 
@@ -333,36 +317,18 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
       end
     end)
 
-    local speed, speedSpan = mods.driver(ref, "attribute", "Speed", attr.get(ref, "Speed_Duration", 0.1, true))
+    local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
 
-    if speed then
+    if speed.animated then
       attr.setState(ref, "SpeedTweening", true)
 
       lifetime.hold(
         scope,
         tween.fromParams(
           utility.linear_bezier,
-          speedSpan,
+          speed.span,
           function(_, deltaTime, elapsed)
-            attr.setState(ref, "SpeedOverride", speed(elapsed))
-            return deltaTime
-          end,
-          nil,
-          function()
-            attr.setState(ref, "SpeedTweening", nil)
-          end
-        )
-      )
-    elseif common.speedStart ~= common.speedEnd then
-      attr.setState(ref, "SpeedTweening", true)
-
-      lifetime.hold(
-        scope,
-        tween.fromParams(
-          attr.get(ref, "Speed_Curve", utility.default_bezier),
-          attr.get(ref, "Speed_Duration", 0.1),
-          function(alpha, deltaTime)
-            attr.setState(ref, "SpeedOverride", utility.lerp(common.speedStart, common.speedEnd, alpha))
+            attr.setState(ref, "SpeedOverride", speed.at(elapsed))
             return deltaTime
           end,
           nil,
@@ -423,14 +389,14 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
     local projectileLifetime = common.projectileEnabled
       and rng:NextNumber(common.projectileLifetime.Min, common.projectileLifetime.Max)
 
-    -- one driver set per emitted bolt, the same granularity the legacy tweens
-    -- ran at. FillTransparency spans fillColorDuration rather than the bolt's,
-    -- which is what its legacy tween did
-    local width, widthSpan = mods.driver(ref, "attribute", "Width", duration)
-    local length, lengthSpan = mods.driver(ref, "attribute", "Length", duration)
-    local transparency, transparencySpan = mods.driver(ref, "attribute", "Transparency", duration)
-    local fillTp, fillTpSpan = mods.driver(ref, "attribute", "Fill_Transparency", attrs.fillColorDuration)
-    local speed, speedSpan = mods.driver(ref, "attribute", "Speed", attr.get(ref, "Speed_Duration", 0.1, true))
+    -- one track set per emitted bolt, the same granularity the legacy tweens
+    -- ran at. Fill_Transparency spans fillColorDuration rather than the bolt's,
+    -- which is what its tween always did
+    local width = mods.track(ref, "attribute", "Width", mods.ramp(2, 0.2), duration)
+    local length = mods.track(ref, "attribute", "Length", 1, duration)
+    local transparency = mods.track(ref, "attribute", "Transparency", 0, duration)
+    local fillTp = mods.track(ref, "attribute", "Fill_Transparency", 1, attrs.fillColorDuration)
+    local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
 
     table.insert(
       promises,
@@ -468,8 +434,10 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
           return
         end
 
-        -- create a highlight container if needed
-        local useHighlight = attrs.fillTransparencyStart < 1 or attrs.fillTransparencyEnd < 1
+        -- create a highlight container if needed. a highlight is worth building
+        -- when the fill is ever less than opaque, which an authored track
+        -- answers and an unauthored one never is
+        local useHighlight = fillTp.animated or fillTp.at(0) < 1
 
         local highlight: Highlight?
         local containerModel: Model?
@@ -483,7 +451,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
           local hl = Instance.new("Highlight")
           hl.Adornee = container
           hl.FillColor = bezier_common.getColorWithEasingOklab(attrs.fillColorSequence, 0, fillColorEasingBezier)
-          hl.FillTransparency = attrs.fillTransparencyStart
+          hl.FillTransparency = fillTp.at(0)
           hl.OutlineTransparency = 1
           hl.DepthMode = Enum.HighlightDepthMode[attrs.fillDepthMode]
           hl.Parent = container
@@ -523,7 +491,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
 
           utility.copyProperties(refObj, obj, utility.COPY_PART_PROPERTIES)
 
-          obj.Size = Vector3.new(attrs.widthStart, attrs.widthStart, 1)
+          obj.Size = Vector3.new(width.at(0), width.at(0), 1)
 
           obj.Anchored = true
           obj.CanQuery = false
@@ -582,11 +550,11 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         -- animation state
         local finished = false
 
-        local currentSpeed = if speed then speed(0) else common.speedStart
-        local currentWidth = if width then width(0) else attrs.widthStart
-        local currentLength = if length then length(0) else attrs.lengthStart
-        local currentTransparency = if transparency then transparency(0) else attrs.transparencyStart
-        local currentFillTransparency = if fillTp then fillTp(0) else attrs.fillTransparencyStart
+        local currentSpeed = speed.at(0)
+        local currentWidth = width.at(0)
+        local currentLength = length.at(0)
+        local currentTransparency = transparency.at(0)
+        local currentFillTransparency = fillTp.at(0)
 
         local currentColorAlpha = 0
         local currentFillColorAlpha = 0
@@ -615,7 +583,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         local dissipateProgress = 0
         local dissipateStartTail = 0
 
-        local dissipateStartWidth = attrs.widthStart
+        local dissipateStartWidth = width.at(0)
         local currentOriginCFrame = originCFrame
 
         local projectileDir: Vector3?
@@ -626,22 +594,11 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
 
         local speedTween
 
-        if speed and not attr.getState(ref, "SpeedOverride", nil) then
-          speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
-            currentSpeed = speed(elapsed)
+        if speed.animated and not attr.getState(ref, "SpeedOverride", nil) then
+          speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+            currentSpeed = speed.at(elapsed)
             return deltaTime
           end)
-
-          lifetime.hold(scope, speedTween)
-        elseif common.speedStart ~= common.speedEnd and not attr.getState(ref, "SpeedOverride", nil) then
-          speedTween = tween.fromParams(
-            attr.get(ref, "Speed_Curve", utility.default_bezier),
-            attr.get(ref, "Speed_Duration", 0.1),
-            function(alpha, deltaTime)
-              currentSpeed = utility.lerp(common.speedStart, common.speedEnd, alpha)
-              return deltaTime
-            end
-          )
 
           lifetime.hold(scope, speedTween)
         end
@@ -918,79 +875,22 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
           lastHeadPos = currentHeadPos
         end
 
-        -- property tweens. each driver replaces the createPropertyTween call
-        -- that read the same quad, and its own curve does the shaping, so the
-        -- tween runs linear over the span the queue asked for
-        local function driveOrTween(
-          drv: ((number) -> any)?,
-          span: number,
-          name: string,
-          tweenDuration: number,
-          startVal: number,
-          endVal: number,
-          setter: (number) -> ()
-        )
-          if drv then
-            lifetime.hold(
-              scope,
-              tween.fromParams(utility.linear_bezier, span, function(_, deltaTime, elapsed)
-                setter(drv(elapsed))
-                return deltaTime * getEffectiveSpeed()
-              end, speedTween)
-            )
-
-            return
-          end
-
-          bezier_common.createPropertyTween(
-            scope,
-            ref,
-            name,
-            tweenDuration,
-            startVal,
-            endVal,
-            setter,
-            getEffectiveSpeed,
-            speedTween
-          )
-        end
-
-        driveOrTween(width, widthSpan, "Width", duration, attrs.widthStart, attrs.widthEnd, function(v)
+        bezier_common.drivePropertyTrack(scope, width, function(v)
           currentWidth = v
-        end)
+        end, getEffectiveSpeed, speedTween)
 
-        driveOrTween(
-          transparency,
-          transparencySpan,
-          "Transparency",
-          duration,
-          attrs.transparencyStart,
-          attrs.transparencyEnd,
-          function(v)
-            currentTransparency = v
-          end
-        )
+        bezier_common.drivePropertyTrack(scope, transparency, function(v)
+          currentTransparency = v
+        end, getEffectiveSpeed, speedTween)
 
-        driveOrTween(length, lengthSpan, "Length", duration, attrs.lengthStart, attrs.lengthEnd, function(v)
+        bezier_common.drivePropertyTrack(scope, length, function(v)
           currentLength = v
-        end)
+        end, getEffectiveSpeed, speedTween)
 
         if useHighlight then
-          -- the legacy curve read here was FillTransparency_Curve, which the
-          -- plugin has never written: it authors Fill_Transparency_Curve, the
-          -- name matching the two value attributes. so an authored fill
-          -- transparency curve was silently ignored, on both paths until now
-          driveOrTween(
-            fillTp,
-            fillTpSpan,
-            "Fill_Transparency",
-            attrs.fillColorDuration,
-            attrs.fillTransparencyStart,
-            attrs.fillTransparencyEnd,
-            function(v)
-              currentFillTransparency = v
-            end
-          )
+          bezier_common.drivePropertyTrack(scope, fillTp, function(v)
+            currentFillTransparency = v
+          end, getEffectiveSpeed, speedTween)
         end
 
         -- dissipation handler

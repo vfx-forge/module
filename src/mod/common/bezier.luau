@@ -2,6 +2,7 @@
 local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
+local mods = require("@mod/mods")
 local shape = require("@mod/shape")
 local tween = require("@mod/tween")
 local utility = require("@mod/utility")
@@ -281,12 +282,6 @@ function common.readCommonAttributes(ref: Attachment)
     hitboxFilterTag = attr.get(ref, "HitboxFilterTag", ""),
     hitboxFilterType = attr.get(ref, "HitboxFilterType", "Exclude"),
     hitboxIgnoreCanCollide = attr.get(ref, "HitboxIgnoreCanCollide", false),
-
-    -- speed. read soft so the defaults are not written back: this reader runs
-    -- before any caller can ask for a modifier queue, and a stamped Speed_Start
-    -- is a quad legacy_mods would then find that nobody authored
-    speedStart = attr.get(ref, "Speed_Start", 1, true),
-    speedEnd = attr.get(ref, "Speed_End", 1, true),
   }
 end
 
@@ -343,32 +338,28 @@ function common.getPerpendicularVectors(tangent: Vector3)
   return right, up
 end
 
-function common.createPropertyTween(
-  scope: any,
-  ref: Attachment,
-  attrName: string,
-  tweenDuration: number,
-  startVal: number,
-  endVal: number,
+-- one knob of a projectile driven from its track: the setter sees the first
+-- value at once and every later one on a stepper scaled by the projectile's
+-- speed. a constant track costs no stepper
+function common.drivePropertyTrack(
+  scope: lifetime.effect,
+  track: mods.Track,
   setter: (number) -> (),
   getSpeed: () -> number,
   speedTween: any?
 )
-  if startVal == endVal then
+  setter(track.at(0))
+
+  if not track.animated then
     return
   end
 
   lifetime.hold(
     scope,
-    tween.fromParams(
-      attr.get(ref, attrName .. "_Curve", utility.default_bezier),
-      tweenDuration,
-      function(alpha, deltaTime)
-        setter(utility.lerp(startVal, endVal, alpha))
-        return deltaTime * getSpeed()
-      end,
-      speedTween
-    )
+    tween.fromParams(utility.linear_bezier, track.span, function(_, deltaTime, elapsed)
+      setter(track.at(elapsed))
+      return deltaTime * getSpeed()
+    end, speedTween)
   )
 end
 
