@@ -36,6 +36,69 @@ function legacy_mods.isDrawnRange(source: string, name: string): boolean
   return group ~= nil and group[name] == true
 end
 
+-- old spellings a key was read under before it got its current name, newest
+-- first. read only: an alias never writes the current name back, so an old
+-- asset stays exactly as it was authored. the mesh effect's oldest names are
+-- not here because which key they belong to depends on the model's structure,
+-- and the effect resolves that itself
+legacy_mods.ALIASES = {
+  OffsetIn_Start = { "Offset_Start", "PartOffset" },
+  OffsetIn_End = { "BaseOffset", "PartOffset" },
+  OffsetOut_End = { "Offset_End", "PartOffset" },
+  OffsetIn_Duration = { "Offset_Start_Duration" },
+  OffsetOut_Duration = { "Offset_End_Duration" },
+  OffsetIn_Curve = { "Offset_Start_Curve" },
+  OffsetOut_Curve = { "Offset_End_Curve" },
+
+  SizeScaleIn_Start = { "SizeScaleStart" },
+  SizeScaleOut_End = { "SizeScaleEnd" },
+  SizeScaleIn_Curve = { "Size_Start_Curve", "Size_Curve" },
+  SizeScaleOut_Curve = { "Size_End_Curve", "Size_Curve" },
+  SizeScaleIn_Duration = { "Size_Start_Duration", "Size_Duration" },
+  SizeScaleOut_Duration = { "Size_End_Duration", "Size_Duration" },
+}
+
+function legacy_mods.alias(ref: Instance, name: string, default: any): any
+  local v = ref:GetAttribute(name)
+
+  if v ~= nil then
+    return v
+  end
+
+  local olds = legacy_mods.ALIASES[name]
+
+  if olds then
+    for _, old in olds do
+      v = ref:GetAttribute(old)
+
+      if v ~= nil then
+        return v
+      end
+    end
+  end
+
+  return default
+end
+
+-- the curve keys that meant linear when absent. every other _Curve key meant
+-- the out cubic default, which is what every effect read one as
+legacy_mods.CURVES = {
+  Easing_Curve = "linear",
+  Weight_Curve = "linear",
+  Path_Curve = "linear",
+  Color_Curve = "linear",
+  Fill_Color_Curve = "linear",
+  Flipbook_Change_Curve = "linear",
+}
+
+function legacy_mods.defaultCurve(key: string): string
+  if legacy_mods.CURVES[key] == "linear" then
+    return curves.linear()
+  end
+
+  return curves.default()
+end
+
 -- omitted rather than wrapped when absent, so evaluate sees no endpoint at
 -- all instead of a lit nil it would try to lerp
 local function litOrNil(v: any): value.Value?
@@ -47,9 +110,8 @@ local function litOrNil(v: any): value.Value?
 end
 
 -- a NumberRange duration collapses to its Min. real authored data stores a
--- range (src/effects/tweener.luau reads it via attr.getRange), while the new
--- format carries a single number, the same collapse legacy_quad.luau makes
--- for the plugin's own "show" side
+-- range, while the new format carries a single number, the same collapse the
+-- plugin's own reader of this format makes
 local function durationOf(v: any): number?
   if typeof(v) == "NumberRange" then
     return v.Min
@@ -62,10 +124,9 @@ local function durationOf(v: any): number?
   return nil
 end
 
--- both effects that play a legacy child honour a ResetOnFinish attribute on it
--- and default it to true (src/effects/tweener.luau, src/effects/randomizer.luau).
--- the modifier codec passes a field it does not know through its `extra` table,
--- so `reset` round trips with no schema change
+-- both legacy child shapes honour a ResetOnFinish attribute and default it to
+-- true. the modifier codec passes a field it does not know through its `extra`
+-- table, so `reset` round trips with no schema change
 local function resetOf(v: any): boolean
   if typeof(v) == "boolean" then
     return v
@@ -82,11 +143,9 @@ local function curveOf(v: any): (string | buffer)?
   return nil
 end
 
--- which side of an instance a legacy RayValue child drives, mirrored from
--- modifier_store.luau's legacySource, the shipping reader for this same
--- data: untagged means a real property, because emitters.dispatch falls back
--- to property_tweener for old content and src/utility.luau's scan buckets an
--- untagged child into tween_properties
+-- which side of an instance a legacy RayValue child drives: untagged means a
+-- real property, because the runtime always fell back to a property tween for
+-- old content
 local function legacySource(child: Instance): string
   if child:HasTag(ATTRIBUTE_TWEENER_TAG) or child:HasTag(ATTRIBUTE_RANDOMIZER_TAG) then
     return "attribute"
@@ -95,8 +154,12 @@ local function legacySource(child: Instance): string
   return "property"
 end
 
--- a drawn-range endpoint, which is a rand rather than a lit so the sampler
--- draws it once per emitted instance the way the effect used to itself
+local function isRandomizer(child: Instance): boolean
+  return child:HasTag(PROPERTY_RANDOMIZER_TAG) or child:HasTag(ATTRIBUTE_RANDOMIZER_TAG)
+end
+
+-- a drawn-range endpoint is a rand rather than a lit so the sampler draws it
+-- once per emitted instance the way the effect used to itself
 local function endpointOf(v: any, drawn: boolean): value.Value?
   if drawn and typeof(v) == "NumberRange" then
     return value.rand(v.Min, v.Max)
@@ -109,6 +172,8 @@ function legacy_mods.endpoint(source: string, name: string, v: any): value.Value
   return endpointOf(v, legacy_mods.isDrawnRange(source, name))
 end
 
+-- a copy of a half quad with the missing half supplied by the caller, which is
+-- the effect that knows what that half rests at
 function legacy_mods.complete(queue: { any }, fillStart: value.Value?, fillFinish: value.Value?): { any }
   local m = table.clone(queue[1])
 
@@ -123,41 +188,126 @@ function legacy_mods.complete(queue: { any }, fillStart: value.Value?, fillFinis
   return { m }
 end
 
--- the released-era quad. a nil _Duration is left nil rather than defaulted,
--- because nil is what "runs over the effect's own duration" is spelled as
+-- the speed ramp a legacy tween child carried beside its tween: a multiplier on
+-- the clock the tween counts, which the applier honours. carried only when it
+-- does something, so an ordinary child stays a plain tween entry
+local function speedOf(child: Instance): { start: number, finish: number, duration: number, curve: string | buffer }?
+  local startV = child:GetAttribute("Speed_Start")
+  local finishV = child:GetAttribute("Speed_End")
+
+  if typeof(startV) ~= "number" then
+    startV = 1
+  end
+
+  if typeof(finishV) ~= "number" then
+    finishV = 1
+  end
+
+  if startV == 1 and finishV == 1 then
+    return nil
+  end
+
+  local duration = child:GetAttribute("Speed_Duration")
+
+  if typeof(duration) ~= "number" then
+    duration = 0.1
+  end
+
+  return {
+    start = startV,
+    finish = finishV,
+    duration = duration,
+    curve = curveOf(child:GetAttribute("Speed_Curve")) or curves.default(),
+  }
+end
+
+-- one RayValue child as queue entries: a randomizer is one entry; a tween is
+-- one entry, led by a delay when it authored one
+local function entriesOf(child: Instance): { any }
+  local reset = resetOf(child:GetAttribute("ResetOnFinish"))
+
+  if isRandomizer(child) then
+    return {
+      {
+        kind = "randomizer",
+        chain = false,
+        start = litOrNil(child:GetAttribute("_START_VALUE")),
+        finish = litOrNil(child:GetAttribute("_END_VALUE")),
+        weight = curveOf(child:GetAttribute("Weight_Curve")) or curves.linear(),
+        reset = reset,
+      },
+    }
+  end
+
+  local out = {}
+
+  local emitDelay = child:GetAttribute("EmitDelay")
+
+  if typeof(emitDelay) == "number" and emitDelay > 0 then
+    table.insert(out, { kind = "delay", chain = false, wait = value.lit(emitDelay) })
+  end
+
+  table.insert(out, {
+    kind = "tween",
+    chain = false,
+    duration = durationOf(child:GetAttribute("Duration")),
+    start = litOrNil(child:GetAttribute("_START_VALUE")),
+    finish = litOrNil(child:GetAttribute("_END_VALUE")),
+    curve = curveOf(child:GetAttribute("Easing_Curve")) or curves.linear(),
+    speed = speedOf(child),
+    reset = reset,
+  })
+
+  return out
+end
+
+export type Child = {
+  source: string,
+  name: string,
+  queue: { any },
+  random: boolean,
+}
+
+-- a legacy RayValue read on its own, for the applier to drive whatever the
+-- RayValue targets. the target is the caller's to find
+function legacy_mods.readChild(child: Instance): Child?
+  if not child:IsA("RayValue") then
+    return nil
+  end
+
+  return {
+    source = legacySource(child),
+    name = child.Name,
+    queue = entriesOf(child),
+    random = isRandomizer(child),
+  }
+end
+
 function legacy_mods.readQuad(ref: Instance, source: string, name: string): { any }?
-  local startV = ref:GetAttribute(`{name}_Start`)
-  local finishV = ref:GetAttribute(`{name}_End`)
+  local startV = legacy_mods.alias(ref, `{name}_Start`, nil)
+  local finishV = legacy_mods.alias(ref, `{name}_End`, nil)
 
   if startV == nil and finishV == nil then
     return nil
   end
 
-  -- a half-authored quad cannot be represented faithfully here, because the
-  -- missing half's default belongs to the EFFECT and differs per knob: 0 or 1
-  -- for a decal transparency, 1 for a speed, NumberRange(0, 0) for a rotation
-  -- speed, the clone's live Volume for a sound. copying the other half is the
-  -- best a generic reader can do and is what a caller with no effect behind it
-  -- gets, so the entry records that it happened and mods.driver hands the knob
-  -- back to its effect rather than pinning it to a constant
-  local partial = startV == nil or finishV == nil
+  -- a half-authored quad cannot be completed here, because the missing half's
+  -- default belongs to the effect and differs per knob. the entry names the
+  -- missing half and mods.track fills it from the default it was handed
+  local partial: string? = nil
 
   if startV == nil then
+    partial = "start"
     startV = finishV
   end
 
   if finishV == nil then
+    partial = "finish"
     finishV = startV
   end
 
-  -- a quad with no _Curve meant OUT CUBIC and not linear, because every effect
-  -- read one as attr.get(ref, "X_Curve", utility.default_bezier). leaving it nil
-  -- would have evaluate fall back to plain progress. every _Start / _End quad in
-  -- the package pairs with a _Curve of that default; the legacy curves that
-  -- default to linear (Easing_Curve, Weight_Curve, Path_Curve) are never quad
-  -- halves, and readChildren reads those
-  local durationV = durationOf(ref:GetAttribute(`{name}_Duration`))
-  local curveV = curveOf(ref:GetAttribute(`{name}_Curve`)) or curves.default()
+  local durationV = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil))
+  local curveV = curveOf(legacy_mods.alias(ref, `{name}_Curve`, nil)) or legacy_mods.defaultCurve(`{name}_Curve`)
 
   local drawn = legacy_mods.isDrawnRange(source, name)
 
@@ -169,7 +319,7 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string): { an
       start = endpointOf(startV, drawn),
       finish = endpointOf(finishV, drawn),
       curve = curveV,
-      partial = partial or nil,
+      partial = partial,
     },
   }
 end
@@ -186,28 +336,8 @@ function legacy_mods.readChildren(ref: Instance, source: string, name: string): 
       continue
     end
 
-    local isRandom = child:HasTag(PROPERTY_RANDOMIZER_TAG) or child:HasTag(ATTRIBUTE_RANDOMIZER_TAG)
-    local reset = resetOf(child:GetAttribute("ResetOnFinish"))
-
-    if isRandom then
-      table.insert(out, {
-        kind = "randomizer",
-        chain = false,
-        start = litOrNil(child:GetAttribute("_START_VALUE")),
-        finish = litOrNil(child:GetAttribute("_END_VALUE")),
-        weight = curveOf(child:GetAttribute("Weight_Curve")),
-        reset = reset,
-      })
-    else
-      table.insert(out, {
-        kind = "tween",
-        chain = false,
-        duration = durationOf(child:GetAttribute("Duration")),
-        start = litOrNil(child:GetAttribute("_START_VALUE")),
-        finish = litOrNil(child:GetAttribute("_END_VALUE")),
-        curve = curveOf(child:GetAttribute("Easing_Curve")),
-        reset = reset,
-      })
+    for _, entry in entriesOf(child) do
+      table.insert(out, entry)
     end
   end
 
