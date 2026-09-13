@@ -364,20 +364,16 @@ function emitters.beam(obj: Beam, scope: types.scope, legacyScale: number)
   clone.Archivable = false
   clone.Parent = workspace.Terrain
 
-  -- clone attachments for beams with scaled length. a Length_Scale QUEUE counts
-  -- too, and cannot be compared against unscaled without sampling it, so any
-  -- non-empty one is taken as scaling. getting this wrong is not cosmetic:
-  -- beam.emit's setLengthScale would move the real attachments instead of
-  -- throwaway clones, and the scope teardown that restores them runs on the
-  -- emitted beam
-  local unscaled = NumberRange.new(1, 1)
-  local scaleQueue = mods.framed(obj, "attribute", "Length_Scale")
-
-  if
-    (scaleQueue ~= nil and #scaleQueue > 0)
-    or attr.get(obj, "Length_Scale_Start", unscaled, true) ~= unscaled
-    or attr.get(obj, "Length_Scale_End", unscaled, true) ~= unscaled
-  then
+  -- clone attachments for beams that scale their length. getting this wrong is
+  -- not cosmetic: beam.emit's setLengthScale would move the real attachments
+  -- instead of throwaway clones, and the scope teardown that restores them runs
+  -- on the emitted beam
+  --
+  -- anything authored on Length_Scale, a queue or a legacy quad, means the
+  -- beam moves attachments, and the draw beam.emit makes for itself is not
+  -- the one this decision has to agree with: an authored constant of one
+  -- still gets throwaway clones, which costs two attachments and nothing else
+  if mods.track(obj, "attribute", "Length_Scale", 1, 1).animated then
     local a, b = att0:Clone(), att1:Clone()
 
     lifetime.hold(scope, a)
