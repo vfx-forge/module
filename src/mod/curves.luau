@@ -1,4 +1,5 @@
 local path = require("@mod/common/path")
+local logger = require("@mod/logger")
 
 local curves = {}
 
@@ -30,6 +31,23 @@ function curves.linear(): string
   end
 
   return linear_curve :: string
+end
+
+curves.PRESETS = {
+  easeOut = curves.default,
+  linear = curves.linear,
+}
+
+-- a row names its curve by preset; nil is the out cubic every effect always
+-- eased with
+function curves.preset(name: string?): string
+  local build = curves.PRESETS[name or "easeOut"]
+
+  if build == nil then
+    logger.error(`unknown curve preset {tostring(name)}`)
+  end
+
+  return build()
 end
 
 return curves
