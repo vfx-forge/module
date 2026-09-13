@@ -252,4 +252,48 @@ harness.suite(function()
     expect(queue[1].kind).toBe("tween")
     expect(queue[1].partial).toBe(nil)
   end)
+
+  test("a quad naming no duration takes the row's old span", function()
+    local obj = Instance.new("Attachment")
+    obj:SetAttribute("Speed_Start", 0)
+    obj:SetAttribute("Speed_End", 1)
+
+    local queue = legacy_mods.readQuad(obj, "attribute", "Speed")
+
+    expect(queue[1].duration).toBe(0.1)
+  end)
+
+  test("a quad on a row with no old span still lends the effect's", function()
+    local obj = Instance.new("Attachment")
+    obj:SetAttribute("Width_Start", 0)
+    obj:SetAttribute("Width_End", 1)
+
+    expect(legacy_mods.readQuad(obj, "attribute", "Width")[1].duration).toBe(nil)
+  end)
+
+  test("a stone-age start spelling reads as the start half of a quad", function()
+    local obj = Instance.new("Attachment")
+    obj:SetAttribute("StartWidth0", 2)
+
+    local queue = legacy_mods.readQuad(obj, "attribute", "Width0")
+
+    expect(queue[1].partial).toBe("finish")
+    expect(queue[1].start.v).toBe(2)
+  end)
+
+  test("the attribute map holds cached and live names, cached first", function()
+    local obj = Instance.new("Attachment")
+    obj:SetAttribute("A", 1)
+    obj:SetAttribute("B", 2)
+    attr.cache(obj)
+    obj:SetAttribute("C", 3)
+    attr.set(obj, "A", 5)
+
+    local map = attr.map(obj)
+
+    expect(map.A).toBe(5)
+    expect(map.B).toBe(2)
+    expect(map.C).toBe(3)
+    expect(map.U).toBe(nil)
+  end)
 end)

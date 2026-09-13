@@ -313,7 +313,7 @@ end
 
 -- the value a knob wants, with the engine's two spellings of a vector read as
 -- one kind
-local function kindOf(v: any): string
+function mods.kindOf(v: any): string
   local t = typeof(v)
 
   return if t == "vector" then "Vector3" else t
@@ -338,20 +338,34 @@ local function sampleQueue(
   return sample, reach
 end
 
--- the one way an effect reads an animated knob. it always answers: what rests
--- when nothing usable is authored, else a sampler over the queue's own reach.
--- a default given as a queue is what runs when nothing is authored, for a knob
--- whose resting state is a ramp or a draw rather than a value.
+-- the entry of a default queue whose ends complete a half quad: the first
+-- tween, since a default may lead with a wait
+local function leadTween(queue: { any }): any
+  for _, m in queue do
+    if m.kind == "tween" then
+      return m
+    end
+  end
+
+  return queue[1]
+end
+
+-- the one way a knob becomes a track. it always answers: what rests when nothing
+-- usable is authored, else a sampler over the queue's own reach. a default given
+-- as a queue is what runs when nothing is authored, for a knob whose resting
+-- state is a ramp or a draw rather than a value.
 --
 -- `ownStart` is for a knob whose start belongs to the effect rather than to the
 -- row, which is the shape below
-function mods.track(
+function mods.build(
   ref: Instance,
   source: string,
   name: string,
   default: any,
   span: number,
   env: { [string]: any }?,
+  queue: { any }?,
+  framed: boolean,
   opts: { ownStart: boolean? }?
 ): Track
   local fallback: { any }? = if type(default) == "table" then default else nil
@@ -362,20 +376,20 @@ function mods.track(
   local want: string? = nil
 
   if fallback then
-    local first = fallback[1]
+    local first = leadTween(fallback)
 
     fillStart = first and first.start
     fillFinish = first and first.finish
 
     if fillStart and value.isLit(fillStart) then
-      want = kindOf(value.resolve(fillStart))
+      want = mods.kindOf(value.resolve(fillStart))
     end
   else
     fillStart = legacy_mods.endpoint(source, name, default)
     fillFinish = fillStart
 
     if default ~= nil then
-      want = kindOf(default)
+      want = mods.kindOf(default)
     end
   end
 
@@ -392,8 +406,6 @@ function mods.track(
 
     return { at = sample, span = reach, animated = true }
   end
-
-  local queue, framed = mods.read(ref, source, name)
 
   if queue == nil or #queue == 0 or mods.inert(queue) then
     return resting()
@@ -426,7 +438,7 @@ function mods.track(
     -- a curve alone can only ease a ramp. a constant default has no ramp and a
     -- drawn default is not a tween, so the curve is dropped as the old arms
     -- dropped it for those knobs
-    if queue[1].partial == "both" and (fallback == nil or fallback[1].kind ~= "tween") then
+    if queue[1].partial == "both" and (fallback == nil or leadTween(fallback).kind ~= "tween") then
       return resting()
     end
 
@@ -440,7 +452,7 @@ function mods.track(
   end
 
   if want ~= nil then
-    local got = kindOf(sample(0))
+    local got = mods.kindOf(sample(0))
 
     if got ~= want then
       warnOnce(ref, name, `{name} samples a {got} where the effect wants a {want}`)
@@ -449,6 +461,21 @@ function mods.track(
   end
 
   return { at = sample, span = reach, animated = true }
+end
+
+-- the read half: what an effect that still names its own knobs calls
+function mods.track(
+  ref: Instance,
+  source: string,
+  name: string,
+  default: any,
+  span: number,
+  env: { [string]: any }?,
+  opts: { ownStart: boolean? }?
+): Track
+  local queue, framed = mods.read(ref, source, name)
+
+  return mods.build(ref, source, name, default, span, env, queue, framed, opts)
 end
 
 local function scaleValue(v: any, factor: number): any

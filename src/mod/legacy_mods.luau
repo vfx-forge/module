@@ -57,6 +57,10 @@ legacy_mods.ALIASES = {
   SizeScaleOut_Curve = { "Size_End_Curve", "Size_Curve" },
   SizeScaleIn_Duration = { "Size_Start_Duration", "Size_Duration" },
   SizeScaleOut_Duration = { "Size_End_Duration", "Size_Duration" },
+
+  Width0_Start = { "StartWidth0" },
+  Width1_Start = { "StartWidth1" },
+  Transparency_Scale_End = { "EndTransparencyScale" },
 }
 
 function legacy_mods.alias(ref: Instance, name: string, default: any): any
@@ -99,6 +103,20 @@ function legacy_mods.defaultCurve(key: string): string
 
   return curves.default()
 end
+
+-- how long an old quad ran when it named no duration of its own: the default
+-- every effect read for the row's _Duration key. a row not listed lends the
+-- effect's duration, which is what a new queue entry naming none does
+legacy_mods.SPANS = {
+  Speed = 0.1,
+  SpinSpeed = 0.1,
+  TimeScale = 0.1,
+  OffsetIn = 0.5,
+  OffsetOut = 0.5,
+  Transparency = 0.5,
+  SizeScaleIn = 0.5,
+  SizeScaleOut = 0.5,
+}
 
 -- omitted rather than wrapped when absent, so evaluate sees no endpoint at
 -- all instead of a lit nil it would try to lerp
@@ -310,7 +328,7 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string): { an
     finishV = startV
   end
 
-  local durationV = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil))
+  local durationV = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil)) or legacy_mods.SPANS[name]
   local curveV = curveOf(legacy_mods.alias(ref, `{name}_Curve`, nil)) or legacy_mods.defaultCurve(`{name}_Curve`)
 
   local drawn = legacy_mods.isDrawnRange(source, name)
@@ -413,7 +431,7 @@ function legacy_mods.readCurve(ref: Instance, _source: string, name: string): { 
     {
       kind = "tween",
       chain = false,
-      duration = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil)),
+      duration = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil)) or legacy_mods.SPANS[name],
       curve = curveV,
       partial = "both",
     },

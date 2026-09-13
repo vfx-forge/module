@@ -260,4 +260,37 @@ harness.suite(function()
 
     expect(near(track.at(0), 5)).toBe(true)
   end)
+
+  test("build takes the queue it is handed instead of reading one", function()
+    local obj = Instance.new("Attachment")
+    local track = mods.build(obj, "attribute", "Width", 3, 2, nil, { tween(0, 10, 4) }, true)
+
+    expect(track.animated).toBe(true)
+    expect(track.span).toBe(4)
+    expect(near(track.at(2), 5)).toBe(true)
+  end)
+
+  test("build with nothing handed in rests", function()
+    local obj = Instance.new("Attachment")
+    local track = mods.build(obj, "attribute", "Width", 3, 2, nil, nil, false)
+
+    expect(track.animated).toBe(false)
+    expect(track.at(0)).toBe(3)
+  end)
+
+  test("a default queue led by a delay still lends its ends to a half quad", function()
+    local obj = Instance.new("Attachment")
+    local queue = { { kind = "tween", chain = false, finish = value.lit(9), partial = "start" } }
+    local default = { delay(1), tween(0, 5) }
+    local track = mods.build(obj, "attribute", "Width", default, 2, nil, queue, false)
+
+    expect(near(track.at(0), 0)).toBe(true)
+    expect(near(track.at(2), 9)).toBe(true)
+  end)
+
+  test("kindOf reads both vector spellings as one", function()
+    expect(mods.kindOf(vector.create(1, 2, 3))).toBe("Vector3")
+    expect(mods.kindOf(Vector3.new(1, 2, 3))).toBe("Vector3")
+    expect(mods.kindOf(1)).toBe("number")
+  end)
 end)
