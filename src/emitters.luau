@@ -107,14 +107,38 @@ local function fallbackDuration(obj: Instance): number
   end)
 end
 
+-- a wait the queue spells out as a literal, for the reach a ramp sits behind.
+-- anything drawn per instance is not a fixed lead and counts as none, which is
+-- also what a nan wait has to mean, since no clock can wait one out
+local function litWait(m: any): number
+  if type(m.wait) ~= "table" or not value.isLit(m.wait) then
+    return 0
+  end
+
+  local waited = value.resolve(m.wait)
+
+  if type(waited) ~= "number" or waited ~= waited or waited <= 0 then
+    return 0
+  end
+
+  return waited
+end
+
 -- the speed ramp a legacy tween child carried, as a multiplier on the clock
--- the timer counts, and how long that ramp runs. it goes by wall time the way
--- the child's own speed tween did, beside the tween it scales
-local function speedOf(queue: { any }): (((wall: number) -> number)?, number?)
+-- the timer counts, how long that ramp runs, and the lead it sits behind: the
+-- waits of every delay ahead of it, which belong to no ramp. it goes by wall
+-- time the way the child's own speed tween did, beside the tween it scales
+local function speedOf(queue: { any }): (((wall: number) -> number)?, number?, number)
+  local lead = 0
+
   for _, m in queue do
     local ramp = m.speed
 
     if type(ramp) ~= "table" then
+      if m.kind == "delay" then
+        lead += litWait(m)
+      end
+
       continue
     end
 
@@ -123,10 +147,10 @@ local function speedOf(queue: { any }): (((wall: number) -> number)?, number?)
       return utility.lerp(ramp.start, ramp.finish, modifiers.alphaFromCurve(ramp.curve, progress))
     end
 
-    return speedAt, ramp.duration
+    return speedAt, ramp.duration, lead
   end
 
-  return nil, nil
+  return nil, nil, 0
 end
 
 -- drives one queue on one target as a child effect of the same emit, so the
@@ -156,7 +180,7 @@ local function drive(
   end
 
   local wants, restore = resetTo(queue, currentOf(target, source, name))
-  local speedAt, speedUntil = speedOf(queue)
+  local speedAt, speedUntil, lead = speedOf(queue)
 
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
 
@@ -175,7 +199,11 @@ local function drive(
     end
 
     tween.timer(span, function(deltaTime, elapsed)
-      wall += deltaTime
+      local waiting = elapsed < lead
+
+      if not waiting then
+        wall += deltaTime
+      end
 
       local v = sample(elapsed)
 
@@ -186,6 +214,14 @@ local function drive(
           logger.warn(`stopped driving {name} on {target:GetFullName()} after {failures} failed writes`)
           return nil
         end
+      end
+
+      -- a delay ahead of the ramp is a wall-clock wait the ramp never touches.
+      -- the multiplier belongs to what runs after the wait, and the ramp's own
+      -- clock only starts turning once that does, so the wait passes at plain
+      -- frame time and leaves the ramp where it began
+      if waiting then
+        return deltaTime
       end
 
       local scaled = if speedAt then deltaTime * speedAt(wall) else deltaTime
