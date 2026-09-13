@@ -34,6 +34,17 @@ harness.suite(function()
       expect(row.default).toBe(nil)
     end)
 
+    test("a row keeps the kind of its default, with a vector spelled one way", function()
+      expect(knob(3).kind).toBe("number")
+      expect(knob(NumberRange.new(0, 1)).kind).toBe("NumberRange")
+      expect(knob(Vector3.new(1, 1, 1)).kind).toBe("Vector3")
+      expect(knob(vector.create(1, 1, 1)).kind).toBe("Vector3")
+      expect(knob().kind).toBe(nil)
+      expect(knob(function()
+        return 1
+      end).kind).toBe(nil)
+    end)
+
     test("every chain method returns the same knob", function()
       local row = knob(1)
       local same = row:min(0):max(2):aliases("A", "B"):label("One"):hint("h"):curve("linear"):unit("seconds"):mod()

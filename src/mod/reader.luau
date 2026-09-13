@@ -57,31 +57,20 @@ local function propertyOf(obj: Instance, name: string): any
   return if ok then v else nil
 end
 
-local function stored(map: { [string]: any }, name: string, row: knob.Knob): any
-  local v = map[name]
+type Lookup = (ref: Instance, source: string, name: string) -> { any }?
 
-  if v ~= nil then
-    return v
-  end
-
+-- the old spellings of a row, after its own name has already missed. walked in
+-- place rather than gathered into a table the row would pay for on every read
+local function aliasOf(look: Lookup, ref: Instance, source: string, row: knob.Knob): { any }?
   for _, alias in row.names do
-    v = map[alias]
+    local queue = look(ref, source, alias)
 
-    if v ~= nil then
-      return v
+    if queue ~= nil then
+      return queue
     end
   end
 
   return nil
-end
-
--- a scalar stored for a range row is the range it always meant
-local function coerce(v: any, want: string?): any
-  if want == "NumberRange" and typeof(v) == "number" then
-    return NumberRange.new(v, v)
-  end
-
-  return v
 end
 
 -- the queue a row carries, looked for under its name and then each alias: any
@@ -90,49 +79,40 @@ end
 -- on the row's own side and then, for a property row, on the attribute side
 -- old content authored on
 local function queueOf(ref: Instance, source: string, name: string, row: knob.Knob): ({ any }?, boolean)
-  local names = { name }
+  local aliased = row.names[1] ~= nil
+  local queue = mods.framed(ref, source, name)
 
-  for _, alias in row.names do
-    table.insert(names, alias)
+  if queue == nil and aliased then
+    queue = aliasOf(mods.framed, ref, source, row)
   end
 
-  for _, n in names do
-    local queue = mods.framed(ref, source, n)
+  if queue == nil and source == "property" then
+    queue = mods.framed(ref, "attribute", name)
 
-    if queue ~= nil then
-      return queue, true
+    if queue == nil and aliased then
+      queue = aliasOf(mods.framed, ref, "attribute", row)
     end
   end
 
-  if source == "property" then
-    for _, n in names do
-      local queue = mods.framed(ref, "attribute", n)
+  if queue ~= nil then
+    return queue, true
+  end
 
-      if queue ~= nil then
-        return queue, true
-      end
+  queue = legacy_mods.read(ref, source, name)
+
+  if queue == nil and aliased then
+    queue = aliasOf(legacy_mods.read, ref, source, row)
+  end
+
+  if queue == nil and source == "property" then
+    queue = legacy_mods.read(ref, "attribute", name)
+
+    if queue == nil and aliased then
+      queue = aliasOf(legacy_mods.read, ref, "attribute", row)
     end
   end
 
-  for _, n in names do
-    local queue = legacy_mods.read(ref, source, n)
-
-    if queue ~= nil then
-      return queue, false
-    end
-  end
-
-  if source == "property" then
-    for _, n in names do
-      local queue = legacy_mods.read(ref, "attribute", n)
-
-      if queue ~= nil then
-        return queue, false
-      end
-    end
-  end
-
-  return nil, false
+  return queue, false
 end
 
 local function usableDuration(d: any): number
@@ -149,9 +129,13 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
   local attrs = {}
   local props = {}
 
-  -- rows resolve on first access, in whatever order rules pull each other,
-  -- and one pulling itself is a module bug rather than a runtime state
-  local resolving: { [string]: boolean } = {}
+  -- rows resolve on first access, in whatever order rules pull each other, and
+  -- one pulling itself is a module bug rather than a runtime state. a guard
+  -- table per source keys a row by its own name, so the guard costs no string
+  -- built per read
+  local attrPending: { [string]: boolean } = {}
+  local propPending: { [string]: boolean } = {}
+  local deciding = false
   local duration: number? = nil
 
   local function durationOf(): number
@@ -159,19 +143,34 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
       return duration
     end
 
-    if resolving.duration then
+    if deciding then
       logger.error(`effect module {module.id}: duration is defined in terms of itself`)
     end
 
-    resolving.duration = true
+    deciding = true
 
     local d = if module.duration then module.duration(ctx, attrs, props) else 1
 
-    resolving.duration = nil
+    deciding = false
     duration = usableDuration(d)
     ctx.duration = duration
 
     return duration
+  end
+
+  -- what a row rests at when nothing usable is stored for it. taking the row
+  -- and its base keeps it one function for the whole resolve rather than one
+  -- closure per row
+  local function fallbackOf(row: knob.Knob, base: any): any
+    if row.rule then
+      return row.rule(ctx, attrs, props)
+    end
+
+    if row.hasDefault then
+      return row.default
+    end
+
+    return base
   end
 
   local function plainOf(source: string, name: string, row: knob.Knob): any
@@ -179,54 +178,90 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     local want: string? = nil
 
     if row.hasDefault then
-      want = mods.kindOf(row.default)
+      want = row.kind
     elseif base ~= nil then
       want = mods.kindOf(base)
     end
 
-    local function fallback(): any
-      if row.rule then
-        return row.rule(ctx, attrs, props)
-      end
-
-      if row.hasDefault then
-        return row.default
-      end
-
-      return base
-    end
-
     -- a property row's state is the property, unless an attribute of its name
-    -- shadows it, which is how old content overrode one
-    local v = stored(map, name, row)
+    -- shadows it, which is how old content overrode one. a row answers to its
+    -- old spellings here too
+    local v = map[name]
+
+    if v == nil then
+      for _, alias in row.names do
+        v = map[alias]
+
+        if v ~= nil then
+          break
+        end
+      end
+    end
 
     if v == nil then
       v = base
     end
 
     if v == nil then
-      v = fallback()
-    else
-      v = coerce(v, want)
+      v = fallbackOf(row, base)
+    elseif want ~= nil then
+      -- mods.kindOf read inline, because every stored row pays for it
+      local got = typeof(v)
 
-      if want ~= nil and mods.kindOf(v) ~= want then
-        mods.warnOnce(ctx.ref, name, `{name} holds a {mods.kindOf(v)} where {module.id} wants a {want}`)
-        v = fallback()
+      if got == "vector" then
+        got = "Vector3"
+      end
+
+      -- a scalar stored for a range row is the range it always meant
+      if want == "NumberRange" and got == "number" then
+        v = NumberRange.new(v, v)
+        got = want
+      end
+
+      if got ~= want then
+        mods.warnOnce(ctx.ref, name, `{name} holds a {got} where {module.id} wants a {want}`)
+        v = fallbackOf(row, base)
       end
     end
 
     if row.readonlyRule ~= nil and row.readonlyRule(ctx, attrs, props) == true then
-      v = fallback()
+      v = fallbackOf(row, base)
     end
 
     if row.choices ~= nil and (typeof(v) ~= "string" or table.find(row.choices, v) == nil) then
-      v = fallback()
+      v = fallbackOf(row, base)
     end
 
     return knob.clamp(v, row.lower, row.upper)
   end
 
-  local function trackOf(source: string, name: string, row: knob.Knob, rest: any, seeded: boolean, span: number): Track
+  -- what a track binds through, and what it rebuilds through. both read the row
+  -- off the track's metatable, so the row travels with the track without one
+  -- closure per track and without showing on the track's own shape
+  local function applyTrack(track: any, write: (v: any) -> ())
+    local bound = getmetatable(track)
+
+    if reader.drive == nil or ctx.scope == nil then
+      logger.error(`{bound.name} cannot be applied without a running effect`)
+    end
+
+    local drive = reader.drive :: any
+
+    drive(ctx.scope, bound.inner, write)
+  end
+
+  local trackOf: (string, string, knob.Knob, any, boolean, number) -> Track
+
+  -- a piece calls the row for a track of its own: rules run again, and a value
+  -- handed in is where this piece's state is
+  local function callTrack(track: any, current: any): Track
+    local bound = getmetatable(track)
+    local state = if current ~= nil then current else plainOf(bound.source, bound.name, bound.row)
+
+    return trackOf(bound.source, bound.name, bound.row, state, current ~= nil, durationOf())
+  end
+
+  function trackOf(source: string, name: string, row: knob.Knob, rest: any, seeded: boolean, span: number): Track
     local queue, framed = queueOf(ctx.ref, source, name, row)
 
     -- an existing queue, even an empty one or one that only waits, means the
@@ -255,45 +290,38 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
       duration = inner.span,
       animated = inner.animated,
       value = rest,
+      apply = applyTrack,
     }
 
-    function track.apply(_, write: (v: any) -> ())
-      if reader.drive == nil or ctx.scope == nil then
-        logger.error(`{name} cannot be applied without a running effect`)
-      end
-
-      local drive = reader.drive :: any
-
-      drive(ctx.scope, inner, write)
-    end
-
-    -- a piece calls the row for a track of its own: rules run again, and a
-    -- value handed in is where this piece's state is
     setmetatable(track, {
-      __call = function(_, current: any)
-        local state = if current ~= nil then current else plainOf(source, name, row)
-
-        return trackOf(source, name, row, state, current ~= nil, durationOf())
-      end,
+      __call = callTrack,
+      source = source,
+      name = name,
+      row = row,
+      inner = inner,
     })
 
     return table.freeze(track) :: any
   end
 
-  local function resolveRow(out: any, rows: { [string]: knob.Knob }, source: string, name: string): any
+  local function resolveRow(
+    out: any,
+    rows: { [string]: knob.Knob },
+    pending: { [string]: boolean },
+    source: string,
+    name: string
+  ): any
     local row = rows[name]
 
     if row == nil then
       return nil
     end
 
-    local key = `{source}.{name}`
-
-    if resolving[key] then
+    if pending[name] then
       logger.error(`effect module {module.id}: {name} is defined in terms of itself`)
     end
 
-    resolving[key] = true
+    pending[name] = true
 
     local rest = plainOf(source, name, row)
     local v = rest
@@ -301,7 +329,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     -- a mod row pulled while the duration rule is still deciding is built over
     -- a span of one and not kept, so the rule may read the row's own value;
     -- the pass after the duration is known builds the track that stays
-    local provisional = row.isMod and resolving.duration == true
+    local provisional = row.isMod and deciding
 
     if row.isMod then
       v = trackOf(source, name, row, rest, false, if provisional then 1 else durationOf())
@@ -311,20 +339,20 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
       rawset(out, name, v)
     end
 
-    resolving[key] = nil
+    pending[name] = nil
 
     return v
   end
 
   setmetatable(attrs, {
     __index = function(t, k)
-      return resolveRow(t, module.attributes, "attribute", k)
+      return resolveRow(t, module.attributes, attrPending, "attribute", k)
     end,
   })
 
   setmetatable(props, {
     __index = function(t, k)
-      return resolveRow(t, module.properties, "property", k)
+      return resolveRow(t, module.properties, propPending, "property", k)
     end,
   })
 
@@ -333,12 +361,19 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
   -- a walk that would otherwise reach it first and lock its own key
   durationOf()
 
+  -- resolved straight rather than through the __index just installed, which
+  -- would only find the row missing and call the same function. a row a rule
+  -- already pulled is left as it resolved
   for name in module.attributes do
-    local _ = attrs[name]
+    if rawget(attrs, name) == nil then
+      resolveRow(attrs, module.attributes, attrPending, "attribute", name)
+    end
   end
 
   for name in module.properties do
-    local _ = props[name]
+    if rawget(props, name) == nil then
+      resolveRow(props, module.properties, propPending, "property", name)
+    end
   end
 
   setmetatable(attrs, nil)

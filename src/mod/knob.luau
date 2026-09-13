@@ -16,12 +16,26 @@ local counter = 0
 
 export type Rule = (ctx: any, attrs: any, props: any) -> any
 
+-- the kind a value names, with the engine's two spellings of a vector read as
+-- one, exactly as mods.kindOf reads them. spelled out here rather than required
+-- so a knob stays the leaf of the graph it is
+local function kindOf(v: any): string?
+  if v == nil then
+    return nil
+  end
+
+  local t = typeof(v)
+
+  return if t == "vector" then "Vector3" else t
+end
+
 -- never a name a chain method also answers to: an unset field of that name
 -- would read as the method itself through Knob's own __index, not as nil
 type Fields = {
   default: any,
   rule: Rule?,
   hasDefault: boolean,
+  kind: string?,
   lower: any,
   upper: any,
   names: { string },
@@ -48,6 +62,9 @@ local function make(default: any): Knob
     default = if isRule then nil else default,
     rule = if isRule then default else nil,
     hasDefault = default ~= nil and not isRule,
+    -- kept beside the default, which never changes after construction, so a
+    -- reader asking what the row wants pays no typeof per read
+    kind = if isRule then nil else kindOf(default),
     lower = nil,
     upper = nil,
     names = {},
