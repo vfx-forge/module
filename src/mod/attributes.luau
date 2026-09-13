@@ -198,7 +198,7 @@ end
 -- winning over a live one of the same name, as attr.get reads them. the live
 -- read already hands back a table of its own, so it is taken rather than copied
 -- into a second one; the caller may still keep it past the next write
-function attr.map(obj: Instance): { [string]: any }
+function attr.map(obj: Instance)
   local id = obj:GetAttribute(ATTR_CACHE_ID)
   local cache = Cache[id]
   local map = obj:GetAttributes()

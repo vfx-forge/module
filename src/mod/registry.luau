@@ -27,7 +27,7 @@ local owned: { [Module]: Owned } = {}
 local shape: { [Module]: { depth: number, subjects: { string }?, sole: string? } } = {}
 
 -- the selector engine is the engine's; a test host hands one in
-local function engineQuery(root: Instance, selector: string): { Instance }
+local function engineQuery(root: Instance, selector: string)
   return root:QueryDescendants(selector)
 end
 
@@ -46,7 +46,7 @@ end
 
 -- a classifier with its parenthesised parts blanked, so a relative selector
 -- inside :has() or :not() never counts as a combinator of the whole
-local function flatten(classifier: string): string
+local function flatten(classifier: string)
   local out = {}
   local depth = 0
 
@@ -65,7 +65,7 @@ local function flatten(classifier: string): string
   return table.concat(out)
 end
 
-local function compounds(alternative: string): { string }
+local function compounds(alternative: string)
   local out = {}
 
   for token in string.gmatch(string.gsub(alternative, ">", " "), "%S+") do
@@ -75,7 +75,7 @@ local function compounds(alternative: string): { string }
   return out
 end
 
-function registry.depth(classifier: string): number
+function registry.depth(classifier: string)
   local deepest = 0
 
   for alternative in string.gmatch(flatten(classifier), "[^,]+") do
@@ -362,7 +362,7 @@ function registry.get(id: string): Module?
   return byId[id]
 end
 
-function registry.list(): { Module }
+function registry.list()
   return table.clone(modules)
 end
 
@@ -404,16 +404,14 @@ local function scanRoot(root: Instance, depth: number): Instance
   return current
 end
 
--- one instance classified: each module whose subject class it is gets its
--- classifier run from the ancestor high enough for every combinator in it to
--- match below the root, and the first hit wins. modules are disjoint by
--- contract, so first is only ever one
+-- one instance classified: a classifier that is only a class is answered by the
+-- instance itself, at no walk and no query, and any other is run from the
+-- ancestor high enough for every combinator in it to match below the root. the
+-- first hit wins; modules are disjoint by contract, so first is only ever one
 function registry.of(inst: Instance): Module?
   for _, module in modules do
     local sole = shape[module].sole
 
-    -- a classifier that is only a class is the instance's own answer, and
-    -- costs no walk up the tree and no query
     if sole ~= nil then
       if inst:IsA(sole) then
         return module

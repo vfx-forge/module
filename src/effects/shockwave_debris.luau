@@ -66,7 +66,7 @@ debris.layout = {
 
 -- the dwell's ceiling: a piece's own lifetime is drawn below it, and a queue
 -- naming no duration runs over it
-function debris.duration(_, attrs: any): number
+function debris.duration(_, attrs: any)
   return attrs.Lifetime.value.Max
 end
 

@@ -31,7 +31,7 @@ function mod.to(b: any): Spec
   return make("to", b)
 end
 
-function mod.is(x: any): boolean
+function mod.is(x: any)
   return type(x) == "table" and getmetatable(x) == Spec
 end
 
@@ -50,7 +50,7 @@ function Spec.start(self: Spec, s: any): Spec
   return self
 end
 
-local function pick(x: any, ctx: any, attrs: any, props: any): any
+local function pick(x: any, ctx: any, attrs: any, props: any)
   if type(x) == "function" then
     return x(ctx, attrs, props)
   end

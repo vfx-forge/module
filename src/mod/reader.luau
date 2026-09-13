@@ -39,7 +39,7 @@ export type Track = {
 
 -- where the walk takes an instance's attributes from. replaceable, for a host
 -- that keeps effect values somewhere other than attributes
-function reader.defaultSource(inst: Instance): { [string]: any }
+function reader.defaultSource(inst: Instance)
   return attr.map(inst)
 end
 
@@ -49,7 +49,7 @@ reader.source = reader.defaultSource
 -- reach, so the dispatcher hands it in at load
 reader.bind = nil :: ((scope: any, track: mods.Track, write: (v: any) -> ()) -> ())?
 
-local function propertyOf(obj: Instance, name: string): any
+local function propertyOf(obj: Instance, name: string)
   local ok, v = pcall(function()
     return (obj :: any)[name]
   end)
@@ -118,7 +118,7 @@ local function queueOf(ref: Instance, source: string, name: string, row: knob.Kn
   return queue, false, under
 end
 
-local function usableDuration(d: any): number
+local function usableDuration(d: any)
   if typeof(d) ~= "number" or d ~= d or d <= 0 or d == math.huge then
     return 1
   end
@@ -164,7 +164,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
   -- what a row rests at when nothing usable is stored for it. taking the row
   -- and its base keeps it one function for the whole resolve rather than one
   -- closure per row
-  local function fallbackOf(row: knob.Knob, base: any): any
+  local function fallbackOf(row: knob.Knob, base: any)
     if row.rule then
       return row.rule(ctx, attrs, props)
     end
@@ -176,7 +176,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     return base
   end
 
-  local function plainOf(source: string, name: string, row: knob.Knob): any
+  local function plainOf(source: string, name: string, row: knob.Knob)
     local base = if source == "property" then propertyOf(ctx.obj, name) else nil
     local want: string? = nil
 
@@ -300,7 +300,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     pending: { [string]: boolean },
     source: string,
     name: string
-  ): any
+  )
     local row = rows[name]
 
     if row == nil then
@@ -317,8 +317,9 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     local v = rest
 
     -- a mod row pulled while the duration rule is still deciding is built over
-    -- a span of one and not kept, so the rule may read the row's own value;
-    -- the pass after the duration is known builds the track that stays
+    -- a span of one and not kept, so the rule may read the row's own value and
+    -- must not read at: the track it sees is not the one the pass after the
+    -- duration is known builds and keeps
     local provisional = row.isMod and deciding
 
     if row.isMod then

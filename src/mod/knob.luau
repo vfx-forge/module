@@ -18,7 +18,7 @@ export type Rule = (ctx: any, attrs: any, props: any) -> any
 
 -- the kind a value names, with the engine's two spellings of a vector read as
 -- one. the package's only answer to that question: mods re-exports this one
-function knob.kindOf(v: any): string
+function knob.kindOf(v: any)
   local t = typeof(v)
 
   return if t == "vector" then "Vector3" else t
@@ -83,7 +83,7 @@ setmetatable(knob, {
   end,
 })
 
-function knob.is(x: any): boolean
+function knob.is(x: any)
   return type(x) == "table" and getmetatable(x) == Knob
 end
 
@@ -143,13 +143,13 @@ function Knob.mod(self: Knob, default: any): Knob
   return self
 end
 
-function knob.ordered(v: any): boolean
+function knob.ordered(v: any)
   local t = typeof(v)
 
   return t == "number" or t == "NumberRange" or t == "Vector3" or t == "vector"
 end
 
-local function clampNumber(v: number, lo: any, hi: any): number
+local function clampNumber(v: number, lo: any, hi: any)
   if typeof(lo) == "number" then
     v = math.max(v, lo)
   end
@@ -187,7 +187,7 @@ local function axis(v: any, upper: string, lower: string): number?
   return v
 end
 
-function knob.clamp(v: any, lo: any, hi: any): any
+function knob.clamp(v: any, lo: any, hi: any)
   if lo == nil and hi == nil then
     return v
   end

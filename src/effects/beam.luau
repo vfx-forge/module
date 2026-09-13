@@ -51,7 +51,7 @@ beam.layout = {
 }
 
 -- one length per emit, drawn from the range the row holds
-function beam.duration(_, attrs: any): number
+function beam.duration(_, attrs: any)
   local range = attrs.EffectDuration
 
   return rng:NextNumber(range.Min, range.Max)
@@ -93,6 +93,9 @@ local function prepare(ctx: reader.Ctx, attrs: any): Beam?
   end
 
   lifetime.hold(scope, clone)
+
+  -- the reader has already run by here, so the clone is for what this effect
+  -- reads of its own below and for the plans that will read from it
   ctx.obj = clone
 
   return clone

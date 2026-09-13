@@ -40,7 +40,7 @@ curves.PRESETS = {
 
 -- a row names its curve by preset; nil is the out cubic every effect always
 -- eased with
-function curves.preset(name: string?): string
+function curves.preset(name: string?)
   local build = curves.PRESETS[name or "easeOut"]
 
   if build == nil then
