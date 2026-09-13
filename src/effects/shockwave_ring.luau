@@ -85,6 +85,12 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   local tpDuration = attr.get(ref, "Transparency_Duration", 0.5, true)
 
+  -- an old row's start was only ever a seed for a piece carrying nothing of its
+  -- own, so it is read here and applied per piece. a framed queue says where the
+  -- fade starts itself, and a piece takes it at its word
+  local framedTp = mods.framed(ref, "attribute", "Transparency") ~= nil
+  local tpSeed = legacy_mods.alias(ref, "Transparency_Start", 0)
+
   -- the entry phases run over their own clocks, which are the durations the
   -- rows always carried, and rest where the old defaults left them: the offset
   -- where it stands, the size on a rise from nothing to the drawn size
@@ -203,11 +209,28 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     part.Material = result.Material
     part.Transparency = result.Instance.Transparency
 
-    -- the fade a segment runs after its dwell starts from where this segment's
-    -- transparency rests, which a segment that inherits its hit surface knows
-    -- only now. an authored queue is taken at its word
-    local transparency = mods.track(ref, "attribute", "Transparency", mods.ramp(part.Transparency, 0), tpDuration)
-    part.Transparency = transparency.at(0)
+    if not framedTp and part.Transparency == 0 then
+      part.Transparency = tpSeed
+    end
+
+    -- the fade a segment runs after its dwell goes from where the segment rests,
+    -- which a segment that inherits its hit surface knows only now, to where the
+    -- row ends. a framed queue names both ends and is taken at its word
+    local transparency = mods.track(
+      ref,
+      "attribute",
+      "Transparency",
+      mods.ramp(part.Transparency, 0),
+      tpDuration,
+      nil,
+      { ownStart = true }
+    )
+
+    if framedTp then
+      part.Transparency = transparency.at(0)
+    end
+
+    local tpMoves = transparency.animated and (framedTp or transparency.at(0) ~= transparency.at(transparency.span))
 
     part.Size = Vector3.zero
 
@@ -337,11 +360,16 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
           )
         end
 
-        if transparency.animated then
+        if tpMoves then
           lifetime.hold(
             scope,
             tween.fromParams(utility.linear_bezier, transparency.span, function(_, deltaTime, elapsed)
-              part.Transparency = transparency.at(elapsed)
+              local v = transparency.at(elapsed)
+
+              if typeof(v) == "number" then
+                part.Transparency = v
+              end
+
               return step(deltaTime, elapsed)
             end)
           )

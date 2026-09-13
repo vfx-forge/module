@@ -226,4 +226,25 @@ harness.suite(function()
     expect(track.animated).toBe(false)
     expect(track.at(0)).toBe(3)
   end)
+
+  -- the old row said where the value ends; where it starts was a seed for a
+  -- target that carried nothing of its own, which is the effect's to know
+  test("an effect that owns the start completes an old quad from its default", function()
+    local obj = Instance.new("Attachment")
+    obj:SetAttribute("Width_Start", 5)
+    obj:SetAttribute("Width_End", 8)
+
+    local track = mods.track(obj, "attribute", "Width", mods.ramp(1, 8), 1, nil, { ownStart = true })
+
+    expect(track.animated).toBe(true)
+    expect(near(track.at(0), 1)).toBe(true)
+    expect(near(track.at(1), 8)).toBe(true)
+  end)
+
+  test("a framed queue keeps its own start when the effect owns it", function()
+    local obj = authored("Width", { tween(5, 8, 1) })
+    local track = mods.track(obj, "attribute", "Width", mods.ramp(1, 8), 1, nil, { ownStart = true })
+
+    expect(near(track.at(0), 5)).toBe(true)
+  end)
 end)

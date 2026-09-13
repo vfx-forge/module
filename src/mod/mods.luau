@@ -338,14 +338,18 @@ end
 -- the one way an effect reads an animated knob. it always answers: what rests
 -- when nothing usable is authored, else a sampler over the queue's own reach.
 -- a default given as a queue is what runs when nothing is authored, for a knob
--- whose resting state is a ramp or a draw rather than a value
+-- whose resting state is a ramp or a draw rather than a value.
+--
+-- `ownStart` is for a knob whose start belongs to the effect rather than to the
+-- row, which is the shape below
 function mods.track(
   ref: Instance,
   source: string,
   name: string,
   default: any,
   span: number,
-  env: { [string]: any }?
+  env: { [string]: any }?,
+  opts: { ownStart: boolean? }?
 ): Track
   local fallback: { any }? = if type(default) == "table" then default else nil
   local rest: any = if fallback then nil else default
@@ -390,6 +394,25 @@ function mods.track(
 
   if queue == nil or #queue == 0 or mods.inert(queue) then
     return resting()
+  end
+
+  -- an old row whose start was only ever a seed for a target carrying nothing
+  -- of its own says where the value ENDS, and the effect says where it comes
+  -- from. handing that start back makes it a half quad, which the block below
+  -- completes from the default. only the old format reads this way: a framed
+  -- queue was authored to mean exactly what it says, both ends of it
+  if
+    opts
+    and opts.ownStart
+    and #queue == 1
+    and queue[1].kind == "tween"
+    and not queue[1].partial
+    and mods.framed(ref, source, name) == nil
+  then
+    local m = table.clone(queue[1])
+
+    m.partial = "start"
+    queue = { m }
   end
 
   -- a half quad is completed from the default, which is the effect's own and is

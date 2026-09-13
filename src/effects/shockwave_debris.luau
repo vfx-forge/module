@@ -128,6 +128,12 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   local tpDuration = attr.get(ref, "Transparency_Duration", 0.5, true)
 
+  -- an old row's start was only ever a seed for a piece carrying nothing of its
+  -- own, so it is read here and applied per piece. a framed queue says where the
+  -- fade starts itself, and a piece takes it at its word
+  local framedTp = mods.framed(ref, "attribute", "Transparency") ~= nil
+  local tpSeed = legacy_mods.alias(ref, "Transparency_Start", 0)
+
   local partData = {}
   local promises = {}
 
@@ -223,15 +229,28 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
       part.Color = iref.Color
       part.Transparency = iref.Transparency
     else
-      part.Transparency = 0
+      part.Transparency = tpSeed
     end
 
-    -- the fade a piece runs after its dwell starts from where this piece's
-    -- transparency rests, which a piece that inherits its hit surface knows
-    -- only now. debris fades all the way out by default, which is what its two
-    -- old defaults spelled. an authored queue is taken at its word
-    local transparency = mods.track(ref, "attribute", "Transparency", mods.ramp(part.Transparency, 1), tpDuration)
-    part.Transparency = transparency.at(0)
+    -- the fade a piece runs after its dwell goes from where the piece rests,
+    -- which a piece that inherits a nearby part knows only now, to where the row
+    -- ends. debris fades all the way out by default, which is what its two old
+    -- defaults spelled. a framed queue names both ends and is taken at its word
+    local transparency = mods.track(
+      ref,
+      "attribute",
+      "Transparency",
+      mods.ramp(part.Transparency, 1),
+      tpDuration,
+      nil,
+      { ownStart = true }
+    )
+
+    if framedTp then
+      part.Transparency = transparency.at(0)
+    end
+
+    local tpMoves = transparency.animated and (framedTp or transparency.at(0) ~= transparency.at(transparency.span))
 
     lifetime.hold(scope, function()
       local index = table.find(physicsParts, realPart)
@@ -310,11 +329,16 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
           )
         end
 
-        if transparency.animated then
+        if tpMoves then
           lifetime.hold(
             scope,
             tween.fromParams(utility.linear_bezier, transparency.span, function(_, deltaTime, elapsed)
-              part.Transparency = transparency.at(elapsed)
+              local v = transparency.at(elapsed)
+
+              if typeof(v) == "number" then
+                part.Transparency = v
+              end
+
               return deltaTime
             end)
           )
