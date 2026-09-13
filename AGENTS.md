@@ -15,6 +15,7 @@ Follow this whether you are changing code here directly or preparing a PR. Code 
 | `src/effects/` | One module per effect (`beam`, `lightning`, `shockwave_ring`, ...) |
 | `src/mod/` | Plain-table helper namespaces (`tween`, `lerp`, `logger`, `attributes`) |
 | `src/mod/lifetime.luau` | Emit and effect records: `hold`, `defer`, `lock`, `run`, `clear`, `await`. Effects file resources through `lifetime.hold(scope, x)`, never `table.insert(scope, x)` |
+| `src/mod/mods.luau` | Modifier queues. `mods.track(ref, source, name, default, span)` is the only way an effect reads an animated knob; never `attr.get` a `_Start`, `_End` or `_Curve` key in an effect. `legacy_mods` reads the old attribute format and owns every quirk of it (`ALIASES`, `CURVES`, `DRAWN_RANGES`) |
 | `src/mod/common/` | Pure helpers with no engine access, requirable under lune |
 | `src/obj/` | Class modules with metatables (`Bezier`, `ObjectCache`) |
 | `src/services/` | Long-lived services (`effects`, `caches`, `texture_loader`) |
@@ -64,6 +65,7 @@ Build with `rojo-build-noalias -o output.rbxm`. The TypeScript surface (`index.d
 - **Sort interchangeable siblings by identifier length, ascending, within each blank-line group.** Governs requires and flat lists. It does not override semantic order: `scaleStart` still precedes `scaleEnd`.
 - **Naming:** `snake_case` files and object internals, `camelCase` locals and functions and config fields, `PascalCase` class modules and exported types and public API fields, `UPPER_CASE` constants.
 - **No em or en dashes anywhere**, in code, comments, or docs. This includes ` -- ` used as a prose dash. Rewrite with a comma or a second sentence.
+- **Effects never read a `_Start`, `_End` or `_Curve` attribute; a knob is read once through `mods.track` and the old format is `legacy_mods`' business.** A `_Duration` may be read soft only as the span lent to a track.
 
 Where this package and the [Roblox Lua style guide](https://roblox.github.io/lua-style-guide/) disagree, this package wins. The guide is a gap-filler only.
 
