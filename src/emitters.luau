@@ -1,4 +1,3 @@
-local Beam = require("@vfx/beam")
 local Spin = require("@vfx/spin")
 local Mesh = require("@vfx/mesh")
 local Sound = require("@vfx/sound")
@@ -397,50 +396,6 @@ function emitters.particle(
   end
 end
 
-function emitters.beam(obj: Beam, scope: types.scope, legacyScale: number)
-  local att0, att1 = obj.Attachment0, obj.Attachment1
-
-  if not att0 or not att1 then
-    return
-  end
-
-  local clone = obj:Clone()
-  clone.Archivable = false
-  clone.Parent = workspace.Terrain
-
-  -- clone attachments for beams that scale their length. getting this wrong is
-  -- not cosmetic: beam.emit's setLengthScale would move the real attachments
-  -- instead of throwaway clones, and the scope teardown that restores them runs
-  -- on the emitted beam
-  --
-  -- anything authored on Length_Scale, a queue or a legacy quad, means the
-  -- beam moves attachments, and the draw beam.emit makes for itself is not
-  -- the one this decision has to agree with: an authored constant of one
-  -- still gets throwaway clones, which costs two attachments and nothing else
-  if mods.track(obj, "attribute", "Length_Scale", 1, 1).animated then
-    local a, b = att0:Clone(), att1:Clone()
-
-    lifetime.hold(scope, a)
-    lifetime.hold(scope, b)
-
-    a.Name = "_ForgeTempAttachment"
-    b.Name = "_ForgeTempAttachment"
-
-    a:AddTag(utility.EMIT_EXCLUDE_TAG)
-    b:AddTag(utility.EMIT_EXCLUDE_TAG)
-
-    clone.Attachment0 = a
-    clone.Attachment1 = b
-
-    a.Parent = att0.Parent
-    b.Parent = att1.Parent
-  end
-
-  lifetime.hold(scope, clone)
-
-  utility.try(`failed to emit beam with error: %s`, Beam.emit, obj, clone, scope, legacyScale)
-end
-
 function emitters.trail(obj: Trail)
   obj.Enabled = true
 end
@@ -607,10 +562,6 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
     return if utility.isMeshVFX(obj) then Mesh.OWNS else Spin.OWNS
   end
 
-  if className == "Beam" then
-    return Beam.OWNS
-  end
-
   if className == "Sound" then
     return Sound.OWNS
   end
@@ -662,9 +613,6 @@ local function route(
 
   if className == "ParticleEmitter" then
     emitters.particle(obj, scope, sharedUncMap, sharedRefMap, legacyScale)
-    return
-  elseif className == "Beam" then
-    emitters.beam(obj, scope, legacyScale)
     return
   elseif className == "Trail" then
     emitters.trail(obj)

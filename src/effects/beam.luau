@@ -1,8 +1,9 @@
 --!nolint LocalShadow
+local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
-local mods = require("@mod/mods")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
@@ -13,72 +14,116 @@ local rng = Random.new()
 
 local beam = {}
 
--- all nine knobs, every one of them read off ref and driven here, so
--- emitters.applyMods leaves them alone. these are ATTRIBUTE names: Width0 and
--- CurveSize0 are also real Beam properties, and a queue on the property side is
--- still the applier's to drive
-beam.OWNS = {
-  attribute = {
-    Speed = true,
-    Width0 = true,
-    Width1 = true,
-    CurveSize0 = true,
-    CurveSize1 = true,
-    Length_Scale = true,
-    Speed_Texture = true,
-    Length_Texture = true,
-    Transparency_Scale = true,
+beam.id = "beam"
+beam.display = { name = "Beam", icon = "beam", order = 20 }
+beam.classifier = "Beam"
+
+beam.attributes = {
+  EmitDelay = knob(0):min(0):unit("seconds"),
+  EffectDuration = knob(NumberRange.new(1, 1)):min(0):aliases("Duration"):unit("seconds"),
+  Speed = knob(1):mod(),
+  LengthScale = knob(1):aliases("Length_Scale"):mod(),
+  TransparencyScale = knob(1):min(0):aliases("Transparency_Scale"):mod(),
+}
+
+-- the beam's own properties are its state; an old attribute of the same name
+-- shadows one, and an old quad on it folds into its queue
+beam.properties = {
+  Width0 = knob():mod(),
+  Width1 = knob():mod(),
+  CurveSize0 = knob():mod(),
+  CurveSize1 = knob():mod(),
+  TextureSpeed = knob():aliases("Speed_Texture"):mod(),
+  TextureLength = knob():aliases("Length_Texture"):mod(),
+}
+
+beam.layout = {
+  { title = "Timing", entries = { "EmitDelay", "EffectDuration", "Speed" } },
+  { title = "Shape", entries = { "Width0", "Width1", "CurveSize0", "CurveSize1", "LengthScale" } },
+  {
+    title = "Texture",
+    entries = {
+      "TextureSpeed",
+      "TextureLength",
+      "TransparencyScale",
+      { action = "toggle_textures", label = "Load Textures" },
+    },
   },
 }
 
-local function getLegacyWidths(obj: Beam, scale: number)
-  local w0 = attr.get(obj, "Width0", obj.Width0, true) * scale
-  local w1 = attr.get(obj, "Width1", obj.Width1, true) * scale
+-- one length per emit, drawn from the range the row holds
+function beam.duration(_, attrs: any): number
+  local range = attrs.EffectDuration
 
-  local s_w0 = attr.get(obj, "StartWidth0", obj.Width0, true) * scale
-  local s_w1 = attr.get(obj, "StartWidth1", obj.Width1, true) * scale
-
-  return w0, w1, s_w0, s_w1
+  return rng:NextNumber(range.Min, range.Max)
 end
 
-function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
+-- the clone every emit plays on, with throwaway attachments when the length
+-- moves: getting this wrong is not cosmetic, since setLengthScale below would
+-- move the real attachments and the scope's restore runs on the clone
+local function prepare(ctx: reader.Ctx, attrs: any): Beam?
+  local ref = ctx.ref :: Beam
+  local scope = ctx.scope
+  local att0, att1 = ref.Attachment0, ref.Attachment1
+
+  if not att0 or not att1 then
+    return nil
+  end
+
+  local clone = ref:Clone()
+  clone.Archivable = false
+  clone.Parent = workspace.Terrain
+
+  if attrs.LengthScale.animated then
+    local a, b = att0:Clone(), att1:Clone()
+
+    lifetime.hold(scope, a)
+    lifetime.hold(scope, b)
+
+    a.Name = "_ForgeTempAttachment"
+    b.Name = "_ForgeTempAttachment"
+
+    a:AddTag(utility.EMIT_EXCLUDE_TAG)
+    b:AddTag(utility.EMIT_EXCLUDE_TAG)
+
+    clone.Attachment0 = a
+    clone.Attachment1 = b
+
+    a.Parent = att0.Parent
+    b.Parent = att1.Parent
+  end
+
+  lifetime.hold(scope, clone)
+  ctx.obj = clone
+
+  return clone
+end
+
+function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
+  local obj = prepare(ctx, attrs)
+
+  if obj == nil then
+    return
+  end
+
+  local ref = ctx.ref :: Beam
+  local scope = ctx.scope
+  local duration = ctx.duration :: number
+
   local emitOnFinish = scope.effects.prepareEmitOnFinish(obj, scope)
 
-  local emitDelay = attr.get(ref, "EmitDelay", 0)
+  local width0 = props.Width0
+  local width1 = props.Width1
+  local curve0 = props.CurveSize0
+  local curve1 = props.CurveSize1
+  local texSpeed = props.TextureSpeed
+  local texLength = props.TextureLength
 
-  local legacy_duration = attr.get(ref, "Duration", 1, true)
-  local legacy_tpScale = attr.get(ref, "EndTransparencyScale", 1, true)
+  local speed = attrs.Speed
+  local tScale = attrs.TransparencyScale
+  local lengthScale = attrs.LengthScale
 
-  local durationRange = attr.getRange(
-    ref,
-    "EffectDuration",
-    NumberRange.new(legacy_duration, legacy_duration),
-    NumberRange.new(0, math.huge)
-  )
-
-  local duration = rng:NextNumber(durationRange.Min, durationRange.Max)
-
-  -- the width defaults are COMPUTED: they carry THIS emit's scale, so they must
-  -- never reach the reference as authored values. a track only ever reads, so
-  -- handing it one costs nothing
-  local a1, a2, a3, a4 = getLegacyWidths(ref, scale)
-
-  local width0 = mods.track(ref, "attribute", "Width0", mods.ramp(a3, a1), duration)
-  local width1 = mods.track(ref, "attribute", "Width1", mods.ramp(a4, a2), duration)
-  local curve0 = mods.track(ref, "attribute", "CurveSize0", obj.CurveSize0, duration)
-  local curve1 = mods.track(ref, "attribute", "CurveSize1", obj.CurveSize1, duration)
-  local tScale = mods.track(ref, "attribute", "Transparency_Scale", mods.ramp(1, legacy_tpScale), duration)
-  local texLength = mods.track(ref, "attribute", "Length_Texture", ref.TextureLength, duration)
-  local lengthScale = mods.track(ref, "attribute", "Length_Scale", 1, duration)
-  local texSpeed = mods.track(ref, "attribute", "Speed_Texture", ref.TextureSpeed, duration)
-
-  -- the span is read off the clone rather than the template on purpose: a
-  -- retimed clone carries its own
-  local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(obj, "Speed_Duration", 0.1, true))
-
-  local baseTexSpeed = obj.TextureSpeed
-
-  task.wait(emitDelay)
+  task.wait(attrs.EmitDelay)
 
   obj.Enabled = true
 
@@ -90,12 +135,12 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
   local env = scope.effects.emitNested(obj, scope.depth + 1, scope)
   table.insert(promises, env.Finished)
 
-  baseTexSpeed = texSpeed.at(0)
+  local baseTexSpeed = texSpeed.at(0)
 
   if texSpeed.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, texSpeed.span, function(_, deltaTime, elapsed)
+      tween.fromParams(utility.linear_bezier, texSpeed.duration, function(_, deltaTime, elapsed)
         baseTexSpeed = texSpeed.at(elapsed)
         obj.TextureSpeed = baseTexSpeed * currentSpeed
 
@@ -107,7 +152,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
   currentSpeed = speed.at(0)
 
   if speed.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
       currentSpeed = speed.at(elapsed)
 
       obj.TextureSpeed = baseTexSpeed * currentSpeed
@@ -180,93 +225,52 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
     setLengthScale(1)
   end)
 
-  setTScale(tScale.at(0))
+  -- every stepper below counts the beam's own clock, which the speed row scales
+  local function step(track: reader.Track, write: (v: any) -> ())
+    write(track.at(0))
 
-  if tScale.animated then
+    if not track.animated then
+      return
+    end
+
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, tScale.span, function(_, deltaTime, elapsed)
-        setTScale(tScale.at(elapsed))
+      tween.fromParams(utility.linear_bezier, track.duration, function(_, deltaTime, elapsed)
+        write(track.at(elapsed))
         return deltaTime * currentSpeed
       end, speedTween)
     )
   end
 
-  obj.TextureLength = texLength.at(0)
+  step(tScale, setTScale)
 
-  if texLength.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, texLength.span, function(_, deltaTime, elapsed)
-        obj.TextureLength = texLength.at(elapsed)
-        return deltaTime * currentSpeed
-      end, speedTween)
-    )
-  end
+  step(texLength, function(v)
+    obj.TextureLength = v
+  end)
 
   local lengthScaleStart = lengthScale.at(0)
 
   if lengthScale.animated then
-    setLengthScale(lengthScaleStart)
-
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, lengthScale.span, function(_, deltaTime, elapsed)
-        setLengthScale(lengthScale.at(elapsed))
-        return deltaTime * currentSpeed
-      end, speedTween)
-    )
+    step(lengthScale, setLengthScale)
   elseif lengthScaleStart ~= 1 then
     setLengthScale(lengthScaleStart)
   end
 
-  obj.Width0 = width0.at(0)
+  step(width0, function(v)
+    obj.Width0 = v
+  end)
 
-  if width0.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, width0.span, function(_, deltaTime, elapsed)
-        obj.Width0 = width0.at(elapsed)
-        return deltaTime * currentSpeed
-      end, speedTween)
-    )
-  end
+  step(width1, function(v)
+    obj.Width1 = v
+  end)
 
-  obj.Width1 = width1.at(0)
+  step(curve0, function(v)
+    obj.CurveSize0 = v
+  end)
 
-  if width1.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, width1.span, function(_, deltaTime, elapsed)
-        obj.Width1 = width1.at(elapsed)
-        return deltaTime * currentSpeed
-      end, speedTween)
-    )
-  end
-
-  obj.CurveSize0 = curve0.at(0)
-
-  if curve0.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, curve0.span, function(_, deltaTime, elapsed)
-        obj.CurveSize0 = curve0.at(elapsed)
-        return deltaTime * currentSpeed
-      end, speedTween)
-    )
-  end
-
-  obj.CurveSize1 = curve1.at(0)
-
-  if curve1.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, curve1.span, function(_, deltaTime, elapsed)
-        obj.CurveSize1 = curve1.at(elapsed)
-        return deltaTime * currentSpeed
-      end, speedTween)
-    )
-  end
+  step(curve1, function(v)
+    obj.CurveSize1 = v
+  end)
 
   -- flipbook support
   local flipbookDuration = 0

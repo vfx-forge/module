@@ -94,6 +94,7 @@ local utility = require("@mod/utility")
 local registry = require("@mod/registry")
 local attributes = require("@mod/attributes")
 
+local Beam = require("@vfx/beam")
 local Sound = require("@vfx/sound")
 local Bezier = require("@vfx/bezier")
 local Lightning = require("@vfx/lightning")
@@ -116,6 +117,9 @@ local api = {}
 
 api.scope = {}
 api.setup = false
+
+-- the built-ins register once, when the module loads
+registry.register(Beam)
 
 function api.init(params: params?)
   if api.setup then
