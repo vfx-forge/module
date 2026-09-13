@@ -1,6 +1,7 @@
 local types = require("@root/types")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
+local registry = require("@mod/registry")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 
@@ -127,18 +128,22 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
 
   local list = { ... }
 
-  local function dispatchInto(target: lifetime.emit, obj: Instance, effectDepth: number)
+  local function dispatchInto(target: lifetime.emit, obj: Instance, effectDepth: number, effect: registry.Module?)
     local fx = lifetime.effect(target, effectDepth, effects)
 
     lifetime.run(fx, function(scope)
-      emitters.dispatch(obj, scope, sharedUncMap, sharedRefMap, api.caches.shared_part, legacyScale)
+      emitters.dispatch(obj, scope, sharedUncMap, sharedRefMap, api.caches.shared_part, legacyScale, effect)
     end)
   end
 
   local function queryAndEmitDescendants(target: lifetime.emit, obj: Instance, baseDepth: number)
+    -- the registry's matches first, each with its module, then the union
+    -- selector for everything still routed by class and tag. an instance the
+    -- registry matched is never dispatched again by the union
+    local found = registry.scan(obj)
     local allDesc = obj:QueryDescendants(EffectSelectors)
 
-    if #allDesc == 0 then
+    if #found == 0 and #allDesc == 0 then
       return
     end
 
@@ -156,9 +161,9 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
     skipCache[obj] = false
     depthCache[obj] = baseDepth
 
-    for _, desc in allDesc do
+    local function visit(desc: Instance, effect: registry.Module?)
       if emitted[desc] then
-        continue
+        return
       end
 
       emitted[desc] = true
@@ -188,8 +193,16 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
       end
 
       if not shouldSkip then
-        dispatchInto(target, desc, depthCache[desc.Parent])
+        dispatchInto(target, desc, depthCache[desc.Parent], effect)
       end
+    end
+
+    for _, hit in found do
+      visit(hit.instance, hit.effect)
+    end
+
+    for _, desc in allDesc do
+      visit(desc, nil)
     end
   end
 
@@ -222,7 +235,7 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
         lifetime.await(inner)
       end)
     else
-      dispatchInto(emit, obj, depth)
+      dispatchInto(emit, obj, depth, registry.of(obj))
 
       if not utility.shouldSkipNested(obj) then
         queryAndEmitDescendants(emit, obj, depth + 1)

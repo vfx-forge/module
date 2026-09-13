@@ -87,8 +87,11 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local mod = require("@mod/mod")
+local knob = require("@mod/knob")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
+local registry = require("@mod/registry")
 local attributes = require("@mod/attributes")
 
 local Sound = require("@vfx/sound")
@@ -298,5 +301,8 @@ api.retime = require("@mod/retime").batch
 api.resize = require("@mod/resize").batch
 api.recolor = require("@mod/recolor")
 api.Schema = require("@root/schema")
+api.effects = registry
+api.knob = knob
+api.mod = mod
 
 return api

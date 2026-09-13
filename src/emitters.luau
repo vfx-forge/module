@@ -17,8 +17,10 @@ local tween = require("@mod/tween")
 local types = require("@root/types")
 local value = require("@mod/value")
 local logger = require("@mod/logger")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local registry = require("@mod/registry")
 local modifiers = require("@mod/modifiers")
 local legacy_mods = require("@mod/legacy_mods")
 
@@ -30,6 +32,10 @@ local Promise = require("@pkg/Promise")
 local MAX_WRITE_FAILURES = 3
 
 local emitters = {}
+
+-- the reader binds a track on an effect's scope through the same helper every
+-- effect steps with, handed in here because the reader stays engine-free
+reader.drive = tween.drive
 
 -- the attribute arm goes through the cache-aware write, so a driven or restored
 -- attribute lands where every reader on this path looks for it
@@ -731,20 +737,37 @@ end
 -- picks the emitter for an instance and calls it, after the randomizer
 -- children under it have drawn and the queues on it have started. a driver is
 -- an effect of the same emit, so nothing here has to wait for it: the emit
--- stays open until the last driver ends
+-- stays open until the last driver ends.
+--
+-- an instance the registry matched runs its module: every row read once, the
+-- applier told which rows the module drives itself, then emit. everything else
+-- takes the route below until its module exists
 function emitters.dispatch(
   obj: any,
   scope: types.scope,
   sharedUncMap: { [Instance]: number },
   sharedRefMap: { [Instance]: Instance },
   shared_part_cache: any,
-  legacyScale: number
+  legacyScale: number,
+  effect: registry.Module?
 )
-  local className = obj.ClassName
-
   processRandomizers(obj)
 
-  emitters.applyMods(obj, scope, fallbackDuration(obj), ownedFor(obj, className))
+  if effect then
+    local ctx: reader.Ctx = { ref = obj, obj = obj, scope = scope, scale = legacyScale, effect = effect }
+    local ok, attrs, props = utility.try(`failed to read {effect.id} with error: %s`, reader.resolve, effect, ctx)
+
+    if not ok then
+      return
+    end
+
+    emitters.applyMods(obj, scope, ctx.duration :: number, registry.owned(effect))
+    utility.try(`failed to emit {effect.id} with error: %s`, effect.emit, ctx, attrs, props)
+
+    return
+  end
+
+  emitters.applyMods(obj, scope, fallbackDuration(obj), ownedFor(obj, obj.ClassName))
 
   route(obj, scope, sharedUncMap, sharedRefMap, shared_part_cache, legacyScale)
 end
