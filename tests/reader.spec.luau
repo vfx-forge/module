@@ -350,6 +350,16 @@ harness.suite(function()
       expect(silenced.A.at(0)).toBe(0)
     end)
 
+    test("an inert framed queue silences the default modifier", function()
+      local obj = Instance.new("Part")
+      framed(obj, "attribute", "A", { { kind = "delay", chain = false, wait = value.lit(1) } })
+
+      local attrs = reader.resolve(module({ A = knob(0):mod(mod.to(1)) }), ctxFor(obj))
+
+      expect(attrs.A.animated).toBe(false)
+      expect(attrs.A.at(0)).toBe(0)
+    end)
+
     test("a default modifier whose endpoint equals the state rests", function()
       local attrs = reader.resolve(module({ A = knob(1):mod(mod.to(1)) }), ctxFor(Instance.new("Part")))
 
@@ -376,6 +386,17 @@ harness.suite(function()
       expect(first >= 2 and first <= 3).toBe(true)
       expect(typeof(again)).toBe("number")
       expect(attrs.Life.value.Min).toBe(2)
+    end)
+
+    test("a tombstone on a range row still draws", function()
+      local obj = Instance.new("Part")
+      framed(obj, "attribute", "Life", {})
+
+      local attrs = reader.resolve(module({ Life = knob(NumberRange.new(2, 3)):mod() }), ctxFor(obj))
+      local drawn = attrs.Life.at(0)
+
+      expect(typeof(drawn)).toBe("number")
+      expect(drawn >= 2 and drawn <= 3).toBe(true)
     end)
 
     test("calling a track for a piece re-resolves it from the value given", function()

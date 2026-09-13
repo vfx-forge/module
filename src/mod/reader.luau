@@ -218,21 +218,22 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
   local function trackOf(source: string, name: string, row: knob.Knob, rest: any, seeded: boolean, span: number): Track
     local queue, framed = queueOf(ctx.ref, source, name, row)
 
-    -- an authored queue with nothing in it is a tombstone, deliberately
-    -- silencing even the row's own default modifier rather than falling back
-    -- to it, which is what mods.build would otherwise read an empty queue as
-    local tombstone = framed and queue ~= nil and #queue == 0
+    -- an existing queue, even an empty one or one that only waits, means the
+    -- author owns the row: it is a tombstone, deliberately silencing even the
+    -- row's own default modifier rather than falling back to it, which is
+    -- what mods.build would otherwise read such a queue as
+    local tombstone = framed and queue ~= nil and (#queue == 0 or mods.inert(queue))
 
     local default: any = rest
 
-    -- a range is the row's state and a draw from it is what a piece takes; a
-    -- default modifier is a queue from the state to its endpoint
-    if not tombstone then
-      if typeof(rest) == "NumberRange" then
-        default = mods.draw(rest.Min, rest.Max)
-      elseif row.modDefault ~= nil then
-        default = mod.queue(row.modDefault, ctx, attrs, props, rest, row.preset) or rest
-      end
+    -- a range is the row's state and a draw from it is what a piece takes,
+    -- tombstone or not: this is not a default, it is what a range row's own
+    -- value always means. a default modifier is a queue from the state to
+    -- its endpoint, and a tombstone silences that instead
+    if typeof(rest) == "NumberRange" then
+      default = mods.draw(rest.Min, rest.Max)
+    elseif not tombstone and row.modDefault ~= nil then
+      default = mod.queue(row.modDefault, ctx, attrs, props, rest, row.preset) or rest
     end
 
     local opts = if seeded then { ownStart = true } else nil
