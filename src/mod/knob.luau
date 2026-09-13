@@ -17,13 +17,8 @@ local counter = 0
 export type Rule = (ctx: any, attrs: any, props: any) -> any
 
 -- the kind a value names, with the engine's two spellings of a vector read as
--- one, exactly as mods.kindOf reads them. spelled out here rather than required
--- so a knob stays the leaf of the graph it is
-local function kindOf(v: any): string?
-  if v == nil then
-    return nil
-  end
-
+-- one. the package's only answer to that question: mods re-exports this one
+function knob.kindOf(v: any): string
   local t = typeof(v)
 
   return if t == "vector" then "Vector3" else t
@@ -57,14 +52,15 @@ local function make(default: any): Knob
   counter += 1
 
   local isRule = type(default) == "function"
+  local hasDefault = default ~= nil and not isRule
 
   return setmetatable({
     default = if isRule then nil else default,
     rule = if isRule then default else nil,
-    hasDefault = default ~= nil and not isRule,
+    hasDefault = hasDefault,
     -- kept beside the default, which never changes after construction, so a
     -- reader asking what the row wants pays no typeof per read
-    kind = if isRule then nil else kindOf(default),
+    kind = if hasDefault then knob.kindOf(default) else nil,
     lower = nil,
     upper = nil,
     names = {},

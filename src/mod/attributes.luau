@@ -195,21 +195,18 @@ function attr.keys(obj: Instance): { string }
 end
 
 -- every attribute the instance answers to as one table, the cached value
--- winning over a live one of the same name, as attr.get reads them. a copy: the
--- caller may keep it past the next write
+-- winning over a live one of the same name, as attr.get reads them. the live
+-- read already hands back a table of its own, so it is taken rather than copied
+-- into a second one; the caller may still keep it past the next write
 function attr.map(obj: Instance): { [string]: any }
   local id = obj:GetAttribute(ATTR_CACHE_ID)
   local cache = Cache[id]
-  local map = {}
+  local map = obj:GetAttributes()
+
+  map[ATTR_CACHE_ID] = nil
 
   if cache then
     for k, v in cache do
-      map[k] = v
-    end
-  end
-
-  for k, v in obj:GetAttributes() do
-    if k ~= ATTR_CACHE_ID and map[k] == nil then
       map[k] = v
     end
   end

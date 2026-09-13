@@ -1,4 +1,5 @@
 local attr = require("@mod/attributes")
+local knob = require("@mod/knob")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
@@ -311,13 +312,9 @@ local function constant(default: any, span: number): Track
   }
 end
 
--- the value a knob wants, with the engine's two spellings of a vector read as
--- one kind
-function mods.kindOf(v: any): string
-  local t = typeof(v)
-
-  return if t == "vector" then "Vector3" else t
-end
+-- the value a knob wants, which is the knob's own answer, re-exported here for
+-- the callers that already hold mods
+mods.kindOf = knob.kindOf
 
 local function sampleQueue(
   ref: Instance,

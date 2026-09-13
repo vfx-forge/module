@@ -180,7 +180,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     if row.hasDefault then
       want = row.kind
     elseif base ~= nil then
-      want = mods.kindOf(base)
+      want = knob.kindOf(base)
     end
 
     -- a property row's state is the property, unless an attribute of its name
@@ -205,12 +205,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     if v == nil then
       v = fallbackOf(row, base)
     elseif want ~= nil then
-      -- mods.kindOf read inline, because every stored row pays for it
-      local got = typeof(v)
-
-      if got == "vector" then
-        got = "Vector3"
-      end
+      local got = knob.kindOf(v)
 
       -- a scalar stored for a range row is the range it always meant
       if want == "NumberRange" and got == "number" then
@@ -235,33 +230,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     return knob.clamp(v, row.lower, row.upper)
   end
 
-  -- what a track binds through, and what it rebuilds through. both read the row
-  -- off the track's metatable, so the row travels with the track without one
-  -- closure per track and without showing on the track's own shape
-  local function applyTrack(track: any, write: (v: any) -> ())
-    local bound = getmetatable(track)
-
-    if reader.drive == nil or ctx.scope == nil then
-      logger.error(`{bound.name} cannot be applied without a running effect`)
-    end
-
-    local drive = reader.drive :: any
-
-    drive(ctx.scope, bound.inner, write)
-  end
-
-  local trackOf: (string, string, knob.Knob, any, boolean, number) -> Track
-
-  -- a piece calls the row for a track of its own: rules run again, and a value
-  -- handed in is where this piece's state is
-  local function callTrack(track: any, current: any): Track
-    local bound = getmetatable(track)
-    local state = if current ~= nil then current else plainOf(bound.source, bound.name, bound.row)
-
-    return trackOf(bound.source, bound.name, bound.row, state, current ~= nil, durationOf())
-  end
-
-  function trackOf(source: string, name: string, row: knob.Knob, rest: any, seeded: boolean, span: number): Track
+  local function trackOf(source: string, name: string, row: knob.Knob, rest: any, seeded: boolean, span: number): Track
     local queue, framed = queueOf(ctx.ref, source, name, row)
 
     -- an existing queue, even an empty one or one that only waits, means the
@@ -290,15 +259,26 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
       duration = inner.span,
       animated = inner.animated,
       value = rest,
-      apply = applyTrack,
     }
 
+    function track.apply(_, write: (v: any) -> ())
+      if reader.drive == nil or ctx.scope == nil then
+        logger.error(`{name} cannot be applied without a running effect`)
+      end
+
+      local drive = reader.drive :: any
+
+      drive(ctx.scope, inner, write)
+    end
+
+    -- a piece calls the row for a track of its own: rules run again, and a
+    -- value handed in is where this piece's state is
     setmetatable(track, {
-      __call = callTrack,
-      source = source,
-      name = name,
-      row = row,
-      inner = inner,
+      __call = function(_, current: any)
+        local state = if current ~= nil then current else plainOf(source, name, row)
+
+        return trackOf(source, name, row, state, current ~= nil, durationOf())
+      end,
     })
 
     return table.freeze(track) :: any
