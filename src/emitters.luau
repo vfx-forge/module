@@ -108,9 +108,9 @@ local function fallbackDuration(obj: Instance): number
 end
 
 -- the speed ramp a legacy tween child carried, as a multiplier on the clock
--- the timer counts. it runs on wall time the way the child's own speed tween
--- did, beside the tween it scales
-local function speedOf(queue: { any }): ((wall: number) -> number)?
+-- the timer counts, and how long that ramp runs. it goes by wall time the way
+-- the child's own speed tween did, beside the tween it scales
+local function speedOf(queue: { any }): (((wall: number) -> number)?, number?)
   for _, m in queue do
     local ramp = m.speed
 
@@ -118,13 +118,15 @@ local function speedOf(queue: { any }): ((wall: number) -> number)?
       continue
     end
 
-    return function(wall: number): number
+    local function speedAt(wall: number): number
       local progress = if ramp.duration > 0 then math.clamp(wall / ramp.duration, 0, 1) else 1
       return utility.lerp(ramp.start, ramp.finish, modifiers.alphaFromCurve(ramp.curve, progress))
     end
+
+    return speedAt, ramp.duration
   end
 
-  return nil
+  return nil, nil
 end
 
 -- drives one queue on one target as a child effect of the same emit, so the
@@ -154,13 +156,23 @@ local function drive(
   end
 
   local wants, restore = resetTo(queue, currentOf(target, source, name))
-  local speedAt = speedOf(queue)
+  local speedAt, speedUntil = speedOf(queue)
 
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
 
   lifetime.run(fx, function(driver)
     local failures = 0
     local wall = 0
+
+    -- the restore rides the record rather than the line after the timer, so a
+    -- clear runs it too. a release fires this whether the driver reached its
+    -- own end or was cancelled, which is what the legacy child did by holding
+    -- its restore in the scope
+    if wants and restore ~= nil then
+      lifetime.defer(driver, function()
+        pcall(writeTarget, target, source, name, restore)
+      end)
+    end
 
     tween.timer(span, function(deltaTime, elapsed)
       wall += deltaTime
@@ -176,14 +188,14 @@ local function drive(
         end
       end
 
-      return if speedAt then deltaTime * speedAt(wall) else deltaTime
-    end, nil, driver, utility.RENDER_PRIORITY + driver.depth)
+      local scaled = if speedAt then deltaTime * speedAt(wall) else deltaTime
 
-    -- tween.timer yields until its own span is up, so this is the finish and
-    -- nothing races the driver's last write
-    if wants and restore ~= nil then
-      pcall(writeTarget, target, source, name, restore)
-    end
+      -- a legacy speed ramp is allowed to rest at zero or below, and that is
+      -- where the tween it scales stopped. a zero read while the ramp is still
+      -- moving is not the end, so the timer only gives up once the ramp has
+      -- settled there
+      return if scaled > 0 or (speedUntil ~= nil and wall < speedUntil) then scaled else nil
+    end, nil, driver, utility.RENDER_PRIORITY + driver.depth)
   end)
 end
 
@@ -212,7 +224,7 @@ local function applyRandomizer(target: Instance, child: legacy_mods.Child)
     return
   end
 
-  if wants then
+  if wants and restore ~= nil then
     task.defer(function()
       pcall(writeTarget, target, child.source, child.name, restore)
     end)
@@ -243,7 +255,7 @@ local function processRandomizers(obj: Instance)
     local target = utility.getTarget(child)
 
     if target then
-      applyRandomizer(target, read)
+      utility.try(`failed to apply a randomizer with error: %s`, applyRandomizer, target, read)
     end
   end
 end
