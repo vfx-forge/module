@@ -111,14 +111,17 @@ function mods.framed(ref: Instance, source: string, name: string): { any }?
   return nil
 end
 
-function mods.read(ref: Instance, source: string, name: string): { any }?
+-- the second return says whether the queue came out of the framed attribute, so
+-- a caller that has to tell an authored queue from an old row does not pay the
+-- decode a second time to ask
+function mods.read(ref: Instance, source: string, name: string): ({ any }?, boolean)
   local queue = mods.framed(ref, source, name)
 
   if queue ~= nil then
-    return queue
+    return queue, true
   end
 
-  return legacy_mods.read(ref, source, name)
+  return legacy_mods.read(ref, source, name), false
 end
 
 -- the value a target already carries, which is what a base entry resolves to
@@ -390,7 +393,7 @@ function mods.track(
     return { at = sample, span = reach, animated = true }
   end
 
-  local queue = mods.read(ref, source, name)
+  local queue, framed = mods.read(ref, source, name)
 
   if queue == nil or #queue == 0 or mods.inert(queue) then
     return resting()
@@ -399,19 +402,21 @@ function mods.track(
   -- an old row whose start was only ever a seed for a target carrying nothing
   -- of its own says where the value ENDS, and the effect says where it comes
   -- from. handing that start back makes it a half quad, which the block below
-  -- completes from the default. only the old format reads this way: a framed
-  -- queue was authored to mean exactly what it says, both ends of it
+  -- completes from the default. a row that already named no finish gives up
+  -- both ends and keeps only its duration and curve, which is what such a row
+  -- did when the effect ran the other half itself. only the old format reads
+  -- this way: a framed queue was authored to mean exactly what it says
   if
     opts
     and opts.ownStart
     and #queue == 1
     and queue[1].kind == "tween"
-    and not queue[1].partial
-    and mods.framed(ref, source, name) == nil
+    and (queue[1].partial == nil or queue[1].partial == "finish")
+    and not framed
   then
     local m = table.clone(queue[1])
 
-    m.partial = "start"
+    m.partial = if queue[1].partial == "finish" then "both" else "start"
     queue = { m }
   end
 
@@ -434,9 +439,13 @@ function mods.track(
     return resting()
   end
 
-  if want ~= nil and kindOf(sample(0)) ~= want then
-    warnOnce(ref, name, `{name} samples a {kindOf(sample(0))} where the effect wants a {want}`)
-    return resting()
+  if want ~= nil then
+    local got = kindOf(sample(0))
+
+    if got ~= want then
+      warnOnce(ref, name, `{name} samples a {got} where the effect wants a {want}`)
+      return resting()
+    end
   end
 
   return { at = sample, span = reach, animated = true }

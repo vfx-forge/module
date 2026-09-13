@@ -241,6 +241,19 @@ harness.suite(function()
     expect(near(track.at(1), 8)).toBe(true)
   end)
 
+  -- a row that named no end was a seed too, so both of its ends come from the
+  -- default and only its duration and curve survive
+  test("an effect that owns the start completes a start-only old quad from its default", function()
+    local obj = Instance.new("Attachment")
+    obj:SetAttribute("Width_Start", 0.3)
+
+    local track = mods.track(obj, "attribute", "Width", mods.ramp(0.7, 1), 1, nil, { ownStart = true })
+
+    expect(track.animated).toBe(true)
+    expect(near(track.at(0), 0.7)).toBe(true)
+    expect(near(track.at(1), 1)).toBe(true)
+  end)
+
   test("a framed queue keeps its own start when the effect owns it", function()
     local obj = authored("Width", { tween(5, 8, 1) })
     local track = mods.track(obj, "attribute", "Width", mods.ramp(1, 8), 1, nil, { ownStart = true })

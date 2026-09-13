@@ -31,11 +31,13 @@ local MAX_WRITE_FAILURES = 3
 
 local emitters = {}
 
+-- the attribute arm goes through the cache-aware write, so a driven or restored
+-- attribute lands where every reader on this path looks for it
 local function writeTarget(obj: Instance, source: string, name: string, v: any)
   if source == "property" then
     (obj :: any)[name] = v
   else
-    obj:SetAttribute(name, v)
+    attr.set(obj, name, v)
   end
 end
 

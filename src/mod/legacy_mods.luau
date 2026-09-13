@@ -5,7 +5,7 @@ local logger = require("@mod/logger")
 
 local legacy_mods = {}
 
--- the tags src/utility.luau puts on a RayValue to say which side of an
+-- the tags src/mod/utility.luau puts on a RayValue to say which side of an
 -- instance it drives. kept as literals rather than a require, so the
 -- quarantine has no dependency that could pull a legacy name anywhere else
 local ATTRIBUTE_TWEENER_TAG = "AttributeTweener"
@@ -328,10 +328,10 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string): { an
   }
 end
 
--- the RayValue children the tweener and randomizer effects still play. only
--- children matching this source are read, so a property and an attribute of
--- the same name never see each other's authoring, and an untagged child
--- counts as a property, matching legacySource exactly
+-- the RayValue children the applier in the emitter plays. only children
+-- matching this source are read, so a property and an attribute of the same
+-- name never see each other's authoring, and an untagged child counts as a
+-- property, matching legacySource exactly
 function legacy_mods.readChildren(ref: Instance, source: string, name: string): { any }?
   local out = {}
 

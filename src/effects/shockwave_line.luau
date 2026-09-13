@@ -114,6 +114,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
   )
 
   local offsetInStart = offsetIn.at(0)
+  local sizeInStart = sizeIn.at(0)
 
   -- a phase that starts where it already ends has nothing to do. an authored
   -- queue is taken at its word
@@ -371,7 +372,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
 
         local size = drawnSize * currentScale
 
-        part.Size = size * sizeIn.at(0)
+        part.Size = size * sizeInStart
 
         if sizeInMoves then
           sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.span, function(_, deltaTime, elapsed)

@@ -67,7 +67,14 @@ function spin.emit(ref: Model, scope: types.scope)
     lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, scale.span, function(_, deltaTime, elapsed)
-        ref:ScaleTo(math.max(scale.at(elapsed), MIN_SCALE))
+        local v = scale.at(elapsed)
+
+        -- a queue that stops resolving partway would throw here every frame, and
+        -- a stepper that throws is never cleaned up
+        if typeof(v) == "number" then
+          ref:ScaleTo(math.max(v, MIN_SCALE))
+        end
+
         return deltaTime
       end)
     )

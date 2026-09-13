@@ -168,23 +168,25 @@ function attr.isCached(obj: Instance): boolean
   return obj:GetAttribute(ATTR_CACHE_ID) ~= nil
 end
 
--- every attribute name the instance answers to, cached or live, so a scan
--- over a cached template finds what a scan over a live one finds
+-- every attribute name the instance answers to, cached and live both and each
+-- one once, so a scan over a cached instance finds what a scan over a live one
+-- finds and still sees a name set on it after it was cached
 function attr.keys(obj: Instance): { string }
   local id = obj:GetAttribute(ATTR_CACHE_ID)
   local cache = Cache[id]
   local keys = {}
+  local seen = {}
 
   if cache then
     for k in cache do
+      seen[k] = true
+
       table.insert(keys, k)
     end
-
-    return keys
   end
 
   for k in obj:GetAttributes() do
-    if k ~= ATTR_CACHE_ID then
+    if k ~= ATTR_CACHE_ID and not seen[k] then
       table.insert(keys, k)
     end
   end
