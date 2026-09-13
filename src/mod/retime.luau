@@ -1,3 +1,4 @@
+local mods = require("@mod/mods")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 local numeric_common = require("@mod/common/numeric")
@@ -123,6 +124,11 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
     utility.scaleAttribute(obj, invFactor, "Speed_Duration")
     utility.scaleAttribute(obj, invFactor, "EmitDelay")
   end
+
+  -- a queue is time whatever it targets, so every one on the instance scales
+  utility.rescaleQueues(obj, function(queue)
+    mods.scaleTime(queue, invFactor)
+  end)
 end
 
 function retime.batch(factor: number, ...: Instance)

@@ -1,3 +1,4 @@
+local mods = require("@mod/mods")
 local utility = require("@mod/utility")
 
 local resize = {}
@@ -21,6 +22,18 @@ function resize.apply(obj: Instance, factor: number)
     utility.scaleAttribute(obj, factor, "Length_Scale_Start")
     utility.scaleAttribute(obj, factor, "Length_Scale_End")
 
+    for _, name in { "Width0", "Width1", "CurveSize0", "CurveSize1", "Length_Scale" } do
+      utility.rescaleQueue(obj, "attribute", name, function(queue)
+        mods.scaleValues(queue, factor)
+      end)
+    end
+
+    for _, name in { "Width0", "Width1", "CurveSize0", "CurveSize1" } do
+      utility.rescaleQueue(obj, "property", name, function(queue)
+        mods.scaleValues(queue, factor)
+      end)
+    end
+
     obj.Width0 *= factor
     obj.Width1 *= factor
     obj.CurveSize0 *= factor
@@ -37,6 +50,10 @@ function resize.apply(obj: Instance, factor: number)
 
     utility.scaleAttribute(obj, factor, "RollOff_Start")
     utility.scaleAttribute(obj, factor, "RollOff_End")
+
+    utility.rescaleQueue(obj, "attribute", "RollOff", function(queue)
+      mods.scaleValues(queue, factor)
+    end)
   elseif obj:IsA("Model") then
     if utility.isMeshVFX(obj) then
       local start = obj:FindFirstChild("Start")
@@ -57,11 +74,19 @@ function resize.apply(obj: Instance, factor: number)
     else
       utility.scaleAttribute(obj, factor, "Scale_Start")
       utility.scaleAttribute(obj, factor, "Scale_End")
+
+      utility.rescaleQueue(obj, "attribute", "Scale", function(queue)
+        mods.scaleValues(queue, factor)
+      end)
     end
   elseif obj:IsA("Attachment") and obj:HasTag(utility.LIGHTNING_TAG) then
     utility.scaleAttribute(obj, factor, "OffsetScale")
     utility.scaleAttribute(obj, factor, "Width_Start")
     utility.scaleAttribute(obj, factor, "Width_End")
+
+    utility.rescaleQueue(obj, "attribute", "Width", function(queue)
+      mods.scaleValues(queue, factor)
+    end)
   elseif
     obj:IsA("BasePart")
     and obj.Parent
@@ -71,6 +96,10 @@ function resize.apply(obj: Instance, factor: number)
     utility.scaleAttribute(obj, factor, "Length")
     utility.scaleAttribute(obj, factor, "MinSize")
     utility.scaleAttribute(obj, factor, "MaxSize")
+
+    utility.rescaleQueue(obj, "attribute", "Size", function(queue)
+      mods.scaleValues(queue, factor)
+    end)
 
     if obj:GetAttribute("LinearMagnitude") then
       obj.Size *= factor

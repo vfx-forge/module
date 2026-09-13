@@ -737,6 +737,34 @@ function utility.scaleAttribute(obj: Instance, factor: number, name: string)
   end
 end
 
+-- the framed queue on one knob, rewritten through the attribute cache so a
+-- cached instance is edited where its attributes actually live
+function utility.rescaleQueue(obj: Instance, source: string, name: string, edit: (queue: { any }) -> ())
+  local key = mods.attrName(source, name)
+  local raw = attr.get(obj, key, nil, true)
+
+  if raw == nil then
+    return
+  end
+
+  local out = mods.recode(raw, edit)
+
+  if out ~= nil then
+    attr.set(obj, key, out)
+  end
+end
+
+-- every queue on an instance, for a rewrite that applies to all of them alike
+function utility.rescaleQueues(obj: Instance, edit: (queue: { any }) -> ())
+  for key in obj:GetAttributes() do
+    for source, prefix in mods.PREFIX do
+      if string.sub(key, 1, #prefix) == prefix then
+        utility.rescaleQueue(obj, source, string.sub(key, #prefix + 1), edit)
+      end
+    end
+  end
+end
+
 function utility.scaleAttachmentDistance(a0: Attachment?, a1: Attachment?, factor: number)
   if not a0 or not a1 then
     return

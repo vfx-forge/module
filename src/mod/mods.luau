@@ -485,4 +485,85 @@ function mods.track(
   return { at = sample, span = reach, animated = true }
 end
 
+local function scaleValue(v: any, factor: number): any
+  local t = typeof(v)
+
+  if t == "number" or t == "Vector3" or t == "vector" then
+    return v * factor
+  end
+
+  if t == "NumberRange" then
+    return NumberRange.new(v.Min * factor, v.Max * factor)
+  end
+
+  return v
+end
+
+local function scaleEndpoint(x: any, factor: number)
+  if type(x) ~= "table" then
+    return
+  end
+
+  if x.t == "lit" then
+    x.v = scaleValue(x.v, factor)
+  elseif x.t == "rand" then
+    x.min *= factor
+    x.max *= factor
+  end
+end
+
+-- everything in a queue that is a time: durations, waits and the duration of
+-- a carried speed ramp. in place, on a decoded queue
+function mods.scaleTime(queue: { any }, factor: number)
+  for _, m in queue do
+    if typeof(m.duration) == "number" then
+      m.duration *= factor
+    end
+
+    if type(m.wait) == "table" then
+      scaleEndpoint(m.wait, factor)
+    elseif typeof(m.wait) == "number" then
+      m.wait *= factor
+    end
+
+    if type(m.speed) == "table" and typeof(m.speed.duration) == "number" then
+      m.speed.duration *= factor
+    end
+  end
+end
+
+-- every numeric endpoint in a queue. a var names a value that is not the
+-- queue's to scale
+function mods.scaleValues(queue: { any }, factor: number)
+  for _, m in queue do
+    scaleEndpoint(m.start, factor)
+    scaleEndpoint(m.finish, factor)
+  end
+end
+
+-- a framed attribute value decoded, edited in place and framed again, so a
+-- caller that scales a queue never touches the codec. nil when the value is
+-- not a framed queue it can read, and the caller leaves the attribute alone
+function mods.recode(raw: any, edit: (queue: { any }) -> ()): string?
+  if not frame.isFramed(raw) then
+    return nil
+  end
+
+  local body = frame.unframe(raw)
+
+  if body == nil then
+    return nil
+  end
+
+  local ok, decoded = pcall(codec.decode, body)
+
+  if not ok or not decoded then
+    return nil
+  end
+
+  edit(decoded.queue)
+
+  return frame.frame(codec.encode(decoded))
+end
+
 return mods
