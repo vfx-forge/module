@@ -7,13 +7,31 @@ local Instance = harness.datatypes.Instance
 local NumberRange = harness.datatypes.NumberRange
 
 -- lune has no selector engine, so the spec's query understands a class name
--- and nothing else, which is what every stub here uses
+-- and nothing else, which is what every stub here uses. it draws from a pool
+-- rather than walking root:GetDescendants() live: the test host hands out a
+-- fresh Instance wrapper on every such call, and the registry keys scan's
+-- results by instance the way the engine allows, so the fake query has to
+-- serve back the very wrappers the spec itself holds
+local pool: { Instance } = {}
+
+local function make(class: string, parent: Instance?): Instance
+  local inst = Instance.new(class)
+
+  if parent then
+    inst.Parent = parent
+  end
+
+  table.insert(pool, inst)
+
+  return inst
+end
+
 local function fakeQuery(root: Instance, selector: string): { Instance }
   local out = {}
 
-  for _, d in root:GetDescendants() do
-    if d:IsA(selector) then
-      table.insert(out, d)
+  for _, inst in pool do
+    if inst:IsA(selector) and inst:IsDescendantOf(root) then
+      table.insert(out, inst)
     end
   end
 
@@ -188,14 +206,12 @@ harness.suite(function()
       registry.configure({ query = fakeQuery })
       registry.register(stub("beam"))
       registry.register(stub("trail", { classifier = "Trail" }))
+      table.clear(pool)
 
       local root = Instance.new("Folder")
-      local beam = Instance.new("Beam")
-      local trail = Instance.new("Trail")
-      local part = Instance.new("Part")
-      beam.Parent = root
-      trail.Parent = root
-      part.Parent = root
+      local beam = make("Beam", root)
+      local trail = make("Trail", root)
+      local part = make("Part", root)
 
       expect(registry.of(beam).id).toBe("beam")
       expect(registry.of(trail).id).toBe("trail")
@@ -208,35 +224,26 @@ harness.suite(function()
       registry.configure({ query = fakeQuery })
       registry.register(stub("beam"))
       registry.register(stub("owner", { classifier = "Model", components = "Beam" }))
+      table.clear(pool)
 
       local root = Instance.new("Folder")
-      local loose = Instance.new("Beam")
-      local model = Instance.new("Model")
-      local inner = Instance.new("Beam")
-      loose.Parent = root
-      model.Parent = root
-      inner.Parent = model
+      local loose = make("Beam", root)
+      local model = make("Model", root)
+      local inner = make("Beam", model)
 
       local hits = registry.scan(root)
 
       expect(#hits).toBe(2)
 
-      -- lune hands back a fresh Instance value on every query, equal by
-      -- IsA/== but not by identity, so a table keyed on Instance would miss;
-      -- match by == instead
-      local function idOf(inst: Instance): string?
-        for _, hit in hits do
-          if hit.instance == inst then
-            return hit.effect.id
-          end
-        end
+      local byInstance = {}
 
-        return nil
+      for _, hit in hits do
+        byInstance[hit.instance] = hit.effect.id
       end
 
-      expect(idOf(loose)).toBe("beam")
-      expect(idOf(model)).toBe("owner")
-      expect(idOf(inner)).toBe(nil)
+      expect(byInstance[loose]).toBe("beam")
+      expect(byInstance[model]).toBe("owner")
+      expect(byInstance[inner]).toBe(nil)
     end)
 
     test("source replaces what the reader walks", function()

@@ -369,25 +369,22 @@ function registry.of(inst: Instance): Module?
   return nil
 end
 
--- an instance handed back by two separate query calls is not guaranteed to be
--- the same table reference even where it names the same instance, so
--- membership here goes through table.find rather than a hash keyed by Instance
 function registry.scan(root: Instance): { Hit }
   local hits: { Hit } = {}
-  local seen: { Instance } = {}
+  local taken: { [Instance]: boolean } = {}
 
   for _, module in modules do
     for _, inst in query(root, module.classifier) do
-      if table.find(seen, inst) then
+      if taken[inst] then
         continue
       end
 
-      table.insert(seen, inst)
+      taken[inst] = true
       table.insert(hits, { instance = inst, effect = module })
     end
   end
 
-  local components: { Instance } = {}
+  local component: { [Instance]: boolean } = {}
 
   for _, hit in hits do
     if hit.effect.components == nil then
@@ -395,14 +392,14 @@ function registry.scan(root: Instance): { Hit }
     end
 
     for _, inst in query(hit.instance, hit.effect.components) do
-      table.insert(components, inst)
+      component[inst] = true
     end
   end
 
   local kept: { Hit } = {}
 
   for _, hit in hits do
-    if not table.find(components, hit.instance) then
+    if not component[hit.instance] then
       table.insert(kept, hit)
     end
   end
