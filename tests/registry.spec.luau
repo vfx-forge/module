@@ -1,5 +1,5 @@
-local knob = require("@mod/knob")
 local mod = require("@mod/mod")
+local knob = require("@mod/knob")
 local harness = require("@tests/harness")
 local registry = require("@mod/registry")
 local test, expect = harness.test, harness.expect
@@ -141,6 +141,8 @@ harness.suite(function()
       }))
 
       expect(registry.get("y") ~= nil).toBe(true)
+      expect(table.isfrozen(registry.get("y").layout[1].entries[2])).toBe(true)
+      expect(table.isfrozen(registry.get("y").layout)).toBe(true)
     end)
 
     test("an unknown unit, curve preset or option list errors", function()

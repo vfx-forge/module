@@ -188,6 +188,20 @@ local function checkLayout(id: string, entries: { any }, rows: { [string]: boole
   end
 end
 
+local function freezeLayout(entries: { any })
+  for _, entry in entries do
+    if type(entry) == "table" then
+      if type(entry.entries) == "table" then
+        freezeLayout(entry.entries)
+      end
+
+      table.freeze(entry)
+    end
+  end
+
+  table.freeze(entries)
+end
+
 local function freezeRows(rows: { [string]: any })
   for _, row in rows do
     table.freeze(row.names)
@@ -283,6 +297,7 @@ function registry.register(module: Module)
 
   if module.layout ~= nil then
     checkLayout(id, module.layout, rows)
+    freezeLayout(module.layout)
   end
 
   owned[module] = table.freeze(ownedOf(module))
