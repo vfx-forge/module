@@ -1,6 +1,7 @@
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
+local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local modifiers = require("@mod/modifiers")
 local legacy_mods = require("@mod/legacy_mods")
@@ -308,6 +309,180 @@ function mods.driver(
   end
 
   return sample, span
+end
+
+export type Track = {
+  at: (elapsed: number) -> any,
+  span: number,
+  animated: boolean,
+}
+
+-- one warning per knob per instance: a mismatch repeats on every emit of the
+-- same template, and the first one already says everything
+local WARNED: { [Instance]: { [string]: boolean } } = setmetatable({}, { __mode = "k" }) :: any
+
+local function warnOnce(ref: Instance, name: string, message: string)
+  local seen = WARNED[ref]
+
+  if seen == nil then
+    seen = {}
+    WARNED[ref] = seen
+  end
+
+  if seen[name] then
+    return
+  end
+
+  seen[name] = true
+  logger.warn(message)
+end
+
+-- the default for a knob that rests on a ramp rather than a value: what the
+-- effect used to tween between when nothing was authored. a value when both
+-- ends agree, so a knob at rest costs no stepper
+function mods.ramp(startV: any, finishV: any): any
+  if startV == finishV then
+    return startV
+  end
+
+  return {
+    {
+      kind = "tween",
+      chain = false,
+      start = value.lit(startV),
+      finish = value.lit(finishV),
+      curve = curves.default(),
+    },
+  }
+end
+
+-- the default for a knob drawn once per emitted instance between two corners,
+-- which is what a Min and Max pair or a NumberRange attribute always meant. a
+-- vector pair draws each axis on its own
+function mods.draw(minV: any, maxV: any): { any }
+  return {
+    {
+      kind = "randomizer",
+      chain = false,
+      start = value.lit(minV),
+      finish = value.lit(maxV),
+      perComponent = true,
+    },
+  }
+end
+
+local function constant(default: any, span: number): Track
+  return {
+    at = function()
+      return default
+    end,
+    span = span,
+    animated = false,
+  }
+end
+
+-- the value a knob wants, with the engine's two spellings of a vector read as
+-- one kind
+local function kindOf(v: any): string
+  local t = typeof(v)
+
+  return if t == "vector" then "Vector3" else t
+end
+
+local function sampleQueue(
+  ref: Instance,
+  source: string,
+  name: string,
+  queue: { any },
+  span: number,
+  env: { [string]: any }?
+): (((number) -> any)?, number)
+  local rolls = mods.roll(queue, env)
+  local reach, linked = mods.span(queue, span, rolls)
+  local sample = mods.sampler(ref, source, name, reach, queue, rolls, linked)
+
+  if sample == nil or sample(0) == nil then
+    return nil, span
+  end
+
+  return sample, reach
+end
+
+-- the one way an effect reads an animated knob. it always answers: what rests
+-- when nothing usable is authored, else a sampler over the queue's own reach.
+-- a default given as a queue is what runs when nothing is authored, for a knob
+-- whose resting state is a ramp or a draw rather than a value
+function mods.track(
+  ref: Instance,
+  source: string,
+  name: string,
+  default: any,
+  span: number,
+  env: { [string]: any }?
+): Track
+  local fallback: { any }? = if type(default) == "table" then default else nil
+  local rest: any = if fallback then nil else default
+
+  local fillStart: value.Value? = nil
+  local fillFinish: value.Value? = nil
+  local want: string? = nil
+
+  if fallback then
+    local first = fallback[1]
+
+    fillStart = first and first.start
+    fillFinish = first and first.finish
+
+    if fillStart and value.isLit(fillStart) then
+      want = kindOf(value.resolve(fillStart))
+    end
+  else
+    fillStart = legacy_mods.endpoint(source, name, default)
+    fillFinish = fillStart
+
+    if default ~= nil then
+      want = kindOf(default)
+    end
+  end
+
+  local function resting(): Track
+    if fallback == nil then
+      return constant(rest, span)
+    end
+
+    local sample, reach = sampleQueue(ref, source, name, fallback, span, env)
+
+    if sample == nil then
+      return constant(nil, span)
+    end
+
+    return { at = sample, span = reach, animated = true }
+  end
+
+  local queue = mods.read(ref, source, name)
+
+  if queue == nil or #queue == 0 or mods.inert(queue) then
+    return resting()
+  end
+
+  -- a half quad is completed from the default, which is the effect's own and is
+  -- exactly what the legacy branch would have read for the missing half
+  if #queue == 1 and queue[1].partial then
+    queue = legacy_mods.complete(queue, fillStart, fillFinish)
+  end
+
+  local sample, reach = sampleQueue(ref, source, name, queue, span, env)
+
+  if sample == nil then
+    return resting()
+  end
+
+  if want ~= nil and kindOf(sample(0)) ~= want then
+    warnOnce(ref, name, `{name} samples a {kindOf(sample(0))} where the effect wants a {want}`)
+    return resting()
+  end
+
+  return { at = sample, span = reach, animated = true }
 end
 
 return mods

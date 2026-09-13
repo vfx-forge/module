@@ -45,6 +45,21 @@ local datatypes: { [string]: any } = {
   NumberSequenceKeypoint = roblox.NumberSequenceKeypoint,
 }
 
+-- lune's roblox library has no Path2DControlPoint constructor at all;
+-- path.serializePath only ever reads these three fields, each UDim2-shaped
+-- selene: allow(unscoped_variables, incorrect_standard_library_use)
+do
+  Path2DControlPoint = {
+    new = function(position: UDim2, leftTangent: UDim2?, rightTangent: UDim2?)
+      return {
+        Position = position,
+        LeftTangent = leftTangent or UDim2.new(),
+        RightTangent = rightTangent or UDim2.new(),
+      }
+    end,
+  }
+end
+
 -- Random is absent under lune outright: @lune/roblox exposes none and there is
 -- no bare global either. mods.roll builds its own rather than taking a seam, so
 -- everything downstream of it, which is mods.driver and every effect, is
@@ -101,9 +116,15 @@ do
   -- selene: allow(unscoped_variables, incorrect_standard_library_use)
   warn = function(...)
     local list = warnings
+    local text = (...)
 
     if list then
-      table.insert(list, (...))
+      -- logger.warn's second call is its own traceback, not a second
+      -- warning, so a spec counting warnings never sees it
+      if not string.find(text, "stack trace:", 1, true) then
+        table.insert(list, text)
+      end
+
       return
     end
 

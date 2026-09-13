@@ -105,6 +105,24 @@ local function endpointOf(v: any, drawn: boolean): value.Value?
   return litOrNil(v)
 end
 
+function legacy_mods.endpoint(source: string, name: string, v: any): value.Value?
+  return endpointOf(v, legacy_mods.isDrawnRange(source, name))
+end
+
+function legacy_mods.complete(queue: { any }, fillStart: value.Value?, fillFinish: value.Value?): { any }
+  local m = table.clone(queue[1])
+
+  if m.partial == "start" then
+    m.start = fillStart
+  elseif m.partial == "finish" then
+    m.finish = fillFinish
+  end
+
+  m.partial = nil
+
+  return { m }
+end
+
 -- the released-era quad. a nil _Duration is left nil rather than defaulted,
 -- because nil is what "runs over the effect's own duration" is spelled as
 function legacy_mods.readQuad(ref: Instance, source: string, name: string): { any }?
