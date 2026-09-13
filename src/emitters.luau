@@ -248,7 +248,7 @@ function emitters.particle(
       sharedUncMap[ancestor] += 1
     end
 
-    table.insert(scope, function()
+    lifetime.hold(scope, function()
       sharedUncMap[ancestor] -= 1
 
       if sharedUncMap[ancestor] <= 0 then
@@ -289,8 +289,8 @@ function emitters.beam(obj: Beam, scope: types.scope, legacyScale: number)
   then
     local a, b = att0:Clone(), att1:Clone()
 
-    table.insert(scope, a)
-    table.insert(scope, b)
+    lifetime.hold(scope, a)
+    lifetime.hold(scope, b)
 
     a.Name = "_ForgeTempAttachment"
     b.Name = "_ForgeTempAttachment"
@@ -305,7 +305,7 @@ function emitters.beam(obj: Beam, scope: types.scope, legacyScale: number)
     b.Parent = att1.Parent
   end
 
-  table.insert(scope, clone)
+  lifetime.hold(scope, clone)
 
   utility.try(`failed to emit beam with error: %s`, Beam.emit, obj, clone, scope, legacyScale)
 end
@@ -328,7 +328,7 @@ function emitters.bezier(obj: Instance, scope: types.scope, skipEnabledCheck: bo
   local clone = part:Clone()
   clone.Locked = true
 
-  table.insert(scope, clone)
+  lifetime.hold(scope, clone)
 
   utility.try(`failed to emit bezier with error: %s`, Bezier.emit, obj, clone, scope, skipEnabledCheck)
 end
@@ -347,7 +347,7 @@ function emitters.lightning(obj: Instance, scope: types.scope, skipEnabledCheck:
   local clone = part:Clone()
   clone.Locked = true
 
-  table.insert(scope, clone)
+  lifetime.hold(scope, clone)
 
   utility.try(`failed to emit lightning with error: %s`, Lightning.emit, obj, clone, scope, skipEnabledCheck)
 end
