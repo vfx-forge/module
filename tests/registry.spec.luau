@@ -6,12 +6,12 @@ local test, expect = harness.test, harness.expect
 local Instance = harness.datatypes.Instance
 local NumberRange = harness.datatypes.NumberRange
 
--- lune has no selector engine, so the spec's query understands a class name
--- and nothing else, which is what every stub here uses. it draws from a pool
--- rather than walking root:GetDescendants() live: the test host hands out a
--- fresh Instance wrapper on every such call, and the registry keys scan's
--- results by instance the way the engine allows, so the fake query has to
--- serve back the very wrappers the spec itself holds
+-- lune has no selector engine, so the spec's query understands class names and
+-- child combinators between them and nothing else, which is what every stub
+-- here uses. it draws from a pool rather than walking root:GetDescendants()
+-- live: the test host hands out a fresh Instance wrapper on every such call,
+-- and the registry keys scan's results by instance the way the engine allows,
+-- so the fake query has to serve back the very wrappers the spec itself holds
 local pool: { Instance } = {}
 
 local function make(class: string, parent: Instance?): Instance
@@ -26,11 +26,35 @@ local function make(class: string, parent: Instance?): Instance
   return inst
 end
 
+-- the engine never matches a selector's leftmost compound against the instance
+-- the query runs from, so a chain counts only when the whole of it lies below
+-- the queried instance
 local function fakeQuery(root: Instance, selector: string): { Instance }
+  local chain = {}
+
+  for token in string.gmatch(selector, "[^>%s]+") do
+    table.insert(chain, token)
+  end
+
   local out = {}
 
   for _, inst in pool do
-    if inst:IsA(selector) and inst:IsDescendantOf(root) then
+    if not inst:IsA(chain[#chain]) then
+      continue
+    end
+
+    local current: Instance? = inst
+
+    for i = #chain - 1, 1, -1 do
+      current = (current :: Instance).Parent
+
+      if current == nil or not (current :: Instance):IsA(chain[i]) then
+        current = nil
+        break
+      end
+    end
+
+    if current ~= nil and (current :: Instance):IsDescendantOf(root) then
       table.insert(out, inst)
     end
   end
@@ -264,18 +288,77 @@ harness.suite(function()
       expect(byInstance[inner]).toBe(nil)
     end)
 
+    test("of answers a class-only classifier with IsA alone", function()
+      registry.clear()
+      registry.configure({ query = fakeQuery })
+      registry.register(stub("beam"))
+      table.clear(pool)
+
+      expect(registry.of(Instance.new("Beam")).id).toBe("beam")
+      expect(registry.of(Instance.new("Part"))).toBe(nil)
+    end)
+
+    test("scan finds a subject under a root the classifier's own leftmost compound names", function()
+      registry.clear()
+      registry.configure({ query = fakeQuery })
+      registry.register(stub("debris", { classifier = "Attachment > Folder > Part" }))
+      table.clear(pool)
+
+      local part = make("Part")
+      local attachment = make("Attachment", part)
+      local folder = make("Folder", attachment)
+      local piece = make("Part", folder)
+
+      local hits = registry.scan(attachment)
+
+      expect(#hits).toBe(1)
+      expect(hits[1].instance).toBe(piece)
+      expect(hits[1].effect.id).toBe("debris")
+    end)
+
+    test("scan drops a hit that lies outside the root it was asked for", function()
+      registry.clear()
+      registry.configure({ query = fakeQuery })
+      registry.register(stub("debris", { classifier = "Attachment > Folder > Part" }))
+      table.clear(pool)
+
+      local part = make("Part")
+      local mine = make("Attachment", part)
+      local other = make("Attachment", part)
+      local piece = make("Part", make("Folder", mine))
+
+      make("Part", make("Folder", other))
+
+      local hits = registry.scan(mine)
+
+      expect(#hits).toBe(1)
+      expect(hits[1].instance).toBe(piece)
+    end)
+
     test("source replaces what the reader walks", function()
       registry.clear()
+      registry.configure({ query = fakeQuery })
+      registry.register(stub("beam", { attributes = { A = knob(0) } }))
 
       local calls = 0
 
       registry.source(function()
         calls += 1
-        return {}
+        return { A = 7 }
       end)
 
-      expect(calls).toBe(0)
+      local ok, err = pcall(function()
+        local attrs = registry.read(Instance.new("Beam"))
+
+        expect(calls).toBe(1)
+        expect(attrs.A).toBe(7)
+      end)
+
       registry.source(nil)
+
+      if not ok then
+        error(err, 0)
+      end
     end)
   end)
 end)

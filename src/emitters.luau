@@ -549,9 +549,10 @@ function emitters.sound(obj: Sound, scope: types.scope)
   utility.try(`failed to emit sound with error: %s`, Sound.emit, obj, scope)
 end
 
--- names a converted effect drives through its own sampler. this mirrors
--- dispatch's branch selection below and has to move with it, which is what the
--- ownership test in tests/roblox/mods.spec.luau exists to catch
+-- the ownership table of an effect that still routes through the arms below:
+-- the rows it drives through its own sampler, which the applier must leave
+-- alone. it mirrors route's own discriminators and has to move with them. a
+-- registered effect never reaches here; its rows come from registry.owned
 local function ownedFor(obj: any, className: string): { [string]: { [string]: boolean } }?
   if className == "Model" then
     return if utility.isMeshVFX(obj) then Mesh.OWNS else Spin.OWNS

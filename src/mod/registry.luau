@@ -21,8 +21,10 @@ local byId: { [string]: Module } = {}
 -- must leave both alone
 local owned: { [Module]: Owned } = {}
 
--- what a module's classifier says about where to run it from
-local shape: { [Module]: { depth: number, subjects: { string }? } } = {}
+-- what a module's classifier says about where to run it from. sole is the class
+-- of a classifier that is nothing but a class name, which an instance answers
+-- on its own
+local shape: { [Module]: { depth: number, subjects: { string }?, sole: string? } } = {}
 
 -- the selector engine is the engine's; a test host hands one in
 local function engineQuery(root: Instance, selector: string): { Instance }
@@ -101,6 +103,20 @@ function registry.subjects(classifier: string): { string }?
   end
 
   return out
+end
+
+-- a classifier that is one bare class token and nothing else: no tag, name,
+-- attribute or combinator, so IsA alone decides it
+local function soleClass(classifier: string, subjects: { string }?): string?
+  if subjects == nil or #subjects ~= 1 then
+    return nil
+  end
+
+  if subjects[1] ~= string.match(classifier, "^%s*(.-)%s*$") then
+    return nil
+  end
+
+  return subjects[1]
 end
 
 local function fail(id: string, message: string)
@@ -312,8 +328,15 @@ function registry.register(module: Module)
     freezeLayout(module.layout)
   end
 
+  local subjects = registry.subjects(module.classifier)
+
   owned[module] = table.freeze(ownedOf(module))
-  shape[module] = { depth = registry.depth(module.classifier), subjects = registry.subjects(module.classifier) }
+
+  shape[module] = {
+    depth = registry.depth(module.classifier),
+    subjects = subjects,
+    sole = soleClass(module.classifier, subjects),
+  }
 
   freezeRows(module.attributes)
   freezeRows(module.properties)
@@ -361,12 +384,44 @@ local function ancestorAt(inst: Instance, levels: number): Instance?
   return current
 end
 
+-- where a module's classifier runs from for a scan of root. the engine never
+-- matches a classifier's leftmost compound against the instance queried, so a
+-- root that is the compound's own instance has to be asked from above it; a
+-- tree shallower than the classifier is asked from the highest ancestor it has
+local function scanRoot(root: Instance, depth: number): Instance
+  local above = ancestorAt(root, depth)
+
+  if above ~= nil then
+    return above
+  end
+
+  local current = root
+
+  while current.Parent ~= nil do
+    current = current.Parent
+  end
+
+  return current
+end
+
 -- one instance classified: each module whose subject class it is gets its
 -- classifier run from the ancestor high enough for every combinator in it to
 -- match below the root, and the first hit wins. modules are disjoint by
 -- contract, so first is only ever one
 function registry.of(inst: Instance): Module?
   for _, module in modules do
+    local sole = shape[module].sole
+
+    -- a classifier that is only a class is the instance's own answer, and
+    -- costs no walk up the tree and no query
+    if sole ~= nil then
+      if inst:IsA(sole) then
+        return module
+      end
+
+      continue
+    end
+
     local subjects = shape[module].subjects
     local candidate = subjects == nil
 
@@ -401,8 +456,10 @@ function registry.scan(root: Instance): { Hit }
   local taken: { [Instance]: boolean } = {}
 
   for _, module in modules do
-    for _, inst in query(root, module.classifier) do
-      if taken[inst] then
+    for _, inst in query(scanRoot(root, shape[module].depth), module.classifier) do
+      -- a query run from above the root reaches the root's siblings too, and
+      -- none of them is this scan's
+      if taken[inst] or not inst:IsDescendantOf(root) then
         continue
       end
 

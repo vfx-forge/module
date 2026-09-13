@@ -8,7 +8,6 @@ local lifetime = require("@mod/lifetime")
 local Promise = require("@pkg/Promise")
 
 local EffectSelectors = table.concat({
-  "Beam",
   "Trail",
   "Sound",
   "ParticleEmitter",
@@ -36,7 +35,6 @@ local EffectSelectors = table.concat({
   -- Shockwave effects
   "#Rings > Part",
   "#Lines > Part",
-  "#Debris > Part",
 }, ",")
 
 local effects = {}
