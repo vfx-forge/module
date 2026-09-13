@@ -334,24 +334,58 @@ harness.suite(function()
       expect(parent.done).toBe(true)
     end)
 
-    test("wakes a waiter once, after everything is released", function()
+    test("wakes a waiter once, after the whole subtree is released", function()
       local log = {}
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-      lifetime.seal(emit)
+      local parent = lifetime.emit(nil)
+      local pfx = lifetime.effect(parent, 0, nil)
+      lifetime.seal(parent)
+      local child = lifetime.emit(parent)
+      local cfx = lifetime.effect(child, 1, nil)
+      lifetime.seal(child)
 
-      lifetime.hold(fx, function()
-        table.insert(log, "released")
+      lifetime.hold(pfx, function()
+        table.insert(log, "parent released")
+      end)
+      lifetime.hold(cfx, function()
+        table.insert(log, "child released")
       end)
 
       task.spawn(function()
-        lifetime.await(emit)
+        lifetime.await(child)
         table.insert(log, "woke")
       end)
 
-      lifetime.clear(emit)
+      lifetime.clear(parent)
+
+      expect(log).toEqual({ "child released", "parent released", "woke" })
+    end)
+
+    test("clear finishes a child that was never sealed", function()
+      local log = {}
+      local parent = lifetime.emit(nil)
+      local child = lifetime.emit(parent)
+      lifetime.seal(parent)
+
+      local cfx = lifetime.effect(child, 1, nil)
+
+      lifetime.run(cfx, function(scope)
+        lifetime.hold(scope, function()
+          table.insert(log, "released")
+        end)
+        coroutine.yield()
+      end)
+
+      task.spawn(function()
+        lifetime.await(parent)
+        table.insert(log, "woke")
+      end)
+
+      lifetime.clear(parent)
 
       expect(log).toEqual({ "released", "woke" })
+      expect(parent.pending).toBe(0)
+      expect(parent.done).toBe(true)
+      expect(#parent.children).toBe(0)
     end)
 
     test("an effect that clears its own emit stops running", function()

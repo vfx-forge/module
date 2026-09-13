@@ -52,6 +52,10 @@ export type effect = {
 -- effect never releases
 local LOCKS = setmetatable({} :: { [Instance]: boolean }, { __mode = "k" })
 
+-- waiters woken but not resumed yet, held back while a clear is in progress
+local wakes: { thread } = {}
+local clearing = 0
+
 function lifetime.emit(parent: emit?): emit
   local emit: emit = {
     parent = parent,
@@ -269,9 +273,6 @@ function lifetime.run(fx: effect, body: (effect) -> ())
   task.spawn(thread)
 end
 
-local clearing = 0
-local wakes: { thread } = {}
-
 -- a wake resumes at once, the same timing the promises had, except during a
 -- clear: a thread resumed halfway through one would see a tree half released
 local function flushWakes()
@@ -312,21 +313,19 @@ settle = function(emit: emit)
     return
   end
 
+  if emit.sealed and not emit.done then
+    emit.done = true
+
+    local parent = emit.parent
+
+    if parent then
+      swapRemove(parent.children, emit)
+      parent.pending -= 1
+      settle(parent)
+    end
+  end
+
   wake(emit)
-
-  if not emit.sealed or emit.done then
-    return
-  end
-
-  emit.done = true
-
-  local parent = emit.parent
-
-  if parent then
-    swapRemove(parent.children, emit)
-    parent.pending -= 1
-    settle(parent)
-  end
 end
 
 -- the caller has added every effect it will add directly. children an effect
@@ -384,15 +383,25 @@ local function stopTree(emit: emit, running: thread)
   end
 end
 
--- pass two: children before parents, over copies because release edits both lists
-local function releaseTree(emit: emit)
+-- pass two: children before parents, over copies because release edits both
+-- lists. a cleared child can never gain an effect again, so it is sealed on the
+-- way out and finishes its parent even if the caller never sealed it. the root
+-- keeps the flag the caller left it with
+local function releaseTree(emit: emit, root: boolean)
   for _, child in table.clone(emit.children) do
-    releaseTree(child)
+    releaseTree(child, false)
   end
 
   for _, fx in table.clone(emit.effects) do
     lifetime.release(fx, true)
   end
+
+  if root then
+    return
+  end
+
+  emit.sealed = true
+  settle(emit)
 end
 
 function lifetime.clear(emit: emit)
@@ -401,10 +410,16 @@ function lifetime.clear(emit: emit)
 
   clearing += 1
 
-  stopTree(emit, running)
-  releaseTree(emit)
+  local ok, err = pcall(function()
+    stopTree(emit, running)
+    releaseTree(emit, true)
+  end)
 
   clearing -= 1
+
+  if not ok then
+    logger.warn(`failed to clear an emit with error: {err}`)
+  end
 
   flushWakes()
 
