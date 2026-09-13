@@ -434,10 +434,9 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
           return
         end
 
-        -- create a highlight container if needed. a highlight is worth building
-        -- when the fill is ever less than opaque, which an authored track
-        -- answers and an unauthored one never is
-        local useHighlight = fillTp.animated or fillTp.at(0) < 1
+        -- create a highlight container if needed. a highlight is built when the
+        -- fill is less than opaque at either end of its track
+        local useHighlight = fillTp.at(0) < 1 or fillTp.at(fillTp.span) < 1
 
         local highlight: Highlight?
         local containerModel: Model?
@@ -482,6 +481,10 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         local nestedSegments = {}
         local nestedEffectChildren = {}
 
+        -- sampled once: every segment is born at the same width, and a queue
+        -- evaluation per segment per axis is not free
+        local initWidth = width.at(0)
+
         -- create segment parts
         for j = 1, attrs.segments do
           local cacheId = utility.getRandomId()
@@ -491,7 +494,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
 
           utility.copyProperties(refObj, obj, utility.COPY_PART_PROPERTIES)
 
-          obj.Size = Vector3.new(width.at(0), width.at(0), 1)
+          obj.Size = Vector3.new(initWidth, initWidth, 1)
 
           obj.Anchored = true
           obj.CanQuery = false
@@ -583,7 +586,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         local dissipateProgress = 0
         local dissipateStartTail = 0
 
-        local dissipateStartWidth = width.at(0)
+        local dissipateStartWidth = initWidth
         local currentOriginCFrame = originCFrame
 
         local projectileDir: Vector3?

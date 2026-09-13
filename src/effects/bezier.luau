@@ -47,7 +47,7 @@ local function readBezierAttributes(ref: Attachment)
     maxInitRot = attr.get(ref, "MaxInitRot", vector.zero),
 
     -- curves
-    speedDuration = attr.get(ref, "Speed_Duration", 0.1),
+    speedDuration = attr.get(ref, "Speed_Duration", 0.1, true),
     easingCurve = attr.get(ref, "Easing_Curve", utility.linear_bezier),
   }
 end
