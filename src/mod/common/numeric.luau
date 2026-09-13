@@ -6,8 +6,8 @@ end
 
 -- a value that is not numeric is nobody's business here, so it passes. a
 -- numeric one passes only when every component is finite: math.clamp keeps
--- nan, so one nan attribute reaches a tween as a duration and throws from a
--- render step every frame, which is how the Slash fixture looped
+-- nan, so one nan attribute would otherwise reach a tween as a duration and
+-- throw from a render step every frame
 function common.usable(v: any): boolean
   local t = typeof(v)
 
