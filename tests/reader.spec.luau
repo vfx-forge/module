@@ -207,10 +207,17 @@ harness.suite(function()
         return { A = 7 }
       end
 
-      local attrs = reader.resolve(module({ A = knob(0) }), ctxFor(obj))
+      -- a module seam restored inside the body leaks into every case after it
+      -- when the body throws, so the throw is carried past the restore
+      local ok, err = pcall(function()
+        expect(reader.resolve(module({ A = knob(0) }), ctxFor(obj)).A).toBe(7)
+      end)
+
       reader.source = reader.defaultSource
 
-      expect(attrs.A).toBe(7)
+      if not ok then
+        error(err, 0)
+      end
     end)
   end)
 
@@ -233,6 +240,16 @@ harness.suite(function()
       reader.resolve(module({}), plain)
 
       expect(plain.duration).toBe(1)
+    end)
+
+    test("a duration rule that asks a mod row for a piece reaches itself and errors", function()
+      local m = module({ Life = knob(1):mod() }, nil, function(_, attrs)
+        return attrs.Life(2).duration
+      end)
+
+      expect(function()
+        reader.resolve(m, ctxFor(Instance.new("Part")))
+      end).toThrow()
     end)
 
     test("the duration rule may read a mod row's own value", function()
@@ -495,15 +512,33 @@ harness.suite(function()
       local ctx = ctxFor(Instance.new("Part"))
       ctx.scope = {}
 
-      local attrs = reader.resolve(module({ A = knob(2):mod() }), ctx)
-      local function write() end
+      local ok, err = pcall(function()
+        local attrs = reader.resolve(module({ A = knob(2):mod() }), ctx)
+        local function write() end
 
-      attrs.A:apply(write)
+        attrs.A:apply(write)
+
+        expect(seen.scope).toBe(ctx.scope)
+        expect(seen.track.at(0)).toBe(2)
+        expect(seen.write).toBe(write)
+      end)
+
       reader.drive = nil
 
-      expect(seen.scope).toBe(ctx.scope)
-      expect(seen.track.at(0)).toBe(2)
-      expect(seen.write).toBe(write)
+      if not ok then
+        error(err, 0)
+      end
+    end)
+
+    test("apply before a driver is bound errors", function()
+      local ctx = ctxFor(Instance.new("Part"))
+      ctx.scope = {}
+
+      local attrs = reader.resolve(module({ A = knob(2):mod() }), ctx)
+
+      expect(function()
+        attrs.A:apply(noop)
+      end).toThrow()
     end)
 
     test("a vector row accepts the engine's other vector spelling", function()
