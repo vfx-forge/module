@@ -251,7 +251,7 @@ export type Track = {
 -- same template, and the first one already says everything
 local WARNED: { [Instance]: { [string]: boolean } } = setmetatable({}, { __mode = "k" }) :: any
 
-local function warnOnce(ref: Instance, name: string, message: string)
+function mods.warnOnce(ref: Instance, name: string, message: string)
   local seen = WARNED[ref]
 
   if seen == nil then
@@ -455,7 +455,7 @@ function mods.build(
     local got = mods.kindOf(sample(0))
 
     if got ~= want then
-      warnOnce(ref, name, `{name} samples a {got} where the effect wants a {want}`)
+      mods.warnOnce(ref, name, `{name} samples a {got} where the effect wants a {want}`)
       return resting()
     end
   end
