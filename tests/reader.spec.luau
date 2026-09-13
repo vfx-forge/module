@@ -329,6 +329,24 @@ harness.suite(function()
       expect(near(props.Transparency.at(props.Transparency.duration), 1)).toBe(true)
     end)
 
+    test("a property row folds an attribute-tagged legacy child", function()
+      local obj = Instance.new("Part")
+      obj.Transparency = 0.5
+
+      local child = Instance.new("RayValue")
+      child.Name = "Transparency"
+      child:AddTag("AttributeTweener")
+      child:SetAttribute("_START_VALUE", 0)
+      child:SetAttribute("_END_VALUE", 1)
+      child:SetAttribute("Duration", 2)
+      child.Parent = obj
+
+      local _, props = reader.resolve(module({}, { Transparency = knob():mod() }), ctxFor(obj))
+
+      expect(props.Transparency.animated).toBe(true)
+      expect(props.Transparency.duration).toBe(2)
+    end)
+
     test("a default modifier runs when no queue exists, and an empty queue silences it", function()
       local obj = Instance.new("Part")
       local m = module({ A = knob(0):mod(mod.to(1)) }, nil, function()

@@ -1,5 +1,4 @@
 --!nolint LocalShadow
-local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
 local tween = require("@mod/tween")

@@ -86,8 +86,9 @@ end
 
 -- the queue a row carries, looked for under its name and then each alias: any
 -- framed queue first, on the row's own side and then, for a property row, on
--- the attribute side old content authored on; then the old shapes, which are
--- attribute quads whichever side the row reads
+-- the attribute side old content authored on; then the old shapes, looked for
+-- on the row's own side and then, for a property row, on the attribute side
+-- old content authored on
 local function queueOf(ref: Instance, source: string, name: string, row: knob.Knob): ({ any }?, boolean)
   local names = { name }
 
@@ -118,6 +119,16 @@ local function queueOf(ref: Instance, source: string, name: string, row: knob.Kn
 
     if queue ~= nil then
       return queue, false
+    end
+  end
+
+  if source == "property" then
+    for _, n in names do
+      local queue = legacy_mods.read(ref, "attribute", n)
+
+      if queue ~= nil then
+        return queue, false
+      end
     end
   end
 
