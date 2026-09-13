@@ -275,7 +275,7 @@ end
 -- the promises an effect module still keeps for its own pieces are cancelled
 -- with the tree, and so is a Finished promise somebody is holding
 local function cancelPromises(emit: lifetime.emit)
-  for _, promise in emit.promises do
+  for _, promise in table.clone(emit.promises) do
     promise:cancel()
   end
 
@@ -290,7 +290,10 @@ local function cancelPromises(emit: lifetime.emit)
   end
 end
 
+-- pass one first: a promise cancel resumes whatever thread is parked on it, and
+-- a body resumed into a live record runs its tail as if it had ended on its own
 function utility.cancelToken(token: lifetime.emit)
+  lifetime.stop(token)
   cancelPromises(token)
   lifetime.clear(token)
 end

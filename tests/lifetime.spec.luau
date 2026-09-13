@@ -189,6 +189,17 @@ harness.suite(function()
 
       lifetime.release(other)
     end)
+
+    test("a released effect is told the lock is taken and takes none", function()
+      local ref = Instance.new("Part")
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.release(fx)
+
+      expect(lifetime.lock(fx, ref)).toBe(true)
+      expect(lifetime.isLocked(ref)).toBe(false)
+    end)
   end)
 
   harness.describe("lifetime.run", function()
@@ -227,6 +238,21 @@ harness.suite(function()
 
       expect(released).toBe(true)
       expect(fx.state).toBe(lifetime.RELEASED)
+    end)
+
+    test("a released effect never starts a body", function()
+      local ran = false
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.release(fx)
+
+      lifetime.run(fx, function()
+        ran = true
+      end)
+
+      expect(ran).toBe(false)
+      expect(fx.thread).toBe(nil)
     end)
   end)
 
@@ -283,6 +309,37 @@ harness.suite(function()
       lifetime.await(empty)
       table.insert(log, "immediate")
       expect(log).toEqual({ "woke", "immediate" })
+    end)
+  end)
+
+  harness.describe("lifetime.stop", function()
+    test("closes a parked thread down the tree and releases nothing until the clear", function()
+      local log = {}
+      local parent = lifetime.emit(nil)
+      local child = lifetime.emit(parent)
+      local cfx = lifetime.effect(child, 1, nil)
+      lifetime.seal(parent)
+      lifetime.seal(child)
+
+      lifetime.run(cfx, function(scope)
+        lifetime.hold(scope, function()
+          table.insert(log, "released")
+        end)
+        coroutine.yield()
+      end)
+
+      lifetime.stop(parent)
+
+      expect(coroutine.status(cfx.thread :: thread)).toBe("dead")
+      expect(cfx.state).toBe(lifetime.STOPPED)
+      expect(log).toEqual({})
+      expect(parent.done).toBe(false)
+
+      lifetime.clear(parent)
+
+      expect(log).toEqual({ "released" })
+      expect(cfx.state).toBe(lifetime.RELEASED)
+      expect(parent.done).toBe(true)
     end)
   end)
 
@@ -405,6 +462,29 @@ harness.suite(function()
       expect(log).toEqual({ "released" })
       expect(fx.state).toBe(lifetime.RELEASED)
       expect(coroutine.status(fx.thread :: thread)).toBe("suspended")
+    end)
+
+    test("marks the whole subtree cleared, where an emit that ends on its own is not", function()
+      local parent = lifetime.emit(nil)
+      local child = lifetime.emit(parent)
+      local cfx = lifetime.effect(child, 1, nil)
+      lifetime.seal(parent)
+      lifetime.seal(child)
+
+      local natural = lifetime.emit(nil)
+      local nfx = lifetime.effect(natural, 0, nil)
+      lifetime.seal(natural)
+      lifetime.release(nfx)
+
+      expect(parent.cleared).toBe(false)
+
+      lifetime.clear(parent)
+
+      expect(parent.cleared).toBe(true)
+      expect(child.cleared).toBe(true)
+      expect(cfx.state).toBe(lifetime.RELEASED)
+      expect(natural.done).toBe(true)
+      expect(natural.cleared).toBe(false)
     end)
   end)
 end)

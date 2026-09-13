@@ -21,6 +21,10 @@ export type emit = {
   sealed: boolean,
   done: boolean,
 
+  -- set by clear over the whole subtree, so a reader that arrives after a
+  -- cancel can tell a cleared emit from one that ended on its own
+  cleared: boolean,
+
   -- evaera promises an effect module still creates for its own pieces, cancelled
   -- together with the emit until the promise removal lands
   promises: { any },
@@ -65,6 +69,7 @@ function lifetime.emit(parent: emit?): emit
     waiters = {},
     sealed = false,
     done = false,
+    cleared = false,
     promises = {},
   }
 
@@ -177,6 +182,10 @@ function lifetime.defer(fx: effect, callback: (cancelled: boolean) -> ())
 end
 
 function lifetime.lock(fx: effect, ref: Instance): boolean
+  if fx.state ~= RUNNING then
+    return true
+  end
+
   if LOCKS[ref] then
     return true
   end
@@ -258,6 +267,10 @@ function lifetime.release(fx: effect, cancelled: boolean?)
 end
 
 function lifetime.run(fx: effect, body: (effect) -> ())
+  if fx.state ~= RUNNING then
+    return
+  end
+
   local thread = coroutine.create(function()
     local ok, err = xpcall(body, debug.traceback, fx)
 
@@ -383,11 +396,21 @@ local function stopTree(emit: emit, running: thread)
   end
 end
 
+-- pass one on its own, for a caller that has to stop every body before it
+-- touches the promises the bodies are parked on. idempotent: a stopped effect
+-- is skipped, so clear runs the very same pass again
+function lifetime.stop(emit: emit)
+  stopTree(emit, coroutine.running())
+end
+
 -- pass two: children before parents, over copies because release edits both
 -- lists. a cleared child can never gain an effect again, so it is sealed on the
 -- way out and finishes its parent even if the caller never sealed it. the root
--- keeps the flag the caller left it with
+-- keeps the flag the caller left it with, and every emit the pass walks is
+-- marked cleared on the way in
 local function releaseTree(emit: emit, root: boolean)
+  emit.cleared = true
+
   for _, child in table.clone(emit.children) do
     releaseTree(child, false)
   end
@@ -411,7 +434,7 @@ function lifetime.clear(emit: emit)
   clearing += 1
 
   local ok, err = pcall(function()
-    stopTree(emit, running)
+    lifetime.stop(emit)
     releaseTree(emit, true)
   end)
 

@@ -70,7 +70,10 @@ local function finishedOf(emit: lifetime.emit)
 
   local promise
 
-  if emit.done then
+  if emit.cleared then
+    promise = Promise.new(function() end)
+    promise:cancel()
+  elseif emit.done then
     promise = Promise.resolve()
   else
     promise = Promise.new(function(resolve)
