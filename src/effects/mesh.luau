@@ -6,6 +6,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
 
 local Oklab = require("@mod/color/Oklab")
@@ -178,7 +179,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
     if speed then
       attr.setState(ref, "SpeedTweening", true)
 
-      table.insert(
+      lifetime.hold(
         scope,
         tween.fromParams(
           utility.linear_bezier,
@@ -196,7 +197,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
     elseif speedStart ~= speedEnd then
       attr.setState(ref, "SpeedTweening", true)
 
-      table.insert(
+      lifetime.hold(
         scope,
         tween.fromParams(
           attr.get(ref, "Speed_Curve", utility.default_bezier),
@@ -264,7 +265,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
 
     RunService:BindToRenderStep(id, utility.RENDER_PRIORITY + scope.depth, updatePos)
 
-    table.insert(scope, function()
+    lifetime.hold(scope, function()
       RunService:UnbindFromRenderStep(id)
     end)
   end
@@ -284,7 +285,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       return deltaTime
     end)
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   elseif speedStart ~= speedEnd and not attr.getState(ref, "SpeedOverride", nil) then
     speedTween = tween.fromParams(
       attr.get(ref, "Speed_Curve", utility.default_bezier),
@@ -295,11 +296,11 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       end
     )
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   end
 
   if goalCFrameOffset ~= CFrame.identity then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(attr.get(ref, "Part_CFrame_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
         currentCFrame = CFrame.identity:Lerp(goalCFrameOffset, alpha)
@@ -309,7 +310,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
   end
 
   if rotSpeed then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, rotSpeedSpan, function(_, deltaTime, elapsed)
         currentRotSpeed = rotSpeed(elapsed)
@@ -317,7 +318,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       end, speedTween)
     )
   elseif rotSpeedStart ~= rotSpeedEnd then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(
         attr.get(ref, "Part_RotSpeed_Curve", utility.default_bezier),
@@ -334,7 +335,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
   if partTp then
     obj.Transparency = partTp(0)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, partTpSpan, function(_, deltaTime, elapsed)
         obj.Transparency = partTp(elapsed)
@@ -342,7 +343,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       end, speedTween)
     )
   elseif tpStart ~= tpEnd then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(
         attr.get(ref, "Part_Transparency_Curve", utility.default_bezier),
@@ -363,7 +364,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
   if sizeStart ~= sizeEnd then
     local lastSizeAlpha = -1
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(attr.get(ref, "Part_Size_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
         local speed = attr.getState(ref, "SpeedOverride", currentSpeed)
@@ -393,7 +394,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       local scaleStart, scaleEnd = startMesh.Scale * scale, goalMesh.Scale * scale
 
       if scaleStart ~= scaleEnd then
-        table.insert(
+        lifetime.hold(
           scope,
           tween.fromParams(
             attr.get(ref, "Mesh_Scale_Curve", utility.default_bezier),
@@ -409,7 +410,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
     else
       objMesh.Parent = nil
 
-      table.insert(scope, function()
+      lifetime.hold(scope, function()
         objMesh.Parent = realObj
       end)
     end
@@ -430,11 +431,11 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
     local displayDecal = Instance.new("Decal")
     displayDecal.Parent = realObj
 
-    table.insert(scope, displayDecal)
+    lifetime.hold(scope, displayDecal)
 
     if legacy_flipbookFadeOffset > 0 then
       if legacy_decalST ~= legacy_decalET then
-        table.insert(
+        lifetime.hold(
           scope,
           tween.fromParams(utility.default_bezier, duration + legacy_flipbookFadeOffset, function(alpha, deltaTime)
             displayDecal.Transparency = utility.lerp(legacy_decalST, legacy_decalET, alpha)
@@ -444,7 +445,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       end
     end
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.default_bezier, duration, function(alpha, deltaTime)
         local index = math.max(math.round(#decals * alpha), 1)
@@ -476,7 +477,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       if decalTp then
         decal.Transparency = decalTp(0)
 
-        table.insert(
+        lifetime.hold(
           scope,
           tween.fromParams(utility.linear_bezier, decalTpSpan, function(_, deltaTime, elapsed)
             decal.Transparency = decalTp(elapsed)
@@ -488,7 +489,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
         local decal_tpEnd = attr.get(from, "Transparency_End", legacy_decalET)
 
         if decal_tpStart ~= decal_tpEnd then
-          table.insert(
+          lifetime.hold(
             scope,
             tween.fromParams(
               attr.get(from, "Transparency_Curve", utility.default_bezier),
@@ -506,7 +507,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       end
 
       if from.Color3 ~= to.Color3 then
-        table.insert(
+        lifetime.hold(
           scope,
           tween.fromParams(attr.get(from, "Color_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
             local a = Oklab.fromSRGB(from.Color3)
@@ -546,7 +547,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
           longestFlipbookDuration = changeDuration
         end
 
-        table.insert(
+        lifetime.hold(
           scope,
           tween.fromParams(config.curve, changeDuration, flipbook_common.createUpdateCallback(config), speedTween)
         )

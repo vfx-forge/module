@@ -5,6 +5,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 
 local Shake = require("@pkg/Shake")
 
@@ -140,7 +141,7 @@ function camera_shake.emit(ref: RayValue, scope: types.scope)
   if speed then
     currentSpeed = speed(0)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, sampledAt)
         currentSpeed = speed(sampledAt)
@@ -161,11 +162,11 @@ function camera_shake.emit(ref: RayValue, scope: types.scope)
         end
       )
 
-      table.insert(scope, speedTween)
+      lifetime.hold(scope, speedTween)
     end
   end
 
-  table.insert(
+  lifetime.hold(
     scope,
     RunService.RenderStepped:Connect(function(deltaTime)
       elapsed += deltaTime * currentSpeed

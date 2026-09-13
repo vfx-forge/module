@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
 
 local Promise = require("@pkg/Promise")
@@ -187,7 +188,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
       return deltaTime
     end)
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   elseif speedStart ~= speedEnd then
     speedTween = tween.fromParams(
       attr.get(ref, "Speed_Curve", utility.default_bezier),
@@ -201,7 +202,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
       end
     )
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   end
 
   local refTpKp = ref.Transparency.Keypoints
@@ -262,14 +263,14 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
     att1.CFrame = CFrame.new(center + scaledHalfOffset) * (cf1 - cf1.Position)
   end
 
-  table.insert(scope, function()
+  lifetime.hold(scope, function()
     setLengthScale(1)
   end)
 
   if tScale then
     setTScale(tScale(0))
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, tScaleSpan, function(_, deltaTime, elapsed)
         setTScale(tScale(elapsed))
@@ -277,7 +278,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
       end, speedTween)
     )
   elseif tStart ~= tEnd then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(
         attr.get(ref, "Transparency_Scale_Curve", utility.default_bezier),
@@ -296,7 +297,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
   if texLength then
     obj.TextureLength = texLength(0)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, texLengthSpan, function(_, deltaTime, elapsed)
         obj.TextureLength = texLength(elapsed)
@@ -304,7 +305,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
       end, speedTween)
     )
   elseif texLengthStart ~= textLengthEnd then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(
         attr.get(ref, "Length_Texture_Curve", utility.default_bezier),
@@ -321,7 +322,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
   if lengthScale then
     setLengthScale(lengthScaleStart)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, lengthScaleSpan, function(_, deltaTime, elapsed)
         setLengthScale(lengthScale(elapsed))
@@ -329,7 +330,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
       end, speedTween)
     )
   elseif lengthScaleStart ~= lengthScaleEnd then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(attr.get(ref, "Length_Scale_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
         local x = utility.lerp(lengthScaleStart, lengthScaleEnd, alpha)
@@ -348,7 +349,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
   if width0 then
     obj.Width0 = width0(0)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, width0Span, function(_, deltaTime, elapsed)
         obj.Width0 = width0(elapsed)
@@ -356,7 +357,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
       end, speedTween)
     )
   elseif w1 ~= w2 then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(attr.get(ref, "Width0_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
         obj.Width0 = utility.lerp(w1, w2, alpha)
@@ -370,7 +371,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
   if width1 then
     obj.Width1 = width1(0)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, width1Span, function(_, deltaTime, elapsed)
         obj.Width1 = width1(elapsed)
@@ -378,7 +379,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
       end, speedTween)
     )
   elseif w3 ~= w4 then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(attr.get(ref, "Width1_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
         obj.Width1 = utility.lerp(w3, w4, alpha)
@@ -392,7 +393,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
   if curve0 then
     obj.CurveSize0 = curve0(0)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, curve0Span, function(_, deltaTime, elapsed)
         obj.CurveSize0 = curve0(elapsed)
@@ -400,7 +401,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
       end, speedTween)
     )
   elseif c1 ~= c2 then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(attr.get(ref, "CurveSize0_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
         obj.CurveSize0 = utility.lerp(c1, c2, alpha)
@@ -416,7 +417,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
   if curve1 then
     obj.CurveSize1 = curve1(0)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, curve1Span, function(_, deltaTime, elapsed)
         obj.CurveSize1 = curve1(elapsed)
@@ -424,7 +425,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
       end, speedTween)
     )
   elseif c3 ~= c4 then
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(attr.get(ref, "CurveSize1_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
         obj.CurveSize1 = utility.lerp(c3, c4, alpha)
@@ -461,7 +462,7 @@ function beam.emit(ref: Beam, obj: Beam, scope: types.scope, scale: number)
 
     flipbookDuration = flipbook_common.getChangeDuration(config)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(config.curve, flipbookDuration, flipbook_common.createUpdateCallback(config), speedTween)
     )

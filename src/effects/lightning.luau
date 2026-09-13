@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 local bezier_common = require("@mod/common/bezier")
 
 local Bezier = require("@obj/Bezier")
@@ -337,7 +338,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
     if speed then
       attr.setState(ref, "SpeedTweening", true)
 
-      table.insert(
+      lifetime.hold(
         scope,
         tween.fromParams(
           utility.linear_bezier,
@@ -355,7 +356,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
     elseif common.speedStart ~= common.speedEnd then
       attr.setState(ref, "SpeedTweening", true)
 
-      table.insert(
+      lifetime.hold(
         scope,
         tween.fromParams(
           attr.get(ref, "Speed_Curve", utility.default_bezier),
@@ -419,7 +420,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
 
   for _ = 1, common.emitCount do
     local duration = rng:NextNumber(common.duration.Min, common.duration.Max)
-    local lifetime = common.projectileEnabled
+    local projectileLifetime = common.projectileEnabled
       and rng:NextNumber(common.projectileLifetime.Min, common.projectileLifetime.Max)
 
     -- one driver set per emitted bolt, the same granularity the legacy tweens
@@ -564,7 +565,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         end
 
         -- cleanup
-        table.insert(scope, function()
+        lifetime.hold(scope, function()
           if part_cache then
             for j = 1, attrs.segments do
               part_cache:free(segmentCacheIds[j])
@@ -631,7 +632,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
             return deltaTime
           end)
 
-          table.insert(scope, speedTween)
+          lifetime.hold(scope, speedTween)
         elseif common.speedStart ~= common.speedEnd and not attr.getState(ref, "SpeedOverride", nil) then
           speedTween = tween.fromParams(
             attr.get(ref, "Speed_Curve", utility.default_bezier),
@@ -642,7 +643,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
             end
           )
 
-          table.insert(scope, speedTween)
+          lifetime.hold(scope, speedTween)
         end
 
         local function getEffectiveSpeed()
@@ -930,7 +931,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
           setter: (number) -> ()
         )
           if drv then
-            table.insert(
+            lifetime.hold(
               scope,
               tween.fromParams(utility.linear_bezier, span, function(_, deltaTime, elapsed)
                 setter(drv(elapsed))
@@ -1079,7 +1080,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         end
 
         -- main animation
-        table.insert(
+        lifetime.hold(
           scope,
           tween.fromParams(
             attr.get(ref, "Easing_Curve", utility.linear_bezier),
@@ -1116,7 +1117,9 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
                 return nil
               end
 
-              if (common.projectileEnabled and alpha * duration < lifetime) or not common.projectileEnabled then
+              if
+                (common.projectileEnabled and alpha * duration < projectileLifetime) or not common.projectileEnabled
+              then
                 return speedDelta
               else
                 startDissipation()
@@ -1208,7 +1211,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
 
               transitionState = state
 
-              tween.timer(lifetime, function(deltaTime, elapsed)
+              tween.timer(projectileLifetime, function(deltaTime, elapsed)
                 local scaledDelta = deltaTime * getEffectiveSpeed()
                 scaledElapsedTime += scaledDelta
 
@@ -1247,7 +1250,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
                   return nil
                 end
 
-                if elapsed >= lifetime then
+                if elapsed >= projectileLifetime then
                   return nil
                 end
 

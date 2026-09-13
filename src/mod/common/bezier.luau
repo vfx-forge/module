@@ -5,6 +5,7 @@ local attr = require("@mod/attributes")
 local shape = require("@mod/shape")
 local tween = require("@mod/tween")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 
 local Oklab = require("@mod/color/Oklab")
 local Bezier = require("@obj/Bezier")
@@ -357,7 +358,7 @@ function common.createPropertyTween(
     return
   end
 
-  table.insert(
+  lifetime.hold(
     scope,
     tween.fromParams(
       attr.get(ref, attrName .. "_Curve", utility.default_bezier),

@@ -3,6 +3,7 @@ local lerp = require("@mod/lerp")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 
 local rng = Random.new()
 
@@ -74,7 +75,7 @@ function tweener.emit(obj: RayValue, scope: types.scope, isAttribute: boolean)
       end
     )
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   end
 
   local lfunc = lerp[typeName] or lerp.Other
@@ -89,7 +90,7 @@ function tweener.emit(obj: RayValue, scope: types.scope, isAttribute: boolean)
       return deltaTime * currentSpeed
     end
 
-  table.insert(
+  lifetime.hold(
     scope,
     tween.fromParams(
       attr.get(obj, "Easing_Curve", utility.linear_bezier),
@@ -103,7 +104,7 @@ function tweener.emit(obj: RayValue, scope: types.scope, isAttribute: boolean)
   )
 
   if resetOnFinish then
-    table.insert(scope, function()
+    lifetime.hold(scope, function()
       if isAttribute then
         attr.set(target, name, startValue)
       else

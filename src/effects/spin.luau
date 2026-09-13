@@ -3,6 +3,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 local timing_common = require("@mod/common/timing")
 
 -- Model:ScaleTo is invalid at zero or below, and the runtime can reach that
@@ -64,7 +65,7 @@ function spin.emit(ref: Model, scope: types.scope)
       return deltaTime
     end)
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   else
     -- nothing authored at all. the pre-conversion default was a 0 to 1 ramp
     -- on default_bezier, and it was load-bearing: an unauthored model that
@@ -85,7 +86,7 @@ function spin.emit(ref: Model, scope: types.scope)
         end
       )
 
-      table.insert(scope, speedTween)
+      lifetime.hold(scope, speedTween)
     end
   end
 
@@ -99,7 +100,7 @@ function spin.emit(ref: Model, scope: types.scope)
     -- timer below is the last statement in this function. the curve is linear
     -- and its alpha ignored, because the sampler owns the shaping and is fed
     -- elapsed directly, exactly as the SpinSpeed branch above does
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, scaleSpan, function(_, deltaTime, elapsed)
         local at = (scale :: any)(elapsed)
@@ -118,7 +119,7 @@ function spin.emit(ref: Model, scope: types.scope)
     local scaleEnd = attr.get(ref, "Scale_End", 1)
 
     if scaleStart ~= scaleEnd then
-      table.insert(
+      lifetime.hold(
         scope,
         tween.fromParams(attr.get(ref, "Scale_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
           -- ScaleTo accepts values >= 0.001
@@ -135,7 +136,7 @@ function spin.emit(ref: Model, scope: types.scope)
   local parent = ref:FindFirstAncestorOfClass("Attachment") or ref:FindFirstAncestorWhichIsA("BasePart")
 
   if resetOnFinish then
-    table.insert(scope, function()
+    lifetime.hold(scope, function()
       ref:PivotTo(parent and utility.getTransformedOriginExtents(parent) or originalPivot)
       ref:ScaleTo(originalScale)
     end)

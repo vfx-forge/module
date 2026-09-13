@@ -6,6 +6,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
@@ -101,7 +102,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
   local emitDelay = attr.get(ref, "EmitDelay", 0)
 
   local amount = attr.getRange(ref, "Amount", NumberRange.new(5, 10), NumberRange.new(0, math.huge))
-  local lifetime = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
+  local lifeRange = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
   local airtime = attr.getRange(ref, "Airtime", NumberRange.new(0.5, 0.5), NumberRange.new(0, math.huge))
 
   local linmag = attr.getRange(ref, "LinearMagnitude", NumberRange.new(15, 25))
@@ -192,7 +193,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
         table.insert(promises, env.Finished)
       end)
 
-      table.insert(scope, function()
+      lifetime.hold(scope, function()
         if conn then
           conn:Disconnect()
           conn = nil
@@ -214,7 +215,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- reads the MinSize and MaxSize pair as a randomizer, and a randomizer
     -- between two Vector3s draws once per component, which is exactly the three
     -- NextNumber calls this replaces
-    local sizeDrv = mods.driver(ref, "attribute", "Size", lifetime.Max, "Vector3")
+    local sizeDrv = mods.driver(ref, "attribute", "Size", lifeRange.Max, "Vector3")
     local size = if sizeDrv then sizeDrv(0) else nil
 
     if typeof(size) ~= "Vector3" then
@@ -235,7 +236,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
       part.Transparency = tpStart
     end
 
-    table.insert(scope, function()
+    lifetime.hold(scope, function()
       local index = table.find(physicsParts, realPart)
 
       if index then
@@ -276,13 +277,13 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- Lifetime driver is sampled on the piece's dwell clock, which never reaches
     -- the run. a zero there reads as fully elapsed, which would pin a linked
     -- modifier at its end value from the first frame
-    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifetime.Max, "number")
+    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifeRange.Max, "number")
     local drawn = if lifeDrv then lifeDrv(0) else nil
 
     -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
     -- ever and the piece dwells for the life of the session
     if typeof(drawn) ~= "number" or drawn ~= drawn then
-      drawn = rng:NextNumber(lifetime.Min, lifetime.Max)
+      drawn = rng:NextNumber(lifeRange.Min, lifeRange.Max)
     end
 
     -- the dwell belongs to the effect rather than to the scheduler: its cleanup
@@ -308,7 +309,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
         local startTp = part.Transparency
 
         if startSize ~= size * sizeOutEnd then
-          table.insert(
+          lifetime.hold(
             scope,
             tween.fromParams(sizeCurve, sizeDuration, function(alpha, deltaTime)
               part.Size = startSize:Lerp(size * sizeOutEnd, alpha)
@@ -318,7 +319,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
         end
 
         if startTp ~= tpEnd then
-          table.insert(
+          lifetime.hold(
             scope,
             tween.fromParams(tpCurve, tpDuration, function(alpha, deltaTime)
               part.Transparency = utility.lerp(startTp, tpEnd, alpha)
@@ -333,7 +334,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     end, scope)
   end
 
-  task.wait(lifetime.Max + math.max(tpDuration, sizeDuration))
+  task.wait(lifeRange.Max + math.max(tpDuration, sizeDuration))
 
   Promise.all(promises):await()
 end

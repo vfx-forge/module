@@ -5,6 +5,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
@@ -67,7 +68,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   local radius = attr.get(ref, "Radius", 5)
   local segments = attr.get(ref, "Segments", 7)
 
-  local lifetime = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
+  local lifeRange = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
 
   -- the two phases are rows now, each a stem whose four keys legacy_mods can
   -- derive: OffsetIn and OffsetOut, SizeScaleIn and SizeScaleOut. Every rename
@@ -127,7 +128,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   -- the longest a segment can last, which is the ring's own clock: the longest
   -- dwell it can draw, then the longest exit it can run
-  local runLength = lifetime.Max + math.max(sizeOutDuration, offsetOutDuration, tpDuration)
+  local runLength = lifeRange.Max + math.max(sizeOutDuration, offsetOutDuration, tpDuration)
 
   -- the driver is asked for BEFORE any non-soft read of the quad keys it would
   -- find, because attr.get writes its default back: reading Speed_Start creates
@@ -197,7 +198,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
       return deltaTime
     end)
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   elseif speedStart ~= speedEnd then
     speedTween = tween.fromParams(
       attr.get(ref, "Speed_Curve", utility.default_bezier),
@@ -208,7 +209,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
       end
     )
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   end
 
   local promises = {}
@@ -265,7 +266,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
     local emitOnFinish = scope.effects.prepareEmitOnFinish(part, scope)
 
-    table.insert(scope, function()
+    lifetime.hold(scope, function()
       if part_cache then
         part_cache:free(id)
       end
@@ -312,7 +313,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         return step(deltaTime, elapsed)
       end)
 
-      table.insert(scope, offsetTween)
+      lifetime.hold(scope, offsetTween)
     elseif offsetInStart ~= offsetInEnd then
       offsetTween = tween.fromParams(offsetInCurve, offsetInDuration, function(alpha, deltaTime, elapsed)
         currentOffset = offsetInStart:Lerp(offsetInEnd, alpha)
@@ -320,7 +321,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         return step(deltaTime, elapsed)
       end)
 
-      table.insert(scope, offsetTween)
+      lifetime.hold(scope, offsetTween)
     end
 
     if sizeInMoves then
@@ -334,14 +335,14 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         return step(deltaTime, elapsed)
       end)
 
-      table.insert(scope, sizeTween)
+      lifetime.hold(scope, sizeTween)
     elseif size * sizeInStart ~= size * sizeInEnd then
       sizeTween = tween.fromParams(sizeInCurve, sizeInDuration, function(alpha, deltaTime, elapsed)
         part.Size = (size * sizeInStart):Lerp(size * sizeInEnd, alpha)
         return step(deltaTime, elapsed)
       end)
 
-      table.insert(scope, sizeTween)
+      lifetime.hold(scope, sizeTween)
     else
       part.Size = size * sizeInStart
     end
@@ -361,13 +362,13 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- Lifetime driver is sampled on the piece's dwell clock, which never reaches
     -- the run. a zero there reads as fully elapsed, which would pin a linked
     -- modifier at its end value from the first frame
-    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifetime.Max, "number")
+    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifeRange.Max, "number")
     local drawn = if lifeDrv then lifeDrv(0) else nil
 
     -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
     -- ever and the piece dwells for the life of the session
     if typeof(drawn) ~= "number" or drawn ~= drawn then
-      drawn = rng:NextNumber(lifetime.Min, lifetime.Max)
+      drawn = rng:NextNumber(lifeRange.Min, lifeRange.Max)
     end
 
     -- the dwell is part of the effect, not of the scheduler: its cleanup lives
@@ -409,7 +410,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         local startTp = part.Transparency
 
         if startSize ~= size * sizeOutEnd then
-          table.insert(
+          lifetime.hold(
             scope,
             tween.fromParams(sizeOutCurve, sizeOutDuration, function(alpha, deltaTime, elapsed)
               part.Size = startSize:Lerp(size * sizeOutEnd, alpha)
@@ -419,7 +420,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         end
 
         if currentOffset ~= offsetOutEnd then
-          table.insert(
+          lifetime.hold(
             scope,
             tween.fromParams(offsetOutCurve, offsetOutDuration, function(alpha, deltaTime, elapsed)
               part.CFrame = CFrame.new(currentOffset:Lerp(offsetOutEnd, alpha)) * rotCF
@@ -429,7 +430,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         end
 
         if startTp ~= tpEnd then
-          table.insert(
+          lifetime.hold(
             scope,
             tween.fromParams(
               attr.get(ref, "Transparency_Curve", utility.default_bezier),

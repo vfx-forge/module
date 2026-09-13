@@ -8,6 +8,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 local Promise = require("@pkg/Promise")
 
 local rng = Random.new()
@@ -116,10 +117,10 @@ local function createSoundClone(ref: Sound, sourceSound: Sound, scope: types.sco
 
       clone.Parent = partClone
 
-      table.insert(scope, partClone)
+      lifetime.hold(scope, partClone)
     else
       clone.Parent = soundWidget
-      table.insert(scope, clone)
+      lifetime.hold(scope, clone)
     end
   else
     if parent then
@@ -128,7 +129,7 @@ local function createSoundClone(ref: Sound, sourceSound: Sound, scope: types.sco
       clone.Parent = workspace.Terrain
     end
 
-    table.insert(scope, clone)
+    lifetime.hold(scope, clone)
   end
 
   return clone, partClone
@@ -164,7 +165,7 @@ local function playSingleSound(
   if volume then
     clone.Volume = volume(0)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, volumeSpan, function(_, deltaTime, elapsed)
         clone.Volume = volume(elapsed)
@@ -180,7 +181,7 @@ local function playSingleSound(
     if volumeStart ~= volumeEnd then
       local volumeDuration = attr.get(src, "Volume_Duration", clone.TimeLength)
 
-      table.insert(
+      lifetime.hold(
         scope,
         tween.fromParams(
           attr.get(src, "Volume_Curve", utility.default_bezier),
@@ -207,7 +208,7 @@ local function playSingleSound(
       return deltaTime
     end)
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   else
     local speedEnd = attr.get(src, "Speed_End", clone.PlaybackSpeed)
     local speedStart = attr.get(src, "Speed_Start", clone.PlaybackSpeed)
@@ -227,7 +228,7 @@ local function playSingleSound(
         end
       )
 
-      table.insert(scope, speedTween)
+      lifetime.hold(scope, speedTween)
     else
       clone.PlaybackSpeed = speedStart
     end
@@ -238,7 +239,7 @@ local function playSingleSound(
   if rolloff then
     clone.RollOffMinDistance = rolloff(0)
 
-    table.insert(
+    lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, rolloffSpan, function(_, deltaTime, elapsed)
         clone.RollOffMinDistance = rolloff(elapsed)
@@ -252,7 +253,7 @@ local function playSingleSound(
     if rolloffStart ~= rolloffEnd then
       local rolloffDuration = attr.get(src, "RollOff_Duration", clone.TimeLength)
 
-      table.insert(
+      lifetime.hold(
         scope,
         tween.fromParams(
           attr.get(src, "RollOff_Curve", utility.default_bezier),
@@ -277,7 +278,7 @@ local function playSingleSound(
     local parent = ref:FindFirstAncestorWhichIsA("BasePart")
 
     if parent then
-      table.insert(
+      lifetime.hold(
         scope,
         RunService.Heartbeat:Connect(function()
           if partClone.Parent then

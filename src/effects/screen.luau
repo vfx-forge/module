@@ -3,6 +3,7 @@ local RunService = game:GetService("RunService")
 local attr = require("@mod/attributes")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 local screen_common = require("@mod/common/screen")
 
 local screen = {}
@@ -24,7 +25,7 @@ function screen.emit(ref: BasePart, scope: types.scope)
 
   ref.CollisionGroup = "ForgeMouseIgnore"
 
-  table.insert(scope, function()
+  lifetime.hold(scope, function()
     ref.Size = originalSize
     ref.CFrame = originalCF
     ref.CollisionGroup = originalColGroup ~= "" and originalColGroup or "Default"
@@ -45,13 +46,13 @@ function screen.emit(ref: BasePart, scope: types.scope)
   end
 
   if not RunService:IsRunning() then
-    table.insert(scope, RunService.RenderStepped:Connect(frame))
+    lifetime.hold(scope, RunService.RenderStepped:Connect(frame))
   else
     local id = utility.getRandomId()
 
     RunService:BindToRenderStep(id, Enum.RenderPriority.Last.Value + 2 + scope.depth, frame)
 
-    table.insert(scope, function()
+    lifetime.hold(scope, function()
       RunService:UnbindFromRenderStep(id)
     end)
   end

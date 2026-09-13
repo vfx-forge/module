@@ -3,6 +3,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 
 local particle = {}
 
@@ -46,7 +47,7 @@ function particle.emit(ref: ParticleEmitter, obj: ParticleEmitter, scope: types.
       return deltaTime
     end)
 
-    table.insert(scope, speedTween)
+    lifetime.hold(scope, speedTween)
   else
     local timeScaleDuration = attr.get(ref, "TimeScale_Duration", 0.1)
 
@@ -66,7 +67,7 @@ function particle.emit(ref: ParticleEmitter, obj: ParticleEmitter, scope: types.
         end
       )
 
-      table.insert(scope, speedTween)
+      lifetime.hold(scope, speedTween)
     elseif timeScaleStart ~= obj.TimeScale then
       obj.TimeScale = timeScaleStart
     end

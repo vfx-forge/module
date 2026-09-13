@@ -2,6 +2,7 @@ local RunService = game:GetService("RunService")
 
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 local timing_common = require("@mod/common/timing")
 
 local Bezier = require("@obj/Bezier")
@@ -104,7 +105,7 @@ local function runTimer(
   duration: number,
   counter: (deltaTime: number, elapsed: number) -> number,
   awaitTween: RBXScriptConnection?,
-  scope: {}?,
+  scope: lifetime.effect?,
   stepAtPriority: number?,
   onDone: () -> ()
 )
@@ -153,7 +154,7 @@ local function runTimer(
   end
 
   if scope then
-    table.insert(scope, cleanupStepper)
+    lifetime.hold(scope, cleanupStepper)
   end
 end
 
@@ -161,7 +162,7 @@ function tween.timer(
   duration: number,
   counter: (deltaTime: number, elapsed: number) -> number,
   awaitTween: RBXScriptConnection?,
-  scope: {}?,
+  scope: lifetime.effect?,
   stepAtPriority: number?
 )
   local main = coroutine.running()
@@ -185,7 +186,7 @@ function tween.after(
   duration: number,
   counter: (deltaTime: number, elapsed: number) -> number,
   onFinish: () -> (),
-  scope: {}?,
+  scope: lifetime.effect?,
   stepAtPriority: number?
 )
   runTimer(duration, counter, nil, scope, stepAtPriority, onFinish)

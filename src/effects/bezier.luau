@@ -6,6 +6,7 @@ local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 local bezier_common = require("@mod/common/bezier")
 
 local Bezier = require("@obj/Bezier")
@@ -92,7 +93,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
     if common.speedStart ~= common.speedEnd then
       attr.setState(ref, "SpeedTweening", true)
 
-      table.insert(
+      lifetime.hold(
         scope,
         tween.fromParams(
           attrs.speedCurve,
@@ -157,7 +158,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
     )
 
     local duration = rng:NextNumber(common.duration.Min, common.duration.Max)
-    local lifetime = common.projectileEnabled
+    local projectileLifetime = common.projectileEnabled
       and rng:NextNumber(common.projectileLifetime.Min, common.projectileLifetime.Max)
 
     -- one driver per emitted part rather than one per emit, because the two
@@ -223,7 +224,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
 
         table.insert(promises, env.Finished)
 
-        table.insert(scope, function()
+        lifetime.hold(scope, function()
           if part_cache then
             part_cache:free(cacheId)
           end
@@ -259,7 +260,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
 
             RunService:BindToRenderStep(id, utility.RENDER_PRIORITY + scope.depth, updatePos)
 
-            table.insert(scope, function()
+            lifetime.hold(scope, function()
               RunService:UnbindFromRenderStep(id)
             end)
           end
@@ -293,14 +294,14 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
             return deltaTime
           end)
 
-          table.insert(scope, speedTween)
+          lifetime.hold(scope, speedTween)
         elseif common.speedStart ~= common.speedEnd and not attr.getState(ref, "SpeedOverride", nil) then
           speedTween = tween.fromParams(attrs.speedCurve, attrs.speedDuration, function(alpha, deltaTime)
             currentSpeed = utility.lerp(common.speedStart, common.speedEnd, alpha)
             return deltaTime
           end)
 
-          table.insert(scope, speedTween)
+          lifetime.hold(scope, speedTween)
         end
 
         local function getEffectiveSpeed()
@@ -313,7 +314,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
 
         -- Rotation speed tween
         if rotSpeed then
-          table.insert(
+          lifetime.hold(
             scope,
             tween.fromParams(utility.linear_bezier, rotSpeedSpan, function(_, deltaTime, elapsed)
               currentRotSpeed = rotSpeed(elapsed)
@@ -329,7 +330,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
         end
 
         -- main animation
-        table.insert(
+        lifetime.hold(
           scope,
           tween.fromParams(
             attrs.easingCurve,
@@ -377,7 +378,9 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
                 return nil
               end
 
-              if (common.projectileEnabled and alpha * duration < lifetime) or not common.projectileEnabled then
+              if
+                (common.projectileEnabled and alpha * duration < projectileLifetime) or not common.projectileEnabled
+              then
                 return deltaTime * speed
               else
                 onFinish()
@@ -407,7 +410,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
               local projectileOrigin = obj.Position
               local originCFrameAtProjectileInit = utility.getTransformedOriginExtents(parent)
 
-              tween.timer(lifetime, function(deltaTime, elapsed)
+              tween.timer(projectileLifetime, function(deltaTime, elapsed)
                 if common.syncPosition then
                   objAbstr.CFrame = utility.getTransformedOriginExtents(parent)
                     * originCFrameAtProjectileInit:ToObjectSpace(CFrame.new(projectileOrigin + lastVelocity * elapsed))
