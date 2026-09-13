@@ -355,7 +355,11 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     end, scope)
   end
 
-  task.wait(lifeMax + math.max(attrs.Transparency.duration, shrinkDuration))
+  -- a resting fade holds the emit open for nothing: it only reaches past the
+  -- last piece's life when it moves
+  local fadeDuration = if attrs.Transparency.animated then attrs.Transparency.duration else 0
+
+  task.wait(lifeMax + math.max(fadeDuration, shrinkDuration))
 
   Promise.all(promises):await()
 end
