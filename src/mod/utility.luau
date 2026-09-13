@@ -285,7 +285,7 @@ local function cancelPromises(emit: lifetime.emit)
     emit.finished:cancel()
   end
 
-  for _, child in emit.children do
+  for _, child in table.clone(emit.children) do
     cancelPromises(child)
   end
 end

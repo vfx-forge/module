@@ -5,6 +5,7 @@ local attr = require("@mod/attributes")
 local types = require("@root/types")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
+local lifetime = require("@mod/lifetime")
 
 local enabled_effects = {}
 
@@ -84,7 +85,10 @@ function enabled_effects.init(scope: types.scope, shared_part_cache: any, effect
         utility.cleanupScope(tempScope)
 
         local last = 0
-        local cancelToken = { _promises = {}, _scopes = {} }
+
+        -- never sealed: it lives as long as the instance stays enabled, and
+        -- finished ticks take themselves out of it
+        local cancelToken = lifetime.emit(nil)
 
         utility.setEnabledCancelToken(obj, cancelToken)
 
@@ -104,21 +108,11 @@ function enabled_effects.init(scope: types.scope, shared_part_cache: any, effect
 
             last = os.clock()
 
-            local emitScope = {}
-            emitScope.depth = 0
-            emitScope.effects = effects_service
-            emitScope._context = cancelToken
+            local emitScope = lifetime.effect(cancelToken, 0, effects_service)
 
-            table.insert(cancelToken._scopes, emitScope)
-
-            effectConfig.emit(obj, emitScope, shared_part_cache)
-
-            local idx = table.find(cancelToken._scopes, emitScope)
-            if idx then
-              table.remove(cancelToken._scopes, idx)
-            end
-
-            utility.cleanupScope(emitScope)
+            lifetime.run(emitScope, function(scope)
+              effectConfig.emit(obj, scope, shared_part_cache)
+            end)
           end)
         )
       else
