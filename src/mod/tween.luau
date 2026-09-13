@@ -1,5 +1,6 @@
 local RunService = game:GetService("RunService")
 
+local mods = require("@mod/mods")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
@@ -190,6 +191,25 @@ function tween.after(
   stepAtPriority: number?
 )
   runTimer(duration, counter, nil, scope, stepAtPriority, onFinish)
+end
+
+-- one target driven by one track: the first value is written at once, and an
+-- animated track keeps writing on a timer the effect holds until its span is
+-- up, ending on the track's last value so a frame that overshoots cannot leave
+-- the target short of it
+function tween.drive(scope: lifetime.effect, track: mods.Track, write: (v: any) -> (), stepAtPriority: number?)
+  write(track.at(0))
+
+  if not track.animated then
+    return
+  end
+
+  tween.after(track.span, function(deltaTime, elapsed)
+    write(track.at(elapsed))
+    return deltaTime
+  end, function()
+    write(track.at(track.span))
+  end, scope, stepAtPriority)
 end
 
 return tween
