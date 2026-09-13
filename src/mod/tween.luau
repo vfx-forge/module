@@ -108,9 +108,10 @@ local function runTimer(
   awaitTween: RBXScriptConnection?,
   scope: lifetime.effect?,
   stepAtPriority: number?,
-  onDone: () -> ()
+  onDone: () -> (),
+  unbounded: boolean?
 )
-  duration = timing_common.duration(duration)
+  duration = if unbounded then math.huge else timing_common.duration(duration)
 
   local elapsed = 0
 
@@ -183,6 +184,9 @@ end
 -- task.delay does neither. It keeps wall-clock time whatever the effect's speed
 -- is doing, and it fires into whatever is left of an effect that has already
 -- been destroyed, which for a pooled part is whoever holds it next
+--
+-- an infinite duration here means there is no ceiling and the counter alone
+-- ends the wait, where every other helper runs an unusable duration as zero
 function tween.after(
   duration: number,
   counter: (deltaTime: number, elapsed: number) -> number,
@@ -190,7 +194,7 @@ function tween.after(
   scope: lifetime.effect?,
   stepAtPriority: number?
 )
-  runTimer(duration, counter, nil, scope, stepAtPriority, onFinish)
+  runTimer(duration, counter, nil, scope, stepAtPriority, onFinish, duration == math.huge)
 end
 
 -- one target driven by one track: the first value is written at once, and an
