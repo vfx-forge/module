@@ -7,6 +7,7 @@ local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
+local lifetime = require("@mod/lifetime")
 
 local Promise = require("@pkg/Promise")
 
@@ -102,28 +103,6 @@ utility.COPY_EXTENDED_PART_PROPERTIES = {
 
   "CollisionGroup",
 }
-
-local LOCKS = setmetatable({} :: { [Instance]: boolean }, { __mode = "k" })
-
-function utility.lock(ref: Instance)
-  if LOCKS[ref] then
-    return true
-  end
-
-  LOCKS[ref] = coroutine.running()
-
-  return false
-end
-
-function utility.unlock(ref: Instance, key: thread?)
-  local thread = LOCKS[ref]
-
-  if coroutine.running() ~= thread and key ~= thread then
-    logger.error("attempt to unlock an instance owned by a different thread")
-  end
-
-  LOCKS[ref] = nil
-end
 
 function utility.setCollisionGroups(groups)
   local rules = {}
@@ -265,55 +244,15 @@ function utility.getTarget(obj: Instance): Instance?
   return parent
 end
 
-function utility.createEmitPromise(
-  effects: any,
-  instance: Instance,
-  effectDepth: number,
-  emitFunc: any,
-  context: { _promises: { any } }?
-)
-  local promise = Promise.new(function(resolve, _, onCancel)
-    local scope: { [any]: any } = {}
-    scope.depth = effectDepth
-    scope.effects = effects
-    scope._context = context
-
-    onCancel(function()
-      if scope._onCancel then
-        for _, cb in scope._onCancel do
-          cb()
-        end
-      end
-
-      utility.cleanupScope(scope)
-    end)
-
-    emitFunc(scope)
-
-    utility.cleanupScope(scope)
-
-    resolve()
+function utility.onCancel(scope: lifetime.effect, callback: () -> ())
+  lifetime.defer(scope, function(cancelled)
+    if cancelled then
+      callback()
+    end
   end)
-
-  if context then
-    table.insert(context._promises, promise)
-  end
-
-  return promise
 end
 
-function utility.onCancel(scope: { [any]: any }, callback: () -> ())
-  if not scope._onCancel then
-    scope._onCancel = {}
-  end
-
-  table.insert(scope._onCancel, callback)
-end
-
-local ENABLED_CANCEL_TOKENS: { [Instance]: { _promises: { any }, _scopes: { { unknown } } } } = setmetatable(
-  {},
-  { __mode = "k" }
-) :: any
+local ENABLED_CANCEL_TOKENS: { [Instance]: lifetime.emit } = setmetatable({}, { __mode = "k" }) :: any
 
 local FORCE_EMIT_SET: { [Instance]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
@@ -325,25 +264,35 @@ function utility.isForceEmitting(obj: Instance): boolean
   return FORCE_EMIT_SET[obj] == true
 end
 
-function utility.setEnabledCancelToken(obj: Instance, token: { _promises: { any }, _scopes: { { unknown } } }?)
+function utility.setEnabledCancelToken(obj: Instance, token: lifetime.emit?)
   ENABLED_CANCEL_TOKENS[obj] = token :: any
 end
 
-function utility.getEnabledCancelToken(obj: Instance)
+function utility.getEnabledCancelToken(obj: Instance): lifetime.emit?
   return ENABLED_CANCEL_TOKENS[obj]
 end
 
-function utility.cancelToken(token: { _promises: { any }, _scopes: { { unknown } } })
-  for _, promise in token._promises do
+-- the promises an effect module still keeps for its own pieces are cancelled
+-- with the tree, and so is a Finished promise somebody is holding
+local function cancelPromises(emit: lifetime.emit)
+  for _, promise in emit.promises do
     promise:cancel()
   end
 
-  for _, scope in token._scopes do
-    utility.cleanupScope(scope, true)
+  table.clear(emit.promises)
+
+  if emit.finished then
+    emit.finished:cancel()
   end
 
-  table.clear(token._promises)
-  table.clear(token._scopes)
+  for _, child in emit.children do
+    cancelPromises(child)
+  end
+end
+
+function utility.cancelToken(token: lifetime.emit)
+  cancelPromises(token)
+  lifetime.clear(token)
 end
 
 function utility.stopEmitDuration(ref: Instance)
@@ -356,35 +305,24 @@ function utility.stopEmitDuration(ref: Instance)
   return token
 end
 
-function utility.awaitEmitDuration(token: { _promises: { any } }?)
+function utility.awaitEmitDuration(token: lifetime.emit?)
   if not token then
     return
   end
 
-  local pending = {}
-
-  for _, promise in token._promises do
-    table.insert(pending, promise)
-  end
+  local pending = table.clone(token.promises)
 
   if #pending > 0 then
     Promise.all(pending):await()
   end
+
+  lifetime.await(token)
 end
 
+-- the module-level scopes (api.scope, the caches, texture preloads) are plain
+-- tables; every emit and effect is a lifetime record now
 function utility.cleanupScope(scope: { [any]: any }, syncFunctions: boolean?)
-  local depth = scope.depth
-  local effects = scope.effects
-
-  local context = scope._context
-  local onCancelCbs = scope._onCancel
-
-  for k, v in scope do
-    -- Skip scope metadata fields
-    if k == "depth" or k == "effects" or k == "_context" or k == "_onCancel" then
-      continue
-    end
-
+  for _, v in scope do
     local t = typeof(v)
 
     if t == "Instance" then
@@ -407,12 +345,6 @@ function utility.cleanupScope(scope: { [any]: any }, syncFunctions: boolean?)
   end
 
   table.clear(scope)
-
-  scope.depth = depth
-  scope.effects = effects
-
-  scope._context = context
-  scope._onCancel = onCancelCbs
 end
 
 function utility.protectParent(scope: { [any]: any }, parent: Instance)
@@ -645,7 +577,7 @@ function utility.getMeshDecals(ref: Model, start: BasePart)
   return decals, flipbooks, fromToMap
 end
 
-function utility.assembleMeshVFX(start: BasePart, scope: { any }, shared_part_cache: any)
+function utility.assembleMeshVFX(start: BasePart, scope: lifetime.effect, shared_part_cache: any)
   local id = utility.getRandomId()
 
   if start:IsA("Part") then
@@ -665,7 +597,7 @@ function utility.assembleMeshVFX(start: BasePart, scope: { any }, shared_part_ca
 
     clone:Destroy()
 
-    table.insert(scope, function()
+    lifetime.hold(scope, function()
       shared_part_cache:free(id)
     end)
 
@@ -678,7 +610,7 @@ function utility.assembleMeshVFX(start: BasePart, scope: { any }, shared_part_ca
 
     clone:AddTag(utility.CLEANUP_TAG)
 
-    table.insert(scope, clone)
+    lifetime.hold(scope, clone)
 
     return clone
   end

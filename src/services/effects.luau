@@ -2,6 +2,7 @@ local types = require("@root/types")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
+local lifetime = require("@mod/lifetime")
 
 local Promise = require("@pkg/Promise")
 
@@ -60,11 +61,61 @@ function effects.deinit()
   api_ref = nil
 end
 
-local function emitWithContext(depth: number, context: { _promises: { any } }?, ...: Instance): types.EmitEnv
-  if not api_ref or not api_ref.setup then
-    logger.error("effects service not initialized")
-    return EMPTY_ENV
+-- built the first time somebody reads it: most emits are fire and forget, and
+-- a promise costs about 5 KB each
+local function finishedOf(emit: lifetime.emit)
+  if emit.finished then
+    return emit.finished
   end
+
+  local promise
+
+  if emit.done then
+    promise = Promise.resolve()
+  else
+    promise = Promise.new(function(resolve)
+      lifetime.await(emit)
+      resolve()
+    end)
+  end
+
+  emit.finished = promise
+
+  return promise
+end
+
+local function envOf(emit: lifetime.emit): types.EmitEnv
+  local env = {}
+
+  env.Clear = function()
+    utility.cancelToken(emit)
+  end
+
+  setmetatable(env, {
+    __index = function(_, key)
+      if key ~= "Finished" then
+        return nil
+      end
+
+      local promise = finishedOf(emit)
+      rawset(env, "Finished", promise)
+
+      return promise
+    end,
+  })
+
+  return env :: any
+end
+
+local function isScreen(obj: Instance): boolean
+  return obj:IsA("BasePart")
+    and obj:GetAttribute("Enabled") ~= nil
+    and obj:GetAttribute("Enabled") ~= false
+    and not utility.findFirstClassWithTag(obj, "Attachment", utility.SHOCKWAVE_TAG)
+end
+
+local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
+  local api = api_ref :: types.Api
 
   local sharedUncMap: { [Instance]: number } = {}
   local sharedRefMap: { [Instance]: Instance } = {}
@@ -72,17 +123,21 @@ local function emitWithContext(depth: number, context: { _promises: { any } }?, 
   local legacyScale = 1
 
   local list = { ... }
-  local rootPromises = {}
 
-  local function queryAndEmitDescendants(obj: Instance, baseDepth: number): { any }
+  local function dispatchInto(target: lifetime.emit, obj: Instance, effectDepth: number)
+    local fx = lifetime.effect(target, effectDepth, effects)
+
+    lifetime.run(fx, function(scope)
+      emitters.dispatch(obj, scope, sharedUncMap, sharedRefMap, api.caches.shared_part, legacyScale)
+    end)
+  end
+
+  local function queryAndEmitDescendants(target: lifetime.emit, obj: Instance, baseDepth: number)
     local allDesc = obj:QueryDescendants(EffectSelectors)
-    local totalDesc = #allDesc
 
-    if totalDesc == 0 then
-      return {}
+    if #allDesc == 0 then
+      return
     end
-
-    local promises = table.create(totalDesc)
 
     local skipCache: { [Instance]: boolean } = {}
     local depthCache: { [Instance]: number } = {}
@@ -130,97 +185,61 @@ local function emitWithContext(depth: number, context: { _promises: { any } }?, 
       end
 
       if not shouldSkip then
-        table.insert(
-          promises,
-          utility.createEmitPromise(effects, desc, depthCache[desc.Parent], function(scope)
-            emitters.dispatch(desc, scope, sharedUncMap, sharedRefMap, api_ref.caches.shared_part, legacyScale)
-          end, context)
-        )
+        dispatchInto(target, desc, depthCache[desc.Parent])
       end
     end
-
-    return promises
   end
 
   for _, obj in list do
-    -- screen effects
-    if
-      obj:IsA("BasePart")
-      and obj:GetAttribute("Enabled")
-      and not utility.findFirstClassWithTag(obj, "Attachment", utility.SHOCKWAVE_TAG)
-    then
-      if utility.lock(obj) then
-        continue
-      end
+    if isScreen(obj) then
+      -- the screen is an effect of its own whose lock and restore live in its
+      -- record, and its children run under a child emit it waits on, so the
+      -- part stays placed until the last of them finishes
+      local fx = lifetime.effect(emit, depth, effects)
 
-      local anc = obj:FindFirstAncestorOfClass("Model")
-
-      if anc and not utility.isSpinModelStatic(anc) then
-        continue
-      end
-
-      local lockThread = coroutine.running()
-
-      local scope: { [any]: any } = {}
-      scope.depth = depth
-      scope.effects = effects
-      scope._context = context
-
-      local await = emitters.screen(obj, scope)
-
-      if await then
-        local innerPromises = queryAndEmitDescendants(obj, depth + 1)
-
-        if #innerPromises > 0 then
-          table.insert(
-            rootPromises,
-            Promise.all(innerPromises):finally(function()
-              utility.unlock(obj, lockThread)
-              utility.cleanupScope(scope)
-            end)
-          )
-        else
-          utility.unlock(obj, lockThread)
-          utility.cleanupScope(scope)
+      lifetime.run(fx, function(scope)
+        if lifetime.lock(scope, obj) then
+          return
         end
-      end
-    -- other effects
+
+        local anc = obj:FindFirstAncestorOfClass("Model")
+
+        if anc and not utility.isSpinModelStatic(anc) then
+          return
+        end
+
+        if not emitters.screen(obj, scope) then
+          return
+        end
+
+        local inner = lifetime.emit(emit)
+
+        queryAndEmitDescendants(inner, obj, depth + 1)
+        lifetime.seal(inner)
+        lifetime.await(inner)
+      end)
     else
-      table.insert(
-        rootPromises,
-        utility.createEmitPromise(effects, obj, depth, function(scope)
-          emitters.dispatch(obj, scope, sharedUncMap, sharedRefMap, api_ref.caches.shared_part, legacyScale)
-        end, context)
-      )
+      dispatchInto(emit, obj, depth)
 
       if not utility.shouldSkipNested(obj) then
-        local descendantPromises = queryAndEmitDescendants(obj, depth + 1)
-
-        for _, promise in descendantPromises do
-          table.insert(rootPromises, promise)
-        end
+        queryAndEmitDescendants(emit, obj, depth + 1)
       end
     end
   end
-
-  local env = {} :: types.EmitEnv
-
-  env.Finished = Promise.all(rootPromises)
-  env.Clear = if context
-    then function()
-      for _, promise in context._promises do
-        promise:cancel()
-      end
-      env.Finished:cancel()
-    end
-    else NOOP
-
-  return env
 end
 
 function effects.emit(depth: number, ...: Instance): types.EmitEnv
-  local context = { _promises = {} }
-  return emitWithContext(depth, context, ...)
+  if not api_ref or not api_ref.setup then
+    logger.error("effects service not initialized")
+    return EMPTY_ENV
+  end
+
+  local emit = lifetime.emit(nil)
+
+  emitInto(emit, depth, ...)
+  lifetime.seal(emit)
+
+  return envOf(emit)
 end
 
 function effects.prepareEmitFolder(obj: Instance, folderName: string, scope: types.scope): Folder?
@@ -228,7 +247,7 @@ function effects.prepareEmitFolder(obj: Instance, folderName: string, scope: typ
 
   if folder and folder:IsA("Folder") then
     folder.Parent = nil
-    table.insert(scope, folder)
+    lifetime.hold(scope, folder)
     return folder
   end
 
@@ -239,19 +258,25 @@ function effects.prepareEmitOnFinish(obj: Instance, scope: types.scope): Folder?
   return effects.prepareEmitFolder(obj, "EmitOnFinish", scope)
 end
 
-function effects.emitNested(part: Instance, depth: number, parentScope: types.scope?): types.EmitEnv
+local function emitChildren(children: { Instance }, depth: number, parentScope: types.scope?): types.EmitEnv
   if not api_ref or not api_ref.setup then
     return EMPTY_ENV
   end
-
-  local children = part:GetChildren()
 
   if #children == 0 then
     return EMPTY_ENV
   end
 
-  local context = if parentScope then parentScope._context else nil
-  return emitWithContext(depth, context, table.unpack(children))
+  local emit = lifetime.emit(if parentScope then parentScope.emit else nil)
+
+  emitInto(emit, depth, table.unpack(children))
+  lifetime.seal(emit)
+
+  return envOf(emit)
+end
+
+function effects.emitNested(part: Instance, depth: number, parentScope: types.scope?): types.EmitEnv
+  return emitChildren(part:GetChildren(), depth, parentScope)
 end
 
 function effects.emitFromFolder(
@@ -266,16 +291,11 @@ function effects.emitFromFolder(
 
   local children = folder:GetChildren()
 
-  if #children == 0 then
-    return EMPTY_ENV
-  end
-
   for _, child in children do
     child.Parent = targetParent
   end
 
-  local context = if parentScope then parentScope._context else nil
-  return emitWithContext(depth, context, table.unpack(children))
+  return emitChildren(children, depth, parentScope)
 end
 
 function effects.emitOnFinish(

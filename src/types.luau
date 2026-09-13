@@ -1,12 +1,8 @@
 local Promise = require("@pkg/Promise")
+local lifetime = require("@mod/lifetime")
 local ObjectCache = require("@obj/ObjectCache")
 
-export type scope = { any } & {
-  depth: number,
-  effects: EffectsService,
-  _context: { _promises: { any } }?,
-  _onCancel: { () -> () }?,
-}
+export type scope = lifetime.effect
 
 export type EmitEnv = {
   Finished: typeof(Promise.resolve()),

@@ -20,6 +20,7 @@ local types = require("@root/types")
 local value = require("@mod/value")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 
 local Promise = require("@pkg/Promise")
 
@@ -369,7 +370,7 @@ function emitters.mesh(
   end
 
   local tasks = {}
-  local context = (scope :: any)._context
+  local promises = scope.emit.promises
 
   local useEmitDuration = obj:HasTag(utility.ENABLED_VFX_TAG) and attr.get(obj, "EmitDuration", 0) > 0
   local emitCount = if useEmitDuration and not skipEnabledCheck then 1 else attr.get(obj, "EmitCount", 1)
@@ -390,22 +391,29 @@ function emitters.mesh(
     end)
 
     table.insert(tasks, promise)
-
-    if context then
-      table.insert(context._promises, promise)
-    end
+    table.insert(promises, promise)
   end
 
   Promise.all(tasks):await()
+
+  -- a settled promise has nothing left to cancel, and a ConstantVFX mesh emits
+  -- for as long as it stays enabled, so leaving these in place grew the list
+  -- by one per emit for the life of the effect
+  for _, promise in tasks do
+    local index = table.find(promises, promise)
+
+    if index then
+      table.remove(promises, index)
+    end
+  end
 end
 
 function emitters.spin(obj: Model, scope: types.scope)
-  if utility.lock(obj) then
+  if lifetime.lock(scope, obj) then
     return
   end
 
   utility.try(`failed to emit spinning model with error: %s`, Spin.emit, obj, scope)
-  utility.unlock(obj)
 end
 
 function emitters.camera_shake(obj: RayValue, scope: types.scope)
@@ -413,21 +421,19 @@ function emitters.camera_shake(obj: RayValue, scope: types.scope)
 end
 
 function emitters.property_tweener(obj: RayValue, scope: types.scope)
-  if not obj.Parent or utility.lock(obj) then
+  if not obj.Parent or lifetime.lock(scope, obj) then
     return
   end
 
   utility.try(`failed to emit property tweener with error: %s`, Tweener.emit, obj, scope, false)
-  utility.unlock(obj)
 end
 
 function emitters.attribute_tweener(obj: RayValue, scope: types.scope)
-  if not obj.Parent or utility.lock(obj) then
+  if not obj.Parent or lifetime.lock(scope, obj) then
     return
   end
 
   utility.try(`failed to emit attribute tweener with error: %s`, Tweener.emit, obj.Parent, obj, scope, true)
-  utility.unlock(obj)
 end
 
 function emitters.screen(obj: BasePart, scope: types.scope)
@@ -619,12 +625,12 @@ end
 
 -- Dispatch function to determine which emitter to use and call it.
 --
--- The wait at the end is load bearing. createEmitPromise calls this and then
--- cleanupScope synchronously, and the applier only spawns its drivers, so
--- without it a driver lives exactly as long as the effect module happens to
--- yield. Effects that never yield (trail is one line, screen is another) tore
--- their drivers down before a single frame, and the applier's reset on finish
--- could not fire anywhere.
+-- The wait at the end is load bearing. This is the whole body of an effect
+-- record, which releases everything it holds the moment this returns, and the
+-- applier only spawns its drivers, so without it a driver lives exactly as
+-- long as the effect module happens to yield. Effects that never yield (trail
+-- is one line, screen is another) tore their drivers down before a single
+-- frame, and the applier's reset on finish could not fire anywhere.
 function emitters.dispatch(
   obj: any,
   scope: types.scope,
