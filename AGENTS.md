@@ -14,6 +14,7 @@ Follow this whether you are changing code here directly or preparing a PR. Code 
 |---|---|
 | `src/effects/` | One module per effect (`beam`, `lightning`, `shockwave_ring`, ...) |
 | `src/mod/` | Plain-table helper namespaces (`tween`, `lerp`, `logger`, `attributes`) |
+| `src/mod/lifetime.luau` | Emit and effect records: `hold`, `defer`, `lock`, `run`, `clear`, `await`. Effects file resources through `lifetime.hold(scope, x)`, never `table.insert(scope, x)` |
 | `src/mod/common/` | Pure helpers with no engine access, requirable under lune |
 | `src/obj/` | Class modules with metatables (`Bezier`, `ObjectCache`) |
 | `src/services/` | Long-lived services (`effects`, `caches`, `texture_loader`) |

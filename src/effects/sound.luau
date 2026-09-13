@@ -9,6 +9,7 @@ local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+
 local Promise = require("@pkg/Promise")
 
 local rng = Random.new()
