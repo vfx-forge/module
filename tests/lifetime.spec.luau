@@ -101,6 +101,29 @@ harness.suite(function()
       expect(#folder:GetChildren()).toBe(0)
     end)
 
+    test("holding a table or a thread after release disposes both at once", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local worker = coroutine.create(function()
+        coroutine.yield()
+      end)
+
+      task.spawn(worker)
+      lifetime.release(fx)
+
+      lifetime.hold(fx, {
+        function()
+          table.insert(log, "nested")
+        end,
+      })
+
+      lifetime.hold(fx, worker)
+
+      expect(log).toEqual({ "nested" })
+      expect(coroutine.status(worker)).toBe("dead")
+    end)
+
     test("a plain table is released like an old scope", function()
       local log = {}
       local emit = lifetime.emit(nil)
@@ -140,12 +163,44 @@ harness.suite(function()
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
 
-      lifetime.run(fx, function(self: lifetime.effect)
-        lifetime.hold(self, coroutine.running())
+      local warnings = harness.captureWarnings(function()
+        lifetime.run(fx, function(self: lifetime.effect)
+          lifetime.hold(self, coroutine.running())
+        end)
       end)
 
+      -- closing the running coroutine throws, and the release only survives it
+      -- through the restartable pcall, so a quiet release is the whole point
+      expect(warnings).toEqual({})
       expect(fx.state).toBe(lifetime.RELEASED)
       expect(coroutine.status(fx.thread :: thread)).toBe("dead")
+    end)
+  end)
+
+  harness.describe("lifetime.releasePlain", function()
+    test("empties a plain scope from the back, each entry out before it runs", function()
+      local log = {}
+      local folder = Instance.new("Folder")
+      local part = Instance.new("Part")
+      part.Parent = folder
+
+      local scope = {
+        function()
+          table.insert(log, "first")
+        end,
+
+        part,
+
+        function()
+          table.insert(log, `second:{#folder:GetChildren()}`)
+        end,
+      }
+
+      lifetime.releasePlain(scope)
+
+      expect(log).toEqual({ "second:1", "first" })
+      expect(#folder:GetChildren()).toBe(0)
+      expect(#scope).toBe(0)
     end)
   end)
 
@@ -485,6 +540,41 @@ harness.suite(function()
       expect(cfx.state).toBe(lifetime.RELEASED)
       expect(natural.done).toBe(true)
       expect(natural.cleared).toBe(false)
+    end)
+
+    -- the root keeps the sealed flag the caller left it with, which is what
+    -- keeps a never-sealed token usable after a cancel
+    test("an unsealed root is still open for the next effect after a clear", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.hold(fx, function()
+        table.insert(log, "first")
+      end)
+
+      lifetime.clear(emit)
+
+      expect(log).toEqual({ "first" })
+      expect(emit.sealed).toBe(false)
+      expect(emit.done).toBe(false)
+
+      local revived = lifetime.effect(emit, 0, nil)
+
+      lifetime.run(revived, parked(log, "second"))
+
+      task.spawn(function()
+        lifetime.await(emit)
+        table.insert(log, "woke")
+      end)
+
+      expect(log).toEqual({ "first", "second:start" })
+
+      task.spawn(revived.thread :: thread)
+
+      expect(log).toEqual({ "first", "second:start", "second:after", "woke" })
+      expect(emit.pending).toBe(0)
+      expect(emit.done).toBe(false)
     end)
   end)
 end)

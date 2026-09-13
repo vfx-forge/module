@@ -144,7 +144,7 @@ local function playSingleSound(
   scope: types.scope,
   emitDuration: number
 ): RBXScriptConnection?
-  if not clone.IsLoaded then
+  if clone.SoundId ~= "" and not clone.IsLoaded then
     local waited = 0
 
     while not clone.IsLoaded and waited < LOAD_TIMEOUT and clone.Parent do

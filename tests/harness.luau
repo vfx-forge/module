@@ -89,6 +89,28 @@ do
   }
 end
 
+-- logger.warn resolves the bare warn global when it is called, and lune hands a
+-- chunk the globals as they stood when that chunk was first required, so the
+-- hook has to be in place here, before any spec pulls in a module that warns.
+-- the swap is a stable function and the capture list behind it is what moves
+local warnings: { string }? = nil
+
+do
+  local passThrough = warn
+
+  -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+  warn = function(...)
+    local list = warnings
+
+    if list then
+      table.insert(list, (...))
+      return
+    end
+
+    passThrough(...)
+  end
+end
+
 --------------------------------------------------------------------------------
 -- tiniest pin
 --------------------------------------------------------------------------------
@@ -235,6 +257,20 @@ function harness.expect(actual: any)
       assert(actual, `expected truthy, got {tostring(actual)}`)
     end,
   }
+end
+
+-- runs fn with everything logger.warn writes collected instead of printed, so a
+-- spec can pin a path that must not warn
+function harness.captureWarnings(fn: () -> ()): { string }
+  local captured = {}
+  warnings = captured
+
+  local ok, err = pcall(fn)
+  warnings = nil
+
+  assert(ok, tostring(err))
+
+  return captured
 end
 
 function harness.suite(fn: () -> ())

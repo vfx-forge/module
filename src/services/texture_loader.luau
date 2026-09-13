@@ -2,13 +2,12 @@ local CollectionService = game:GetService("CollectionService")
 
 local ObjectCache = require("@obj/ObjectCache")
 
-local types = require("@root/types")
 local utility = require("@mod/utility")
 local flipbook_common = require("@mod/common/flipbook")
 
 local texture_loader = {}
 
-function texture_loader.init(scope: types.scope)
+function texture_loader.init(scope: { any })
   local template = Instance.new("Decal")
 
   local parent = Instance.new("Part")

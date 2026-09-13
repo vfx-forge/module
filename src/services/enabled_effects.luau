@@ -2,14 +2,13 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
-local types = require("@root/types")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 
 local enabled_effects = {}
 
-function enabled_effects.init(scope: types.scope, shared_part_cache: any, effects_service: any)
+function enabled_effects.init(scope: { any }, shared_part_cache: any, effects_service: any)
   local enabledScopes = {}
   local ancestryConnections: { [Instance]: RBXScriptConnection } = {}
 
@@ -20,6 +19,7 @@ function enabled_effects.init(scope: types.scope, shared_part_cache: any, effect
       utility.cleanupScope(effectScope)
     end
 
+    utility.setEnabledCancelToken(obj, nil)
     enabledScopes[obj] = nil
   end
 
@@ -117,6 +117,7 @@ function enabled_effects.init(scope: types.scope, shared_part_cache: any, effect
         )
       else
         utility.cleanupScope(tempScope)
+        utility.setEnabledCancelToken(obj, nil)
       end
     end
 
