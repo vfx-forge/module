@@ -138,8 +138,8 @@ end
 -- pair: a pair names a box, and a size drawn inside it keeps its own
 -- proportions, where one alpha would only ever scale a copy of the same shape.
 -- two endpoints name a segment instead, so a RayValue randomizer child and an
--- authored one keep drawing along it, exactly as src/effects/randomizer.luau
--- still does for the same data.
+-- authored one keep drawing along it, exactly as the legacy randomizer always
+-- did for the same data.
 --
 -- both ends have to resolve to vectors, because evaluate's per-component branch
 -- needs two to interpolate between. resolved rather than read raw, so a var

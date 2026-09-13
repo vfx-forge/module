@@ -7,8 +7,6 @@ local Screen = require("@vfx/screen")
 local Particle = require("@vfx/particle")
 local Lightning = require("@vfx/lightning")
 local CameraShake = require("@vfx/camera_shake")
-local Tweener = require("@vfx/tweener")
-local Randomizer = require("@vfx/randomizer")
 local ShockwaveRing = require("@vfx/shockwave_ring")
 local ShockwaveLine = require("@vfx/shockwave_line")
 local ShockwaveDebris = require("@vfx/shockwave_debris")
@@ -21,6 +19,8 @@ local value = require("@mod/value")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local modifiers = require("@mod/modifiers")
+local legacy_mods = require("@mod/legacy_mods")
 
 local Promise = require("@pkg/Promise")
 
@@ -30,28 +30,6 @@ local Promise = require("@pkg/Promise")
 local MAX_WRITE_FAILURES = 3
 
 local emitters = {}
-
-local function processRandomizers(obj: Instance, scope: types.scope)
-  local r_prop = obj:QueryDescendants(`> RayValue.{utility.PROPERTY_RANDOMIZER_TAG}`)
-  local r_attr = obj:QueryDescendants(`> RayValue.{utility.ATTRIBUTE_RANDOMIZER_TAG}`)
-
-  -- allow emitting the randomizer directly
-  if obj:IsA("RayValue") then
-    if obj:HasTag(utility.PROPERTY_RANDOMIZER_TAG) then
-      table.insert(r_prop, obj)
-    elseif obj:HasTag(utility.ATTRIBUTE_RANDOMIZER_TAG) then
-      table.insert(r_attr, obj)
-    end
-  end
-
-  for _, obj in r_prop do
-    utility.try(`failed to emit property randomizer with error: %s`, Randomizer.emit, obj, scope, false)
-  end
-
-  for _, obj in r_attr do
-    utility.try(`failed to emit attribute randomizer with error: %s`, Randomizer.emit, obj, scope, true)
-  end
-end
 
 local function writeTarget(obj: Instance, source: string, name: string, v: any)
   if source == "property" then
@@ -75,8 +53,8 @@ local function currentOf(obj: Instance, source: string, name: string): any
   return if ok then current else nil
 end
 
--- the same bail the legacy tweener makes before it drives anything: a property
--- whose current value is a different type will never accept the write
+-- a property whose current value is a different type will never accept the
+-- write
 local function canDrive(obj: Instance, source: string, name: string, v: any): boolean
   if source ~= "property" then
     return true
@@ -85,14 +63,13 @@ local function canDrive(obj: Instance, source: string, name: string, v: any): bo
   return typeof(currentOf(obj, source, name)) == typeof(v)
 end
 
--- a legacy RayValue child carried a ResetOnFinish flag, default true, and both
--- effects that played one restored on finish: the tweener to its authored
--- _START_VALUE when it had one and otherwise to the value the target held at
--- emit time, the randomizer always to that pre-drive value. legacy_mods lifts
--- the flag onto its modifiers as `reset`, and those two collapse to one rule.
--- a queue authored in the modifier panel carries no `reset` at all and gets no
--- restore, because the panel presents a modifier as what the value IS, and
--- there is no per-modifier control there to say otherwise
+-- a legacy RayValue child carried a ResetOnFinish flag, default true, and the
+-- target went back on finish: a tween to its authored _START_VALUE when it had
+-- one and otherwise to the value the target held at emit time, a randomizer
+-- always to that pre-drive value. legacy_mods lifts the flag onto its entries
+-- as `reset`, and those two collapse to one rule. a queue authored in the
+-- modifier panel carries no `reset` at all and gets no restore, because the
+-- panel presents a modifier as what the value IS
 local function resetTo(queue: { any }, snapshot: any): (boolean, any)
   local wants = false
   local restore = snapshot
@@ -111,6 +88,166 @@ local function resetTo(queue: { any }, snapshot: any): (boolean, any)
   return wants, restore
 end
 
+-- the clock the applier falls back to when no modifier on a queue names a
+-- duration of its own. no forge schema authors a bare Duration as an effect
+-- clock, but a legacy tweener RayValue carries one as its own span, stored as
+-- a NumberRange that collapses to Min. the read is soft because a fallback is
+-- not authored data and must never be stamped onto a dispatched instance
+local function fallbackDuration(obj: Instance): number
+  return attr.get(obj, "Duration", 1, true, function(v)
+    if typeof(v) == "NumberRange" and v.Min > 0 then
+      return v.Min
+    end
+
+    if typeof(v) == "number" and v > 0 then
+      return v
+    end
+
+    return 1
+  end)
+end
+
+-- the speed ramp a legacy tween child carried, as a multiplier on the clock
+-- the timer counts. it runs on wall time the way the child's own speed tween
+-- did, beside the tween it scales
+local function speedOf(queue: { any }): ((wall: number) -> number)?
+  for _, m in queue do
+    local ramp = m.speed
+
+    if type(ramp) ~= "table" then
+      continue
+    end
+
+    return function(wall: number): number
+      local progress = if ramp.duration > 0 then math.clamp(wall / ramp.duration, 0, 1) else 1
+      return utility.lerp(ramp.start, ramp.finish, modifiers.alphaFromCurve(ramp.curve, progress))
+    end
+  end
+
+  return nil
+end
+
+-- drives one queue on one target as a child effect of the same emit, so the
+-- emit stays open while the driver runs and a clear stops it with everything
+-- else. `duration` is the clock the queue falls back to when nothing in it
+-- names one
+local function drive(
+  target: Instance,
+  source: string,
+  name: string,
+  queue: { any },
+  scope: types.scope,
+  duration: number
+)
+  local rolls = mods.roll(queue)
+  local span, linked = mods.span(queue, duration, rolls)
+  local sample = mods.sampler(target, source, name, span, queue, rolls, linked)
+
+  if sample == nil then
+    return
+  end
+
+  local first = sample(0)
+
+  if first ~= nil and not canDrive(target, source, name, first) then
+    return
+  end
+
+  local wants, restore = resetTo(queue, currentOf(target, source, name))
+  local speedAt = speedOf(queue)
+
+  local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
+
+  lifetime.run(fx, function(driver)
+    local failures = 0
+    local wall = 0
+
+    tween.timer(span, function(deltaTime, elapsed)
+      wall += deltaTime
+
+      local v = sample(elapsed)
+
+      if v ~= nil and not pcall(writeTarget, target, source, name, v) then
+        failures += 1
+
+        if failures >= MAX_WRITE_FAILURES then
+          logger.warn(`stopped driving {name} on {target:GetFullName()} after {failures} failed writes`)
+          return nil
+        end
+      end
+
+      return if speedAt then deltaTime * speedAt(wall) else deltaTime
+    end, nil, driver, utility.RENDER_PRIORITY + driver.depth)
+
+    -- tween.timer yields until its own span is up, so this is the finish and
+    -- nothing races the driver's last write
+    if wants and restore ~= nil then
+      pcall(writeTarget, target, source, name, restore)
+    end
+  end)
+end
+
+-- a randomizer child is applied before the effect it sits under reads its
+-- target, and with `reset` the target goes back on the next frame, after that
+-- effect has read the drawn value. driving it through the timer would do the
+-- same one frame later than the effect needs
+local function applyRandomizer(target: Instance, child: legacy_mods.Child)
+  local queue = child.queue
+  local rolls = mods.roll(queue)
+  local sample = mods.sampler(target, child.source, child.name, 0, queue, rolls, 0)
+
+  if sample == nil then
+    return
+  end
+
+  local drawn = sample(0)
+
+  if drawn == nil or not canDrive(target, child.source, child.name, drawn) then
+    return
+  end
+
+  local wants, restore = resetTo(queue, currentOf(target, child.source, child.name))
+
+  if not pcall(writeTarget, target, child.source, child.name, drawn) then
+    return
+  end
+
+  if wants then
+    task.defer(function()
+      pcall(writeTarget, target, child.source, child.name, restore)
+    end)
+  end
+end
+
+-- the randomizer children directly under an instance, applied before its
+-- effect runs. an instance that is itself a randomizer counts as its own child,
+-- which is how one is emitted on its own
+local function processRandomizers(obj: Instance)
+  local children = obj:GetChildren()
+
+  if obj:IsA("RayValue") then
+    table.insert(children, obj)
+  end
+
+  for _, child in children do
+    if not child:IsA("RayValue") or child:HasTag(utility.SCREENSHAKE_TAG) then
+      continue
+    end
+
+    local read = legacy_mods.readChild(child)
+
+    if read == nil or not read.random then
+      continue
+    end
+
+    local target = utility.getTarget(child)
+
+    if target then
+      applyRandomizer(target, read)
+    end
+  end
+end
+
 -- drives every Forge*Mods_* target on an instance that no effect module claims,
 -- with no effect code written for that target. it only ever sees what
 -- emitters.dispatch is handed, and services/effects.luau's EffectSelectors
@@ -120,16 +257,13 @@ end
 -- Section 3, "Known limitation, recorded 2026-08-01"
 -- `owned` is keyed by source first, then name, because a name alone is not a
 -- target: an instance can carry both a property and an attribute called Scale,
--- which is the ambiguity the two prefixes exist to remove. Returns one promise
--- per driver, which emitters.dispatch waits on.
+-- which is the ambiguity the two prefixes exist to remove
 function emitters.applyMods(
   obj: Instance,
   scope: types.scope,
   duration: number,
   owned: { [string]: { [string]: boolean } }?
-): { any }
-  local drivers = {}
-
+)
   for key in obj:GetAttributes() do
     local source: string? = nil
     local name: string? = nil
@@ -157,63 +291,8 @@ function emitters.applyMods(
       continue
     end
 
-    -- no effect module lends this queue a clock, so it runs to its own far end
-    -- and only falls back when no modifier in it names a duration
-    local rolls = mods.roll(queue)
-    local span, linked = mods.span(queue, duration, rolls)
-    local sample = mods.sampler(obj, source :: string, name :: string, span, queue, rolls, linked)
-
-    if sample == nil then
-      continue
-    end
-
-    local target = name :: string
-    local write = source :: string
-
-    local first = sample(0)
-
-    if first ~= nil and not canDrive(obj, write, target, first) then
-      continue
-    end
-
-    local wants, restore = resetTo(queue, currentOf(obj, write, target))
-
-    table.insert(
-      drivers,
-      Promise.new(function(resolve)
-        -- task.spawn runs inline until the first yield, so the executor returns
-        -- as soon as tween.timer has bound its stepper
-        task.spawn(function()
-          local failures = 0
-
-          tween.timer(span, function(deltaTime, elapsed)
-            local v = sample(elapsed)
-
-            if v ~= nil and not pcall(writeTarget, obj, write, target, v) then
-              failures += 1
-
-              if failures >= MAX_WRITE_FAILURES then
-                logger.warn(`stopped driving {target} on {obj:GetFullName()} after {failures} failed writes`)
-                return nil
-              end
-            end
-
-            return deltaTime
-          end, nil, scope, utility.RENDER_PRIORITY + scope.depth)
-
-          -- tween.timer yields until its own span is up, so this is the finish
-          -- and nothing races the driver's last write
-          if wants and restore ~= nil then
-            pcall(writeTarget, obj, write, target, restore)
-          end
-
-          resolve()
-        end)
-      end)
-    )
+    drive(obj, source :: string, name :: string, queue, scope, duration)
   end
-
-  return drivers
 end
 
 function emitters.particle(
@@ -420,20 +499,24 @@ function emitters.camera_shake(obj: RayValue, scope: types.scope)
   utility.try(`failed to emit camera shake with error: %s`, CameraShake.emit, obj, scope)
 end
 
-function emitters.property_tweener(obj: RayValue, scope: types.scope)
-  if not obj.Parent or lifetime.lock(scope, obj) then
+-- a legacy tween RayValue emitted on its own: the queue it spells drives
+-- whatever it targets, under a lock so two emits of one template cannot drive
+-- the same target twice. a randomizer RayValue is applied by the prologue of
+-- its parent's dispatch and does nothing here
+function emitters.legacy_child(obj: RayValue, scope: types.scope)
+  local read = legacy_mods.readChild(obj)
+
+  if read == nil or read.random then
     return
   end
 
-  utility.try(`failed to emit property tweener with error: %s`, Tweener.emit, obj, scope, false)
-end
+  local target = utility.getTarget(obj)
 
-function emitters.attribute_tweener(obj: RayValue, scope: types.scope)
-  if not obj.Parent or lifetime.lock(scope, obj) then
+  if not target or lifetime.lock(scope, obj) then
     return
   end
 
-  utility.try(`failed to emit attribute tweener with error: %s`, Tweener.emit, obj.Parent, obj, scope, true)
+  drive(target, read.source, read.name, read.queue, scope, fallbackDuration(obj))
 end
 
 function emitters.screen(obj: BasePart, scope: types.scope)
@@ -513,27 +596,8 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
   return nil
 end
 
--- the clock the applier falls back to when no modifier on a queue names a
--- duration of its own. no forge schema authors a bare Duration as an effect
--- clock, but a legacy tweener RayValue carries one as its own span, stored as
--- a NumberRange that collapses to Min. the read is soft because a fallback is
--- not authored data and must never be stamped onto a dispatched instance
-local function fallbackDuration(obj: Instance): number
-  return attr.get(obj, "Duration", 1, true, function(v)
-    if typeof(v) == "NumberRange" and v.Min > 0 then
-      return v.Min
-    end
-
-    if typeof(v) == "number" and v > 0 then
-      return v
-    end
-
-    return 1
-  end)
-end
-
 -- picks the emitter for an instance and calls it. wrapped by emitters.dispatch,
--- which owns the prologue and the wait on the applier's drivers
+-- which owns the prologue
 local function route(
   obj: any, -- since we don't use IsA(...), we don't get type narrowing
   scope: types.scope,
@@ -559,13 +623,8 @@ local function route(
   elseif className == "RayValue" then
     if obj:HasTag(utility.SCREENSHAKE_TAG) then
       emitters.camera_shake(obj, scope)
-    elseif obj:HasTag(utility.ATTRIBUTE_TWEENER_TAG) then
-      emitters.attribute_tweener(obj, scope)
-    elseif obj:HasTag(utility.PROPERTY_RANDOMIZER_TAG) or obj:HasTag(utility.ATTRIBUTE_RANDOMIZER_TAG) then
-    -- skip randomizer effects because they have already been emitted
     else
-      -- fall back to property tweens for backwards compatibility
-      emitters.property_tweener(obj, scope)
+      emitters.legacy_child(obj, scope)
     end
 
     return
@@ -623,14 +682,10 @@ local function route(
   end
 end
 
--- Dispatch function to determine which emitter to use and call it.
---
--- The wait at the end is load bearing. This is the whole body of an effect
--- record, which releases everything it holds the moment this returns, and the
--- applier only spawns its drivers, so without it a driver lives exactly as
--- long as the effect module happens to yield. Effects that never yield (trail
--- is one line, screen is another) tore their drivers down before a single
--- frame, and the applier's reset on finish could not fire anywhere.
+-- picks the emitter for an instance and calls it, after the randomizer
+-- children under it have drawn and the queues on it have started. a driver is
+-- an effect of the same emit, so nothing here has to wait for it: the emit
+-- stays open until the last driver ends
 function emitters.dispatch(
   obj: any,
   scope: types.scope,
@@ -641,17 +696,11 @@ function emitters.dispatch(
 )
   local className = obj.ClassName
 
-  processRandomizers(obj, scope)
+  processRandomizers(obj)
 
-  local drivers = emitters.applyMods(obj, scope, fallbackDuration(obj), ownedFor(obj, className))
+  emitters.applyMods(obj, scope, fallbackDuration(obj), ownedFor(obj, className))
 
   route(obj, scope, sharedUncMap, sharedRefMap, shared_part_cache, legacyScale)
-
-  -- the effect module above has already run, so anything still going is a
-  -- driver outliving it rather than one waiting its turn
-  if #drivers > 0 then
-    Promise.all(drivers):await()
-  end
 end
 
 -- Registry for enabled effects (effects that emit continuously)
