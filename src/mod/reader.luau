@@ -60,59 +60,62 @@ end
 type Lookup = (ref: Instance, source: string, name: string) -> { any }?
 
 -- the old spellings of a row, after its own name has already missed. walked in
--- place rather than gathered into a table the row would pay for on every read
-local function aliasOf(look: Lookup, ref: Instance, source: string, row: knob.Knob): { any }?
+-- place rather than gathered into a table the row would pay for on every read.
+-- the second return is the spelling it answered under
+local function aliasOf(look: Lookup, ref: Instance, source: string, row: knob.Knob): ({ any }?, string?)
   for _, alias in row.names do
     local queue = look(ref, source, alias)
 
     if queue ~= nil then
-      return queue
+      return queue, alias
     end
   end
 
-  return nil
+  return nil, nil
 end
 
 -- the queue a row carries, looked for under its name and then each alias: any
 -- framed queue first, on the row's own side and then, for a property row, on
 -- the attribute side old content authored on; then the old shapes, looked for
 -- on the row's own side and then, for a property row, on the attribute side
--- old content authored on
-local function queueOf(ref: Instance, source: string, name: string, row: knob.Knob): ({ any }?, boolean)
+-- old content authored on. the third return is the alias it was found under,
+-- which is the name the base behind it is stored under too
+local function queueOf(ref: Instance, source: string, name: string, row: knob.Knob): ({ any }?, boolean, string?)
   local aliased = row.names[1] ~= nil
   local queue = mods.framed(ref, source, name)
+  local under: string? = nil
 
   if queue == nil and aliased then
-    queue = aliasOf(mods.framed, ref, source, row)
+    queue, under = aliasOf(mods.framed, ref, source, row)
   end
 
   if queue == nil and source == "property" then
     queue = mods.framed(ref, "attribute", name)
 
     if queue == nil and aliased then
-      queue = aliasOf(mods.framed, ref, "attribute", row)
+      queue, under = aliasOf(mods.framed, ref, "attribute", row)
     end
   end
 
   if queue ~= nil then
-    return queue, true
+    return queue, true, under
   end
 
   queue = legacy_mods.read(ref, source, name)
 
   if queue == nil and aliased then
-    queue = aliasOf(legacy_mods.read, ref, source, row)
+    queue, under = aliasOf(legacy_mods.read, ref, source, row)
   end
 
   if queue == nil and source == "property" then
     queue = legacy_mods.read(ref, "attribute", name)
 
     if queue == nil and aliased then
-      queue = aliasOf(legacy_mods.read, ref, "attribute", row)
+      queue, under = aliasOf(legacy_mods.read, ref, "attribute", row)
     end
   end
 
-  return queue, false
+  return queue, false, under
 end
 
 local function usableDuration(d: any): number
@@ -213,7 +216,12 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
         got = want
       end
 
-      if got ~= want then
+      -- a range stored on a scalar mod row is the randomizer queueOf reads
+      -- under the same name, so the row rests at its own fallback and the draw
+      -- comes from the range rather than from a warning
+      if row.isMod and want == "number" and got == "NumberRange" then
+        v = fallbackOf(row, base)
+      elseif got ~= want then
         mods.warnOnce(ctx.ref, name, `{name} holds a {got} where {module.id} wants a {want}`)
         v = fallbackOf(row, base)
       end
@@ -231,7 +239,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
   end
 
   local function trackOf(source: string, name: string, row: knob.Knob, rest: any, seeded: boolean, span: number): Track
-    local queue, framed = queueOf(ctx.ref, source, name, row)
+    local queue, framed, under = queueOf(ctx.ref, source, name, row)
 
     -- an existing queue, even an empty one or one that only waits, means the
     -- author owns the row: it is a tombstone, deliberately silencing even the
@@ -252,7 +260,9 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     end
 
     local opts = if seeded then { ownStart = true } else nil
-    local inner = mods.build(ctx.ref, source, name, default, span, nil, queue, framed, opts)
+    -- built under the name the queue was found under, since that is where the
+    -- value it chains from and the range it draws inside are stored too
+    local inner = mods.build(ctx.ref, source, under or name, default, span, nil, queue, framed, opts)
 
     local track = {
       at = inner.at,

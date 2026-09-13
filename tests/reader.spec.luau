@@ -293,6 +293,35 @@ harness.suite(function()
       expect(attrs.NewName.animated).toBe(true)
     end)
 
+    test("a queue found under an alias chains from the value stored under that alias", function()
+      local obj = Instance.new("Part")
+      obj:SetAttribute("Length_Scale", 2)
+      framed(obj, "attribute", "Length_Scale", { { kind = "tween", chain = true, finish = value.lit(5) } })
+
+      local attrs = reader.resolve(module({ LengthScale = knob(1):aliases("Length_Scale"):mod() }), ctxFor(obj))
+      local track = attrs.LengthScale
+
+      expect(track.animated).toBe(true)
+      expect(near(track.at(0), 2)).toBe(true)
+      expect(near(track.at(track.duration), 5)).toBe(true)
+    end)
+
+    test("a range stored on a scalar mod row draws inside it and warns about nothing", function()
+      local obj = Instance.new("Part")
+      obj:SetAttribute("Speed", NumberRange.new(2, 3))
+
+      local m = module({ Speed = knob(1):mod() })
+
+      local warnings = harness.captureWarnings(function()
+        local drawn = reader.resolve(m, ctxFor(obj)).Speed.at(0)
+
+        expect(typeof(drawn)).toBe("number")
+        expect(drawn >= 2 and drawn <= 3).toBe(true)
+      end)
+
+      expect(#warnings).toBe(0)
+    end)
+
     test("an old quad folds in, and a half quad is completed from the row's state", function()
       local obj = Instance.new("Part")
       obj:SetAttribute("A_Start", 1)
