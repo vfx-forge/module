@@ -1,3 +1,4 @@
+local attr = require("@mod/attributes")
 local value = require("@mod/value")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
@@ -105,6 +106,15 @@ harness.suite(function()
     expect(queue[1].curve).toBe(curves.linear())
   end)
 
+  -- a curve is a binary string, which an instance under this harness cannot hold
+  -- as an attribute. the cache carries raw values and every reader looks there
+  -- first, so it is the one place a spec can author one
+  local function setCurve(obj: Instance, name: string, curve: string)
+    obj:SetAttribute(name, "")
+    attr.cache(obj)
+    attr.set(obj, name, curve)
+  end
+
   local function tweenChild(name: string)
     local child = Instance.new("RayValue")
     child.Name = name
@@ -194,5 +204,52 @@ harness.suite(function()
 
   test("readChild refuses anything but a RayValue", function()
     expect(legacy_mods.readChild(Instance.new("Part") :: any)).toBe(nil)
+  end)
+
+  test("a cached RayValue child still reads as a queue", function()
+    local child = tweenChild("Transparency")
+    child:AddTag("AttributeTweener")
+    attr.cache(child)
+
+    expect(child:GetAttribute("_START_VALUE")).toBe(nil)
+
+    local read = legacy_mods.readChild(child)
+
+    expect(read.source).toBe("attribute")
+    expect(read.name).toBe("Transparency")
+    expect(read.random).toBe(false)
+    expect(read.queue[1].kind).toBe("tween")
+    expect(read.queue[1].duration).toBe(2)
+    expect(read.queue[1].start.v).toBe(0)
+    expect(read.queue[1].finish.v).toBe(10)
+  end)
+
+  test("a curve alone is a quad with both halves missing", function()
+    local obj = Instance.new("Attachment")
+    setCurve(obj, "Width_Curve", curves.linear())
+
+    local queue = legacy_mods.read(obj, "attribute", "Width")
+
+    expect(#queue).toBe(1)
+    expect(queue[1].partial).toBe("both")
+    expect(queue[1].curve).toBe(curves.linear())
+
+    local done = legacy_mods.complete(queue, value.lit(1), value.lit(2))
+
+    expect(done[1].partial).toBe(nil)
+    expect(done[1].start.v).toBe(1)
+    expect(done[1].finish.v).toBe(2)
+  end)
+
+  test("a curve alone never shadows a RayValue child", function()
+    local obj = Instance.new("Part")
+    setCurve(obj, "Width_Curve", curves.linear())
+    tweenChild("Width").Parent = obj
+
+    local queue = legacy_mods.read(obj, "property", "Width")
+
+    expect(#queue).toBe(1)
+    expect(queue[1].kind).toBe("tween")
+    expect(queue[1].partial).toBe(nil)
   end)
 end)

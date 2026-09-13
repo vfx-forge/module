@@ -1,3 +1,4 @@
+local attr = require("@mod/attributes")
 local value = require("@mod/value")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
@@ -59,7 +60,7 @@ legacy_mods.ALIASES = {
 }
 
 function legacy_mods.alias(ref: Instance, name: string, default: any): any
-  local v = ref:GetAttribute(name)
+  local v = attr.get(ref, name, nil, true)
 
   if v ~= nil then
     return v
@@ -69,7 +70,7 @@ function legacy_mods.alias(ref: Instance, name: string, default: any): any
 
   if olds then
     for _, old in olds do
-      v = ref:GetAttribute(old)
+      v = attr.get(ref, old, nil, true)
 
       if v ~= nil then
         return v
@@ -181,6 +182,9 @@ function legacy_mods.complete(queue: { any }, fillStart: value.Value?, fillFinis
     m.start = fillStart
   elseif m.partial == "finish" then
     m.finish = fillFinish
+  elseif m.partial == "both" then
+    m.start = fillStart
+    m.finish = fillFinish
   end
 
   m.partial = nil
@@ -192,8 +196,8 @@ end
 -- the clock the tween counts, which the applier honours. carried only when it
 -- does something, so an ordinary child stays a plain tween entry
 local function speedOf(child: Instance): { start: number, finish: number, duration: number, curve: string | buffer }?
-  local startV = child:GetAttribute("Speed_Start")
-  local finishV = child:GetAttribute("Speed_End")
+  local startV = attr.get(child, "Speed_Start", nil, true)
+  local finishV = attr.get(child, "Speed_End", nil, true)
 
   if typeof(startV) ~= "number" then
     startV = 1
@@ -207,7 +211,7 @@ local function speedOf(child: Instance): { start: number, finish: number, durati
     return nil
   end
 
-  local duration = child:GetAttribute("Speed_Duration")
+  local duration = attr.get(child, "Speed_Duration", nil, true)
 
   if typeof(duration) ~= "number" then
     duration = 0.1
@@ -217,23 +221,23 @@ local function speedOf(child: Instance): { start: number, finish: number, durati
     start = startV,
     finish = finishV,
     duration = duration,
-    curve = curveOf(child:GetAttribute("Speed_Curve")) or curves.default(),
+    curve = curveOf(attr.get(child, "Speed_Curve", nil, true)) or curves.default(),
   }
 end
 
 -- one RayValue child as queue entries: a randomizer is one entry; a tween is
 -- one entry, led by a delay when it authored one
 local function entriesOf(child: Instance): { any }
-  local reset = resetOf(child:GetAttribute("ResetOnFinish"))
+  local reset = resetOf(attr.get(child, "ResetOnFinish", nil, true))
 
   if isRandomizer(child) then
     return {
       {
         kind = "randomizer",
         chain = false,
-        start = litOrNil(child:GetAttribute("_START_VALUE")),
-        finish = litOrNil(child:GetAttribute("_END_VALUE")),
-        weight = curveOf(child:GetAttribute("Weight_Curve")) or curves.linear(),
+        start = litOrNil(attr.get(child, "_START_VALUE", nil, true)),
+        finish = litOrNil(attr.get(child, "_END_VALUE", nil, true)),
+        weight = curveOf(attr.get(child, "Weight_Curve", nil, true)) or curves.linear(),
         reset = reset,
       },
     }
@@ -241,7 +245,7 @@ local function entriesOf(child: Instance): { any }
 
   local out = {}
 
-  local emitDelay = child:GetAttribute("EmitDelay")
+  local emitDelay = attr.get(child, "EmitDelay", nil, true)
 
   if typeof(emitDelay) == "number" and emitDelay > 0 then
     table.insert(out, { kind = "delay", chain = false, wait = value.lit(emitDelay) })
@@ -250,10 +254,10 @@ local function entriesOf(child: Instance): { any }
   table.insert(out, {
     kind = "tween",
     chain = false,
-    duration = durationOf(child:GetAttribute("Duration")),
-    start = litOrNil(child:GetAttribute("_START_VALUE")),
-    finish = litOrNil(child:GetAttribute("_END_VALUE")),
-    curve = curveOf(child:GetAttribute("Easing_Curve")) or curves.linear(),
+    duration = durationOf(attr.get(child, "Duration", nil, true)),
+    start = litOrNil(attr.get(child, "_START_VALUE", nil, true)),
+    finish = litOrNil(attr.get(child, "_END_VALUE", nil, true)),
+    curve = curveOf(attr.get(child, "Easing_Curve", nil, true)) or curves.linear(),
     speed = speedOf(child),
     reset = reset,
   })
@@ -368,22 +372,22 @@ function legacy_mods.readRange(ref: Instance, source: string, name: string): { a
     return nil
   end
 
-  local range = ref:GetAttribute(name)
+  local range = attr.get(ref, name, nil, true)
 
   if typeof(range) == "NumberRange" then
     return { { kind = "randomizer", chain = false, start = value.lit(range.Min), finish = value.lit(range.Max) } }
   end
 
-  local min = ref:GetAttribute(`{name}_Min`)
-  local max = ref:GetAttribute(`{name}_Max`)
+  local min = attr.get(ref, `{name}_Min`, nil, true)
+  local max = attr.get(ref, `{name}_Max`, nil, true)
 
   -- the prefixed spelling is tried unless the underscore pair reads WHOLE. half
   -- of a pair says nothing on its own, and gating this on "neither half is
   -- there" would let one stray Size_Max suppress a complete MinSize and MaxSize,
   -- which is the spelling every shockwave in the wild actually carries
   if min == nil or max == nil then
-    min = ref:GetAttribute(`Min{name}`)
-    max = ref:GetAttribute(`Max{name}`)
+    min = attr.get(ref, `Min{name}`, nil, true)
+    max = attr.get(ref, `Max{name}`, nil, true)
   end
 
   -- half a pair cannot say what the other half was, and that default belongs to
@@ -395,14 +399,38 @@ function legacy_mods.readRange(ref: Instance, source: string, name: string): { a
   return { { kind = "randomizer", chain = false, start = value.lit(min), finish = value.lit(max), perComponent = true } }
 end
 
+-- a curve authored with neither end of its quad. it eases whatever ramp the
+-- effect would have run by default, so both halves are left for mods.track to
+-- fill; it says nothing about a constant knob, which mods.track decides
+function legacy_mods.readCurve(ref: Instance, _source: string, name: string): { any }?
+  local curveV = curveOf(legacy_mods.alias(ref, `{name}_Curve`, nil))
+
+  if curveV == nil then
+    return nil
+  end
+
+  return {
+    {
+      kind = "tween",
+      chain = false,
+      duration = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil)),
+      curve = curveV,
+      partial = "both",
+    },
+  }
+end
+
 function legacy_mods.read(ref: Instance, source: string, name: string): { any }?
   local ok, result = pcall(function()
     -- range last: it is the broadest of the three shapes, matching on a single
     -- attribute named exactly for the row, so it must not shadow a quad or a
-    -- RayValue child that says something more specific
+    -- RayValue child that says something more specific. the curve-only shape
+    -- trails even range, because a curve with no value behind it is the least
+    -- specific thing an author can have left
     return legacy_mods.readQuad(ref, source, name)
       or legacy_mods.readChildren(ref, source, name)
       or legacy_mods.readRange(ref, source, name)
+      or legacy_mods.readCurve(ref, source, name)
   end)
 
   if not ok then

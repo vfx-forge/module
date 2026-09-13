@@ -43,7 +43,7 @@ end
 -- as nil and every caller treats that as "nothing there"
 local function currentOf(obj: Instance, source: string, name: string): any
   if source ~= "property" then
-    return obj:GetAttribute(name)
+    return attr.get(obj, name, nil, true)
   end
 
   local ok, current = pcall(function()
@@ -276,7 +276,7 @@ function emitters.applyMods(
   duration: number,
   owned: { [string]: { [string]: boolean } }?
 )
-  for key in obj:GetAttributes() do
+  for _, key in attr.keys(obj) do
     local source: string? = nil
     local name: string? = nil
 

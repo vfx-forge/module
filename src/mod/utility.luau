@@ -756,7 +756,7 @@ end
 
 -- every queue on an instance, for a rewrite that applies to all of them alike
 function utility.rescaleQueues(obj: Instance, edit: (queue: { any }) -> ())
-  for key in obj:GetAttributes() do
+  for _, key in attr.keys(obj) do
     for source, prefix in mods.PREFIX do
       if string.sub(key, 1, #prefix) == prefix then
         utility.rescaleQueue(obj, source, string.sub(key, #prefix + 1), edit)

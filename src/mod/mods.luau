@@ -1,3 +1,4 @@
+local attr = require("@mod/attributes")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
@@ -86,7 +87,7 @@ end
 -- asking whether anything is authored here has to tell it apart from an absent
 -- attribute, which mods.read cannot once it has fallen through
 function mods.framed(ref: Instance, source: string, name: string): { any }?
-  local raw = ref:GetAttribute(mods.attrName(source, name))
+  local raw = attr.get(ref, mods.attrName(source, name), nil, true)
 
   if not frame.isFramed(raw) then
     return nil
@@ -123,7 +124,7 @@ end
 -- the value a target already carries, which is what a base entry resolves to
 local function baseOf(ref: Instance, source: string, name: string): any
   if source ~= "property" then
-    return ref:GetAttribute(name)
+    return attr.get(ref, name, nil, true)
   end
 
   local ok, current = pcall(function()
@@ -468,6 +469,13 @@ function mods.track(
   -- a half quad is completed from the default, which is the effect's own and is
   -- exactly what the legacy branch would have read for the missing half
   if #queue == 1 and queue[1].partial then
+    -- a curve alone can only ease a ramp. a constant default has no ramp and a
+    -- drawn default is not a tween, so the curve is dropped as the old arms
+    -- dropped it for those knobs
+    if queue[1].partial == "both" and (fallback == nil or fallback[1].kind ~= "tween") then
+      return resting()
+    end
+
     queue = legacy_mods.complete(queue, fillStart, fillFinish)
   end
 

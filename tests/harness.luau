@@ -60,6 +60,40 @@ do
   }
 end
 
+-- @mod/attributes asks RunService and the script's ancestry for its context
+-- once at load; under lune the answer is "a plain client", which is also the
+-- context where a write-back must never happen
+-- selene: allow(unscoped_variables, incorrect_standard_library_use)
+do
+  local runService = {
+    IsServer = function()
+      return false
+    end,
+    IsStudio = function()
+      return false
+    end,
+    IsRunning = function()
+      return false
+    end,
+  }
+
+  game = {
+    GetService = function(_, name: string)
+      if name == "RunService" then
+        return runService
+      end
+
+      error(`the test harness has no stand-in for {name}`)
+    end,
+  }
+
+  script = {
+    FindFirstAncestorOfClass = function()
+      return nil
+    end,
+  }
+end
+
 -- Random is absent under lune outright: @lune/roblox exposes none and there is
 -- no bare global either. mods.roll builds its own rather than taking a seam, so
 -- everything downstream of it, which is mods.driver and every effect, is

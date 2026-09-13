@@ -1,7 +1,9 @@
+local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
+local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local test, expect = harness.test, harness.expect
 local Vector3 = harness.datatypes.Vector3
@@ -28,6 +30,15 @@ local function authored(name: string, queue: { any })
   obj:SetAttribute(mods.attrName("attribute", name), frame.frame(codec.encode({ v = 1, queue = queue })))
 
   return obj
+end
+
+-- a curve is a binary string, which an instance under this harness cannot hold
+-- as an attribute. the cache carries raw values and every reader looks there
+-- first, so it is the one place a spec can author one
+local function setCurve(obj: Instance, name: string, curve: string)
+  obj:SetAttribute(name, "")
+  attr.cache(obj)
+  attr.set(obj, name, curve)
 end
 
 harness.suite(function()
@@ -169,5 +180,50 @@ harness.suite(function()
     expect(track.span).toBe(2)
     expect(near(track.at(0), 1)).toBe(true)
     expect(near(track.at(2), 3)).toBe(true)
+  end)
+
+  test("a cached instance still answers its legacy quad", function()
+    local obj = Instance.new("Attachment")
+    obj:SetAttribute("Width_Start", 2)
+    obj:SetAttribute("Width_End", 8)
+    attr.cache(obj)
+
+    expect(obj:GetAttribute("Width_Start")).toBe(nil)
+
+    local track = mods.track(obj, "attribute", "Width", 1, 1)
+
+    expect(track.animated).toBe(true)
+    expect(track.at(0)).toBe(2)
+    expect(track.at(1)).toBe(8)
+  end)
+
+  test("a cached instance still answers its framed queue", function()
+    local obj = authored("Width", { tween(0, 4, 1) })
+    attr.cache(obj)
+
+    local track = mods.track(obj, "attribute", "Width", 1, 1)
+
+    expect(track.animated).toBe(true)
+    expect(track.at(1)).toBe(4)
+  end)
+
+  test("a curve alone eases the default ramp", function()
+    local obj = Instance.new("Attachment")
+    setCurve(obj, "Width_Curve", curves.linear())
+
+    local track = mods.track(obj, "attribute", "Width", mods.ramp(0, 10), 1)
+
+    expect(track.animated).toBe(true)
+    expect(near(track.at(0.5), 5)).toBe(true)
+  end)
+
+  test("a curve alone leaves a constant default alone", function()
+    local obj = Instance.new("Attachment")
+    setCurve(obj, "Width_Curve", curves.linear())
+
+    local track = mods.track(obj, "attribute", "Width", 3, 1)
+
+    expect(track.animated).toBe(false)
+    expect(track.at(0)).toBe(3)
   end)
 end)
