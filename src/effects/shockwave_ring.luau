@@ -98,12 +98,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     legacy_mods.alias(ref, "SizeScaleIn_Duration", 0.5)
   )
 
-  -- the fade a segment runs after its dwell: from where the transparency rests
-  -- to where it ends, over its own clock
-  local transparency = mods.track(ref, "attribute", "Transparency", 0, tpDuration)
-
   local offsetInStart = offsetIn.at(0)
-  local tpStart = transparency.at(0)
 
   -- a phase that starts where it already ends has nothing to do. an authored
   -- queue is taken at its word
@@ -208,9 +203,11 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     part.Material = result.Material
     part.Transparency = result.Instance.Transparency
 
-    if part.Transparency == 0 then
-      part.Transparency = tpStart
-    end
+    -- the fade a segment runs after its dwell starts from where this segment's
+    -- transparency rests, which a segment that inherits its hit surface knows
+    -- only now. an authored queue is taken at its word
+    local transparency = mods.track(ref, "attribute", "Transparency", mods.ramp(part.Transparency, 0), tpDuration)
+    part.Transparency = transparency.at(0)
 
     part.Size = Vector3.zero
 

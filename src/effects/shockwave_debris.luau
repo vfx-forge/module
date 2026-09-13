@@ -128,10 +128,6 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   local tpDuration = attr.get(ref, "Transparency_Duration", 0.5, true)
 
-  -- debris fades out by default, which is what its two old defaults spelled
-  local transparency = mods.track(ref, "attribute", "Transparency", mods.ramp(0, 1), tpDuration)
-  local tpStart = transparency.at(0)
-
   local partData = {}
   local promises = {}
 
@@ -227,8 +223,15 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
       part.Color = iref.Color
       part.Transparency = iref.Transparency
     else
-      part.Transparency = tpStart
+      part.Transparency = 0
     end
+
+    -- the fade a piece runs after its dwell starts from where this piece's
+    -- transparency rests, which a piece that inherits its hit surface knows
+    -- only now. debris fades all the way out by default, which is what its two
+    -- old defaults spelled. an authored queue is taken at its word
+    local transparency = mods.track(ref, "attribute", "Transparency", mods.ramp(part.Transparency, 1), tpDuration)
+    part.Transparency = transparency.at(0)
 
     lifetime.hold(scope, function()
       local index = table.find(physicsParts, realPart)
