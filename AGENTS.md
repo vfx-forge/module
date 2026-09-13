@@ -15,7 +15,9 @@ Follow this whether you are changing code here directly or preparing a PR. Code 
 | `src/effects/` | One module per effect (`beam`, `lightning`, `shockwave_ring`, ...) |
 | `src/mod/` | Plain-table helper namespaces (`tween`, `lerp`, `logger`, `attributes`) |
 | `src/mod/lifetime.luau` | Emit and effect records: `hold`, `defer`, `lock`, `run`, `clear`, `await`. Effects file resources through `lifetime.hold(scope, x)`, never `table.insert(scope, x)` |
-| `src/mod/mods.luau` | Modifier queues. `mods.track(ref, source, name, default, span)` is the only way an effect reads an animated knob; never `attr.get` a `_Start`, `_End` or `_Curve` key in an effect. `legacy_mods` reads the old attribute format and owns every quirk of it (`ALIASES`, `CURVES`, `DRAWN_RANGES`) |
+| `src/mod/mods.luau` | Modifier queues. `mods.build` turns a queue into a Track; `mods.track` is the read-and-build an unconverted effect still calls. `legacy_mods` reads the old attribute format and owns every quirk of it (`ALIASES`, `CURVES`, `SPANS`, `DRAWN_RANGES`) |
+| `src/mod/knob.luau`, `src/mod/mod.luau` | Row and default-modifier builders an effect module declares its rows with: `knob(x)` chained `min max aliases options label hint curve unit hidden readonly mod`; `mod.from(a)` / `mod.to(b)` chained `duration curve start` |
+| `src/mod/registry.luau`, `src/mod/reader.luau` | The effect registry (`register get list of scan read source`) and the reader that resolves a module's rows into one frozen `attrs, props` pair per emit |
 | `src/mod/common/` | Pure helpers with no engine access, requirable under lune |
 | `src/obj/` | Class modules with metatables (`Bezier`, `ObjectCache`) |
 | `src/services/` | Long-lived services (`effects`, `caches`, `texture_loader`) |
@@ -65,7 +67,8 @@ Build with `rojo-build-noalias -o output.rbxm`. The TypeScript surface (`index.d
 - **Sort interchangeable siblings by identifier length, ascending, within each blank-line group.** Governs requires and flat lists. It does not override semantic order: `scaleStart` still precedes `scaleEnd`.
 - **Naming:** `snake_case` files and object internals, `camelCase` locals and functions and config fields, `PascalCase` class modules and exported types and public API fields, `UPPER_CASE` constants.
 - **No em or en dashes anywhere**, in code, comments, or docs. This includes ` -- ` used as a prose dash. Rewrite with a comma or a second sentence.
-- **Effects never read a `_Start`, `_End` or `_Curve` attribute; a knob is read once through `mods.track` and the old format is `legacy_mods`' business.** A `_Duration` may be read soft only as the span lent to a track.
+- **A registered effect module declares every value it needs as a row and reads it through `emit(ctx, attrs, props)`; it never calls `attr.get` on its own instance.** An unconverted effect reads a knob once through `mods.track` and never reads a `_Start`, `_End` or `_Curve` attribute; the old format is `legacy_mods`' business.
+- **Row ids carry no underscores; old spellings are aliases.** A value that is a Roblox property is a property row. The vocabulary is fixed: module fields `id display classifier components attributes properties layout duration emit selected`; never name a public thing `select`, `claims`, `draw`, `rest`, `ramp`, `each`, `ownStart`, `span`, `stamp`, `drive` or `track`.
 
 Where this package and the [Roblox Lua style guide](https://roblox.github.io/lua-style-guide/) disagree, this package wins. The guide is a gap-filler only.
 
