@@ -16,20 +16,22 @@ local counter = 0
 
 export type Rule = (ctx: any, attrs: any, props: any) -> any
 
+-- never a name a chain method also answers to: an unset field of that name
+-- would read as the method itself through Knob's own __index, not as nil
 type Fields = {
   default: any,
   rule: Rule?,
   hasDefault: boolean,
-  min: any,
-  max: any,
-  aliases: { string }?,
-  options: { string }?,
-  label: string?,
-  hint: string?,
-  curve: string?,
-  unit: string?,
-  hidden: Rule?,
-  readonly: Rule?,
+  lower: any,
+  upper: any,
+  names: { string },
+  choices: { string }?,
+  title: string?,
+  details: string?,
+  preset: string?,
+  units: string?,
+  hiddenRule: Rule?,
+  readonlyRule: Rule?,
   isMod: boolean,
   modDefault: any,
   order: number,
@@ -46,16 +48,16 @@ local function make(default: any): Knob
     default = if isRule then nil else default,
     rule = if isRule then default else nil,
     hasDefault = default ~= nil and not isRule,
-    min = nil,
-    max = nil,
-    aliases = nil,
-    options = nil,
-    label = nil,
-    hint = nil,
-    curve = nil,
-    unit = nil,
-    hidden = nil,
-    readonly = nil,
+    lower = nil,
+    upper = nil,
+    names = {},
+    choices = nil,
+    title = nil,
+    details = nil,
+    preset = nil,
+    units = nil,
+    hiddenRule = nil,
+    readonlyRule = nil,
     isMod = false,
     modDefault = nil,
     order = counter,
@@ -73,52 +75,52 @@ function knob.is(x: any): boolean
 end
 
 function Knob.min(self: Knob, v: any): Knob
-  self.min = v
+  self.lower = v
   return self
 end
 
 function Knob.max(self: Knob, v: any): Knob
-  self.max = v
+  self.upper = v
   return self
 end
 
 function Knob.aliases(self: Knob, ...: string): Knob
-  self.aliases = { ... }
+  self.names = { ... }
   return self
 end
 
 function Knob.options(self: Knob, list: { string }): Knob
-  self.options = list
+  self.choices = list
   return self
 end
 
 function Knob.label(self: Knob, text: string): Knob
-  self.label = text
+  self.title = text
   return self
 end
 
 function Knob.hint(self: Knob, text: string): Knob
-  self.hint = text
+  self.details = text
   return self
 end
 
 function Knob.curve(self: Knob, preset: string): Knob
-  self.curve = preset
+  self.preset = preset
   return self
 end
 
 function Knob.unit(self: Knob, unit: string): Knob
-  self.unit = unit
+  self.units = unit
   return self
 end
 
 function Knob.hidden(self: Knob, rule: Rule): Knob
-  self.hidden = rule
+  self.hiddenRule = rule
   return self
 end
 
 function Knob.readonly(self: Knob, rule: Rule): Knob
-  self.readonly = rule
+  self.readonlyRule = rule
   return self
 end
 

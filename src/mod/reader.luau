@@ -57,13 +57,6 @@ local function propertyOf(obj: Instance, name: string): any
   return if ok then v else nil
 end
 
--- a knob's chain methods live on the same table as its fields and share their
--- names, so an unset field falls through the metatable to the setter itself
--- rather than reading nil; the raw slot is what a row's own state actually is
-local function field(row: knob.Knob, key: string): any
-  return rawget(row, key)
-end
-
 local function stored(map: { [string]: any }, name: string, row: knob.Knob): any
   local v = map[name]
 
@@ -71,7 +64,7 @@ local function stored(map: { [string]: any }, name: string, row: knob.Knob): any
     return v
   end
 
-  for _, alias in field(row, "aliases") or {} do
+  for _, alias in row.names do
     v = map[alias]
 
     if v ~= nil then
@@ -98,7 +91,7 @@ end
 local function queueOf(ref: Instance, source: string, name: string, row: knob.Knob): ({ any }?, boolean)
   local names = { name }
 
-  for _, alias in field(row, "aliases") or {} do
+  for _, alias in row.names do
     table.insert(names, alias)
   end
 
@@ -211,19 +204,15 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
       end
     end
 
-    local readonly = field(row, "readonly")
-
-    if readonly ~= nil and readonly(ctx, attrs, props) == true then
+    if row.readonlyRule ~= nil and row.readonlyRule(ctx, attrs, props) == true then
       v = fallback()
     end
 
-    local options = field(row, "options")
-
-    if options ~= nil and (typeof(v) ~= "string" or table.find(options, v) == nil) then
+    if row.choices ~= nil and (typeof(v) ~= "string" or table.find(row.choices, v) == nil) then
       v = fallback()
     end
 
-    return knob.clamp(v, field(row, "min"), field(row, "max"))
+    return knob.clamp(v, row.lower, row.upper)
   end
 
   local function trackOf(source: string, name: string, row: knob.Knob, rest: any, seeded: boolean, span: number): Track
@@ -242,7 +231,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
       if typeof(rest) == "NumberRange" then
         default = mods.draw(rest.Min, rest.Max)
       elseif row.modDefault ~= nil then
-        default = mod.queue(row.modDefault, ctx, attrs, props, rest, field(row, "curve")) or rest
+        default = mod.queue(row.modDefault, ctx, attrs, props, rest, row.preset) or rest
       end
     end
 
