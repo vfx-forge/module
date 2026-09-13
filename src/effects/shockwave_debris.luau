@@ -7,6 +7,7 @@ local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local legacy_mods = require("@mod/legacy_mods")
 
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
@@ -15,9 +16,9 @@ local rng = Random.new()
 
 local debris = {}
 
--- both are driven here, so the applier must not drive them as well: their legacy
--- attributes are a NumberRange and a Min/Max pair, and an applier writing a
--- sample back would replace the range with a scalar.
+-- every one of these is driven here, so the applier must not drive them as
+-- well: Lifetime and Size carry a NumberRange and a Min/Max pair, and an
+-- applier writing a sample back would replace the range with a scalar.
 --
 -- no Speed. debris flies under physics impulses, so a speed multiplier would
 -- scale the dwell and the shrink and leave the flight alone, which reads worse
@@ -26,6 +27,7 @@ debris.OWNS = {
   attribute = {
     Size = true,
     Lifetime = true,
+    Transparency = true,
   },
 }
 
@@ -108,9 +110,10 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
   local linmag = attr.getRange(ref, "LinearMagnitude", NumberRange.new(15, 25))
   local angmag = attr.getRange(ref, "AngularMagnitude", NumberRange.new(5, 15))
 
-  -- one phase, so one row: the shrink after the dwell. the old name is read soft
-  -- as the new one's default, so content in the wild keeps working
-  local sizeOutEnd = attr.get(ref, "SizeScaleOut_End", attr.get(ref, "SizeScaleEnd", vector.zero, true))
+  -- one phase, so one row: the shrink after the dwell. the old name is read
+  -- through the alias, so content in the wild keeps working and nothing of it
+  -- is written back
+  local sizeOutEnd = legacy_mods.alias(ref, "SizeScaleOut_End", Vector3.zero)
 
   local minSize = attr.get(ref, "MinSize", vector.create(2, 1, 2))
   local maxSize = attr.get(ref, "MaxSize", vector.create(3, 2, 3))
@@ -120,14 +123,14 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   local count = rng:NextInteger(amount.Min, amount.Max)
 
-  local sizeCurve = attr.get(ref, "SizeScaleOut_Curve", attr.get(ref, "Size_Curve", utility.default_bezier, true))
-  local tpCurve = attr.get(ref, "Transparency_Curve", utility.default_bezier)
+  local sizeCurve = legacy_mods.alias(ref, "SizeScaleOut_Curve", utility.default_bezier)
+  local sizeDuration = legacy_mods.alias(ref, "SizeScaleOut_Duration", 0.5)
 
-  local tpDuration = attr.get(ref, "Transparency_Duration", 0.5)
-  local sizeDuration = attr.get(ref, "SizeScaleOut_Duration", attr.get(ref, "Size_Duration", 0.5, true))
+  local tpDuration = attr.get(ref, "Transparency_Duration", 0.5, true)
 
-  local tpStart = attr.get(ref, "Transparency_Start", 0)
-  local tpEnd = attr.get(ref, "Transparency_End", 1)
+  -- debris fades out by default, which is what its two old defaults spelled
+  local transparency = mods.track(ref, "attribute", "Transparency", mods.ramp(0, 1), tpDuration)
+  local tpStart = transparency.at(0)
 
   local partData = {}
   local promises = {}
@@ -210,21 +213,12 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
 
     part.CFrame = CFrame.new(originPosition)
 
-    -- per PIECE: a size is drawn per emitted instance, and one driver for the
-    -- whole field would cut every piece to the same measurements. legacy_mods
-    -- reads the MinSize and MaxSize pair as a randomizer, and a randomizer
-    -- between two Vector3s draws once per component, which is exactly the three
-    -- NextNumber calls this replaces
-    local sizeDrv = mods.driver(ref, "attribute", "Size", lifeRange.Max, "Vector3")
-    local size = if sizeDrv then sizeDrv(0) else nil
-
-    if typeof(size) ~= "Vector3" then
-      size = Vector3.new(
-        rng:NextNumber(minSize.X, maxSize.X),
-        rng:NextNumber(minSize.Y, maxSize.Y),
-        rng:NextNumber(minSize.Z, maxSize.Z)
-      )
-    end
+    -- per PIECE: a size is drawn per emitted instance, and one track for the
+    -- whole field would cut every piece to the same measurements. the track's
+    -- queue default is the Min and Max pair, a randomizer between two Vector3s
+    -- that draws once per component, which is exactly the three NextNumber
+    -- calls this replaces
+    local size = mods.track(ref, "attribute", "Size", mods.draw(minSize, maxSize), lifeRange.Max).at(0)
 
     part.Size = size
 
@@ -269,16 +263,12 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     local env = scope.effects.emitNested(realPart, scope.depth + 1, scope)
     table.insert(promises, env.Finished)
 
-    -- legacy_mods reads the Lifetime NumberRange as a randomizer, so this covers
-    -- authored and unauthored alike and the manual draw is only left for a field
-    -- carrying no Lifetime attribute at all
-    --
-    -- the fallback span is the dwell's own ceiling rather than the effect's run: a
-    -- Lifetime driver is sampled on the piece's dwell clock, which never reaches
+    -- the span is the dwell's own ceiling rather than the effect's run: a
+    -- Lifetime track is sampled on the piece's dwell clock, which never reaches
     -- the run. a zero there reads as fully elapsed, which would pin a linked
     -- modifier at its end value from the first frame
-    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifeRange.Max, "number")
-    local drawn = if lifeDrv then lifeDrv(0) else nil
+    local life = mods.track(ref, "attribute", "Lifetime", mods.draw(lifeRange.Min, lifeRange.Max), lifeRange.Max)
+    local drawn = life.at(0)
 
     -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
     -- ever and the piece dwells for the life of the session
@@ -292,7 +282,7 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- length is the counter's to decide, so a Lifetime a modifier is moving
     -- moves a dwell that is already running
     tween.after(math.huge, function(deltaTime, elapsed)
-      local target = if lifeDrv then lifeDrv(elapsed) else nil
+      local target = life.at(elapsed)
 
       if typeof(target) ~= "number" or target ~= target then
         target = drawn
@@ -306,7 +296,6 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
     end, function()
       task.spawn(function()
         local startSize = part.Size
-        local startTp = part.Transparency
 
         if startSize ~= size * sizeOutEnd then
           lifetime.hold(
@@ -318,11 +307,11 @@ function debris.emit(origin: Attachment, ref: Part, scope: types.scope)
           )
         end
 
-        if startTp ~= tpEnd then
+        if transparency.animated then
           lifetime.hold(
             scope,
-            tween.fromParams(tpCurve, tpDuration, function(alpha, deltaTime)
-              part.Transparency = utility.lerp(startTp, tpEnd, alpha)
+            tween.fromParams(utility.linear_bezier, transparency.span, function(_, deltaTime, elapsed)
+              part.Transparency = transparency.at(elapsed)
               return deltaTime
             end)
           )

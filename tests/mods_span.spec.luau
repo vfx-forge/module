@@ -55,7 +55,7 @@ harness.suite(function()
     end)
 
     -- the far end has to be far enough for a delayed modifier that names no
-    -- duration to get a full turn, or mods.driver pumps for a span the queue
+    -- duration to get a full turn, or mods.track pumps for a span the queue
     -- cannot finish inside and the knob freezes at its start value
     test("lends a delayed modifier with no duration a full fallback", function()
       local queue = { { kind = "delay", wait = { t = "lit", v = 2 } }, { kind = "tween" } }
@@ -170,7 +170,7 @@ harness.suite(function()
     end)
 
     -- a base entry alone is a value the target already carries, which is a
-    -- shape mods.driver has its own reason to stand down on. inert is about
+    -- shape mods.track has its own reason to stand down on. inert is about
     -- the waits, so it must not widen its reach to that one
     test("a queue with no delay in it is never inert", function()
       expect(mods.inert({ { kind = "sequence" } })).toBe(false)

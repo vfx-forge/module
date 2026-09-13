@@ -1093,7 +1093,7 @@ harness.suite(function()
     end)
 
     -- once it starts late it can, because it still has to get a full turn
-    -- before the run is over, and mods.driver pumps for exactly this reach
+    -- before the run is over, and mods.track pumps for exactly this reach
     test("a delayed modifier with no duration reaches a full lent duration past its wait", function()
       local queue = {
         { kind = "delay", chain = false, wait = { t = "lit", v = 2 } },

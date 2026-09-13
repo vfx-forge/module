@@ -62,7 +62,7 @@ end
 -- a queue that waits and does nothing else. its delays still push a clock
 -- around, but nothing in it produces a value, so driving it writes the target's
 -- own value back every frame for the length of the waits and holds the emit
--- open while it does. mods.driver's sample(0) guard catches the base-only case
+-- open while it does. mods.track's sample(0) guard catches the base-only case
 -- on an attribute, whose base is usually nil, but not on a property, whose base
 -- is whatever it currently holds
 function mods.inert(queue: { any }): boolean
@@ -236,80 +236,6 @@ function mods.sampler(
   return function(elapsed: number)
     return modifiers.evaluate(queue, elapsed, ctx)
   end
-end
-
--- everything an effect module needs to drive one target: the sampler, and the
--- span it should run over, which is the queue's own far end and falls back only
--- when no modifier names a duration. nil when nothing is authored, so the
--- caller keeps whatever legacy path it had.
---
--- Call this BEFORE any non-soft attr.get on that name's quad keys. attr.get
--- writes its default back, so reading X_Start creates it, and readQuad then
--- finds a quad nobody authored.
---
--- `env` is what a `var` in this queue resolves against, and an effect passes the
--- SAME table to every knob it drives on one emitted instance. that is how one
--- drawn lifetime means one moment to all of them: a rand in each queue would
--- draw once per queue and break them apart.
-function mods.driver(
-  ref: Instance,
-  source: string,
-  name: string,
-  fallback: number,
-  want: string?,
-  env: { [string]: any }?
-): (((number) -> any)?, number)
-  local queue = mods.read(ref, source, name)
-
-  if queue == nil or #queue == 0 then
-    return nil, fallback
-  end
-
-  -- a legacy quad with only one half authored cannot say what the other half
-  -- was, because that default is the effect's own and legacy_mods copied the
-  -- authored half over it. handing back no driver runs the effect's legacy
-  -- branch, which still has the real default. this is the only shape where
-  -- refusing to drive is more faithful than driving
-  if #queue == 1 and queue[1].partial then
-    return nil, fallback
-  end
-
-  if mods.inert(queue) then
-    return nil, fallback
-  end
-
-  -- drawn before the span rather than inside the sampler, because a delay whose
-  -- wait is drawn decides how far the queue reaches
-  local rolls = mods.roll(queue, env)
-  local span, linked = mods.span(queue, fallback, rolls)
-  local sample = mods.sampler(ref, source, name, span, queue, rolls, linked)
-
-  -- a queue of nothing but base kinds evaluates to ctx.base and stops there,
-  -- and for a forge knob like Speed that base is an attribute nobody ever
-  -- wrote. the curve editor stores exactly that shape when it authors a curve
-  -- on a target with no legacy quad behind it. handing an effect a sampler
-  -- that only ever returns nil is worse than handing it none, because every
-  -- conversion assigns the first sample straight into its own arithmetic
-  if sample == nil then
-    return nil, fallback
-  end
-
-  local first = sample(0)
-
-  if first == nil then
-    return nil, fallback
-  end
-
-  -- a knob that names the type it wants is handed no driver when the queue
-  -- samples another one. the effect assigns a sample straight into its own
-  -- arithmetic, and a stepper that throws is never cleaned up: tween only runs
-  -- its cleanup on a frame the counter returns from normally, so one wrong type
-  -- repeats the same error every frame for as long as the scope lives
-  if want ~= nil and typeof(first) ~= want then
-    return nil, fallback
-  end
-
-  return sample, span
 end
 
 export type Track = {

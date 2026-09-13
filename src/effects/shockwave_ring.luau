@@ -6,6 +6,7 @@ local tween = require("@mod/tween")
 local types = require("@root/types")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local legacy_mods = require("@mod/legacy_mods")
 
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
@@ -14,10 +15,10 @@ local rng = Random.new()
 
 local ring = {}
 
--- all three are driven here, so the applier must not drive them as well.
--- Lifetime and Size especially: their legacy attributes are a NumberRange and a
--- Min/Max pair, and an applier writing a sample back would replace the range
--- with a scalar
+-- every one of these is driven here, so the applier must not drive them as
+-- well. Lifetime and Size especially: their legacy attributes are a NumberRange
+-- and a Min/Max pair, and an applier writing a sample back would replace the
+-- range with a scalar
 ring.OWNS = {
   attribute = {
     Size = true,
@@ -25,6 +26,7 @@ ring.OWNS = {
     Lifetime = true,
     OffsetIn = true,
     SizeScaleIn = true,
+    Transparency = true,
   },
 }
 
@@ -70,105 +72,55 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   local lifeRange = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
 
-  -- the two phases are rows now, each a stem whose four keys legacy_mods can
-  -- derive: OffsetIn and OffsetOut, SizeScaleIn and SizeScaleOut. Every rename
-  -- reads the old name SOFT as the new one's default, which is what PartOffset
-  -- and Size_Curve already did here, so content in the wild keeps working and
-  -- nothing of it is overwritten
-  local old_partOffset = attr.get(ref, "PartOffset", vector.zero, true)
+  local offsetOutEnd = legacy_mods.alias(ref, "OffsetOut_End", Vector3.zero)
+  local offsetOutDuration = legacy_mods.alias(ref, "OffsetOut_Duration", 0.5)
+  local offsetOutCurve = legacy_mods.alias(ref, "OffsetOut_Curve", utility.default_bezier)
 
-  local old_baseOffset = attr.get(ref, "BaseOffset", old_partOffset, true)
-  local old_offsetStart = attr.get(ref, "Offset_Start", old_partOffset, true)
-  local old_offsetEnd = attr.get(ref, "Offset_End", old_partOffset, true)
-
-  local offsetInStart = attr.get(ref, "OffsetIn_Start", old_offsetStart)
-  local offsetInEnd = attr.get(ref, "OffsetIn_End", old_baseOffset)
-  local offsetOutEnd = attr.get(ref, "OffsetOut_End", old_offsetEnd)
-
-  local offsetInDuration = attr.get(ref, "OffsetIn_Duration", attr.get(ref, "Offset_Start_Duration", 0.5, true))
-  local offsetOutDuration = attr.get(ref, "OffsetOut_Duration", attr.get(ref, "Offset_End_Duration", 0.5, true))
-
-  -- hoisted for the same reason the size curves are: read down in the legacy
-  -- branch this never runs when a driver exists, so an authored Offset_Start_Curve
-  -- would be dropped. reading it here also stamps the new name before the driver
-  -- asks, so the quad readQuad finds carries the migrated curve
-  local offsetInCurve =
-    attr.get(ref, "OffsetIn_Curve", attr.get(ref, "Offset_Start_Curve", utility.default_bezier, true))
-  local offsetOutCurve =
-    attr.get(ref, "OffsetOut_Curve", attr.get(ref, "Offset_End_Curve", utility.default_bezier, true))
+  local sizeOutEnd = legacy_mods.alias(ref, "SizeScaleOut_End", Vector3.zero)
+  local sizeOutDuration = legacy_mods.alias(ref, "SizeScaleOut_Duration", 0.5)
+  local sizeOutCurve = legacy_mods.alias(ref, "SizeScaleOut_Curve", utility.default_bezier)
 
   local minSize = attr.get(ref, "MinSize", vector.create(2, 1, 2))
   local maxSize = attr.get(ref, "MaxSize", vector.create(3, 2, 3))
 
-  local old_sizeCurve = attr.get(ref, "Size_Curve", utility.default_bezier, true)
-  local old_sizeDuration = attr.get(ref, "Size_Duration", 0.5, true)
+  local tpDuration = attr.get(ref, "Transparency_Duration", 0.5, true)
 
-  local old_scaleStart = attr.get(ref, "SizeScaleStart", vector.zero, true)
-  local old_scaleEnd = attr.get(ref, "SizeScaleEnd", vector.zero, true)
+  -- the entry phases run over their own clocks, which are the durations the
+  -- rows always carried, and rest where the old defaults left them: the offset
+  -- where it stands, the size on a rise from nothing to the drawn size
+  local offsetIn =
+    mods.track(ref, "attribute", "OffsetIn", Vector3.zero, legacy_mods.alias(ref, "OffsetIn_Duration", 0.5))
+  local sizeIn = mods.track(
+    ref,
+    "attribute",
+    "SizeScaleIn",
+    mods.ramp(Vector3.zero, Vector3.one),
+    legacy_mods.alias(ref, "SizeScaleIn_Duration", 0.5)
+  )
 
-  local sizeInStart = attr.get(ref, "SizeScaleIn_Start", old_scaleStart)
-  local sizeOutEnd = attr.get(ref, "SizeScaleOut_End", old_scaleEnd)
+  -- the fade a segment runs after its dwell: from where the transparency rests
+  -- to where it ends, over its own clock
+  local transparency = mods.track(ref, "attribute", "Transparency", 0, tpDuration)
 
-  -- the entry phase always ended at exactly the drawn size, which is a factor of
-  -- one. naming it makes it authorable: a piece can overshoot and settle
-  local sizeInEnd = attr.get(ref, "SizeScaleIn_End", vector.one)
+  local offsetInStart = offsetIn.at(0)
+  local tpStart = transparency.at(0)
 
-  local sizeInCurve = attr.get(ref, "SizeScaleIn_Curve", attr.get(ref, "Size_Start_Curve", old_sizeCurve, true))
-  local sizeOutCurve = attr.get(ref, "SizeScaleOut_Curve", attr.get(ref, "Size_End_Curve", old_sizeCurve, true))
-
-  local sizeInDuration =
-    attr.get(ref, "SizeScaleIn_Duration", attr.get(ref, "Size_Start_Duration", old_sizeDuration, true))
-  local sizeOutDuration =
-    attr.get(ref, "SizeScaleOut_Duration", attr.get(ref, "Size_End_Duration", old_sizeDuration, true))
-
-  local tpDuration = attr.get(ref, "Transparency_Duration", 0.5)
-
-  local tpStart = attr.get(ref, "Transparency_Start", 0)
-  local tpEnd = attr.get(ref, "Transparency_End", 0)
+  -- a phase that starts where it already ends has nothing to do. an authored
+  -- queue is taken at its word
+  local offsetInMoves = offsetIn.animated
+    and (mods.framed(ref, "attribute", "OffsetIn") ~= nil or offsetIn.at(0) ~= offsetIn.at(offsetIn.span))
+  local sizeInMoves = sizeIn.animated
+    and (mods.framed(ref, "attribute", "SizeScaleIn") ~= nil or sizeIn.at(0) ~= sizeIn.at(sizeIn.span))
 
   -- the longest a segment can last, which is the ring's own clock: the longest
   -- dwell it can draw, then the longest exit it can run
   local runLength = lifeRange.Max + math.max(sizeOutDuration, offsetOutDuration, tpDuration)
 
-  -- the driver is asked for BEFORE any non-soft read of the quad keys it would
-  -- find, because attr.get writes its default back: reading Speed_Start creates
-  -- it and legacy_mods then finds a quad nobody authored.
-  --
-  -- the fallback is the ring's own run, not Speed_Duration. it is only reached
-  -- when NO modifier in the queue names a duration, which is what the panel
-  -- calls a linked modifier, and linked means "as long as the effect runs". a
-  -- legacy quad never reaches it at all, since readQuad puts Speed_Duration on
-  -- the modifier itself
-  -- the entry phases are rows a reader can derive now, so each runs from its own
-  -- queue when it has one. the exit phases carry only an _End: their start is
-  -- wherever the value got to, so they read as half quads and mods.driver stands
-  -- down on them, which is lightning's Fade_In and Fade_Out shape exactly.
-  --
-  -- the usual "ask before any non-soft read of the quad keys" rule does not bite
-  -- here. it exists because attr.get stamps a default the author never chose;
-  -- what these stamp is the value the old name already held, which is precisely
-  -- what the legacy branch below would have tweened, so the queue readQuad finds
-  -- says the same thing either way
-  local offsetInQueue = mods.framed(ref, "attribute", "OffsetIn")
-  local offsetInDrv, offsetInSpan = mods.driver(ref, "attribute", "OffsetIn", runLength, "Vector3")
-
-  local sizeInQueue = mods.framed(ref, "attribute", "SizeScaleIn")
-  local sizeInDrv, sizeInSpan = mods.driver(ref, "attribute", "SizeScaleIn", runLength, "Vector3")
-
-  -- a phase that starts where it already ends has nothing to do, and the legacy
-  -- branch skipped it outright rather than binding a stepper per piece to write
-  -- one value over itself. an authored queue is taken at its word
-  local offsetInMoves = offsetInDrv ~= nil and (offsetInQueue ~= nil or offsetInStart ~= offsetInEnd)
-  local sizeInMoves = sizeInDrv ~= nil and (sizeInQueue ~= nil or sizeInStart ~= sizeInEnd)
-
-  local speedDrv, speedSpan = mods.driver(ref, "attribute", "Speed", runLength, "number")
-
-  local speedStart = attr.get(ref, "Speed_Start", 1, true)
-  local speedEnd = attr.get(ref, "Speed_End", 1, true)
+  local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
 
   local speedTween
 
-  local currentSpeed = if speedDrv then speedDrv(0) else speedStart
+  local currentSpeed = speed.at(0)
 
   -- a speed of zero advances no stepper's elapsed, so nothing would ever reach
   -- its end: the hold would never return and the parts would never come back to
@@ -192,22 +144,11 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
   -- the speed tween is the clock itself, so it is the one stepper that does not
   -- scale by it
-  if speedDrv then
-    speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
-      currentSpeed = speedDrv(elapsed)
+  if speed.animated then
+    speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+      currentSpeed = speed.at(elapsed)
       return deltaTime
     end)
-
-    lifetime.hold(scope, speedTween)
-  elseif speedStart ~= speedEnd then
-    speedTween = tween.fromParams(
-      attr.get(ref, "Speed_Curve", utility.default_bezier),
-      attr.get(ref, "Speed_Duration", 0.1),
-      function(alpha, deltaTime)
-        currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
-        return deltaTime
-      end
-    )
 
     lifetime.hold(scope, speedTween)
   end
@@ -229,21 +170,12 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     end
 
     -- per SEGMENT, like the lifetime: a size is drawn per emitted instance, and
-    -- one driver for the ring would cut every piece to the same measurements.
+    -- one track for the ring would cut every piece to the same measurements.
     --
-    -- legacy_mods reads the MinSize and MaxSize pair as a randomizer, and a
-    -- randomizer between two Vector3s draws once per component, which is exactly
-    -- the three NextNumber calls this replaces
-    local sizeDrv = mods.driver(ref, "attribute", "Size", runLength, "Vector3")
-    local size = if sizeDrv then sizeDrv(0) else nil
-
-    if typeof(size) ~= "Vector3" then
-      size = Vector3.new(
-        rng:NextNumber(minSize.X, maxSize.X),
-        rng:NextNumber(minSize.Y, maxSize.Y),
-        rng:NextNumber(minSize.Z, maxSize.Z)
-      )
-    end
+    -- the track's queue default is the Min and Max pair, a randomizer between
+    -- two Vector3s that draws once per component, which is exactly the three
+    -- NextNumber calls this replaces
+    local size = mods.track(ref, "attribute", "Size", mods.draw(minSize, maxSize), runLength).at(0)
 
     local id = utility.getRandomId()
 
@@ -299,9 +231,8 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     local currentOffset = Vector3.zero
 
     if offsetInMoves then
-      -- linear, because the queue's own curve is what shapes it
-      offsetTween = tween.fromParams(utility.linear_bezier, offsetInSpan, function(_, deltaTime, elapsed)
-        local at = (offsetInDrv :: any)(elapsed)
+      offsetTween = tween.fromParams(utility.linear_bezier, offsetIn.span, function(_, deltaTime, elapsed)
+        local at = offsetIn.at(elapsed)
 
         -- a queue that stops resolving partway would throw here every frame, and a
         -- stepper that throws is never cleaned up
@@ -314,56 +245,37 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
       end)
 
       lifetime.hold(scope, offsetTween)
-    elseif offsetInStart ~= offsetInEnd then
-      offsetTween = tween.fromParams(offsetInCurve, offsetInDuration, function(alpha, deltaTime, elapsed)
-        currentOffset = offsetInStart:Lerp(offsetInEnd, alpha)
-        part.CFrame = CFrame.new(currentOffset) * rotCF
-        return step(deltaTime, elapsed)
-      end)
-
-      lifetime.hold(scope, offsetTween)
     end
 
-    if sizeInMoves then
-      sizeTween = tween.fromParams(utility.linear_bezier, sizeInSpan, function(_, deltaTime, elapsed)
-        local scale = (sizeInDrv :: any)(elapsed)
+    part.Size = size * sizeIn.at(0)
 
-        if typeof(scale) == "Vector3" then
-          part.Size = size * scale
+    if sizeInMoves then
+      sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.span, function(_, deltaTime, elapsed)
+        local factor = sizeIn.at(elapsed)
+
+        if typeof(factor) == "Vector3" then
+          part.Size = size * factor
         end
 
         return step(deltaTime, elapsed)
       end)
 
       lifetime.hold(scope, sizeTween)
-    elseif size * sizeInStart ~= size * sizeInEnd then
-      sizeTween = tween.fromParams(sizeInCurve, sizeInDuration, function(alpha, deltaTime, elapsed)
-        part.Size = (size * sizeInStart):Lerp(size * sizeInEnd, alpha)
-        return step(deltaTime, elapsed)
-      end)
-
-      lifetime.hold(scope, sizeTween)
-    else
-      part.Size = size * sizeInStart
     end
 
     local env = scope.effects.emitNested(part, scope.depth + 1, scope)
     table.insert(promises, env.Finished)
 
     -- asked for per SEGMENT, not once for the ring: a lifetime is drawn per
-    -- emitted instance, and a driver asked for once would hand every segment the
+    -- emitted instance, and a track asked for once would hand every segment the
     -- same draw and break them apart into one synchronised flash.
     --
-    -- legacy_mods reads the Lifetime NumberRange as a randomizer, so this covers
-    -- authored and unauthored alike and the manual draw is only left for a ring
-    -- carrying no Lifetime attribute at all
-    --
-    -- the fallback span is the dwell's own ceiling rather than the effect's run: a
-    -- Lifetime driver is sampled on the piece's dwell clock, which never reaches
+    -- the span is the dwell's own ceiling rather than the effect's run: a
+    -- Lifetime track is sampled on the piece's dwell clock, which never reaches
     -- the run. a zero there reads as fully elapsed, which would pin a linked
     -- modifier at its end value from the first frame
-    local lifeDrv = mods.driver(ref, "attribute", "Lifetime", lifeRange.Max, "number")
-    local drawn = if lifeDrv then lifeDrv(0) else nil
+    local life = mods.track(ref, "attribute", "Lifetime", mods.draw(lifeRange.Min, lifeRange.Max), lifeRange.Max)
+    local drawn = life.at(0)
 
     -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
     -- ever and the piece dwells for the life of the session
@@ -385,7 +297,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     -- resumes it is a render step, and emitOnFinish is not something to hand a
     -- render step
     tween.after(math.huge, function(deltaTime, elapsed)
-      local target = if lifeDrv then lifeDrv(elapsed) else nil
+      local target = life.at(elapsed)
 
       if typeof(target) ~= "number" or target ~= target then
         target = drawn
@@ -407,7 +319,6 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
         end
 
         local startSize = part.Size
-        local startTp = part.Transparency
 
         if startSize ~= size * sizeOutEnd then
           lifetime.hold(
@@ -429,17 +340,13 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
           )
         end
 
-        if startTp ~= tpEnd then
+        if transparency.animated then
           lifetime.hold(
             scope,
-            tween.fromParams(
-              attr.get(ref, "Transparency_Curve", utility.default_bezier),
-              tpDuration,
-              function(alpha, deltaTime, elapsed)
-                part.Transparency = utility.lerp(startTp, tpEnd, alpha)
-                return step(deltaTime, elapsed)
-              end
-            )
+            tween.fromParams(utility.linear_bezier, transparency.span, function(_, deltaTime, elapsed)
+              part.Transparency = transparency.at(elapsed)
+              return step(deltaTime, elapsed)
+            end)
           )
         end
 

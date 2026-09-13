@@ -7,9 +7,10 @@ local test, expect = harness.test, harness.expect
 local Vector3 = harness.datatypes.Vector3
 local Instance = harness.datatypes.Instance
 
--- the half of mods that reads a queue off an instance and draws for it. it used
--- to be the Studio lane's alone, on the reading that a spec here can reach
--- neither an Instance nor a Random, and only the second half of that was true.
+-- the half of mods that reads a queue off an instance and draws for it, which
+-- mods.track is the one way in to. it used to be the Studio lane's alone, on
+-- the reading that a spec here can reach neither an Instance nor a Random, and
+-- only the second half of that was true.
 -- the harness stands a Random in now, so which branch each of these takes has a
 -- floor that does not need Studio; what a REAL Random spreads across is still
 -- the plugin's vector_randomizer.spec, which is the part a stand-in cannot say
@@ -32,7 +33,7 @@ local function delay(wait: number)
 end
 
 -- an instance carrying the queue the way an authored one does, framed and
--- encoded, because mods.driver reads its own rather than taking a preread
+-- encoded, because mods.track reads its own rather than taking a preread
 local function authored(name: string, queue: { any })
   local obj = Instance.new("Attachment")
   obj:SetAttribute(mods.attrName("attribute", name), frame.frame(codec.encode({ v = 1, queue = queue })))
@@ -73,15 +74,15 @@ harness.suite(function()
     end)
   end)
 
-  harness.describe("mods.driver", function()
+  harness.describe("mods.track", function()
     -- the same threading through the function every effect actually calls: the
     -- span it hands back is the reach, and what it hands the sampler is the run
     test("threads the run it took beside the reach", function()
       local obj = authored("Size", { delay(2), tween(0, 10) })
-      local sample, span = mods.driver(obj, "attribute", "Size", 5)
+      local track = mods.track(obj, "attribute", "Size", 0, 5)
 
-      expect(span).toBe(7)
-      expect(near((sample :: any)(7), 10)).ok()
+      expect(track.span).toBe(7)
+      expect(near(track.at(7), 10)).ok()
     end)
 
     -- an effect assigns a sample straight into its own arithmetic, and a stepper
@@ -90,28 +91,34 @@ harness.suite(function()
     -- every frame for as long as the scope lives
     test("a knob that names a type is handed no driver for another one", function()
       local obj = authored("Speed", { tween(Vector3.new(0, 0, 0), Vector3.new(10, 10, 10), 1) })
-      local sample, span = mods.driver(obj, "attribute", "Speed", 5, "number")
 
-      expect(sample).toBe(nil)
-      expect(span).toBe(5)
+      local warnings = harness.captureWarnings(function()
+        local track = mods.track(obj, "attribute", "Speed", 0, 5)
+
+        expect(track.animated).toBe(false)
+        expect(track.at(0)).toBe(0)
+        expect(track.span).toBe(5)
+      end)
+
+      expect(#warnings).toBe(1)
     end)
 
     -- and it is the type that refused it rather than anything about the queue,
     -- which the same attribute driving a knob that asked for a Vector3, and one
-    -- that named no type at all, is what says
+    -- whose default names no type at all, is what says
     test("the same queue drives a knob that asked for what it samples", function()
       local obj = authored("Speed", { tween(Vector3.new(0, 0, 0), Vector3.new(10, 10, 10), 1) })
 
-      expect(mods.driver(obj, "attribute", "Speed", 5, "Vector3") ~= nil).ok()
-      expect(mods.driver(obj, "attribute", "Speed", 5) ~= nil).ok()
+      expect(mods.track(obj, "attribute", "Speed", Vector3.new(0, 0, 0), 5).animated).ok()
+      expect(mods.track(obj, "attribute", "Speed", nil, 5).animated).ok()
     end)
 
     test("a number knob keeps the driver its queue samples", function()
       local obj = authored("Speed", { tween(0, 10, 1) })
-      local sample, span = mods.driver(obj, "attribute", "Speed", 5, "number")
+      local track = mods.track(obj, "attribute", "Speed", 0, 5)
 
-      expect(sample ~= nil).ok()
-      expect(span).toBe(1)
+      expect(track.animated).ok()
+      expect(track.span).toBe(1)
     end)
   end)
 

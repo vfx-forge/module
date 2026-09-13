@@ -96,7 +96,7 @@ end
 
 -- Random is absent under lune outright: @lune/roblox exposes none and there is
 -- no bare global either. mods.roll builds its own rather than taking a seam, so
--- everything downstream of it, which is mods.driver and every effect, is
+-- everything downstream of it, which is mods.track and every effect, is
 -- unreachable headlessly without a stand-in. a fixed LCG, so a spec that reaches
 -- it is never flaky; the spread of the real thing is pinned in the plugin's
 -- Studio lane, where a real Random exists
