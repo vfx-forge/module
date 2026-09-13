@@ -158,115 +158,48 @@ local function playSingleSound(
 
   local currentSpeed = clone.PlaybackSpeed
 
-  -- every driver is read before the legacy attr.get below it, and that ordering
-  -- is not cosmetic: attr.get writes its default back, so reading Volume_Start
-  -- would create it and readQuad would then find a quad nobody authored
-  local volume, volumeSpan = mods.driver(src, "attribute", "Volume", clone.TimeLength)
+  local volume = mods.track(src, "attribute", "Volume", clone.Volume, clone.TimeLength)
 
-  if volume then
-    clone.Volume = volume(0)
+  clone.Volume = volume.at(0)
 
+  if volume.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, volumeSpan, function(_, deltaTime, elapsed)
-        clone.Volume = volume(elapsed)
+      tween.fromParams(utility.linear_bezier, volume.span, function(_, deltaTime, elapsed)
+        clone.Volume = volume.at(elapsed)
         return deltaTime * currentSpeed
       end)
     )
-  else
-    local volumeEnd = attr.get(src, "Volume_End", clone.Volume)
-    local volumeStart = attr.get(src, "Volume_Start", clone.Volume)
-
-    clone.Volume = volumeStart
-
-    if volumeStart ~= volumeEnd then
-      local volumeDuration = attr.get(src, "Volume_Duration", clone.TimeLength)
-
-      lifetime.hold(
-        scope,
-        tween.fromParams(
-          attr.get(src, "Volume_Curve", utility.default_bezier),
-          volumeDuration,
-          function(alpha, deltaTime)
-            clone.Volume = utility.lerp(volumeStart, volumeEnd, alpha)
-            return deltaTime * currentSpeed
-          end
-        )
-      )
-    end
   end
 
-  local speed, speedSpan = mods.driver(src, "attribute", "Speed", clone.TimeLength)
+  local speed = mods.track(src, "attribute", "Speed", clone.PlaybackSpeed, clone.TimeLength)
   local speedTween: RBXScriptConnection? = nil
 
-  if speed then
-    currentSpeed = speed(0)
-    clone.PlaybackSpeed = currentSpeed
+  currentSpeed = speed.at(0)
+  clone.PlaybackSpeed = currentSpeed
 
-    speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
-      currentSpeed = speed(elapsed)
+  if speed.animated then
+    speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+      currentSpeed = speed.at(elapsed)
       clone.PlaybackSpeed = currentSpeed
       return deltaTime
     end)
 
     lifetime.hold(scope, speedTween)
-  else
-    local speedEnd = attr.get(src, "Speed_End", clone.PlaybackSpeed)
-    local speedStart = attr.get(src, "Speed_Start", clone.PlaybackSpeed)
-
-    currentSpeed = speedStart
-
-    if speedStart ~= speedEnd then
-      local speedDuration = attr.get(src, "Speed_Duration", clone.TimeLength)
-
-      speedTween = tween.fromParams(
-        attr.get(src, "Speed_Curve", utility.default_bezier),
-        speedDuration,
-        function(alpha, deltaTime)
-          currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
-          clone.PlaybackSpeed = currentSpeed
-          return deltaTime
-        end
-      )
-
-      lifetime.hold(scope, speedTween)
-    else
-      clone.PlaybackSpeed = speedStart
-    end
   end
 
-  local rolloff, rolloffSpan = mods.driver(src, "attribute", "RollOff", clone.TimeLength)
+  local rolloff = mods.track(src, "attribute", "RollOff", clone.RollOffMinDistance, clone.TimeLength)
 
-  if rolloff then
-    clone.RollOffMinDistance = rolloff(0)
+  clone.RollOffMinDistance = rolloff.at(0)
 
+  if rolloff.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, rolloffSpan, function(_, deltaTime, elapsed)
-        clone.RollOffMinDistance = rolloff(elapsed)
+      tween.fromParams(utility.linear_bezier, rolloff.span, function(_, deltaTime, elapsed)
+        clone.RollOffMinDistance = rolloff.at(elapsed)
         return deltaTime * currentSpeed
       end, speedTween)
     )
-  else
-    local rolloffEnd = attr.get(src, "RollOff_End", clone.RollOffMinDistance)
-    local rolloffStart = attr.get(src, "RollOff_Start", clone.RollOffMinDistance)
-
-    if rolloffStart ~= rolloffEnd then
-      local rolloffDuration = attr.get(src, "RollOff_Duration", clone.TimeLength)
-
-      lifetime.hold(
-        scope,
-        tween.fromParams(
-          attr.get(src, "RollOff_Curve", utility.default_bezier),
-          rolloffDuration,
-          function(alpha, deltaTime)
-            clone.RollOffMinDistance = utility.lerp(rolloffStart, rolloffEnd, alpha)
-            return deltaTime * currentSpeed
-          end,
-          speedTween
-        )
-      )
-    end
   end
 
   if clone.PlayOnRemove and not utility.PLUGIN_CONTEXT then

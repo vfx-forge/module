@@ -61,35 +61,13 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
   local legacy_isFlipbook = attr.get(ref, "Flipbook", false, true)
   local legacy_flipbookFadeOffset = attr.get(ref, "FlipbookFadeOffset", 0, true)
 
-  -- stone age compatibility
-  do
-    local prefix
+  -- the oldest assets carry one StartTransparency and one EndTransparency for
+  -- the whole model, and which surface they meant depends on what the model
+  -- holds: the decal when there is one, else the mesh. read, never renamed
+  local stoneStart = attr.get(ref, "StartTransparency", nil, true)
+  local stoneEnd = attr.get(ref, "EndTransparency", nil, true)
 
-    if legacy_isFlipbook or not start:FindFirstChildOfClass("Decal") then
-      prefix = "Mesh_"
-    else
-      prefix = "Decal_"
-    end
-
-    local ts = ref:GetAttribute("StartTransparency")
-
-    if ts ~= nil then
-      ref:SetAttribute(prefix .. "StartTransparency", ts)
-      ref:SetAttribute("StartTransparency", nil)
-    end
-
-    local te = ref:GetAttribute("EndTransparency")
-
-    if te ~= nil then
-      ref:SetAttribute(prefix .. "EndTransparency", te)
-      ref:SetAttribute("EndTransparency", nil)
-    end
-  end
-
-  local useEmitDuration = ref:HasTag(utility.ENABLED_VFX_TAG) and emitDuration > 0
-
-  local legacy_decalST = attr.get(ref, "Decal_StartTransparency", 0, true)
-  local legacy_decalET = attr.get(ref, "Decal_EndTransparency", 1, true)
+  local stoneOnMesh = legacy_isFlipbook or not start:FindFirstChildOfClass("Decal")
 
   local partDefaultTp = 0
 
@@ -101,40 +79,24 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
     end
   end
 
-  local legacy_meshST = attr.get(ref, "Mesh_StartTransparency", partDefaultTp, true)
-  local legacy_meshET = attr.get(ref, "Mesh_EndTransparency", partDefaultTp, true)
+  local legacy_decalST = attr.get(ref, "Decal_StartTransparency", if stoneOnMesh then 0 else stoneStart or 0, true)
+  local legacy_decalET = attr.get(ref, "Decal_EndTransparency", if stoneOnMesh then 1 else stoneEnd or 1, true)
+
+  local legacy_meshST =
+    attr.get(ref, "Mesh_StartTransparency", if stoneOnMesh then stoneStart or partDefaultTp else partDefaultTp, true)
+  local legacy_meshET =
+    attr.get(ref, "Mesh_EndTransparency", if stoneOnMesh then stoneEnd or partDefaultTp else partDefaultTp, true)
+
+  local useEmitDuration = ref:HasTag(utility.ENABLED_VFX_TAG) and emitDuration > 0
 
   local sync = attr.get(ref, "SyncPosition", false)
 
-  -- every driver is read before the legacy attr.get for the same knob, and that
-  -- ordering is not cosmetic: attr.get writes its default back, so reading
-  -- Speed_Start would create it and readQuad would then find a quad nobody
-  -- authored. the legacy pair stays behind each one as the fallback
-  local speed, speedSpan = mods.driver(ref, "attribute", "Speed", attr.get(ref, "Speed_Duration", 0.1, true))
-  local partTp, partTpSpan = mods.driver(ref, "attribute", "Part_Transparency", duration)
-  local rotSpeed, rotSpeedSpan = mods.driver(ref, "attribute", "Part_RotSpeed", duration)
+  local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
+  local partTp = mods.track(ref, "attribute", "Part_Transparency", mods.ramp(legacy_meshST, legacy_meshET), duration)
+  local rotSpeed = mods.track(ref, "attribute", "Part_RotSpeed", 0, duration)
 
-  local speedStart = 1
-  local speedEnd = 1
-
-  -- the fallback reads are soft for the same reason the driver is read first:
-  -- a non-soft read writes its default back, so an unauthored mesh would gain a
-  -- quad on its first emit and take the DRIVER branch on its second, flipping
-  -- behaviour between two emits of the same effect
-  if speed then
-    speedStart = speed(0)
-  else
-    speedStart = attr.get(ref, "Speed_Start", 1, true)
-    speedEnd = attr.get(ref, "Speed_End", 1, true)
-  end
-
-  local tpStart = 0
-  local tpEnd = 0
-
-  if not partTp then
-    tpStart = attr.get(ref, "Part_Transparency_Start", legacy_meshST, true)
-    tpEnd = attr.get(ref, "Part_Transparency_End", legacy_meshET, true)
-  end
+  local speedStart = speed.at(0)
+  local rotSpeedStart = rotSpeed.at(0)
 
   local spreadAngle = attr.get(ref, "SpreadAngle", vector.zero)
 
@@ -142,19 +104,6 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
 
   local minInitRot = attr.get(ref, "MinInitRot", vector.zero)
   local maxInitRot = attr.get(ref, "MaxInitRot", vector.zero)
-
-  local rotSpeedStart = 0
-  local rotSpeedEnd = 0
-
-  if rotSpeed then
-    rotSpeedStart = rotSpeed(0)
-  else
-    local rotSpeedStartRange = attr.getRange(ref, "Part_RotSpeed_Start", NumberRange.new(0, 0))
-    local rotSpeedEndRange = attr.getRange(ref, "Part_RotSpeed_End", NumberRange.new(0, 0))
-
-    rotSpeedStart = rng:NextNumber(rotSpeedStartRange.Min, rotSpeedStartRange.Max)
-    rotSpeedEnd = rng:NextNumber(rotSpeedEndRange.Min, rotSpeedEndRange.Max)
-  end
 
   local initRot = vector.create(
     rng:NextNumber(minInitRot.x, maxInitRot.x),
@@ -176,34 +125,16 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       end
     end)
 
-    if speed then
+    if speed.animated then
       attr.setState(ref, "SpeedTweening", true)
 
       lifetime.hold(
         scope,
         tween.fromParams(
           utility.linear_bezier,
-          speedSpan,
+          speed.span,
           function(_, deltaTime, elapsed)
-            attr.setState(ref, "SpeedOverride", speed(elapsed))
-            return deltaTime
-          end,
-          nil,
-          function()
-            attr.setState(ref, "SpeedTweening", nil)
-          end
-        )
-      )
-    elseif speedStart ~= speedEnd then
-      attr.setState(ref, "SpeedTweening", true)
-
-      lifetime.hold(
-        scope,
-        tween.fromParams(
-          attr.get(ref, "Speed_Curve", utility.default_bezier),
-          attr.get(ref, "Speed_Duration", 0.1),
-          function(alpha, deltaTime)
-            attr.setState(ref, "SpeedOverride", utility.lerp(speedStart, speedEnd, alpha))
+            attr.setState(ref, "SpeedOverride", speed.at(elapsed))
             return deltaTime
           end,
           nil,
@@ -279,22 +210,11 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
 
   local speedTween
 
-  if speed and not attr.getState(ref, "SpeedOverride", nil) then
-    speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
-      currentSpeed = speed(elapsed)
+  if speed.animated and not attr.getState(ref, "SpeedOverride", nil) then
+    speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+      currentSpeed = speed.at(elapsed)
       return deltaTime
     end)
-
-    lifetime.hold(scope, speedTween)
-  elseif speedStart ~= speedEnd and not attr.getState(ref, "SpeedOverride", nil) then
-    speedTween = tween.fromParams(
-      attr.get(ref, "Speed_Curve", utility.default_bezier),
-      attr.get(ref, "Speed_Duration", 0.1),
-      function(alpha, deltaTime)
-        currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
-        return deltaTime
-      end
-    )
 
     lifetime.hold(scope, speedTween)
   end
@@ -309,54 +229,26 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
     )
   end
 
-  if rotSpeed then
+  if rotSpeed.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, rotSpeedSpan, function(_, deltaTime, elapsed)
-        currentRotSpeed = rotSpeed(elapsed)
+      tween.fromParams(utility.linear_bezier, rotSpeed.span, function(_, deltaTime, elapsed)
+        currentRotSpeed = rotSpeed.at(elapsed)
         return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
       end, speedTween)
-    )
-  elseif rotSpeedStart ~= rotSpeedEnd then
-    lifetime.hold(
-      scope,
-      tween.fromParams(
-        attr.get(ref, "Part_RotSpeed_Curve", utility.default_bezier),
-        duration,
-        function(alpha, deltaTime)
-          currentRotSpeed = utility.lerp(rotSpeedStart, rotSpeedEnd, alpha)
-          return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-        end,
-        speedTween
-      )
     )
   end
 
-  if partTp then
-    obj.Transparency = partTp(0)
+  obj.Transparency = partTp.at(0)
 
+  if partTp.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, partTpSpan, function(_, deltaTime, elapsed)
-        obj.Transparency = partTp(elapsed)
+      tween.fromParams(utility.linear_bezier, partTp.span, function(_, deltaTime, elapsed)
+        obj.Transparency = partTp.at(elapsed)
         return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
       end, speedTween)
     )
-  elseif tpStart ~= tpEnd then
-    lifetime.hold(
-      scope,
-      tween.fromParams(
-        attr.get(ref, "Part_Transparency_Curve", utility.default_bezier),
-        duration,
-        function(alpha, deltaTime)
-          obj.Transparency = utility.lerp(tpStart, tpEnd, alpha)
-          return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-        end,
-        speedTween
-      )
-    )
-  else
-    obj.Transparency = tpStart
   end
 
   local sizeStart, sizeEnd = start.Size * scale, goal.Size * scale
@@ -472,38 +364,18 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       -- this knob is authored on the DECAL rather than on ref, so mesh.OWNS
       -- cannot cover it: ownership is keyed to the instance dispatch routes to,
       -- and the decal is dispatched on its own through emitNested
-      local decalTp, decalTpSpan = mods.driver(from, "attribute", "Transparency", duration)
+      local decalTp = mods.track(from, "attribute", "Transparency", mods.ramp(legacy_decalST, legacy_decalET), duration)
 
-      if decalTp then
-        decal.Transparency = decalTp(0)
+      decal.Transparency = decalTp.at(0)
 
+      if decalTp.animated then
         lifetime.hold(
           scope,
-          tween.fromParams(utility.linear_bezier, decalTpSpan, function(_, deltaTime, elapsed)
-            decal.Transparency = decalTp(elapsed)
+          tween.fromParams(utility.linear_bezier, decalTp.span, function(_, deltaTime, elapsed)
+            decal.Transparency = decalTp.at(elapsed)
             return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
           end, speedTween)
         )
-      else
-        local decal_tpStart = attr.get(from, "Transparency_Start", legacy_decalST)
-        local decal_tpEnd = attr.get(from, "Transparency_End", legacy_decalET)
-
-        if decal_tpStart ~= decal_tpEnd then
-          lifetime.hold(
-            scope,
-            tween.fromParams(
-              attr.get(from, "Transparency_Curve", utility.default_bezier),
-              duration,
-              function(alpha, deltaTime)
-                decal.Transparency = utility.lerp(decal_tpStart, decal_tpEnd, alpha)
-                return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-              end,
-              speedTween
-            )
-          )
-        else
-          decal.Transparency = decal_tpStart
-        end
       end
 
       if from.Color3 ~= to.Color3 then

@@ -36,101 +36,43 @@ function spin.emit(ref: Model, scope: types.scope)
   local sync = attr.get(ref, "SyncPosition", false)
   local duration = attr.get(ref, "SpinDuration", 0.5)
 
-  local speedDuration = attr.get(ref, "SpinSpeed_Duration", 0.1)
+  local speedDuration = attr.get(ref, "SpinSpeed_Duration", 0.1, true)
 
   task.wait(emitDelay)
 
-  -- read the sampler before any attr.get on SpinSpeed_Start/_End: attr.get's
-  -- non-soft read below self-writes its default back onto ref, and it must
-  -- not do that before legacy_mods.readQuad gets to see whether either
-  -- attribute was genuinely absent
-  --
-  -- driver rather than sampler: the sampler drives ANY non-empty queue, so a
-  -- half quad pinned the knob to whichever endpoint happened to exist instead of
-  -- handing it back to the legacy branch below, which carries the real default,
-  -- and a base-only queue (what the curve editor stores over a target with no
-  -- quad behind it) sampled nil into `currentSpeed > 0` and threw every frame
-  local speed, speedSpan = mods.driver(ref, "attribute", "SpinSpeed", speedDuration, "number")
+  -- an unauthored model rests on a ramp from nought to one, and that ramp is
+  -- load bearing: a speed that is zero for good returns nil from the rotation
+  -- timer's counter and stops it on frame one
+  local speed = mods.track(ref, "attribute", "SpinSpeed", mods.ramp(0, 1), speedDuration)
   local speedTween
-  local currentSpeed
+  local currentSpeed = speed.at(0)
 
-  if speed then
-    currentSpeed = speed(0)
-
-    -- the queue's own reach, not the attribute duration: a queue that names a
-    -- longer run than SpinSpeed_Duration would otherwise be cut off partway, and
-    -- one carrying a delay needs the room the wait pushes it out by
-    speedTween = tween.fromParams(utility.linear_bezier, speedSpan, function(_, deltaTime, elapsed)
-      currentSpeed = speed(elapsed)
+  if speed.animated then
+    speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+      currentSpeed = speed.at(elapsed)
       return deltaTime
     end)
 
     lifetime.hold(scope, speedTween)
-  else
-    -- nothing authored at all. the pre-conversion default was a 0 to 1 ramp
-    -- on default_bezier, and it was load-bearing: an unauthored model that
-    -- lost it returns nil from the rotation timer's counter and stops on
-    -- frame one
-    local speedStart = attr.get(ref, "SpinSpeed_Start", 0)
-    local speedEnd = attr.get(ref, "SpinSpeed_End", 1)
-
-    currentSpeed = speedStart
-
-    if speedStart ~= speedEnd then
-      speedTween = tween.fromParams(
-        attr.get(ref, "SpinSpeed_Curve", utility.default_bezier),
-        speedDuration,
-        function(alpha, deltaTime)
-          currentSpeed = utility.lerp(speedStart, speedEnd, alpha)
-          return deltaTime
-        end
-      )
-
-      lifetime.hold(scope, speedTween)
-    end
   end
 
   local originalPivot = ref:GetPivot()
   local originalScale = ref:GetScale()
 
-  local scale, scaleSpan = mods.driver(ref, "attribute", "Scale", duration, "number")
+  local scale = mods.track(ref, "attribute", "Scale", 1, duration)
 
-  if scale then
+  if scale.animated then
     -- fromParams, not timer: timer yields until it finishes, and the rotation
-    -- timer below is the last statement in this function. the curve is linear
-    -- and its alpha ignored, because the sampler owns the shaping and is fed
-    -- elapsed directly, exactly as the SpinSpeed branch above does
+    -- timer below is the last statement in this function
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, scaleSpan, function(_, deltaTime, elapsed)
-        local at = (scale :: any)(elapsed)
-
-        -- a queue that stops resolving partway would throw here every frame, and
-        -- tween only runs its cleanup on a frame the counter returns from
-        if typeof(at) == "number" then
-          ref:ScaleTo(math.max(at, MIN_SCALE))
-        end
-
+      tween.fromParams(utility.linear_bezier, scale.span, function(_, deltaTime, elapsed)
+        ref:ScaleTo(math.max(scale.at(elapsed), MIN_SCALE))
         return deltaTime
       end)
     )
   else
-    local scaleStart = attr.get(ref, "Scale_Start", 1)
-    local scaleEnd = attr.get(ref, "Scale_End", 1)
-
-    if scaleStart ~= scaleEnd then
-      lifetime.hold(
-        scope,
-        tween.fromParams(attr.get(ref, "Scale_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
-          -- ScaleTo accepts values >= 0.001
-          ref:ScaleTo(math.max(utility.lerp(scaleStart, scaleEnd, alpha), MIN_SCALE))
-
-          return deltaTime
-        end)
-      )
-    else
-      ref:ScaleTo(math.max(scaleStart, MIN_SCALE))
-    end
+    ref:ScaleTo(math.max(scale.at(0), MIN_SCALE))
   end
 
   local parent = ref:FindFirstAncestorOfClass("Attachment") or ref:FindFirstAncestorWhichIsA("BasePart")

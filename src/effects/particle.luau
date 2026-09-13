@@ -33,44 +33,20 @@ function particle.emit(ref: ParticleEmitter, obj: ParticleEmitter, scope: types.
     obj.Enabled = true
   end
 
-  -- read before the legacy attr.get below, because attr.get writes its default
-  -- back and reading TimeScale_Start would create the quad readQuad then finds
-  local timeScale, timeScaleSpan = mods.driver(ref, "attribute", "TimeScale", 0.1)
+  local timeScale =
+    mods.track(ref, "attribute", "TimeScale", obj.TimeScale, attr.get(ref, "TimeScale_Duration", 0.1, true))
 
   local speedTween
 
-  if timeScale then
-    obj.TimeScale = timeScale(0)
+  obj.TimeScale = timeScale.at(0)
 
-    speedTween = tween.fromParams(utility.linear_bezier, timeScaleSpan, function(_, deltaTime, elapsed)
-      obj.TimeScale = timeScale(elapsed)
+  if timeScale.animated then
+    speedTween = tween.fromParams(utility.linear_bezier, timeScale.span, function(_, deltaTime, elapsed)
+      obj.TimeScale = timeScale.at(elapsed)
       return deltaTime
     end)
 
     lifetime.hold(scope, speedTween)
-  else
-    local timeScaleDuration = attr.get(ref, "TimeScale_Duration", 0.1)
-
-    local timeScaleStart = attr.get(ref, "TimeScale_Start", obj.TimeScale, true)
-    local timeScaleEnd = attr.get(ref, "TimeScale_End", obj.TimeScale, true)
-
-    if timeScaleStart ~= timeScaleEnd then
-      speedTween = tween.fromParams(
-        attr.get(ref, "TimeScale_Curve", utility.default_bezier),
-        timeScaleDuration,
-        function(alpha, deltaTime)
-          local speed = utility.lerp(timeScaleStart, timeScaleEnd, math.clamp(alpha, 0, 1))
-
-          obj.TimeScale = speed
-
-          return deltaTime
-        end
-      )
-
-      lifetime.hold(scope, speedTween)
-    elseif timeScaleStart ~= obj.TimeScale then
-      obj.TimeScale = timeScaleStart
-    end
   end
 
   utility.onCancel(scope, function()
