@@ -80,7 +80,7 @@ end
 
 -- the walk every unit-driven edit makes: the row's own keys by the unit's
 -- factor, the old quad endpoints and drawn ranges of a mod row likewise, and
--- the old span keys of a mod row by the inverse when `spans` is given. `each`
+-- the old span keys of a mod row by the inverse when `spans` is given. `visit`
 -- is called with the key and the factor for every key the walk decides on
 function retime.walk(
   obj: Instance,
@@ -88,7 +88,7 @@ function retime.walk(
   factor: number,
   unitFactor: (unit: string, factor: number) -> number?,
   spans: number?,
-  each: (source: string, name: string, key: string, f: number, row: any) -> ()
+  visit: (source: string, name: string, key: string, f: number) -> ()
 )
   local claimed = claimedOf(module)
 
@@ -103,7 +103,7 @@ function retime.walk(
 
       for _, key in keys do
         if f ~= nil then
-          each(source, name, key, f, row)
+          visit(source, name, key, f)
         end
 
         if not row.isMod then
@@ -163,6 +163,14 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
   utility.rescaleQueues(obj, function(queue)
     mods.scaleTime(queue, invFactor)
   end)
+
+  -- the legacy child the dispatcher still emits belongs to no module, so the
+  -- spans it carries are named here
+  if module == nil and obj:IsA("RayValue") then
+    utility.scaleAttribute(obj, invFactor, "Duration")
+    utility.scaleAttribute(obj, invFactor, "Speed_Duration")
+    utility.scaleAttribute(obj, invFactor, "EmitDelay")
+  end
 end
 
 function retime.batch(factor: number, ...: Instance)

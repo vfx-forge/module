@@ -3,6 +3,7 @@ local mods = require("@mod/mods")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
+local debris = require("@vfx/shockwave_debris")
 local resize = require("@mod/resize")
 local retime = require("@mod/retime")
 local harness = require("@tests/harness")
@@ -62,6 +63,22 @@ local function soundLike()
     properties = {
       Volume = knob():mod(),
     },
+    emit = noop,
+  })
+end
+
+-- a module of a built-in's id and rows, for the behaviour resize keys by id.
+-- the built-ins are frozen by the time this file runs, and a frozen module
+-- cannot be registered a second time
+local function effectStub(id: string, classifier: string, attributes: { [string]: any })
+  registry.clear()
+  registry.configure({ query = harness.query })
+  registry.register({
+    id = id,
+    display = { name = id },
+    classifier = classifier,
+    attributes = attributes,
+    properties = {},
     emit = noop,
   })
 end
@@ -134,6 +151,21 @@ harness.suite(function()
       expect(obj:GetAttribute("Volume_Duration")).toBe(0.5)
     end)
 
+    test("a bare RayValue keeps the legacy child's spans", function()
+      stub()
+
+      local obj = Instance.new("RayValue")
+      obj:SetAttribute("Duration", 2)
+      obj:SetAttribute("Speed_Duration", 2)
+      obj:SetAttribute("EmitDelay", 2)
+
+      retime.apply(obj, 2, 0.5)
+
+      expect(obj:GetAttribute("Duration")).toBe(1)
+      expect(obj:GetAttribute("Speed_Duration")).toBe(1)
+      expect(obj:GetAttribute("EmitDelay")).toBe(1)
+    end)
+
     test("engine properties scale by class", function()
       local obj = Instance.new("ParticleEmitter")
       obj.Lifetime = NumberRange.new(2, 4)
@@ -197,6 +229,62 @@ harness.suite(function()
 
       expect(obj.Size.Keypoints[1].Value).toBe(2)
       expect(obj.Size.Keypoints[2].Value).toBe(4)
+    end)
+
+    test("a beam's length scales its attachments, never its resting value", function()
+      effectStub("beam", "Beam", { LengthScale = knob(1):aliases("Length_Scale"):mod() })
+
+      local obj = Instance.new("Beam")
+      local a0 = Instance.new("Attachment")
+      local a1 = Instance.new("Attachment")
+
+      a0.Position = Vector3.new(-1, 0, 0)
+      a1.Position = Vector3.new(1, 0, 0)
+
+      obj.Attachment0 = a0
+      obj.Attachment1 = a1
+
+      obj:SetAttribute("LengthScale", 1)
+      obj:SetAttribute("Length_Scale_Start", 1)
+
+      resize.apply(obj, 2)
+
+      expect(a0.Position == Vector3.new(-2, 0, 0)).toBe(true)
+      expect(a1.Position == Vector3.new(2, 0, 0)).toBe(true)
+      expect(obj:GetAttribute("LengthScale")).toBe(1)
+      expect(obj:GetAttribute("Length_Scale_Start")).toBe(2)
+    end)
+
+    test("a spin model's resting scale is its size", function()
+      effectStub("model_spin", "Model", { Scale = knob(1):mod() })
+
+      local obj = Instance.new("Model")
+      obj:SetAttribute("Scale", 1)
+
+      resize.apply(obj, 2)
+
+      expect(obj:GetAttribute("Scale")).toBe(2)
+    end)
+
+    test("a debris piece's impulse scales where its spin does not", function()
+      expect(debris.attributes.LinearMagnitude.units).toBe("studsPerSecond")
+      expect(debris.attributes.AngularMagnitude.units).toBe(nil)
+
+      effectStub("shockwave_debris", "Part", {
+        LinearMagnitude = knob(NumberRange.new(15, 25)):unit("studsPerSecond"),
+        AngularMagnitude = knob(NumberRange.new(5, 15)),
+      })
+
+      local obj = Instance.new("Part")
+      obj.Size = Vector3.new(1, 1, 1)
+      obj:SetAttribute("LinearMagnitude", NumberRange.new(15, 25))
+      obj:SetAttribute("AngularMagnitude", NumberRange.new(5, 15))
+
+      resize.apply(obj, 2)
+
+      expect(obj:GetAttribute("LinearMagnitude") == NumberRange.new(30, 50)).toBe(true)
+      expect(obj:GetAttribute("AngularMagnitude") == NumberRange.new(5, 15)).toBe(true)
+      expect(obj.Size == Vector3.new(2, 2, 2)).toBe(true)
     end)
   end)
 end)

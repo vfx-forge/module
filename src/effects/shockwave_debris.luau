@@ -41,6 +41,7 @@ debris.attributes = {
     :label("Airtime")
     :hint("Target time-of-flight used to compute launch impulse, in seconds."),
   LinearMagnitude = knob(NumberRange.new(15, 25))
+    :unit("studsPerSecond")
     :label("Linear")
     :hint("Random range for each piece's launch impulse strength."),
   AngularMagnitude = knob(NumberRange.new(5, 15))

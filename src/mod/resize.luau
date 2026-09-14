@@ -21,11 +21,12 @@ resize.PROPERTY_UNITS = {
 }
 
 -- ratios the old resize scaled as if they were lengths, kept so a resized
--- effect looks as it did: a spin model's scale is its absolute size, and a
--- beam's length scale was scaled beside its attachments
+-- effect looks as it did. the flag says whether the resting value scales with
+-- them: a spin model's scale is its absolute size, where a beam's length scale
+-- multiplies the attachment distance that scaleShape already scales
 resize.RATIOS = {
   model_spin = { Scale = true },
-  beam = { LengthScale = true },
+  beam = { LengthScale = false },
 }
 
 -- a property the instance does not have throws on the read, which is the
@@ -87,29 +88,26 @@ function resize.apply(obj: Instance, factor: number)
   if module ~= nil then
     local ratios = resize.RATIOS[module.id] or {}
 
-    retime.walk(
-      obj,
-      module,
-      factor,
-      function(unit, f)
-        return factorOf(unit, f)
-      end,
-      nil,
-      function(source, name, key, f)
-        utility.scaleAttribute(obj, f, key)
-        scaleQueue(obj, source, key, f)
+    retime.walk(obj, module, factor, factorOf, nil, function(source, name, key, f)
+      -- a row RATIOS names takes its factor from there, never from a unit as
+      -- well, so nothing it holds is ever scaled twice
+      if ratios[name] ~= nil then
+        return
+      end
 
-        if source == "property" then
-          scaleQueue(obj, "attribute", key, f)
+      utility.scaleAttribute(obj, f, key)
+      scaleQueue(obj, source, key, f)
 
-          if key == name then
-            scaleProperty(obj, name, f)
-          end
+      if source == "property" then
+        scaleQueue(obj, "attribute", key, f)
+
+        if key == name then
+          scaleProperty(obj, name, f)
         end
       end
-    )
+    end)
 
-    for name in ratios do
+    for name, bare in ratios do
       local row = module.attributes[name]
 
       if row == nil then
@@ -117,7 +115,10 @@ function resize.apply(obj: Instance, factor: number)
       end
 
       for _, key in { name, table.unpack(row.names) } do
-        utility.scaleAttribute(obj, factor, key)
+        if bare then
+          utility.scaleAttribute(obj, factor, key)
+        end
+
         utility.scaleAttribute(obj, factor, key .. "_Start")
         utility.scaleAttribute(obj, factor, key .. "_End")
         scaleQueue(obj, "attribute", key, factor)
