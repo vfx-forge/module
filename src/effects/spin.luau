@@ -43,6 +43,7 @@ spin.attributes = {
     :hint("Seconds the rotation sweep takes to complete."),
   SyncPosition = knob(false):label("SyncPosition"):hint("Whether the effect follows the emitter's position."),
   Scale = knob(1):min(MIN_SCALE):mod():label("Scale"):hint("Model scale factor over the spin."),
+  ScaleDuration = knob():aliases("Scale_Duration"):unit("seconds"):hidden(always),
   -- an unauthored model rests on a ramp from nought to one, and that ramp is
   -- load bearing: a speed that is zero for good returns nil from the rotation
   -- timer's counter and stops it on frame one

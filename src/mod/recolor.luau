@@ -1,3 +1,5 @@
+local registry = require("@mod/registry")
+
 local colorProps = {
   Single = {
     Color3 = {
@@ -56,12 +58,25 @@ local function multiplyRGB(color: Color3, factor: number)
   return Color3.new(color.R * factor, color.G * factor, color.B * factor)
 end
 
+-- one colour multiplied by another, the way this module has always meant it:
+-- the hue rotated, the saturation and value pushed, the overbright factor kept
+local function multiplyColor(c: Color3, color: Color3): Color3
+  local hue, sat, val = color:ToHSV()
+
+  local f, col = normalizeColor(c)
+  local h0, s0, v0 = col:ToHSV()
+
+  local h2 = multiplyHue(h0, hue)
+  local s2 = multiplyChannel(s0, sat)
+  local v2 = multiplyChannel(v0, val)
+
+  return multiplyRGB(Color3.fromHSV(h2, s2, v2), f)
+end
+
 local function recolorObj(obj: Instance, color: Color3, mode: string, isDirect: boolean)
   if not isDirect and obj:IsA("BasePart") then
     return
   end
-
-  local hue, sat, val = color:ToHSV()
 
   for _, info in colorProps do
     for k, v in info do
@@ -73,26 +88,12 @@ local function recolorObj(obj: Instance, color: Color3, mode: string, isDirect: 
 
       if mode == "multiply" then
         if typeof(c) == "Color3" then
-          local f, col = normalizeColor(c)
-          local h0, s0, v0 = col:ToHSV()
-
-          local h2 = multiplyHue(h0, hue)
-          local s2 = multiplyChannel(s0, sat)
-          local v2 = multiplyChannel(v0, val)
-
-          obj[k] = multiplyRGB(Color3.fromHSV(h2, s2, v2), f)
+          obj[k] = multiplyColor(c, color)
         elseif typeof(c) == "ColorSequence" then
           local res = {}
 
           for _, kp in c.Keypoints do
-            local f, col = normalizeColor(kp.Value)
-            local h0, s0, v0 = col:ToHSV()
-
-            local h2 = multiplyHue(h0, hue)
-            local s2 = multiplyChannel(s0, sat)
-            local v2 = multiplyChannel(v0, val)
-
-            table.insert(res, ColorSequenceKeypoint.new(kp.Time, multiplyRGB(Color3.fromHSV(h2, s2, v2), f)))
+            table.insert(res, ColorSequenceKeypoint.new(kp.Time, multiplyColor(kp.Value, color)))
           end
 
           obj[k] = ColorSequence.new(res)
@@ -109,12 +110,65 @@ local function recolorObj(obj: Instance, color: Color3, mode: string, isDirect: 
   end
 end
 
+-- the colour rows of a classified instance: a sequence row is replaced by a
+-- flat sequence of the colour, or multiplied keypoint by keypoint
+local function recolorRows(obj: Instance, color: Color3, mode: string)
+  local module = registry.of(obj)
+
+  if module == nil then
+    return
+  end
+
+  for name, row in module.attributes do
+    local kind = row.kind
+
+    if kind ~= "Color3" and kind ~= "ColorSequence" then
+      continue
+    end
+
+    local current = obj:GetAttribute(name)
+
+    if current == nil then
+      for _, alias in row.names do
+        current = obj:GetAttribute(alias)
+
+        if current ~= nil then
+          name = alias
+          break
+        end
+      end
+    end
+
+    if current == nil then
+      current = row.default
+    end
+
+    if typeof(current) == "Color3" then
+      obj:SetAttribute(name, if mode == "multiply" then multiplyColor(current, color) else color)
+    elseif typeof(current) == "ColorSequence" then
+      if mode == "multiply" then
+        local keypoints = {}
+
+        for _, kp in current.Keypoints do
+          table.insert(keypoints, ColorSequenceKeypoint.new(kp.Time, multiplyColor(kp.Value, color)))
+        end
+
+        obj:SetAttribute(name, ColorSequence.new(keypoints))
+      else
+        obj:SetAttribute(name, ColorSequence.new(color))
+      end
+    end
+  end
+end
+
 local function recolor(color: Color3, mode: "replace" | "multiply", ...: Instance)
   for _, instance in { ... } do
     recolorObj(instance, color, mode, true)
+    recolorRows(instance, color, mode)
 
     for _, desc in instance:GetDescendants() do
       recolorObj(desc, color, mode, false)
+      recolorRows(desc, color, mode)
     end
   end
 end

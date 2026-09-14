@@ -11,6 +11,10 @@ local Promise = require("@pkg/Promise")
 
 local rng = Random.new()
 
+local function always()
+  return true
+end
+
 local beam = {}
 
 beam.id = "beam"
@@ -29,6 +33,7 @@ beam.attributes = {
     :label("Duration")
     :hint("Duration range of the effect in seconds."),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the beam's clock."),
+  SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   LengthScale = knob(1)
     :aliases("Length_Scale")
     :mod()
@@ -55,11 +60,16 @@ beam.attributes = {
 -- the beam's own properties are its state; an old attribute of the same name
 -- shadows one, and an old quad on it folds into its queue
 beam.properties = {
-  Width0 = knob():mod():label("Width0"):hint("Beam Width0 over the effect."),
-  Width1 = knob():mod():label("Width1"):hint("Beam Width1 over the effect."),
-  CurveSize0 = knob():mod():label("CurveSize0"):hint("Beam CurveSize0 over the effect."),
-  CurveSize1 = knob():mod():label("CurveSize1"):hint("Beam CurveSize1 over the effect."),
-  TextureSpeed = knob():aliases("Speed_Texture"):mod():label("Texture"):hint("Texture speed over the effect."),
+  Width0 = knob():unit("studs"):mod():label("Width0"):hint("Beam Width0 over the effect."),
+  Width1 = knob():unit("studs"):mod():label("Width1"):hint("Beam Width1 over the effect."),
+  CurveSize0 = knob():unit("studs"):mod():label("CurveSize0"):hint("Beam CurveSize0 over the effect."),
+  CurveSize1 = knob():unit("studs"):mod():label("CurveSize1"):hint("Beam CurveSize1 over the effect."),
+  TextureSpeed = knob()
+    :aliases("Speed_Texture")
+    :unit("perSecond")
+    :mod()
+    :label("Texture")
+    :hint("Texture speed over the effect."),
   TextureLength = knob():aliases("Length_Texture"):mod():label("Texture"):hint("Texture length over the effect."),
 }
 

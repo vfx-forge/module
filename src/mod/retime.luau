@@ -1,131 +1,162 @@
 local mods = require("@mod/mods")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
+local registry = require("@mod/registry")
 local numeric_common = require("@mod/common/numeric")
 
 local retime = {}
 
-function retime.apply(obj: Instance, factor: number, invFactor: number)
-  if obj:IsA("ParticleEmitter") then
-    utility.scaleAttribute(obj, invFactor, "EmitDelay")
-    utility.scaleAttribute(obj, invFactor, "EmitDuration")
-    utility.scaleAttribute(obj, invFactor, "TimeScale_Duration")
+-- how a unit scales when time runs `factor` times faster: a span shrinks, a
+-- rate grows, an acceleration grows by the square, a length is untouched
+local function factorOf(unit: string, factor: number): number?
+  if unit == "seconds" then
+    return 1 / factor
+  end
 
-    obj.Speed = NumberRange.new(obj.Speed.Min * factor, obj.Speed.Max * factor)
-    obj.RotSpeed = NumberRange.new(obj.RotSpeed.Min * factor, obj.RotSpeed.Max * factor)
-    obj.Lifetime = NumberRange.new(obj.Lifetime.Min / factor, obj.Lifetime.Max / factor)
+  if unit == "perSecond" or unit == "studsPerSecond" then
+    return factor
+  end
 
-    obj.Acceleration *= factor ^ 2
-    obj.Drag *= factor
-    obj.Rate *= factor
-  elseif obj:IsA("Beam") then
-    utility.scaleAttribute(obj, invFactor, "EmitDelay")
-    utility.scaleAttribute(obj, invFactor, "EmitDuration")
-    utility.scaleAttribute(obj, invFactor, "EffectDuration")
-    utility.scaleAttribute(obj, invFactor, "Speed_Duration")
-    utility.scaleAttribute(obj, invFactor, "Duration")
+  if unit == "perSecondSquared" or unit == "studsPerSecondSquared" then
+    return factor * factor
+  end
 
-    obj.TextureSpeed *= factor
-  elseif obj:IsA("Trail") then
-    obj.Lifetime *= invFactor
-  elseif obj:IsA("Sound") then
-    utility.scaleAttribute(obj, invFactor, "EmitDelay")
-    utility.scaleAttribute(obj, invFactor, "EmitDuration")
-    utility.scaleAttribute(obj, invFactor, "EmitInterval")
-    utility.scaleAttribute(obj, invFactor, "RepeatInterval")
-    utility.scaleAttribute(obj, invFactor, "FadeOutTime")
+  return nil
+end
 
-    utility.scaleAttribute(obj, invFactor, "Volume_Duration")
-    utility.scaleAttribute(obj, invFactor, "Speed_Duration")
-    utility.scaleAttribute(obj, invFactor, "RollOff_Duration")
-  elseif obj:IsA("Model") then
-    local start = obj:FindFirstChild("Start")
-    local goal = obj:FindFirstChild("End")
+-- engine properties no effect reads, which time still scales
+retime.PROPERTY_UNITS = {
+  ParticleEmitter = {
+    Speed = "studsPerSecond",
+    RotSpeed = "perSecond",
+    Lifetime = "seconds",
+    Acceleration = "studsPerSecondSquared",
+    Drag = "perSecond",
+    Rate = "perSecond",
+  },
+  Trail = { Lifetime = "seconds" },
+}
 
-    if start and start:IsA("BasePart") and goal and goal:IsA("BasePart") then
-      utility.scaleAttribute(obj, invFactor, "EmitDelay")
-      utility.scaleAttribute(obj, invFactor, "DestroyDelay")
-      utility.scaleAttribute(obj, invFactor, "EmitDuration")
-      utility.scaleAttribute(obj, invFactor, "EffectDuration")
-      utility.scaleAttribute(obj, invFactor, "Speed_Duration")
-      utility.scaleAttribute(obj, invFactor, "Duration")
+-- a property the instance does not have throws on the read, which is the
+-- answer "nothing to scale"
+local function scaleProperty(obj: any, name: string, f: number)
+  local ok, v = pcall(function()
+    return obj[name]
+  end)
 
-      utility.scaleAttribute(obj, factor, "Rate")
-      utility.scaleAttribute(obj, factor, "Part_RotSpeed_Start")
-      utility.scaleAttribute(obj, factor, "Part_RotSpeed_End")
-    else
-      utility.scaleAttribute(obj, factor, "SpinRotation")
+  if not ok then
+    return
+  end
 
-      utility.scaleAttribute(obj, invFactor, "EmitDelay")
-      utility.scaleAttribute(obj, invFactor, "ResetDelay")
+  if typeof(v) == "number" or typeof(v) == "Vector3" then
+    obj[name] = v * f
+  elseif typeof(v) == "NumberRange" then
+    obj[name] = NumberRange.new(v.Min * f, v.Max * f)
+  elseif typeof(v) == "NumberSequence" then
+    obj[name] = utility.scaleNumberSequence(v, f)
+  end
+end
 
-      utility.scaleAttribute(obj, invFactor, "SpinDuration")
-      utility.scaleAttribute(obj, invFactor, "Scale_Duration")
-      utility.scaleAttribute(obj, invFactor, "SpinSpeed_Duration")
+local QUAD = { "_Start", "_End", "_Min", "_Max" }
+local RANGE = { "Min", "Max" }
+
+-- every name a module's rows answer to, so a legacy key one row claims is
+-- never scaled twice by another row's rule
+local function claimedOf(module: registry.Module): { [string]: boolean }
+  local out = {}
+
+  for _, rows in { module.attributes, module.properties } do
+    for name, row in rows do
+      out[name] = true
+
+      for _, alias in row.names do
+        out[alias] = true
+      end
     end
-  elseif obj:IsA("Attachment") and obj:HasTag(utility.BEZIER_TAG) then
-    utility.scaleAttribute(obj, invFactor, "EmitDelay")
-    utility.scaleAttribute(obj, invFactor, "DestroyDelay")
-    utility.scaleAttribute(obj, invFactor, "EmitDuration")
-    utility.scaleAttribute(obj, invFactor, "Duration")
-    utility.scaleAttribute(obj, invFactor, "Speed_Duration")
+  end
 
-    utility.scaleAttribute(obj, factor, "ProjectileSpeed")
-    utility.scaleAttribute(obj, invFactor, "ProjectileLifetime")
-    utility.scaleAttribute(obj, factor, "Rate")
-    utility.scaleAttribute(obj, factor, "Part_RotSpeed_Start")
-    utility.scaleAttribute(obj, factor, "Part_RotSpeed_End")
-  elseif obj:IsA("Attachment") and obj:HasTag(utility.LIGHTNING_TAG) then
-    utility.scaleAttribute(obj, invFactor, "EmitDelay")
-    utility.scaleAttribute(obj, invFactor, "DestroyDelay")
-    utility.scaleAttribute(obj, invFactor, "EmitDuration")
-    utility.scaleAttribute(obj, invFactor, "Duration")
-    utility.scaleAttribute(obj, invFactor, "Speed_Duration")
+  return out
+end
 
-    utility.scaleAttribute(obj, invFactor, "Color_Duration")
-    utility.scaleAttribute(obj, invFactor, "Fill_Color_Duration")
-    utility.scaleAttribute(obj, invFactor, "Fade_In_Duration")
-    utility.scaleAttribute(obj, invFactor, "Fade_Out_Duration")
-    utility.scaleAttribute(obj, invFactor, "Dissipate_Duration")
+-- the walk every unit-driven edit makes: the row's own keys by the unit's
+-- factor, the old quad endpoints and drawn ranges of a mod row likewise, and
+-- the old span keys of a mod row by the inverse when `spans` is given. `each`
+-- is called with the key and the factor for every key the walk decides on
+function retime.walk(
+  obj: Instance,
+  module: registry.Module,
+  factor: number,
+  unitFactor: (unit: string, factor: number) -> number?,
+  spans: number?,
+  each: (source: string, name: string, key: string, f: number, row: any) -> ()
+)
+  local claimed = claimedOf(module)
 
-    utility.scaleAttribute(obj, factor, "ProjectileSpeed")
-    utility.scaleAttribute(obj, invFactor, "ProjectileLifetime")
-    utility.scaleAttribute(obj, factor, "Rate")
-    utility.scaleAttribute(obj, factor, "RefreshRate")
-  elseif
-    obj:IsA("BasePart")
-    and obj.Parent
-    and utility.findFirstClassWithTag(obj.Parent, "Attachment", utility.SHOCKWAVE_TAG)
-  then
-    utility.scaleAttribute(obj, invFactor, "EmitDelay")
-    utility.scaleAttribute(obj, invFactor, "Size_Duration")
+  for source, rows in { attribute = module.attributes, property = module.properties } do
+    for name, row in rows do
+      local f = if row.units ~= nil then unitFactor(row.units, factor) else nil
+      local keys = { name }
 
-    -- the phase rows, which retime never reached under their old names either.
-    -- scaleAttribute is a no-op on an attribute that is absent, so listing both
-    -- the new names and the ones they were renamed from costs nothing
-    utility.scaleAttribute(obj, invFactor, "SizeScaleIn_Duration")
-    utility.scaleAttribute(obj, invFactor, "SizeScaleOut_Duration")
-    utility.scaleAttribute(obj, invFactor, "OffsetIn_Duration")
-    utility.scaleAttribute(obj, invFactor, "OffsetOut_Duration")
-    utility.scaleAttribute(obj, invFactor, "Size_Start_Duration")
-    utility.scaleAttribute(obj, invFactor, "Size_End_Duration")
-    utility.scaleAttribute(obj, invFactor, "Offset_Start_Duration")
-    utility.scaleAttribute(obj, invFactor, "Offset_End_Duration")
+      for _, alias in row.names do
+        table.insert(keys, alias)
+      end
 
-    utility.scaleAttribute(obj, invFactor, "Speed_Duration")
-    utility.scaleAttribute(obj, invFactor, "Transparency_Duration")
-    utility.scaleAttribute(obj, invFactor, "Lifetime")
-    utility.scaleAttribute(obj, invFactor, "Duration")
-    utility.scaleAttribute(obj, factor, "Rate_Start")
-    utility.scaleAttribute(obj, factor, "Rate_End")
-  elseif obj:IsA("RayValue") and obj:HasTag(utility.SCREENSHAKE_TAG) then
-    utility.scaleAttribute(obj, invFactor, "EmitDelay")
-    utility.scaleAttribute(obj, invFactor, "EmitDuration")
-    utility.scaleAttribute(obj, invFactor, "Scale_Duration")
-  elseif obj:IsA("RayValue") then
-    utility.scaleAttribute(obj, invFactor, "Duration")
-    utility.scaleAttribute(obj, invFactor, "Speed_Duration")
-    utility.scaleAttribute(obj, invFactor, "EmitDelay")
+      for _, key in keys do
+        if f ~= nil then
+          each(source, name, key, f, row)
+        end
+
+        if not row.isMod then
+          continue
+        end
+
+        if f ~= nil then
+          for _, suffix in QUAD do
+            if not claimed[key .. suffix] then
+              utility.scaleAttribute(obj, f, key .. suffix)
+            end
+          end
+
+          for _, prefix in RANGE do
+            if not claimed[prefix .. key] then
+              utility.scaleAttribute(obj, f, prefix .. key)
+            end
+          end
+        end
+
+        if spans ~= nil and not claimed[key .. "_Duration"] then
+          utility.scaleAttribute(obj, spans, key .. "_Duration")
+        end
+      end
+    end
+  end
+end
+
+function retime.apply(obj: Instance, factor: number, invFactor: number)
+  local module = registry.of(obj)
+
+  if module ~= nil then
+    retime.walk(obj, module, factor, factorOf, invFactor, function(source, name, key, f)
+      utility.scaleAttribute(obj, f, key)
+
+      if source == "property" and key == name then
+        scaleProperty(obj, name, f)
+      end
+    end)
+  end
+
+  for class, units in retime.PROPERTY_UNITS do
+    if not obj:IsA(class) then
+      continue
+    end
+
+    for name, unit in units do
+      local f = factorOf(unit, factor)
+
+      if f ~= nil then
+        scaleProperty(obj, name, f)
+      end
+    end
   end
 
   -- a queue is time whatever it targets, so every one on the instance scales
