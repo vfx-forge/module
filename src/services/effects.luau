@@ -91,8 +91,6 @@ local function envOf(emit: lifetime.emit): types.EmitEnv
 end
 
 local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
-  local api = api_ref :: types.Api
-
   local shared: reader.Shared = { unc = {}, ref = {} }
 
   local legacyScale = 1

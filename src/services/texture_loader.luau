@@ -79,19 +79,15 @@ function texture_loader.init(scope: { any })
       return
     end
 
+    local obj = ref:FindFirstChild("Start")
+
     if
       ref:IsA("Model")
-      and ref:FindFirstChild("Start")
-      and (ref :: any).Start:IsA("BasePart")
+      and obj
+      and obj:IsA("BasePart")
       and ref:FindFirstChild("End")
       and (ref :: any).End:IsA("BasePart")
     then
-      local obj = ref:FindFirstChild("Start")
-
-      if not obj or not obj:IsA("BasePart") then
-        return
-      end
-
       createLoader(ref, function(add)
         local decals, flipbooks = utility.getMeshDecals(ref :: Model, obj)
 

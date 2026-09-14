@@ -11,8 +11,6 @@ local registry = require("@mod/registry")
 local modifiers = require("@mod/modifiers")
 local legacy_mods = require("@mod/legacy_mods")
 
-local Promise = require("@pkg/Promise")
-
 -- how many throwing writes a driven target gets before the applier gives up on
 -- it. an unguarded write throws from inside a render step binding, which never
 -- advances the timer that would otherwise end it
