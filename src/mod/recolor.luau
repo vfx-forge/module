@@ -1,3 +1,4 @@
+local attr = require("@mod/attributes")
 local registry = require("@mod/registry")
 
 local colorProps = {
@@ -111,7 +112,9 @@ local function recolorObj(obj: Instance, color: Color3, mode: string, isDirect: 
 end
 
 -- the colour rows of a classified instance: a sequence row is replaced by a
--- flat sequence of the colour, or multiplied keypoint by keypoint
+-- flat sequence of the colour, or multiplied keypoint by keypoint. the row goes
+-- through the cache-aware read and write, so a cached instance is recoloured
+-- where every reader on this path looks, and a soft read stamps nothing
 local function recolorRows(obj: Instance, color: Color3, mode: string)
   local module = registry.of(obj)
 
@@ -126,11 +129,11 @@ local function recolorRows(obj: Instance, color: Color3, mode: string)
       continue
     end
 
-    local current = obj:GetAttribute(name)
+    local current = attr.get(obj, name, nil, true)
 
     if current == nil then
       for _, alias in row.names do
-        current = obj:GetAttribute(alias)
+        current = attr.get(obj, alias, nil, true)
 
         if current ~= nil then
           name = alias
@@ -144,7 +147,7 @@ local function recolorRows(obj: Instance, color: Color3, mode: string)
     end
 
     if typeof(current) == "Color3" then
-      obj:SetAttribute(name, if mode == "multiply" then multiplyColor(current, color) else color)
+      attr.set(obj, name, if mode == "multiply" then multiplyColor(current, color) else color)
     elseif typeof(current) == "ColorSequence" then
       if mode == "multiply" then
         local keypoints = {}
@@ -153,9 +156,9 @@ local function recolorRows(obj: Instance, color: Color3, mode: string)
           table.insert(keypoints, ColorSequenceKeypoint.new(kp.Time, multiplyColor(kp.Value, color)))
         end
 
-        obj:SetAttribute(name, ColorSequence.new(keypoints))
+        attr.set(obj, name, ColorSequence.new(keypoints))
       else
-        obj:SetAttribute(name, ColorSequence.new(color))
+        attr.set(obj, name, ColorSequence.new(color))
       end
     end
   end
