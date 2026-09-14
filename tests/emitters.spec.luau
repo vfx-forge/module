@@ -1,9 +1,15 @@
 local harness = require("@tests/harness")
 local knob = require("@mod/knob")
+local mods = require("@mod/mods")
+local codec = require("@mod/modifier_codec")
+local frame = require("@mod/modifier_frame")
+local value = require("@mod/value")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local test, expect = harness.test, harness.expect
+
+frame.configure(harness.fakeEncoding, harness.fakeCompression)
 
 -- a value written to a property comes back single precision, so a comparison
 -- here is looser than one against a number the reader never wrote anywhere
@@ -55,6 +61,10 @@ local function emit(root: Instance)
   lifetime.seal(em)
 
   return em
+end
+
+local function framed(obj: Instance, source: string, name: string, queue: { any })
+  obj:SetAttribute(mods.attrName(source, name), frame.frame(codec.encode({ v = 1, queue = queue })))
 end
 
 local function tweener(parent: Instance, name: string, startV: any, endV: any, duration: number): Instance
@@ -166,6 +176,61 @@ harness.suite(function()
       harness.render(0.5)
 
       expect(part.Transparency).toBe(0)
+    end)
+  end)
+
+  harness.describe("the dispatcher", function()
+    test("a constant emit reads and emits the module alone, where a plain one draws and drives too", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(module("piece", "Part"))
+      harness.reset()
+
+      -- a piece carrying both halves of the prologue: a randomizer child to
+      -- draw and a queue of its own for the applier to start
+      local function fixture(): Instance
+        local part = harness.make("Part")
+        local child = tweener(part, "Transparency", 0.7, 0.7, 1)
+        child:AddTag("PropertyRandomizer")
+
+        framed(part, "property", "Transparency", {
+          { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(1) },
+        })
+
+        return part
+      end
+
+      local function dispatch(obj: Instance, constant: boolean?)
+        local em = lifetime.emit(nil)
+
+        lifetime.run(lifetime.effect(em, 0, nil), function(scope)
+          emitters.dispatch(obj, scope, { unc = {}, ref = {} }, 1, registry.get("piece"), constant)
+        end)
+
+        lifetime.seal(em)
+      end
+
+      local ticked = fixture()
+      dispatch(ticked, true)
+
+      expect(ticked.Transparency).toBe(0)
+
+      for _ = 1, 3 do
+        harness.render(0.25)
+      end
+
+      expect(ticked.Transparency).toBe(0)
+
+      local emitted = fixture()
+      dispatch(emitted, nil)
+
+      expect(near(emitted.Transparency, 0.7)).toBe(true)
+
+      for _ = 1, 3 do
+        harness.render(0.25)
+      end
+
+      expect(near(emitted.Transparency, 0.5)).toBe(true)
     end)
   end)
 end)

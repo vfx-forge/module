@@ -81,11 +81,21 @@ line.attributes = {
     :aliases("Path_Curve")
     :label("Path")
     :hint("Easing of the sweep along its length."),
-  Size = knob(drawnSize):unit("studs"):mod():label("Size"):hint("Size drawn for each piece, in studs."),
-  -- the corners are spelled the engine's way, because a draw only runs per
-  -- axis between two values of that spelling
-  MinSize = knob(Vector3.new(2, 1, 2)):aliases("Size_Min"):unit("studs"):hidden(always),
-  MaxSize = knob(Vector3.new(3, 2, 3)):aliases("Size_Max"):unit("studs"):hidden(always),
+  -- the corners are the pair an author sets and the panel renders, and they are
+  -- spelled the engine's way because a draw only runs per axis between two
+  -- values of that spelling. the drawn size between them is the row a queue or
+  -- a bare Size attribute overrides, which is all it is ever named for
+  Size = knob(drawnSize):unit("studs"):mod():hidden(always),
+  MinSize = knob(Vector3.new(2, 1, 2))
+    :aliases("Size_Min")
+    :unit("studs")
+    :label("Min")
+    :hint("Minimum per-axis size for each line piece."),
+  MaxSize = knob(Vector3.new(3, 2, 3))
+    :aliases("Size_Max")
+    :unit("studs")
+    :label("Max")
+    :hint("Maximum per-axis size for each line piece."),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
   -- the span an old speed quad ran over, read by the old format's reader under
   -- this name and kept as a row so retime reaches it
@@ -166,7 +176,8 @@ line.layout = {
     title = "Size",
     entries = {
       { title = "Scale", entries = { "SizeScaleIn", "ShrinkScale", "ShrinkDuration", "ShrinkCurve" } },
-      "Size",
+      "MinSize",
+      "MaxSize",
     },
   },
 }
