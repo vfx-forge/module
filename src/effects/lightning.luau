@@ -48,7 +48,7 @@ do
     :label("Mode")
     :hint("Which segments spawn nested child effects.")
 
-  rows.Color = knob(ColorSequence.new(Color3.new(1, 1, 1))):label("Color"):hint("Color of the lightning segments.")
+  rows.Color = knob(ColorSequence.new(Color3.new(1, 1, 1))):label("Color"):hint("Colour of the segments.")
   rows.ColorCurve = knob(linear):aliases("Color_Curve"):label("Curve"):hint("Easing of the colour cycle.")
   rows.ColorDuration =
     knob(1):min(0):aliases("Color_Duration"):unit("seconds"):label("Duration"):hint("Seconds one colour cycle takes.")
@@ -125,16 +125,16 @@ table.insert(lightning.layout, {
     "ColorDuration",
     "IndependentSegments",
     { title = "Refresh", entries = { "RefreshRate", "RefreshDuringDissipate" } },
-    { title = "Transparency", entries = { "Transparency" } },
-    { title = "Width", entries = { "Width" } },
-    { title = "Length", entries = { "Length" } },
+    "Transparency",
+    "Width",
+    "Length",
   },
 })
 table.insert(lightning.layout, { title = "Offset", entries = { "Jaggedness", "OffsetScale" } })
 table.insert(lightning.layout, { title = "Nested Effects", entries = { "NestedEffectMode" } })
 table.insert(lightning.layout, {
   title = "Fill",
-  entries = { "FillColor", "FillColorCurve", "FillColorDuration", "FillDepthMode", "FillTransparency" },
+  entries = { "FillColor", "FillDepthMode", "FillColorCurve", "FillColorDuration", "FillTransparency" },
 })
 table.insert(lightning.layout, {
   title = "Fade",

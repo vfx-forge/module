@@ -145,7 +145,7 @@ mesh.layout = {
   {
     title = "Part",
     entries = {
-      { title = "Transparency", entries = { "PartTransparency" } },
+      "PartTransparency",
       "PartCFrameCurve",
       "PartSizeCurve",
       "MeshScaleCurve",

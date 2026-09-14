@@ -173,7 +173,7 @@ harness.suite(function()
       for _, module in registry.list() do
         local placed = {}
 
-        local function walk(entries)
+        local function walk(entries: { any })
           for _, entry in entries do
             if type(entry) == "string" then
               expect(placed[entry]).toBe(nil)

@@ -63,8 +63,8 @@ debris.attributes = {
     :hint("Size drawn for each piece, in studs."),
   ShrinkScale = knob(vector.zero)
     :aliases("SizeScaleOut_End", "SizeScaleEnd")
-    :label("EndScale")
-    :hint("Fraction of the rolled size each debris piece tweens to."),
+    :label("End")
+    :hint("Fraction of the drawn size each piece tweens to before despawning."),
   ShrinkDuration = knob(0.5)
     :min(0)
     :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
@@ -80,7 +80,7 @@ debris.attributes = {
   Transparency = knob(0)
     :aliases("Transparency_Start")
     :mod(mod.to(1):duration(0.5))
-    :label("Start")
+    :label("Transparency")
     :hint("Transparency applied to spawned debris without an inherited surface."),
 }
 

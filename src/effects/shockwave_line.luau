@@ -102,13 +102,13 @@ line.attributes = {
     :mod(mod.to(0):duration(function(_, attrs)
       return attrs.TransparencyDuration
     end))
-    :label("Start")
-    :hint("Transparency applied to each line piece on spawn."),
+    :label("Transparency")
+    :hint("Transparency each piece rests at before its fade."),
   TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"):unit("seconds"):hidden(always),
   ShrinkScale = knob(vector.zero)
     :aliases("SizeScaleOut_End", "SizeScaleEnd")
     :label("End")
-    :hint("Fraction of the rolled size each line piece tweens to."),
+    :hint("Fraction of the drawn size each piece tweens to before despawning."),
   ShrinkDuration = knob(0.5)
     :min(0)
     :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
@@ -123,7 +123,7 @@ line.attributes = {
     :aliases("OffsetOut_End", "Offset_End", "PartOffset")
     :unit("studs")
     :label("End")
-    :hint("Local offset each line piece tweens to before despawning."),
+    :hint("Local offset each piece tweens to before despawning."),
   OffsetOutDuration = knob(0.5)
     :min(0)
     :aliases("OffsetOut_Duration", "Offset_End_Duration")
@@ -155,8 +155,8 @@ line.layout = {
   {
     title = "Size",
     entries = {
-      "Size",
       { title = "Scale", entries = { "SizeScaleIn", "ShrinkScale", "ShrinkDuration", "ShrinkCurve" } },
+      "Size",
     },
   },
 }

@@ -1,8 +1,3 @@
--- prints the differences between the plugin's schema files and the modules'
--- rows: a plugin row no module row answers to (by name or alias), a default
--- that differs, an option list that differs, a label or short hint that
--- differs, and a module row the plugin never showed. run from the package
--- root: lune run scripts/row-diff -- /path/to/plugin/src/ui/attributes/schema
 local fs = require("@lune/fs")
 local luau = require("@lune/luau")
 local process = require("@lune/process")
@@ -73,7 +68,7 @@ local function loadSchema(file: string)
   return chunk()
 end
 
-local function same(a: any, b: any): boolean
+local function same(a: any, b: any)
   if typeof(a) ~= typeof(b) then
     return false
   end
@@ -95,7 +90,7 @@ local function same(a: any, b: any): boolean
   return a == b
 end
 
-local function show(v: any): string
+local function show(v: any)
   if typeof(v) == "table" then
     local parts = {}
 
@@ -145,6 +140,11 @@ local function report(effect: string, line: string)
   print(`{effect}: {line}`)
 end
 
+-- every plugin schema against the module it names: a plugin row no module row
+-- answers to (by name or alias), a default that differs, an option list that
+-- differs, a label or short hint that differs, and a module row the plugin
+-- never showed. run from the package root:
+-- lune run scripts/row-diff -- /path/to/plugin/src/ui/attributes/schema
 for key, id in IDS do
   local schema = loadSchema(`{dir}/{key}.luau`)
   local module = registry.get(id)
