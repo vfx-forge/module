@@ -260,9 +260,11 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     end
 
     local opts = if seeded then { ownStart = true } else nil
-    -- built under the name the queue was found under, since that is where the
-    -- value it chains from and the range it draws inside are stored too
-    local inner = mods.build(ctx.ref, source, under or name, default, span, nil, queue, framed, opts)
+    -- an attribute row builds under the name its queue was found under, since
+    -- that is where the value it chains from and the range it draws inside are
+    -- stored too; a property row's base is the property, whatever the spelling
+    local built = if source == "property" then name else under or name
+    local inner = mods.build(ctx.ref, source, built, default, span, nil, queue, framed, opts)
 
     local track = {
       at = inner.at,

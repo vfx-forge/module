@@ -353,6 +353,20 @@ harness.suite(function()
       expect(near(attrs.B.at(attrs.B.duration), 3)).toBe(true)
     end)
 
+    test("a property row's queue found under an alias still chains from the property", function()
+      local obj = Instance.new("Part")
+      obj.Transparency = 0.5
+      framed(obj, "property", "Transparency_Old", { { kind = "tween", chain = true, finish = value.lit(1) } })
+
+      local _, props =
+        reader.resolve(module({}, { Transparency = knob():aliases("Transparency_Old"):mod() }), ctxFor(obj))
+      local track = props.Transparency
+
+      expect(track.animated).toBe(true)
+      expect(near(track.at(0), 0.5)).toBe(true)
+      expect(near(track.at(track.duration), 1)).toBe(true)
+    end)
+
     test("a property row finds a queue framed on the attribute side", function()
       local obj = Instance.new("Part")
       obj.Transparency = 0.5

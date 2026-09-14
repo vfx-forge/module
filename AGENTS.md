@@ -68,7 +68,7 @@ Build with `rojo-build-noalias -o output.rbxm`. The TypeScript surface (`index.d
 - **Naming:** `snake_case` files and object internals, `camelCase` locals and functions and config fields, `PascalCase` class modules and exported types and public API fields, `UPPER_CASE` constants.
 - **No em or en dashes anywhere**, in code, comments, or docs. This includes ` -- ` used as a prose dash. Rewrite with a comma or a second sentence.
 - **A registered effect module declares every value it needs as a row and reads it through `emit(ctx, attrs, props)`; it never calls `attr.get` on its own instance.** An unconverted effect reads a knob once through `mods.track` and never reads a `_Start`, `_End` or `_Curve` attribute; the old format is `legacy_mods`' business.
-- **Row ids carry no underscores; old spellings are aliases.** A value that is a Roblox property is a property row. The vocabulary is fixed: module fields `id display classifier components attributes properties layout duration emit selected`; never name a public thing `select`, `claims`, `draw`, `rest`, `ramp`, `each`, `ownStart`, `span`, `stamp`, `drive` or `track`.
+- **Row ids carry no underscores; old spellings are aliases.** A value that is a Roblox property is a property row. The vocabulary is fixed: module fields `id display classifier components attributes properties layout duration emit selected`; never name a new public thing `select`, `claims`, `draw`, `rest`, `ramp`, `each`, `ownStart`, `span`, `stamp`, `drive` or `track`.
 
 Where this package and the [Roblox Lua style guide](https://roblox.github.io/lua-style-guide/) disagree, this package wins. The guide is a gap-filler only.
 
