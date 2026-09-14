@@ -5,6 +5,7 @@ local attr = require("@mod/attributes")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
+local registry = require("@mod/registry")
 
 local enabled_effects = {}
 
@@ -35,18 +36,27 @@ function enabled_effects.init(scope: { any }, shared_part_cache: any, effects_se
   end
 
   local function addEnabledEffect(obj: Instance)
-    -- Find which effect type this object is
-    local effectConfig = nil
+    -- a registered module says whether the tick may emit it; the arms below
+    -- answer for the effects still routed by class until each has a module
+    local module = registry.of(obj)
 
-    for _, config in emitters.enabled_registry do
-      if config.check(obj) then
-        effectConfig = config
-        break
-      end
+    if module ~= nil and not module.constant then
+      return
     end
 
-    if not effectConfig then
-      return
+    local effectConfig = nil
+
+    if module == nil then
+      for _, config in emitters.enabled_registry do
+        if config.check(obj) then
+          effectConfig = config
+          break
+        end
+      end
+
+      if not effectConfig then
+        return
+      end
     end
 
     local tempScope = {} :: { any }
@@ -111,7 +121,11 @@ function enabled_effects.init(scope: { any }, shared_part_cache: any, effects_se
             local emitScope = lifetime.effect(cancelToken, 0, effects_service)
 
             lifetime.run(emitScope, function(scope)
-              effectConfig.emit(obj, scope, shared_part_cache)
+              if module ~= nil then
+                emitters.dispatch(obj, scope, { unc = {}, ref = {} }, shared_part_cache, 1, module, true)
+              else
+                (effectConfig :: any).emit(obj, scope, shared_part_cache)
+              end
             end)
           end)
         )

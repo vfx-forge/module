@@ -16,8 +16,16 @@ export type Module = {
   properties: { [string]: knob.Knob },
   layout: { any }?,
   duration: knob.Rule?,
+  constant: boolean?,
   emit: (ctx: any, attrs: any, props: any) -> (),
   selected: ((ctx: any) -> ())?,
+}
+
+-- the two maps a particle's ancestry clone is shared through for the life of
+-- one emit, built by the dispatcher and handed to every effect of that emit
+export type Shared = {
+  unc: { [Instance]: number },
+  ref: { [Instance]: Instance },
 }
 
 export type Ctx = {
@@ -27,6 +35,8 @@ export type Ctx = {
   scale: number,
   effect: Module?,
   duration: number?,
+  shared: Shared?,
+  constant: boolean?,
 }
 
 export type Track = {
@@ -283,13 +293,14 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
       bind(ctx.scope, inner, write)
     end
 
-    -- a piece calls the row for a track of its own: rules run again, and a
-    -- value handed in is where this piece's state is
+    -- a piece calls the row for a track of its own: rules run again, a value
+    -- handed in is where this piece's state is, and a span handed in is the
+    -- clock this piece runs over when it drew one of its own
     setmetatable(track, {
-      __call = function(_, current: any)
+      __call = function(_, current: any, span: number?)
         local state = if current ~= nil then current else plainOf(source, name, row)
 
-        return trackOf(source, name, row, state, current ~= nil, durationOf())
+        return trackOf(source, name, row, state, current ~= nil, span or durationOf())
       end,
     })
 

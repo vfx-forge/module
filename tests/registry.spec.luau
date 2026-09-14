@@ -6,62 +6,6 @@ local test, expect = harness.test, harness.expect
 local Instance = harness.datatypes.Instance
 local NumberRange = harness.datatypes.NumberRange
 
--- lune has no selector engine, so the spec's query understands class names and
--- child combinators between them and nothing else, which is what every stub
--- here uses. it draws from a pool rather than walking root:GetDescendants()
--- live: the test host hands out a fresh Instance wrapper on every such call,
--- and the registry keys scan's results by instance the way the engine allows,
--- so the fake query has to serve back the very wrappers the spec itself holds
-local pool: { Instance } = {}
-
-local function make(class: string, parent: Instance?): Instance
-  local inst = Instance.new(class)
-
-  if parent then
-    inst.Parent = parent
-  end
-
-  table.insert(pool, inst)
-
-  return inst
-end
-
--- the engine never matches a selector's leftmost compound against the instance
--- the query runs from, so a chain counts only when the whole of it lies below
--- the queried instance
-local function fakeQuery(root: Instance, selector: string): { Instance }
-  local chain = {}
-
-  for token in string.gmatch(selector, "[^>%s]+") do
-    table.insert(chain, token)
-  end
-
-  local out = {}
-
-  for _, inst in pool do
-    if not inst:IsA(chain[#chain]) then
-      continue
-    end
-
-    local current: Instance? = inst
-
-    for i = #chain - 1, 1, -1 do
-      current = (current :: Instance).Parent
-
-      if current == nil or not (current :: Instance):IsA(chain[i]) then
-        current = nil
-        break
-      end
-    end
-
-    if current ~= nil and (current :: Instance):IsDescendantOf(root) then
-      table.insert(out, inst)
-    end
-  end
-
-  return out
-end
-
 local function noop() end
 
 local function stub(id: string, extra: { [string]: any }?)
@@ -220,6 +164,17 @@ harness.suite(function()
       expect(owned.attribute.EmitDelay).toBe(nil)
       expect(owned.property.EmitDelay).toBe(nil)
     end)
+
+    test("constant is an optional boolean", function()
+      registry.clear()
+      registry.register(stub("c", { constant = true }))
+
+      expect(registry.get("c").constant).toBe(true)
+
+      expect(function()
+        registry.register(stub("d", { constant = 1 }))
+      end).toThrow()
+    end)
   end)
 
   harness.describe("registry.depth and registry.subjects", function()
@@ -245,15 +200,15 @@ harness.suite(function()
   harness.describe("registry.of and registry.scan", function()
     test("of finds the module whose classifier matches from the right ancestor", function()
       registry.clear()
-      registry.configure({ query = fakeQuery })
+      registry.configure({ query = harness.query })
       registry.register(stub("beam"))
       registry.register(stub("trail", { classifier = "Trail" }))
-      table.clear(pool)
+      harness.reset()
 
       local root = Instance.new("Folder")
-      local beam = make("Beam", root)
-      local trail = make("Trail", root)
-      local part = make("Part", root)
+      local beam = harness.make("Beam", root)
+      local trail = harness.make("Trail", root)
+      local part = harness.make("Part", root)
 
       expect(registry.of(beam).id).toBe("beam")
       expect(registry.of(trail).id).toBe("trail")
@@ -263,15 +218,15 @@ harness.suite(function()
 
     test("scan buckets every match by module and drops the components of a match", function()
       registry.clear()
-      registry.configure({ query = fakeQuery })
+      registry.configure({ query = harness.query })
       registry.register(stub("beam"))
       registry.register(stub("owner", { classifier = "Model", components = "Beam" }))
-      table.clear(pool)
+      harness.reset()
 
       local root = Instance.new("Folder")
-      local loose = make("Beam", root)
-      local model = make("Model", root)
-      local inner = make("Beam", model)
+      local loose = harness.make("Beam", root)
+      local model = harness.make("Model", root)
+      local inner = harness.make("Beam", model)
 
       local hits = registry.scan(root)
 
@@ -290,9 +245,9 @@ harness.suite(function()
 
     test("of answers a class-only classifier with IsA alone", function()
       registry.clear()
-      registry.configure({ query = fakeQuery })
+      registry.configure({ query = harness.query })
       registry.register(stub("beam"))
-      table.clear(pool)
+      harness.reset()
 
       expect(registry.of(Instance.new("Beam")).id).toBe("beam")
       expect(registry.of(Instance.new("Part"))).toBe(nil)
@@ -300,14 +255,14 @@ harness.suite(function()
 
     test("scan finds a subject under a root the classifier's own leftmost compound names", function()
       registry.clear()
-      registry.configure({ query = fakeQuery })
+      registry.configure({ query = harness.query })
       registry.register(stub("debris", { classifier = "Attachment > Folder > Part" }))
-      table.clear(pool)
+      harness.reset()
 
-      local part = make("Part")
-      local attachment = make("Attachment", part)
-      local folder = make("Folder", attachment)
-      local piece = make("Part", folder)
+      local part = harness.make("Part")
+      local attachment = harness.make("Attachment", part)
+      local folder = harness.make("Folder", attachment)
+      local piece = harness.make("Part", folder)
 
       local hits = registry.scan(attachment)
 
@@ -318,16 +273,16 @@ harness.suite(function()
 
     test("scan drops a hit that lies outside the root it was asked for", function()
       registry.clear()
-      registry.configure({ query = fakeQuery })
+      registry.configure({ query = harness.query })
       registry.register(stub("debris", { classifier = "Attachment > Folder > Part" }))
-      table.clear(pool)
+      harness.reset()
 
-      local part = make("Part")
-      local mine = make("Attachment", part)
-      local other = make("Attachment", part)
-      local piece = make("Part", make("Folder", mine))
+      local part = harness.make("Part")
+      local mine = harness.make("Attachment", part)
+      local other = harness.make("Attachment", part)
+      local piece = harness.make("Part", harness.make("Folder", mine))
 
-      make("Part", make("Folder", other))
+      harness.make("Part", harness.make("Folder", other))
 
       local hits = registry.scan(mine)
 
@@ -337,7 +292,7 @@ harness.suite(function()
 
     test("source replaces what the reader walks", function()
       registry.clear()
-      registry.configure({ query = fakeQuery })
+      registry.configure({ query = harness.query })
       registry.register(stub("beam", { attributes = { A = knob(0) } }))
 
       local calls = 0
@@ -359,6 +314,60 @@ harness.suite(function()
       if not ok then
         error(err, 0)
       end
+    end)
+
+    test("scan returns nothing under a claimant that claims every descendant, without a query", function()
+      registry.clear()
+
+      local asked = 0
+
+      registry.configure({
+        query = function(root, selector)
+          asked += 1
+          return harness.query(root, selector)
+        end,
+      })
+
+      registry.register(stub("mesh", { classifier = "Model", components = "Instance" }))
+      registry.register(stub("beam", { classifier = "Beam" }))
+
+      harness.reset()
+
+      local model = harness.make("Model")
+      harness.make("Beam", model)
+
+      asked = 0
+
+      expect(#registry.scan(model, registry.get("mesh"))).toBe(0)
+      expect(asked).toBe(0)
+      expect(#registry.scan(model)).toBe(1)
+    end)
+
+    test("a hit that claims every descendant drops the hits below it by ancestry", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(stub("mesh", { classifier = "Model", components = "Instance" }))
+      registry.register(stub("beam", { classifier = "Beam" }))
+
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local model = harness.make("Model", root)
+      harness.make("Beam", model)
+      local outside = harness.make("Beam", root)
+
+      local hits = registry.scan(root)
+
+      expect(#hits).toBe(2)
+
+      local ids = {}
+
+      for _, hit in hits do
+        ids[hit.effect.id] = hit.instance
+      end
+
+      expect(ids.mesh == model).toBe(true)
+      expect(ids.beam == outside).toBe(true)
     end)
   end)
 end)

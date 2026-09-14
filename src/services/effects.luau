@@ -1,5 +1,6 @@
 local types = require("@root/types")
 local logger = require("@mod/logger")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
 local emitters = require("@root/emitters")
@@ -119,8 +120,7 @@ end
 local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
   local api = api_ref :: types.Api
 
-  local sharedUncMap: { [Instance]: number } = {}
-  local sharedRefMap: { [Instance]: Instance } = {}
+  local shared: reader.Shared = { unc = {}, ref = {} }
 
   local legacyScale = 1
 
@@ -130,15 +130,20 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
     local fx = lifetime.effect(target, effectDepth, effects)
 
     lifetime.run(fx, function(scope)
-      emitters.dispatch(obj, scope, sharedUncMap, sharedRefMap, api.caches.shared_part, legacyScale, effect)
+      emitters.dispatch(obj, scope, shared, api.caches.shared_part, legacyScale, effect)
     end)
   end
 
-  local function queryAndEmitDescendants(target: lifetime.emit, obj: Instance, baseDepth: number)
+  local function queryAndEmitDescendants(
+    target: lifetime.emit,
+    obj: Instance,
+    baseDepth: number,
+    claimant: registry.Module?
+  )
     -- the registry's matches first, each with its module, then the union
     -- selector for everything still routed by class and tag. an instance the
     -- registry matched is never dispatched again by the union
-    local found = registry.scan(obj)
+    local found = registry.scan(obj, claimant)
     local allDesc = obj:QueryDescendants(EffectSelectors)
 
     if #found == 0 and #allDesc == 0 then
@@ -228,15 +233,17 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
 
         local inner = lifetime.emit(emit)
 
-        queryAndEmitDescendants(inner, obj, depth + 1)
+        queryAndEmitDescendants(inner, obj, depth + 1, nil)
         lifetime.seal(inner)
         lifetime.await(inner)
       end)
     else
-      dispatchInto(emit, obj, depth, registry.of(obj))
+      local module = registry.of(obj)
+
+      dispatchInto(emit, obj, depth, module)
 
       if not utility.shouldSkipNested(obj) then
-        queryAndEmitDescendants(emit, obj, depth + 1)
+        queryAndEmitDescendants(emit, obj, depth + 1, module)
       end
     end
   end

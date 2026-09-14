@@ -564,5 +564,28 @@ harness.suite(function()
       expect(attrs.V.animated).toBe(false)
       expect(attrs.V.at(0).X).toBe(1)
     end)
+
+    test("a row called with a span builds this piece's track over it", function()
+      local obj = Instance.new("Part")
+
+      local m = module(
+        {
+          Width = knob(0.2):mod(mod.from(2)),
+        },
+        nil,
+        function()
+          return 4
+        end
+      )
+
+      local attrs = reader.resolve(m, ctxFor(obj))
+
+      expect(attrs.Width.duration).toBe(4)
+      expect(attrs.Width(nil, 1).duration).toBe(1)
+      expect(near(attrs.Width(nil, 1).at(0), 2)).toBe(true)
+      expect(near(attrs.Width(nil, 1).at(1), 0.2)).toBe(true)
+      expect(attrs.Width(0.5, 2).duration).toBe(2)
+      expect(near(attrs.Width(0.5, 2).at(0), 2)).toBe(true)
+    end)
   end)
 end)

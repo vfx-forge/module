@@ -681,20 +681,29 @@ end
 --
 -- an instance the registry matched runs its module: every row read once, the
 -- applier told which rows the module drives itself, then emit. everything else
--- takes the route below until its module exists
+-- takes the route below until its module exists. `constant` marks an emit the
+-- ConstantVFX tick started, which a module reads as ctx.constant
 function emitters.dispatch(
   obj: any,
   scope: types.scope,
-  sharedUncMap: { [Instance]: number },
-  sharedRefMap: { [Instance]: Instance },
+  shared: reader.Shared,
   shared_part_cache: any,
   legacyScale: number,
-  effect: registry.Module?
+  effect: registry.Module?,
+  constant: boolean?
 )
   processRandomizers(obj)
 
   if effect then
-    local ctx: reader.Ctx = { ref = obj, obj = obj, scope = scope, scale = legacyScale, effect = effect }
+    local ctx: reader.Ctx = {
+      ref = obj,
+      obj = obj,
+      scope = scope,
+      scale = legacyScale,
+      effect = effect,
+      shared = shared,
+      constant = constant,
+    }
     local ok, attrs, props = utility.try(`failed to read {effect.id} with error: %s`, reader.resolve, effect, ctx)
 
     if not ok then
@@ -709,7 +718,7 @@ function emitters.dispatch(
 
   emitters.applyMods(obj, scope, fallbackDuration(obj), ownedFor(obj, obj.ClassName))
 
-  route(obj, scope, sharedUncMap, sharedRefMap, shared_part_cache, legacyScale)
+  route(obj, scope, shared.unc, shared.ref, shared_part_cache, legacyScale)
 end
 
 -- Registry for enabled effects (effects that emit continuously)

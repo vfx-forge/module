@@ -302,6 +302,10 @@ function registry.register(module: Module)
     fail(id, "selected must be a function")
   end
 
+  if module.constant ~= nil and type(module.constant) ~= "boolean" then
+    fail(id, "constant must be a boolean")
+  end
+
   if module.attributes == nil then
     module.attributes = {}
   end
@@ -449,7 +453,15 @@ function registry.of(inst: Instance): Module?
   return nil
 end
 
-function registry.scan(root: Instance): { Hit }
+-- every descendant of root that some module classifies, less the ones another
+-- hit or the root's own module claims as components. a module whose
+-- components selector is the whole subtree is answered by ancestry rather
+-- than by a query, since every instance below it is claimed
+function registry.scan(root: Instance, claimant: Module?): { Hit }
+  if claimant ~= nil and claimant.components == "Instance" then
+    return {}
+  end
+
   local hits: { Hit } = {}
   local taken: { [Instance]: boolean } = {}
 
@@ -468,12 +480,30 @@ function registry.scan(root: Instance): { Hit }
 
   local component: { [Instance]: boolean } = {}
 
+  if claimant ~= nil and claimant.components ~= nil then
+    for _, inst in query(root, claimant.components) do
+      component[inst] = true
+    end
+  end
+
   for _, hit in hits do
-    if hit.effect.components == nil then
+    local selector = hit.effect.components
+
+    if selector == nil then
       continue
     end
 
-    for _, inst in query(hit.instance, hit.effect.components) do
+    if selector == "Instance" then
+      for _, other in hits do
+        if other ~= hit and other.instance:IsDescendantOf(hit.instance) then
+          component[other.instance] = true
+        end
+      end
+
+      continue
+    end
+
+    for _, inst in query(hit.instance, selector) do
       component[inst] = true
     end
   end

@@ -342,4 +342,334 @@ function harness.run(): number
   return if result.status_tally.fail > 0 then 1 else 0
 end
 
+--------------------------------------------------------------------------------
+-- selector engine
+--------------------------------------------------------------------------------
+
+-- lune has no QueryDescendants. this engine understands the grammar the
+-- classifiers use and nothing more: a compound is an optional class, then any
+-- of #Name, .Tag, [$Attr] or [$Attr=value], :not(selector) and :has(relative);
+-- compounds chain with > and >>; alternatives split on a comma. it draws from a
+-- pool of the wrappers specs made rather than walking GetDescendants live: the
+-- test host hands out a fresh wrapper per walk, and a registry keyed by
+-- instance has to be served the wrappers the spec itself holds. like the
+-- engine, it never matches a chain's leftmost compound against the root
+local pool: { Instance } = {}
+
+function harness.reset()
+  table.clear(pool)
+end
+
+function harness.make(class: string, parent: Instance?): Instance
+  local inst = datatypes.Instance.new(class)
+
+  if parent then
+    inst.Parent = parent
+  end
+
+  table.insert(pool, inst)
+
+  return inst
+end
+
+type Compound = {
+  class: string?,
+  name: string?,
+  tags: { string },
+  attrs: { { name: string, value: any, any: boolean } },
+  nots: { Selector },
+  has: { Chain },
+}
+
+type Chain = { { combinator: string, compound: Compound } }
+
+type Selector = { Chain }
+
+local parseSelector
+
+-- the body of a balanced parenthesis starting at `from`, and the index after it
+local function balanced(s: string, from: number): (string, number)
+  local depth = 0
+
+  for i = from, #s do
+    local c = string.sub(s, i, i)
+
+    if c == "(" then
+      depth += 1
+    elseif c == ")" then
+      depth -= 1
+
+      if depth == 0 then
+        return string.sub(s, from + 1, i - 1), i + 1
+      end
+    end
+  end
+
+  error(`unbalanced selector {s}`)
+end
+
+local function literal(text: string): any
+  if text == "true" then
+    return true
+  end
+
+  if text == "false" then
+    return false
+  end
+
+  local n = tonumber(text)
+
+  if n ~= nil then
+    return n
+  end
+
+  return (string.gsub(text, "^[\"']?(.-)[\"']?$", "%1"))
+end
+
+local function parseCompound(s: string): Compound
+  local out: Compound = { class = nil, name = nil, tags = {}, attrs = {}, nots = {}, has = {} }
+  local i = 1
+
+  local class = string.match(s, "^[%a_][%w_]*")
+
+  if class then
+    out.class = class
+    i += #class
+  end
+
+  while i <= #s do
+    local c = string.sub(s, i, i)
+
+    if c == "#" then
+      local name = string.match(s, "^[%w_]+", i + 1) or ""
+      out.name = name
+      i += 1 + #name
+    elseif c == "." then
+      local tag = string.match(s, "^[%w_]+", i + 1) or ""
+      table.insert(out.tags, tag)
+      i += 1 + #tag
+    elseif c == "[" then
+      local close = string.find(s, "]", i, true) or #s
+      local body = string.sub(s, i + 1, close - 1)
+      local name, valueText = string.match(body, "^%$([%w_]+)=(.*)$")
+
+      if name then
+        table.insert(out.attrs, { name = name, value = literal(valueText), any = false })
+      else
+        table.insert(out.attrs, { name = string.match(body, "^%$([%w_]+)$") or body, value = nil, any = true })
+      end
+
+      i = close + 1
+    elseif string.sub(s, i, i + 4) == ":not(" then
+      local body, after = balanced(s, i + 4)
+      table.insert(out.nots, parseSelector(body))
+      i = after
+    elseif string.sub(s, i, i + 4) == ":has(" then
+      local body, after = balanced(s, i + 4)
+      local relative = parseSelector(body)
+
+      for _, chain in relative do
+        table.insert(out.has, chain)
+      end
+
+      i = after
+    else
+      error(`unsupported selector syntax at {i} in {s}`)
+    end
+  end
+
+  return out
+end
+
+-- one alternative split into compounds and the combinator ahead of each; the
+-- first combinator is "" for an absolute chain and > or >> for a relative one
+local function parseChain(s: string): Chain
+  local chain: Chain = {}
+  local i = 1
+  local n = #s
+
+  while i <= n do
+    while i <= n and string.sub(s, i, i) == " " do
+      i += 1
+    end
+
+    local combinator = ""
+
+    if string.sub(s, i, i + 1) == ">>" then
+      combinator = ">>"
+      i += 2
+    elseif string.sub(s, i, i) == ">" then
+      combinator = ">"
+      i += 1
+    end
+
+    while i <= n and string.sub(s, i, i) == " " do
+      i += 1
+    end
+
+    local start = i
+    local depth = 0
+
+    while i <= n do
+      local c = string.sub(s, i, i)
+
+      if c == "(" then
+        depth += 1
+      elseif c == ")" then
+        depth -= 1
+      elseif depth == 0 and (c == ">" or c == " ") then
+        break
+      end
+
+      i += 1
+    end
+
+    local text = string.sub(s, start, i - 1)
+
+    if text ~= "" then
+      table.insert(chain, { combinator = combinator, compound = parseCompound(text) })
+    end
+  end
+
+  return chain
+end
+
+function parseSelector(s: string): Selector
+  local out: Selector = {}
+  local depth = 0
+  local start = 1
+
+  for i = 1, #s + 1 do
+    local c = string.sub(s, i, i)
+
+    if c == "(" then
+      depth += 1
+    elseif c == ")" then
+      depth -= 1
+    elseif (c == "," and depth == 0) or i == #s + 1 then
+      table.insert(out, parseChain(string.sub(s, start, i - 1)))
+      start = i + 1
+    end
+  end
+
+  return out
+end
+
+local matchChainAt
+
+local function matchCompound(inst: Instance, compound: Compound): boolean
+  if compound.class ~= nil and not inst:IsA(compound.class) then
+    return false
+  end
+
+  if compound.name ~= nil and inst.Name ~= compound.name then
+    return false
+  end
+
+  for _, tag in compound.tags do
+    if not inst:HasTag(tag) then
+      return false
+    end
+  end
+
+  for _, filter in compound.attrs do
+    local v = inst:GetAttribute(filter.name)
+
+    if filter.any then
+      if v == nil then
+        return false
+      end
+    elseif v ~= filter.value then
+      return false
+    end
+  end
+
+  for _, selector in compound.nots do
+    for _, chain in selector do
+      if matchChainAt(inst, chain, #chain, nil) then
+        return false
+      end
+    end
+  end
+
+  for _, chain in compound.has do
+    local found = false
+    local candidates = if chain[1].combinator == ">" then inst:GetChildren() else inst:GetDescendants()
+
+    for _, candidate in candidates do
+      if matchChainAt(candidate, chain, #chain, inst) then
+        found = true
+        break
+      end
+    end
+
+    if not found then
+      return false
+    end
+  end
+
+  return true
+end
+
+-- whether inst is the chain's compound at `index` with the compounds ahead of
+-- it satisfied by its ancestors, every matched instance strictly below root
+-- when a root is given. a chain that starts with a combinator is relative to
+-- the root, so its first compound sits directly under (>) or somewhere below
+-- (>>) the root
+function matchChainAt(inst: Instance, chain: Chain, index: number, root: Instance?): boolean
+  local link = chain[index]
+
+  if not matchCompound(inst, link.compound) then
+    return false
+  end
+
+  if root ~= nil and (inst == root or not inst:IsDescendantOf(root)) then
+    return false
+  end
+
+  if index == 1 then
+    if link.combinator == ">" then
+      return root ~= nil and inst.Parent == root
+    end
+
+    return true
+  end
+
+  local parent = inst.Parent
+
+  if link.combinator == ">" then
+    return parent ~= nil and matchChainAt(parent, chain, index - 1, root)
+  end
+
+  while parent ~= nil do
+    if matchChainAt(parent, chain, index - 1, root) then
+      return true
+    end
+
+    parent = parent.Parent
+  end
+
+  return false
+end
+
+function harness.query(root: Instance, selector: string): { Instance }
+  local parsed = parseSelector(selector)
+  local out = {}
+
+  for _, inst in pool do
+    if inst == root or not inst:IsDescendantOf(root) then
+      continue
+    end
+
+    for _, chain in parsed do
+      if #chain > 0 and matchChainAt(inst, chain, #chain, root) then
+        table.insert(out, inst)
+        break
+      end
+    end
+  end
+
+  return out
+end
+
 return harness
