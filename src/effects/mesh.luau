@@ -461,7 +461,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
           frames = flipbook,
           speedTween = speedTween,
           effectDuration = duration,
-          syncDuration = from:GetAttribute("SyncDuration") == true,
+          syncDuration = attr.get(from, "SyncDuration", false, true) == true,
 
           curve = attr.get(from, "Flipbook_Change_Curve", utility.linear_bezier),
           duration = attr.get(from, "Flipbook_Change_Duration", duration),
@@ -525,7 +525,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   -- a plain emit of an enabled model switches it off; the tick's own emits
   -- leave it as it is
   if attrs.Enabled and not ctx.constant then
-    ref:SetAttribute("Enabled", false)
+    attr.set(ref, "Enabled", false)
   end
 
   local emitDuration = attrs.EmitDuration

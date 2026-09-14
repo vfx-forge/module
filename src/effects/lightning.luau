@@ -28,131 +28,143 @@ lightning.classifier = "Attachment.LightningBolt"
 lightning.components = "Instance"
 lightning.constant = true
 
-lightning.attributes = bezier_common.rows()
-
-do
-  local rows = lightning.attributes
-
-  rows.Segments = knob(8):min(2):label("Amount"):hint("Number of straight segments that make up the bolt.")
-  rows.Jaggedness =
-    knob(NumberRange.new(0.5, 1)):min(0):label("Jaggedness"):hint("Random offset magnitude range for the jagged path.")
-  rows.OffsetScale = knob(1):unit("studs"):label("Scale"):hint("Multiplier applied to the jagged offset magnitude.")
-  rows.RefreshRate =
-    knob(15):min(0):unit("perSecond"):label("Rate"):hint("Times per second the jagged path is regenerated.")
-  rows.IndependentSegments =
-    knob(false):label("Independent"):hint("Whether each segment keeps its own birth width and transparency.")
-  rows.RefreshDuringDissipate =
-    knob(false):label("DuringDissipate"):hint("Whether the path keeps refreshing while dissipating.")
-  rows.NestedEffectMode = knob("None")
+lightning.attributes = bezier_common.rows({
+  Segments = knob(8):min(2):label("Amount"):hint("Number of straight segments that make up the bolt."),
+  Jaggedness = knob(NumberRange.new(0.5, 1))
+    :min(0)
+    :label("Jaggedness")
+    :hint("Random offset magnitude range for the jagged path."),
+  OffsetScale = knob(1):unit("studs"):label("Scale"):hint("Multiplier applied to the jagged offset magnitude."),
+  RefreshRate = knob(15)
+    :min(0)
+    :unit("perSecond")
+    :label("Rate")
+    :hint("Times per second the jagged path is regenerated."),
+  IndependentSegments = knob(false)
+    :label("Independent")
+    :hint("Whether each segment keeps its own birth width and transparency."),
+  RefreshDuringDissipate = knob(false)
+    :label("DuringDissipate")
+    :hint("Whether the path keeps refreshing while dissipating."),
+  NestedEffectMode = knob("None")
     :options({ "None", "All", "Head", "Tail" })
     :label("Mode")
-    :hint("Which segments spawn nested child effects.")
+    :hint("Which segments spawn nested child effects."),
 
-  rows.Color = knob(ColorSequence.new(Color3.new(1, 1, 1))):label("Color"):hint("Colour of the segments.")
-  rows.ColorCurve = knob(linear):aliases("Color_Curve"):label("Curve"):hint("Easing of the colour cycle.")
-  rows.ColorDuration =
-    knob(1):min(0):aliases("Color_Duration"):unit("seconds"):label("Duration"):hint("Seconds one colour cycle takes.")
+  Color = knob(ColorSequence.new(Color3.new(1, 1, 1))):label("Color"):hint("Colour of the segments."),
+  ColorCurve = knob(linear):aliases("Color_Curve"):label("Curve"):hint("Easing of the colour cycle."),
+  ColorDuration = knob(1)
+    :min(0)
+    :aliases("Color_Duration")
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds one colour cycle takes."),
 
-  rows.FillColor = knob(ColorSequence.new(Color3.new(1, 1, 1)))
+  FillColor = knob(ColorSequence.new(Color3.new(1, 1, 1)))
     :aliases("Fill_Color")
     :label("Color")
-    :hint("Fill (glow) color of the bolt.")
-  rows.FillColorCurve = knob(linear):aliases("Fill_Color_Curve"):label("Curve"):hint("Easing of the fill colour cycle.")
-  rows.FillColorDuration = knob(1)
+    :hint("Fill (glow) color of the bolt."),
+  FillColorCurve = knob(linear):aliases("Fill_Color_Curve"):label("Curve"):hint("Easing of the fill colour cycle."),
+  FillColorDuration = knob(1)
     :min(0)
     :aliases("Fill_Color_Duration")
     :unit("seconds")
     :label("Duration")
-    :hint("Seconds one fill colour cycle takes.")
-  rows.FillDepthMode = knob("Occluded")
+    :hint("Seconds one fill colour cycle takes."),
+  FillDepthMode = knob("Occluded")
     :options({ "AlwaysOnTop", "Occluded" })
     :aliases("Fill_DepthMode")
     :label("DepthMode")
-    :hint("Occlusion mode for the fill highlight.")
-  rows.FillTransparency = knob(1)
+    :hint("Occlusion mode for the fill highlight."),
+  FillTransparency = knob(1)
     :aliases("Fill_Transparency")
     :mod()
     :label("Transparency")
-    :hint("Fill transparency over the fill colour's duration.")
+    :hint("Fill transparency over the fill colour's duration."),
 
-  rows.FadeInStart = knob(1):aliases("Fade_In_Start"):label("Start"):hint("Transparency the bolt fades in from.")
-  rows.FadeInDuration =
-    knob(0):min(0):aliases("Fade_In_Duration"):unit("seconds"):label("Duration"):hint("Seconds the fade in takes.")
-  rows.FadeInCurve = knob(eased):aliases("Fade_In_Curve"):label("Curve"):hint("Easing of the fade in.")
+  FadeInStart = knob(1):aliases("Fade_In_Start"):label("Start"):hint("Transparency the bolt fades in from."),
+  FadeInDuration = knob(0)
+    :min(0)
+    :aliases("Fade_In_Duration")
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the fade in takes."),
+  FadeInCurve = knob(eased):aliases("Fade_In_Curve"):label("Curve"):hint("Easing of the fade in."),
 
-  rows.FadeOutEnd = knob(1):aliases("Fade_Out_End"):label("End"):hint("Transparency the bolt fades out to.")
-  rows.FadeOutDuration =
-    knob(0):min(0):aliases("Fade_Out_Duration"):unit("seconds"):label("Duration"):hint("Seconds the fade out takes.")
-  rows.FadeOutCurve = knob(eased):aliases("Fade_Out_Curve"):label("Curve"):hint("Easing of the fade out.")
+  FadeOutEnd = knob(1):aliases("Fade_Out_End"):label("End"):hint("Transparency the bolt fades out to."),
+  FadeOutDuration = knob(0)
+    :min(0)
+    :aliases("Fade_Out_Duration")
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the fade out takes."),
+  FadeOutCurve = knob(eased):aliases("Fade_Out_Curve"):label("Curve"):hint("Easing of the fade out."),
 
-  rows.DissipateMode = knob("None")
+  DissipateMode = knob("None")
     :options({ "None", "Retract", "Scale" })
     :aliases("Dissipate_Mode")
     :label("Mode")
-    :hint("How the bolt disappears when it finishes.")
-  rows.DissipateDuration = knob(0.5)
+    :hint("How the bolt disappears when it finishes."),
+  DissipateDuration = knob(0.5)
     :min(0)
     :aliases("Dissipate_Duration")
     :unit("seconds")
     :label("Duration")
-    :hint("Seconds the dissipation animation lasts.")
-  rows.DissipateCurve = knob(eased):aliases("Dissipate_Curve"):label("Curve"):hint("Easing of the dissipation.")
+    :hint("Seconds the dissipation animation lasts."),
+  DissipateCurve = knob(eased):aliases("Dissipate_Curve"):label("Curve"):hint("Easing of the dissipation."),
 
   -- an unauthored bolt thins from two studs to a fifth over its own duration
-  rows.Width = knob(0.2)
+  Width = knob(0.2)
     :min(0)
     :unit("studs")
     :mod(mod.from(2))
     :label("Width")
-    :hint("Segment width in studs over the bolt's duration.")
-  rows.Length = knob(1):min(0):mod():label("Length"):hint("Visible fraction of the bolt over its duration.")
-  rows.Transparency = knob(0):mod():label("Transparency"):hint("Segment transparency over the bolt's duration.")
+    :hint("Segment width in studs over the bolt's duration."),
+  Length = knob(1):min(0):mod():label("Length"):hint("Visible fraction of the bolt over its duration."),
+  Transparency = knob(0):mod():label("Transparency"):hint("Segment transparency over the bolt's duration."),
 
-  rows.EasingCurve = knob(linear):aliases("Easing_Curve"):label("Easing"):hint("Easing of travel along the path.")
-end
+  EasingCurve = knob(linear):aliases("Easing_Curve"):label("Easing"):hint("Easing of travel along the path."),
+})
 
 lightning.properties = {}
 
-lightning.layout = bezier_common.layout()
-
-table.insert(lightning.layout, { title = "Animation", entries = { "EasingCurve" } })
-table.insert(lightning.layout, {
-  title = "Segments",
-  entries = {
-    "Segments",
-    "Color",
-    "ColorCurve",
-    "ColorDuration",
-    "IndependentSegments",
-    { title = "Refresh", entries = { "RefreshRate", "RefreshDuringDissipate" } },
-    "Transparency",
-    "Width",
-    "Length",
+lightning.layout = bezier_common.layout({}, {
+  { title = "Animation", entries = { "EasingCurve" } },
+  {
+    title = "Segments",
+    entries = {
+      "Segments",
+      "Color",
+      "ColorCurve",
+      "ColorDuration",
+      "IndependentSegments",
+      { title = "Refresh", entries = { "RefreshRate", "RefreshDuringDissipate" } },
+      "Transparency",
+      "Width",
+      "Length",
+    },
   },
-})
-table.insert(lightning.layout, { title = "Offset", entries = { "Jaggedness", "OffsetScale" } })
-table.insert(lightning.layout, { title = "Nested Effects", entries = { "NestedEffectMode" } })
-table.insert(lightning.layout, {
-  title = "Fill",
-  entries = { "FillColor", "FillDepthMode", "FillColorCurve", "FillColorDuration", "FillTransparency" },
-})
-table.insert(lightning.layout, {
-  title = "Fade",
-  entries = {
-    { title = "In", entries = { "FadeInStart", "FadeInDuration", "FadeInCurve" } },
-    { title = "Out", entries = { "FadeOutEnd", "FadeOutDuration", "FadeOutCurve" } },
+  { title = "Offset", entries = { "Jaggedness", "OffsetScale" } },
+  { title = "Nested Effects", entries = { "NestedEffectMode" } },
+  {
+    title = "Fill",
+    entries = { "FillColor", "FillDepthMode", "FillColorCurve", "FillColorDuration", "FillTransparency" },
   },
-})
-table.insert(
-  lightning.layout,
-  { title = "Dissipation", entries = { "DissipateMode", "DissipateDuration", "DissipateCurve" } }
-)
-table.insert(lightning.layout, {
-  title = "Behavior",
-  entries = {
-    { action = "edit_path", label = "Edit Lightning" },
-    { action = "toggle_paths", label = "Show Paths" },
-    { action = "toggle_constant", label = "Add Enabled Tag" },
+  {
+    title = "Fade",
+    entries = {
+      { title = "In", entries = { "FadeInStart", "FadeInDuration", "FadeInCurve" } },
+      { title = "Out", entries = { "FadeOutEnd", "FadeOutDuration", "FadeOutCurve" } },
+    },
+  },
+  { title = "Dissipation", entries = { "DissipateMode", "DissipateDuration", "DissipateCurve" } },
+  {
+    title = "Behavior",
+    entries = {
+      { action = "edit_path", label = "Edit Lightning" },
+      { action = "toggle_paths", label = "Show Paths" },
+      { action = "toggle_constant", label = "Add Enabled Tag" },
+    },
   },
 })
 
@@ -391,7 +403,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
   -- a plain emit of an enabled bolt switches it off; the tick's own emits
   -- leave it as it is
   if attrs.Enabled and not ctx.constant then
-    ref:SetAttribute("Enabled", false)
+    attr.set(ref, "Enabled", false)
   end
 
   local refObj = template:Clone()

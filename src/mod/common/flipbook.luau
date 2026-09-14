@@ -1,6 +1,8 @@
 local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
+local attr = require("@mod/attributes")
+
 local common = {}
 
 function common.serialize(ids: { number })
@@ -45,11 +47,11 @@ function common.getTexturePrefix(ref: Instance)
 end
 
 function common.getFlipbookData(ref: Instance): { number }?
-  if not ref:GetAttribute("FlipbookEnabled") then
+  if not attr.get(ref, "FlipbookEnabled", false, true) then
     return nil
   end
 
-  local data = ref:GetAttribute("FlipbookTextures")
+  local data = attr.get(ref, "FlipbookTextures", nil, true)
 
   if not data then
     return nil

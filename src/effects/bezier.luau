@@ -24,40 +24,41 @@ bezier.classifier = "Attachment.BezierParticle"
 bezier.components = "Instance"
 bezier.constant = true
 
-bezier.attributes = bezier_common.rows()
-
-bezier.attributes.FacePath =
-  knob(false):label("FacePath"):hint("Whether the part orients along its direction of travel.")
-bezier.attributes.ArcSpace = knob(false):label("ArcSpace"):hint("Whether progress is measured by arc length.")
-bezier.attributes.MinInitRot =
-  knob(vector.zero):label("Min"):hint("Lower per-axis bound for each path's initial rotation.")
-bezier.attributes.MaxInitRot =
-  knob(vector.zero):label("Max"):hint("Upper per-axis bound for each path's initial rotation.")
-bezier.attributes.EasingCurve = knob(function()
-    return utility.linear_bezier
-  end)
-  :aliases("Easing_Curve")
-  :label("Easing")
-  :hint("Easing of travel along the path.")
-bezier.attributes.RotSpeed =
-  knob(0):unit("perSecond"):mod():label("Speed"):hint("Rotation speed drawn for each piece, in degrees per second.")
+bezier.attributes = bezier_common.rows({
+  FacePath = knob(false):label("FacePath"):hint("Whether the part orients along its direction of travel."),
+  ArcSpace = knob(false):label("ArcSpace"):hint("Whether progress is measured by arc length."),
+  MinInitRot = knob(vector.zero):label("Min"):hint("Lower per-axis bound for each path's initial rotation."),
+  MaxInitRot = knob(vector.zero):label("Max"):hint("Upper per-axis bound for each path's initial rotation."),
+  EasingCurve = knob(function()
+      return utility.linear_bezier
+    end)
+    :aliases("Easing_Curve")
+    :label("Easing")
+    :hint("Easing of travel along the path."),
+  RotSpeed = knob(0)
+    :unit("perSecond")
+    :mod()
+    :label("Speed")
+    :hint("Rotation speed drawn for each piece, in degrees per second."),
+})
 
 bezier.properties = {}
 
-bezier.layout = bezier_common.layout()
-
 -- the rotation rows sit between the shared end point and the projectile phase
-table.insert(bezier.layout, 5, {
-  title = "Random Rotation",
-  entries = { { title = "Speed", entries = { "RotSpeed" } }, "MinInitRot", "MaxInitRot" },
-})
-table.insert(bezier.layout, { title = "Animation", entries = { "FacePath", "ArcSpace", "EasingCurve" } })
-table.insert(bezier.layout, {
-  title = "Behavior",
-  entries = {
-    { action = "edit_path", label = "Edit Bezier" },
-    { action = "toggle_paths", label = "Show Paths" },
-    { action = "toggle_constant", label = "Add Enabled Tag" },
+bezier.layout = bezier_common.layout({
+  {
+    title = "Random Rotation",
+    entries = { { title = "Speed", entries = { "RotSpeed" } }, "MinInitRot", "MaxInitRot" },
+  },
+}, {
+  { title = "Animation", entries = { "FacePath", "ArcSpace", "EasingCurve" } },
+  {
+    title = "Behavior",
+    entries = {
+      { action = "edit_path", label = "Edit Bezier" },
+      { action = "toggle_paths", label = "Show Paths" },
+      { action = "toggle_constant", label = "Add Enabled Tag" },
+    },
   },
 })
 
@@ -89,7 +90,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   -- a plain emit of an enabled bolt switches it off; the tick's own emits
   -- leave it as it is
   if attrs.Enabled and not ctx.constant then
-    ref:SetAttribute("Enabled", false)
+    attr.set(ref, "Enabled", false)
   end
 
   local refObj = template:Clone()

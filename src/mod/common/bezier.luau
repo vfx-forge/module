@@ -246,10 +246,10 @@ local function always()
   return true
 end
 
--- the rows a bezier and a lightning bolt share, a fresh table per module so
--- the registry freezes each module's own
-function common.rows()
-  return {
+-- the rows a bezier and a lightning bolt share plus the module's own, a fresh
+-- table per module so the registry freezes each module's own
+function common.rows(own: { [string]: any })
+  local rows = {
     EmitCount = knob(1):min(0):label("Count"):hint("The amount of effects to emit."),
     EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
     EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
@@ -316,14 +316,24 @@ function common.rows()
     Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
     SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   }
+
+  for name, row in own do
+    rows[name] = row
+  end
+
+  return rows
 end
 
-function common.layout()
-  return {
+-- the shared groups with the module's own: `middle` sits between the shared
+-- end point and the projectile phase, `tail` after the hitbox
+function common.layout(middle: { any }, tail: { any })
+  local head = {
     { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration", "DestroyDelay" } },
     { title = "Effect", entries = { "Duration", "SpreadAngle", "Enabled", "Rate", "SyncPosition", "Speed" } },
     { title = "Shape", entries = { "EmissionDirection", "Shape", "ShapePartial", "ShapeStyle", "ShapeFace" } },
     { title = "Shared End Point", entries = { "MirrorPaths", "MirrorRotation" } },
+  }
+  local rest = {
     {
       title = "Projectile Motion",
       entries = { "ProjectileEnabled", "ProjectileLifetime", "ProjectileSpeed", "MatchEndDirection" },
@@ -337,6 +347,12 @@ function common.layout()
       },
     },
   }
+
+  table.move(middle, 1, #middle, #head + 1, head)
+  table.move(rest, 1, #rest, #head + 1, head)
+  table.move(tail, 1, #tail, #head + 1, head)
+
+  return head
 end
 
 -- the hitbox parameters as the two modules' rows spell them
