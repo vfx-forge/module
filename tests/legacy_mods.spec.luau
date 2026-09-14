@@ -175,6 +175,21 @@ harness.suite(function()
     expect(queue[1].speed).toBe(nil)
   end)
 
+  test("a children list handed in is the one walked, and read passes it down", function()
+    local obj = Instance.new("Part")
+    local child = tweenChild("Transparency")
+    child.Parent = obj
+
+    local taken = obj:GetChildren()
+
+    expect(#legacy_mods.readChildren(obj, "property", "Transparency", taken)).toBe(1)
+    expect(#legacy_mods.read(obj, "property", "Transparency", nil, taken)).toBe(1)
+
+    -- a list naming none of them is what the walk sees, not the instance
+    expect(legacy_mods.readChildren(obj, "property", "Transparency", {})).toBe(nil)
+    expect(legacy_mods.read(obj, "property", "Transparency", nil, {})).toBe(nil)
+  end)
+
   test("readChild reads one RayValue on its own", function()
     local child = tweenChild("Transparency")
     child:AddTag("AttributeTweener")

@@ -19,6 +19,11 @@ end
 
 local legacy_mods = {}
 
+-- the keys an old row's shapes are stored under, derived from the row's name
+-- once and kept. every read of that row would otherwise build the same handful
+-- of strings again
+local Keys: { [string]: { [string]: string } } = {}
+
 -- the tags src/mod/utility.luau puts on a RayValue to say which side of an
 -- instance it drives. kept as literals rather than a require, so the
 -- quarantine has no dependency that could pull a legacy name anywhere else
@@ -319,9 +324,31 @@ function legacy_mods.readChild(child: Instance): Child?
   }
 end
 
+local function keysOf(name: string)
+  local derived = Keys[name]
+
+  if derived == nil then
+    derived = {
+      min = `{name}_Min`,
+      max = `{name}_Max`,
+      start = `{name}_Start`,
+      finish = `{name}_End`,
+      curve = `{name}_Curve`,
+      lowest = `Min{name}`,
+      highest = `Max{name}`,
+      duration = `{name}_Duration`,
+    }
+
+    Keys[name] = derived
+  end
+
+  return derived
+end
+
 function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
-  local startV = legacy_mods.alias(ref, `{name}_Start`, nil, map)
-  local finishV = legacy_mods.alias(ref, `{name}_End`, nil, map)
+  local keys = keysOf(name)
+  local startV = legacy_mods.alias(ref, keys.start, nil, map)
+  local finishV = legacy_mods.alias(ref, keys.finish, nil, map)
 
   if startV == nil and finishV == nil then
     return nil
@@ -342,8 +369,8 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: 
     finishV = startV
   end
 
-  local durationV = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil, map)) or legacy_mods.SPANS[name]
-  local curveV = curveOf(legacy_mods.alias(ref, `{name}_Curve`, nil, map)) or legacy_mods.defaultCurve(`{name}_Curve`)
+  local durationV = durationOf(legacy_mods.alias(ref, keys.duration, nil, map)) or legacy_mods.SPANS[name]
+  local curveV = curveOf(legacy_mods.alias(ref, keys.curve, nil, map)) or legacy_mods.defaultCurve(keys.curve)
 
   local drawn = legacy_mods.isDrawnRange(source, name)
 
@@ -364,10 +391,10 @@ end
 -- matching this source are read, so a property and an attribute of the same
 -- name never see each other's authoring, and an untagged child counts as a
 -- property, matching legacySource exactly
-function legacy_mods.readChildren(ref: Instance, source: string, name: string): { any }?
+function legacy_mods.readChildren(ref: Instance, source: string, name: string, children: { Instance }?): { any }?
   local out = {}
 
-  for _, child in ref:GetChildren() do
+  for _, child in children or ref:GetChildren() do
     if child.Name ~= name or not child:IsA("RayValue") or legacySource(child) ~= source then
       continue
     end
@@ -410,16 +437,17 @@ function legacy_mods.readRange(ref: Instance, source: string, name: string, map:
     return { { kind = "randomizer", chain = false, start = value.lit(range.Min), finish = value.lit(range.Max) } }
   end
 
-  local min = stored(ref, `{name}_Min`, map)
-  local max = stored(ref, `{name}_Max`, map)
+  local keys = keysOf(name)
+  local min = stored(ref, keys.min, map)
+  local max = stored(ref, keys.max, map)
 
   -- the prefixed spelling is tried unless the underscore pair reads WHOLE. half
   -- of a pair says nothing on its own, and gating this on "neither half is
   -- there" would let one stray Size_Max suppress a complete MinSize and MaxSize,
   -- which is the spelling every shockwave in the wild actually carries
   if min == nil or max == nil then
-    min = stored(ref, `Min{name}`, map)
-    max = stored(ref, `Max{name}`, map)
+    min = stored(ref, keys.lowest, map)
+    max = stored(ref, keys.highest, map)
   end
 
   -- half a pair cannot say what the other half was, and that default belongs to
@@ -435,7 +463,8 @@ end
 -- effect would have run by default, so both halves are left for mods.track to
 -- fill; it says nothing about a constant knob, which mods.track decides
 function legacy_mods.readCurve(ref: Instance, _source: string, name: string, map: { [string]: any }?): { any }?
-  local curveV = curveOf(legacy_mods.alias(ref, `{name}_Curve`, nil, map))
+  local keys = keysOf(name)
+  local curveV = curveOf(legacy_mods.alias(ref, keys.curve, nil, map))
 
   if curveV == nil then
     return nil
@@ -445,25 +474,42 @@ function legacy_mods.readCurve(ref: Instance, _source: string, name: string, map
     {
       kind = "tween",
       chain = false,
-      duration = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil, map)) or legacy_mods.SPANS[name],
+      duration = durationOf(legacy_mods.alias(ref, keys.duration, nil, map)) or legacy_mods.SPANS[name],
       curve = curveV,
       partial = "both",
     },
   }
 end
 
-function legacy_mods.read(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
-  local ok, result = pcall(function()
-    -- range last: it is the broadest of the three shapes, matching on a single
-    -- attribute named exactly for the row, so it must not shadow a quad or a
-    -- RayValue child that says something more specific. the curve-only shape
-    -- trails even range, because a curve with no value behind it is the least
-    -- specific thing an author can have left
-    return legacy_mods.readQuad(ref, source, name, map)
-      or legacy_mods.readChildren(ref, source, name)
-      or legacy_mods.readRange(ref, source, name, map)
-      or legacy_mods.readCurve(ref, source, name, map)
-  end)
+-- range last: it is the broadest of the three shapes, matching on a single
+-- attribute named exactly for the row, so it must not shadow a quad or a
+-- RayValue child that says something more specific. the curve-only shape
+-- trails even range, because a curve with no value behind it is the least
+-- specific thing an author can have left. written here rather than inside the
+-- pcall below, so a read builds no closure to call
+local function readShapes(
+  ref: Instance,
+  source: string,
+  name: string,
+  map: { [string]: any }?,
+  children: { Instance }?
+): { any }?
+  return legacy_mods.readQuad(ref, source, name, map)
+    or legacy_mods.readChildren(ref, source, name, children)
+    or legacy_mods.readRange(ref, source, name, map)
+    or legacy_mods.readCurve(ref, source, name, map)
+end
+
+-- children is the one list of the instance's children a caller reading several
+-- rows off the same instance already holds. left out, every row takes its own
+function legacy_mods.read(
+  ref: Instance,
+  source: string,
+  name: string,
+  map: { [string]: any }?,
+  children: { Instance }?
+): { any }?
+  local ok, result = pcall(readShapes, ref, source, name, map, children)
 
   if not ok then
     logger.warn(`failed to read legacy modifiers for {name} with error: {result}`)

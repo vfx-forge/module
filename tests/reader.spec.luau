@@ -207,7 +207,48 @@ harness.suite(function()
       expect(table.isfrozen(attrs)).toBe(true)
       expect(table.isfrozen(props)).toBe(true)
       expect(getmetatable(attrs)).toBe(nil)
+      expect(getmetatable(props)).toBe(nil)
       expect(attrs.Missing).toBe(nil)
+    end)
+
+    test("a rule reaches the side it asks for, whichever table it came through", function()
+      local obj = Instance.new("Part")
+      obj.Transparency = 0.25
+
+      local m = module({
+        A = knob(function(_, _, props)
+          return props.Transparency * 4
+        end),
+      }, {
+        Transparency = knob(),
+        Nothing = knob(function(_, attrs)
+          return attrs.A + 1
+        end),
+      })
+
+      local attrs, props = reader.resolve(m, ctxFor(obj))
+
+      expect(attrs.A).toBe(1)
+      expect(props.Transparency).toBe(0.25)
+      expect(props.Nothing).toBe(2)
+    end)
+
+    test("an attribute row and a property row of one name are not each other", function()
+      local obj = Instance.new("Part")
+      obj.Transparency = 0.5
+
+      local m = module({
+        Transparency = knob(function(_, _, props)
+          return props.Transparency + 1
+        end),
+      }, {
+        Transparency = knob(),
+      })
+
+      local attrs, props = reader.resolve(m, ctxFor(obj))
+
+      expect(props.Transparency).toBe(0.5)
+      expect(attrs.Transparency).toBe(1.5)
     end)
 
     test("a row defined in terms of itself errors", function()
