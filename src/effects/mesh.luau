@@ -614,4 +614,23 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   end
 end
 
+-- a mesh under an attachment pivots on that attachment, so a scale or a spin
+-- authored in the panel turns about the point the emit turns about
+function mesh.selected(ctx: reader.Ctx)
+  local model = ctx.ref :: Model
+  local parent = model.Parent
+
+  if parent == nil or not parent:IsA("Attachment") then
+    return
+  end
+
+  local primary = model.PrimaryPart
+
+  if primary == nil then
+    model.WorldPivot = parent.WorldCFrame
+  else
+    primary.PivotOffset = primary.CFrame:ToObjectSpace(parent.WorldCFrame)
+  end
+end
+
 return mesh

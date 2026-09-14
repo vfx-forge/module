@@ -445,4 +445,18 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   task.wait(attrs.DestroyDelay)
 end
 
+-- the template part is authored on the bolt, so a preview of a piece starts
+-- where the bolt is
+function bezier.selected(ctx: reader.Ctx)
+  local ref = ctx.ref :: Attachment
+  local points = ref:FindFirstChild("Points")
+  local template = ref:FindFirstChildOfClass("Part")
+
+  if template == nil or points == nil or not points:IsA("Attachment") then
+    return
+  end
+
+  template.CFrame = ref.WorldCFrame
+end
+
 return bezier

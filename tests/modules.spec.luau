@@ -315,4 +315,27 @@ harness.suite(function()
       end
     end)
   end)
+
+  -- the modules whose pieces are authored where they emit: the plugin settles a
+  -- selected instance through this hook before it shows the rows
+  local SETTLED = {
+    mesh = true,
+    bezier = true,
+    lightning = true,
+    shockwave_ring = true,
+    shockwave_line = true,
+    shockwave_debris = true,
+  }
+
+  test("only the modules authored at their origin carry a selected hook", function()
+    loadAll()
+
+    for _, module in registry.list() do
+      if SETTLED[module.id] then
+        expect(type(module.selected)).toBe("function")
+      else
+        expect(module.selected).toBe(nil)
+      end
+    end
+  end)
 end)

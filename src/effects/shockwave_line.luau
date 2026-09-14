@@ -614,4 +614,19 @@ function line.emit(ctx: reader.Ctx, attrs: any)
   Promise.all(promises):await()
 end
 
+-- a piece is authored resting on its origin, so what the panel shows is what
+-- the sweep starts from; the origin is the shockwave attachment two levels up
+function line.selected(ctx: reader.Ctx)
+  local piece = ctx.ref :: BasePart
+  local folder = piece.Parent
+  local origin = if folder ~= nil then folder.Parent else nil
+
+  if origin == nil or not origin:IsA("Attachment") then
+    return
+  end
+
+  piece.Anchored = true
+  piece.CFrame = origin.WorldCFrame
+end
+
 return line
