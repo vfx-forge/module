@@ -9,9 +9,6 @@ local lifetime = require("@mod/lifetime")
 local Promise = require("@pkg/Promise")
 
 local EffectSelectors = table.concat({
-  -- Mesh effects, until their module exists; a spin model is the registry's first
-  "Model",
-
   -- Legacy tween children, until the union goes
   "RayValue",
 
@@ -106,7 +103,7 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
     local fx = lifetime.effect(target, effectDepth, effects)
 
     lifetime.run(fx, function(scope)
-      emitters.dispatch(obj, scope, shared, api.caches.shared_part, legacyScale, effect)
+      emitters.dispatch(obj, scope, shared, legacyScale, effect)
     end)
   end
 
@@ -165,7 +162,8 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
         depthCache[ancestor] = currentDepth
 
         if not shouldSkip then
-          shouldSkip = utility.shouldSkipNested(ancestor) or ancestor:HasTag(utility.EMIT_EXCLUDE_TAG)
+          local claim = registry.of(ancestor)
+          shouldSkip = (claim ~= nil and claim.components == "Instance") or ancestor:HasTag(utility.EMIT_EXCLUDE_TAG)
         end
 
         skipCache[ancestor] = shouldSkip
@@ -191,7 +189,7 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
     dispatchInto(emit, obj, depth, module)
 
     -- a module that claims its whole subtree runs the effects under it itself
-    if not (module and module.components == "Instance") and not utility.shouldSkipNested(obj) then
+    if not (module and module.components == "Instance") then
       queryAndEmitDescendants(emit, obj, depth + 1, module)
     end
   end

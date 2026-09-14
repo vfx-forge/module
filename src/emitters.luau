@@ -1,5 +1,3 @@
-local Mesh = require("@vfx/mesh")
-
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local tween = require("@mod/tween")
@@ -340,62 +338,6 @@ function emitters.applyMods(
   end
 end
 
-function emitters.mesh(
-  obj: Instance,
-  scope: types.scope,
-  shared_part_cache: any,
-  legacyScale: number,
-  skipEnabledCheck: boolean?
-)
-  local start = obj:FindFirstChild("Start")
-
-  if not start then
-    return
-  end
-
-  if not skipEnabledCheck and obj:GetAttribute("Enabled") then
-    obj:SetAttribute("Enabled", false)
-  end
-
-  local tasks = {}
-  local promises = scope.emit.promises
-
-  local useEmitDuration = obj:HasTag(utility.ENABLED_VFX_TAG) and attr.get(obj, "EmitDuration", 0) > 0
-  local emitCount = if useEmitDuration and not skipEnabledCheck then 1 else attr.get(obj, "EmitCount", 1)
-
-  for i = 1, emitCount do
-    local promise = Promise.new(function(resolve)
-      utility.try(
-        `failed to emit mesh with error: %s`,
-        Mesh.emit,
-        obj,
-        utility.assembleMeshVFX(start, scope, shared_part_cache),
-        scope,
-        legacyScale,
-        skipEnabledCheck
-      )
-
-      resolve()
-    end)
-
-    table.insert(tasks, promise)
-    table.insert(promises, promise)
-  end
-
-  Promise.all(tasks):await()
-
-  -- a settled promise has nothing left to cancel, and a ConstantVFX mesh emits
-  -- for as long as it stays enabled, so leaving these in place grew the list
-  -- by one per emit for the life of the effect
-  for _, promise in tasks do
-    local index = table.find(promises, promise)
-
-    if index then
-      table.remove(promises, index)
-    end
-  end
-end
-
 -- a legacy tween RayValue emitted on its own: the queue it spells drives
 -- whatever it targets, under a lock so two emits of one template cannot drive
 -- the same target twice. a randomizer RayValue is applied by the prologue of
@@ -416,18 +358,6 @@ function emitters.legacy_child(obj: RayValue, scope: types.scope)
   drive(target, read.source, read.name, read.queue, scope, fallbackDuration(obj))
 end
 
--- the ownership table of an effect that still routes through the arms below:
--- the rows it drives through its own sampler, which the applier must leave
--- alone. it mirrors route's own discriminators and has to move with them. a
--- registered effect never reaches here; its rows come from registry.owned
-local function ownedFor(obj: any, className: string): { [string]: { [string]: boolean } }?
-  if className == "Model" then
-    return if utility.isMeshVFX(obj) then Mesh.OWNS else nil
-  end
-
-  return nil
-end
-
 -- picks the emitter for an instance and calls it. wrapped by emitters.dispatch,
 -- which owns the prologue
 local function route(
@@ -435,21 +365,12 @@ local function route(
   scope: types.scope,
   sharedUncMap: { [Instance]: number },
   sharedRefMap: { [Instance]: Instance },
-  shared_part_cache: any,
   legacyScale: number
 )
   local className = obj.ClassName
 
   if className == "RayValue" then
     emitters.legacy_child(obj, scope)
-    return
-  end
-
-  if className == "Model" then
-    if utility.isMeshVFX(obj) then
-      emitters.mesh(obj, scope, shared_part_cache, legacyScale)
-    end
-
     return
   end
 end
@@ -467,7 +388,6 @@ function emitters.dispatch(
   obj: any,
   scope: types.scope,
   shared: reader.Shared,
-  shared_part_cache: any,
   legacyScale: number,
   effect: registry.Module?,
   constant: boolean?
@@ -496,26 +416,9 @@ function emitters.dispatch(
     return
   end
 
-  emitters.applyMods(obj, scope, fallbackDuration(obj), ownedFor(obj, obj.ClassName))
+  emitters.applyMods(obj, scope, fallbackDuration(obj), nil)
 
-  route(obj, scope, shared.unc, shared.ref, shared_part_cache, legacyScale)
+  route(obj, scope, shared.unc, shared.ref, legacyScale)
 end
-
--- Registry for enabled effects (effects that emit continuously)
-type EnabledEffectConfig = {
-  check: (obj: Instance) -> boolean,
-  emit: (obj: Instance, scope: types.scope, shared_part_cache: any) -> (),
-}
-
-emitters.enabled_registry = {
-  mesh = {
-    check = function(obj: Instance)
-      return utility.isMeshVFX(obj)
-    end,
-    emit = function(obj: Instance, scope: types.scope, shared_part_cache: any)
-      emitters.mesh(obj, scope, shared_part_cache, 1, true)
-    end,
-  },
-} :: { [string]: EnabledEffectConfig }
 
 return emitters

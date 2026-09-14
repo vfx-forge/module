@@ -9,7 +9,7 @@ local registry = require("@mod/registry")
 
 local enabled_effects = {}
 
-function enabled_effects.init(scope: { any }, shared_part_cache: any, effects_service: any)
+function enabled_effects.init(scope: { any }, effects_service: any)
   local enabledScopes = {}
   local ancestryConnections: { [Instance]: RBXScriptConnection } = {}
 
@@ -36,27 +36,10 @@ function enabled_effects.init(scope: { any }, shared_part_cache: any, effects_se
   end
 
   local function addEnabledEffect(obj: Instance)
-    -- a registered module says whether the tick may emit it; the arms below
-    -- answer for the effects still routed by class until each has a module
     local module = registry.of(obj)
 
-    if module ~= nil and not module.constant then
+    if module == nil or not module.constant then
       return
-    end
-
-    local effectConfig = nil
-
-    if module == nil then
-      for _, config in emitters.enabled_registry do
-        if config.check(obj) then
-          effectConfig = config
-          break
-        end
-      end
-
-      if not effectConfig then
-        return
-      end
     end
 
     local tempScope = {} :: { any }
@@ -121,11 +104,7 @@ function enabled_effects.init(scope: { any }, shared_part_cache: any, effects_se
             local emitScope = lifetime.effect(cancelToken, 0, effects_service)
 
             lifetime.run(emitScope, function(scope)
-              if module ~= nil then
-                emitters.dispatch(obj, scope, { unc = {}, ref = {} }, shared_part_cache, 1, module, true)
-              else
-                (effectConfig :: any).emit(obj, scope, shared_part_cache)
-              end
+              emitters.dispatch(obj, scope, { unc = {}, ref = {} }, 1, module, true)
             end)
           end)
         )

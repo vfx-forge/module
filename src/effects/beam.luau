@@ -17,6 +17,9 @@ beam.id = "beam"
 beam.display = { name = "Beam", icon = "beam", order = 20 }
 beam.classifier = "Beam"
 
+-- the beam runs the effects nested under it itself, per emit, on its clone
+beam.components = "Instance"
+
 beam.attributes = {
   EmitDelay = knob(0):min(0):unit("seconds"),
   EffectDuration = knob(NumberRange.new(1, 1)):min(0):aliases("Duration"):unit("seconds"),

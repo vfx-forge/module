@@ -79,7 +79,13 @@ function texture_loader.init(scope: { any })
       return
     end
 
-    if utility.isMeshVFX(ref) then
+    if
+      ref:IsA("Model")
+      and ref:FindFirstChild("Start")
+      and (ref :: any).Start:IsA("BasePart")
+      and ref:FindFirstChild("End")
+      and (ref :: any).End:IsA("BasePart")
+    then
       local obj = ref:FindFirstChild("Start")
 
       if not obj or not obj:IsA("BasePart") then

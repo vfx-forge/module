@@ -39,7 +39,10 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
     utility.scaleAttribute(obj, invFactor, "Speed_Duration")
     utility.scaleAttribute(obj, invFactor, "RollOff_Duration")
   elseif obj:IsA("Model") then
-    if utility.isMeshVFX(obj) then
+    local start = obj:FindFirstChild("Start")
+    local goal = obj:FindFirstChild("End")
+
+    if start and start:IsA("BasePart") and goal and goal:IsA("BasePart") then
       utility.scaleAttribute(obj, invFactor, "EmitDelay")
       utility.scaleAttribute(obj, invFactor, "DestroyDelay")
       utility.scaleAttribute(obj, invFactor, "EmitDuration")

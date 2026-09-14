@@ -1,10 +1,12 @@
 --!nolint LocalShadow
 local RunService = game:GetService("RunService")
 
+local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
+local knob = require("@mod/knob")
 local mods = require("@mod/mods")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
@@ -14,143 +16,158 @@ local Promise = require("@pkg/Promise")
 
 local rng = Random.new()
 
+local function always()
+  return true
+end
+
+local function eased()
+  return utility.default_bezier
+end
+
+-- whether the oldest transparency pair, one StartTransparency and one
+-- EndTransparency for the whole model, meant the mesh or its decal: the decal
+-- when there is one and the model is not an old flipbook
+local function stoneOnMesh(ctx: reader.Ctx, attrs: any)
+  local start = ctx.ref:FindFirstChild("Start")
+
+  return attrs.Flipbook or start == nil or start:FindFirstChildOfClass("Decal") == nil
+end
+
+local function partDefault(ctx: reader.Ctx)
+  local start = ctx.ref:FindFirstChild("Start")
+
+  return if start ~= nil and start:FindFirstChildOfClass("Decal") ~= nil then 1 else 0
+end
+
 local mesh = {}
 
--- the knobs this effect reads off ref through samplers of its own, so
--- emitters.applyMods leaves them alone. Part_RotSpeed's endpoints are
--- NumberRanges it used to draw a scalar from itself, which read back as rand
--- endpoints now. Part_Size is absent because it is not a queue at all: it lerps
--- the Start part's size to the End part's, read off them as geometry
-mesh.OWNS = {
-  attribute = {
-    Speed = true,
-    Part_RotSpeed = true,
-    Part_Transparency = true,
-  },
+mesh.id = "mesh"
+mesh.display = { name = "Mesh", icon = "mesh", order = 75 }
+mesh.classifier = "Model:has(> BasePart#Start):has(> BasePart#End)"
+mesh.components = "Instance"
+mesh.constant = true
+
+mesh.attributes = {
+  EmitCount = knob(1):min(0),
+  EmitDelay = knob(0):min(0):unit("seconds"),
+  EmitDuration = knob(0):min(0):unit("seconds"),
+  DestroyDelay = knob(0):min(0):unit("seconds"),
+  EffectDuration = knob(NumberRange.new(1, 1)):min(0):aliases("Duration"):unit("seconds"),
+  SpreadAngle = knob(vector.zero),
+  SyncPosition = knob(false),
+  Enabled = knob(false),
+  Rate = knob(5):min(0):unit("perSecond"),
+  RotAroundOrigin = knob(false),
+  MinInitRot = knob(vector.zero),
+  MaxInitRot = knob(vector.zero),
+  PartRotSpeed = knob(0):aliases("Part_RotSpeed"):unit("perSecond"):mod(),
+  PartCFrameCurve = knob(eased):aliases("Part_CFrame_Curve"),
+  PartSizeCurve = knob(eased):aliases("Part_Size_Curve"),
+  MeshScaleCurve = knob(eased):aliases("Mesh_Scale_Curve"),
+  Speed = knob(1):mod(),
+  SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
+  -- the oldest assets' inputs, read and never renamed. which surface the
+  -- stone-age pair means depends on what the model holds, so the per-surface
+  -- rows fall back through it
+  Flipbook = knob(false):hidden(always),
+  FlipbookFadeOffset = knob(0):min(0):unit("seconds"):hidden(always),
+  StartTransparency = knob():hidden(always),
+  EndTransparency = knob():hidden(always),
+  DecalStartTransparency = knob(function(ctx, attrs)
+      return if stoneOnMesh(ctx, attrs) then 0 else attrs.StartTransparency or 0
+    end)
+    :aliases("Decal_StartTransparency")
+    :hidden(always),
+  DecalEndTransparency = knob(function(ctx, attrs)
+      return if stoneOnMesh(ctx, attrs) then 1 else attrs.EndTransparency or 1
+    end)
+    :aliases("Decal_EndTransparency")
+    :hidden(always),
+  MeshStartTransparency = knob(function(ctx, attrs)
+      local base = partDefault(ctx)
+      return if stoneOnMesh(ctx, attrs) then attrs.StartTransparency or base else base
+    end)
+    :aliases("Mesh_StartTransparency")
+    :hidden(always),
+  MeshEndTransparency = knob(function(ctx, attrs)
+      local base = partDefault(ctx)
+      return if stoneOnMesh(ctx, attrs) then attrs.EndTransparency or base else base
+    end)
+    :aliases("Mesh_EndTransparency")
+    :hidden(always),
+  -- the part's transparency rests at the mesh end value and ramps from the
+  -- mesh start value over the piece's duration, as the old default did
+  PartTransparency = knob(function(_, attrs)
+      return attrs.MeshEndTransparency
+    end)
+    :aliases("Part_Transparency")
+    :mod(mod.from(function(_, attrs)
+      return attrs.MeshStartTransparency
+    end)),
 }
 
-function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number, mustEmit: boolean?)
-  local start = ref:FindFirstChild("Start")
-  local goal = ref:FindFirstChild("End")
+mesh.properties = {}
 
-  if
-    not start
-    or not goal
-    or not start:IsA("BasePart")
-    or not goal:IsA("BasePart")
-    or (attr.get(ref, "Enabled", false) and not mustEmit)
-  then
-    return
-  end
+mesh.layout = {
+  { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration", "DestroyDelay" } },
+  { title = "Effect", entries = { "EffectDuration", "SpreadAngle", "SyncPosition", "Enabled", "Rate", "Speed" } },
+  { title = "Random Rotation", entries = { "RotAroundOrigin", "MinInitRot", "MaxInitRot", "PartRotSpeed" } },
+  { title = "Part", entries = { "PartTransparency", "PartCFrameCurve", "PartSizeCurve", "MeshScaleCurve" } },
+}
 
-  local legacy_duration = attr.get(ref, "Duration", 1, true)
+function mesh.duration(_, attrs: any)
+  return attrs.EffectDuration.Max
+end
 
-  local durationRange = attr.getRange(
-    ref,
-    "EffectDuration",
-    NumberRange.new(legacy_duration, legacy_duration),
-    NumberRange.new(0, math.huge)
-  )
+local part_cache: any
 
-  local duration = rng:NextNumber(durationRange.Min, durationRange.Max)
+function mesh.init(cache)
+  part_cache = cache
+end
 
-  local emitDelay = attr.get(ref, "EmitDelay", 0)
-  local destroyDelay = attr.get(ref, "DestroyDelay", 0)
-  local emitDuration = attr.get(ref, "EmitDuration", 0)
+function mesh.deinit()
+  part_cache = nil
+end
 
-  local legacy_isFlipbook = attr.get(ref, "Flipbook", false, true)
-  local legacy_flipbookFadeOffset = attr.get(ref, "FlipbookFadeOffset", 0, true)
+-- one piece: the assembled part driven over a duration of its own, the tail of
+-- the old effect body
+local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
+  local ref = ctx.ref :: Model
+  local scope = ctx.scope
+  local scale = ctx.scale
 
-  -- the oldest assets carry one StartTransparency and one EndTransparency for
-  -- the whole model, and which surface they meant depends on what the model
-  -- holds: the decal when there is one, else the mesh. read, never renamed
-  local stoneStart = attr.get(ref, "StartTransparency", nil, true)
-  local stoneEnd = attr.get(ref, "EndTransparency", nil, true)
+  local start = ref:FindFirstChild("Start") :: BasePart
+  local goal = ref:FindFirstChild("End") :: BasePart
 
-  local stoneOnMesh = legacy_isFlipbook or not start:FindFirstChildOfClass("Decal")
+  local destroyDelay = attrs.DestroyDelay
 
-  local partDefaultTp = 0
+  local legacy_isFlipbook = attrs.Flipbook
+  local legacy_flipbookFadeOffset = attrs.FlipbookFadeOffset
 
-  do
-    local decal = start and start:FindFirstChildOfClass("Decal")
+  local legacy_decalST = attrs.DecalStartTransparency
+  local legacy_decalET = attrs.DecalEndTransparency
 
-    if decal then
-      partDefaultTp = 1
-    end
-  end
+  local sync = attrs.SyncPosition
 
-  local legacy_decalST = attr.get(ref, "Decal_StartTransparency", if stoneOnMesh then 0 else stoneStart or 0, true)
-  local legacy_decalET = attr.get(ref, "Decal_EndTransparency", if stoneOnMesh then 1 else stoneEnd or 1, true)
-
-  local legacy_meshST =
-    attr.get(ref, "Mesh_StartTransparency", if stoneOnMesh then stoneStart or partDefaultTp else partDefaultTp, true)
-  local legacy_meshET =
-    attr.get(ref, "Mesh_EndTransparency", if stoneOnMesh then stoneEnd or partDefaultTp else partDefaultTp, true)
-
-  local useEmitDuration = ref:HasTag(utility.ENABLED_VFX_TAG) and emitDuration > 0
-
-  local sync = attr.get(ref, "SyncPosition", false)
-
-  local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
-  local partTp = mods.track(ref, "attribute", "Part_Transparency", mods.ramp(legacy_meshST, legacy_meshET), duration)
-  local rotSpeed = mods.track(ref, "attribute", "Part_RotSpeed", 0, duration)
+  local speed = attrs.Speed(nil, duration)
+  local partTp = attrs.PartTransparency(nil, duration)
+  local rotSpeed = attrs.PartRotSpeed(nil, duration)
 
   local speedStart = speed.at(0)
   local rotSpeedStart = rotSpeed.at(0)
 
-  local spreadAngle = attr.get(ref, "SpreadAngle", vector.zero)
+  local spreadAngle = attrs.SpreadAngle
 
-  local rotAroundOrigin = attr.get(ref, "RotAroundOrigin", false)
+  local rotAroundOrigin = attrs.RotAroundOrigin
 
-  local minInitRot = attr.get(ref, "MinInitRot", vector.zero)
-  local maxInitRot = attr.get(ref, "MaxInitRot", vector.zero)
+  local minInitRot = attrs.MinInitRot
+  local maxInitRot = attrs.MaxInitRot
 
   local initRot = vector.create(
     rng:NextNumber(minInitRot.x, maxInitRot.x),
     rng:NextNumber(minInitRot.y, maxInitRot.y),
     rng:NextNumber(minInitRot.z, maxInitRot.z)
   ) * utility.DEG_TO_RAD
-
-  task.wait(emitDelay)
-
-  if useEmitDuration and not mustEmit then
-    utility.forceEmit(ref, true)
-    attr.trigger(ref, "Enabled", true)
-
-    utility.onCancel(scope, function()
-      local token = utility.stopEmitDuration(ref)
-
-      if token then
-        utility.cancelToken(token)
-      end
-    end)
-
-    if speed.animated then
-      attr.setState(ref, "SpeedTweening", true)
-
-      lifetime.hold(
-        scope,
-        tween.fromParams(
-          utility.linear_bezier,
-          speed.span,
-          function(_, deltaTime, elapsed)
-            attr.setState(ref, "SpeedOverride", speed.at(elapsed))
-            return deltaTime
-          end,
-          nil,
-          function()
-            attr.setState(ref, "SpeedTweening", nil)
-          end
-        )
-      )
-    end
-
-    task.wait(emitDuration)
-
-    utility.awaitEmitDuration(utility.stopEmitDuration(ref))
-
-    return
-  end
 
   local parent = ref:FindFirstAncestorOfClass("Attachment") or start
   local realObj = typeof(obj) == "table" and obj._getReal() or obj
@@ -211,7 +228,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
   local speedTween
 
   if speed.animated and not attr.getState(ref, "SpeedOverride", nil) then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
       currentSpeed = speed.at(elapsed)
       return deltaTime
     end)
@@ -222,7 +239,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
   if goalCFrameOffset ~= CFrame.identity then
     lifetime.hold(
       scope,
-      tween.fromParams(attr.get(ref, "Part_CFrame_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
+      tween.fromParams(attrs.PartCFrameCurve, duration, function(alpha, deltaTime)
         currentCFrame = CFrame.identity:Lerp(goalCFrameOffset, alpha)
         return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
       end, speedTween)
@@ -232,7 +249,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
   if rotSpeed.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, rotSpeed.span, function(_, deltaTime, elapsed)
+      tween.fromParams(utility.linear_bezier, rotSpeed.duration, function(_, deltaTime, elapsed)
         currentRotSpeed = rotSpeed.at(elapsed)
         return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
       end, speedTween)
@@ -244,7 +261,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
   if partTp.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, partTp.span, function(_, deltaTime, elapsed)
+      tween.fromParams(utility.linear_bezier, partTp.duration, function(_, deltaTime, elapsed)
         obj.Transparency = partTp.at(elapsed)
         return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
       end, speedTween)
@@ -258,7 +275,7 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
 
     lifetime.hold(
       scope,
-      tween.fromParams(attr.get(ref, "Part_Size_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
+      tween.fromParams(attrs.PartSizeCurve, duration, function(alpha, deltaTime)
         local speed = attr.getState(ref, "SpeedOverride", currentSpeed)
 
         -- reduce size writes
@@ -288,15 +305,10 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       if scaleStart ~= scaleEnd then
         lifetime.hold(
           scope,
-          tween.fromParams(
-            attr.get(ref, "Mesh_Scale_Curve", utility.default_bezier),
-            duration,
-            function(alpha, deltaTime)
-              objMesh.Scale = utility.lerp(scaleStart, scaleEnd, alpha)
-              return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-            end,
-            speedTween
-          )
+          tween.fromParams(attrs.MeshScaleCurve, duration, function(alpha, deltaTime)
+            objMesh.Scale = utility.lerp(scaleStart, scaleEnd, alpha)
+            return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
+          end, speedTween)
         )
       end
     else
@@ -361,9 +373,9 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
       local from = decal
       local to = fromToMap[from]
 
-      -- this knob is authored on the DECAL rather than on ref, so mesh.OWNS
-      -- cannot cover it: ownership is keyed to the instance dispatch routes to,
-      -- and the decal is dispatched on its own through emitNested
+      -- this knob is authored on the DECAL rather than on ref: ownership is
+      -- keyed to the instance dispatch routes to, and the decal is dispatched
+      -- on its own through emitNested
       local decalTp = mods.track(from, "attribute", "Transparency", mods.ramp(legacy_decalST, legacy_decalET), duration)
 
       decal.Transparency = decalTp.at(0)
@@ -447,6 +459,109 @@ function mesh.emit(ref: Model, obj: BasePart, scope: types.scope, scale: number,
 
   local env = scope.effects.emitOnFinish(emitOnFinish, realObj, scope.depth + 1, scope)
   env.Finished:await()
+end
+
+function mesh.emit(ctx: reader.Ctx, attrs: any)
+  local ref = ctx.ref :: Model
+  local scope = ctx.scope
+
+  local start = ref:FindFirstChild("Start")
+  local goal = ref:FindFirstChild("End")
+
+  if not start or not goal or not start:IsA("BasePart") or not goal:IsA("BasePart") or not part_cache then
+    return
+  end
+
+  -- a plain emit of an enabled model switches it off; the tick's own emits
+  -- leave it as it is
+  if attrs.Enabled and not ctx.constant then
+    ref:SetAttribute("Enabled", false)
+  end
+
+  local emitDuration = attrs.EmitDuration
+  local useEmitDuration = ref:HasTag(utility.ENABLED_VFX_TAG) and emitDuration > 0
+
+  local speed = attrs.Speed
+
+  task.wait(attrs.EmitDelay)
+
+  if useEmitDuration and not ctx.constant then
+    utility.forceEmit(ref, true)
+    attr.trigger(ref, "Enabled", true)
+
+    utility.onCancel(scope, function()
+      local token = utility.stopEmitDuration(ref)
+
+      if token then
+        utility.cancelToken(token)
+      end
+    end)
+
+    if speed.animated then
+      attr.setState(ref, "SpeedTweening", true)
+
+      lifetime.hold(
+        scope,
+        tween.fromParams(
+          utility.linear_bezier,
+          speed.duration,
+          function(_, deltaTime, elapsed)
+            attr.setState(ref, "SpeedOverride", speed.at(elapsed))
+            return deltaTime
+          end,
+          nil,
+          function()
+            attr.setState(ref, "SpeedTweening", nil)
+          end
+        )
+      )
+    end
+
+    task.wait(emitDuration)
+
+    utility.awaitEmitDuration(utility.stopEmitDuration(ref))
+
+    return
+  end
+
+  local emitCount = if useEmitDuration and not ctx.constant then 1 else attrs.EmitCount
+  local range = attrs.EffectDuration
+
+  local tasks = {}
+  local promises = scope.emit.promises
+
+  for _ = 1, emitCount do
+    local duration = rng:NextNumber(range.Min, range.Max)
+
+    local promise = Promise.new(function(resolve)
+      utility.try(
+        `failed to emit a mesh piece with error: %s`,
+        piece,
+        ctx,
+        attrs,
+        utility.assembleMeshVFX(start, scope, part_cache),
+        duration
+      )
+
+      resolve()
+    end)
+
+    table.insert(tasks, promise)
+    table.insert(promises, promise)
+  end
+
+  Promise.all(tasks):await()
+
+  -- a settled promise has nothing left to cancel, and a ConstantVFX mesh emits
+  -- for as long as it stays enabled, so leaving these in place grew the list
+  -- by one per emit for the life of the effect
+  for _, promise in tasks do
+    local index = table.find(promises, promise)
+
+    if index then
+      table.remove(promises, index)
+    end
+  end
 end
 
 return mesh

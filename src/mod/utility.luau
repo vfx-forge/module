@@ -177,23 +177,6 @@ function utility.getImpulseForce(start: Vector3, goal: Vector3, duration: number
   return (goal - start) / duration + Vector3.new(0, workspace.Gravity * duration * 0.5, 0)
 end
 
-function utility.isMeshVFX(obj: Instance)
-  return obj
-    and obj:IsA("Model")
-    and obj:FindFirstChild("Start")
-    and (obj :: any).Start:IsA("BasePart")
-    and obj:FindFirstChild("End")
-    and (obj :: any).End:IsA("BasePart")
-end
-
-function utility.shouldSkipNested(obj: Instance)
-  return obj:IsA("Beam")
-    or obj:HasTag(utility.BEZIER_TAG)
-    or obj:HasTag(utility.LIGHTNING_TAG)
-    or utility.isMeshVFX(obj)
-    or (obj:IsA("BasePart") and utility.findFirstClassWithTag(obj, "Attachment", utility.SHOCKWAVE_TAG) ~= nil)
-end
-
 function utility.getTarget(obj: Instance): Instance?
   local objectValue = obj:FindFirstChildOfClass("ObjectValue")
 

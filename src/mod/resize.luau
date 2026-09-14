@@ -55,21 +55,19 @@ function resize.apply(obj: Instance, factor: number)
       mods.scaleValues(queue, factor)
     end)
   elseif obj:IsA("Model") then
-    if utility.isMeshVFX(obj) then
-      local start = obj:FindFirstChild("Start")
-      local goal = obj:FindFirstChild("End")
+    local start = obj:FindFirstChild("Start")
+    local goal = obj:FindFirstChild("End")
 
-      if start and goal then
-        start.Size *= factor
-        goal.Size *= factor
+    if start and start:IsA("BasePart") and goal and goal:IsA("BasePart") then
+      start.Size *= factor
+      goal.Size *= factor
 
-        local startMesh = start:FindFirstChildOfClass("SpecialMesh")
-        local goalMesh = goal:FindFirstChildOfClass("SpecialMesh")
+      local startMesh = start:FindFirstChildOfClass("SpecialMesh")
+      local goalMesh = goal:FindFirstChildOfClass("SpecialMesh")
 
-        if startMesh and goalMesh then
-          startMesh.Scale *= factor
-          goalMesh.Scale *= factor
-        end
+      if startMesh and goalMesh then
+        startMesh.Scale *= factor
+        goalMesh.Scale *= factor
       end
     else
       utility.scaleAttribute(obj, factor, "Scale_Start")
