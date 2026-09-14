@@ -1,5 +1,4 @@
 local Mesh = require("@vfx/mesh")
-local Lightning = require("@vfx/lightning")
 
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
@@ -341,25 +340,6 @@ function emitters.applyMods(
   end
 end
 
-function emitters.lightning(obj: Instance, scope: types.scope, skipEnabledCheck: boolean?)
-  local part = obj:FindFirstChildOfClass("Part")
-
-  if not part then
-    return
-  end
-
-  if not skipEnabledCheck and obj:GetAttribute("Enabled") then
-    obj:SetAttribute("Enabled", false)
-  end
-
-  local clone = part:Clone()
-  clone.Locked = true
-
-  lifetime.hold(scope, clone)
-
-  utility.try(`failed to emit lightning with error: %s`, Lightning.emit, obj, clone, scope, skipEnabledCheck)
-end
-
 function emitters.mesh(
   obj: Instance,
   scope: types.scope,
@@ -445,10 +425,6 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
     return if utility.isMeshVFX(obj) then Mesh.OWNS else nil
   end
 
-  if obj:HasTag(utility.LIGHTNING_TAG) then
-    return Lightning.OWNS
-  end
-
   return nil
 end
 
@@ -466,11 +442,6 @@ local function route(
 
   if className == "RayValue" then
     emitters.legacy_child(obj, scope)
-    return
-  end
-
-  if obj:HasTag(utility.LIGHTNING_TAG) then
-    emitters.lightning(obj, scope)
     return
   end
 
@@ -543,15 +514,6 @@ emitters.enabled_registry = {
     end,
     emit = function(obj: Instance, scope: types.scope, shared_part_cache: any)
       emitters.mesh(obj, scope, shared_part_cache, 1, true)
-    end,
-  },
-
-  lightning = {
-    check = function(obj: Instance)
-      return obj:HasTag(utility.LIGHTNING_TAG)
-    end,
-    emit = function(obj: Instance, scope: types.scope, shared_part_cache: any)
-      emitters.lightning(obj, scope, true)
     end,
   },
 } :: { [string]: EnabledEffectConfig }

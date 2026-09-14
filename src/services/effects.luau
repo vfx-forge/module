@@ -9,9 +9,6 @@ local lifetime = require("@mod/lifetime")
 local Promise = require("@pkg/Promise")
 
 local EffectSelectors = table.concat({
-  -- Lightning bolts
-  `.{utility.LIGHTNING_TAG}`,
-
   -- Mesh effects, until their module exists; a spin model is the registry's first
   "Model",
 

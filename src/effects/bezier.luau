@@ -155,6 +155,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
   local promises = {}
+  local emission = bezier_common.emissionOf(attrs)
 
   for _ = 1, attrs.EmitCount do
     local initRot = vector.create(
@@ -179,7 +180,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
         local cf = bezier_common.calculateEmissionCFrame(
           originCFrame,
           originSize,
-          bezier_common.emissionOf(attrs),
+          emission,
           drawFunc,
           rng,
           endPoint,

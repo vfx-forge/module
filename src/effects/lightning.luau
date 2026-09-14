@@ -1,8 +1,9 @@
 --!nolint LocalShadow
+local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
-local mods = require("@mod/mods")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local bezier_common = require("@mod/common/bezier")
@@ -11,21 +12,99 @@ local Bezier = require("@obj/Bezier")
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
 
+local function linear()
+  return utility.linear_bezier
+end
+
+local function eased()
+  return utility.default_bezier
+end
+
 local lightning = {}
 
--- the knobs this effect drives through samplers of its own, so
--- emitters.applyMods leaves them alone. the rest of lightning's animation is
--- not quad-shaped: Fade_In and Fade_Out carry one endpoint each with their own
--- duration and curve, and Color and Fill_Color are sequences sampled by alpha
-lightning.OWNS = {
-  attribute = {
-    Speed = true,
-    Width = true,
-    Length = true,
-    Transparency = true,
-    Fill_Transparency = true,
+lightning.id = "lightning"
+lightning.display = { name = "Lightning", icon = "lightning", order = 85 }
+lightning.classifier = "Attachment.LightningBolt"
+lightning.components = "Instance"
+lightning.constant = true
+
+lightning.attributes = bezier_common.rows()
+
+do
+  local rows = lightning.attributes
+
+  rows.Segments = knob(8):min(2)
+  rows.Jaggedness = knob(NumberRange.new(0.5, 1)):min(0)
+  rows.OffsetScale = knob(1):unit("studs")
+  rows.RefreshRate = knob(15):min(0):unit("perSecond")
+  rows.IndependentSegments = knob(false)
+  rows.RefreshDuringDissipate = knob(false)
+  rows.NestedEffectMode = knob("None"):options({ "None", "All", "Head", "Tail" })
+
+  rows.Color = knob(ColorSequence.new(Color3.new(1, 1, 1)))
+  rows.ColorCurve = knob(linear):aliases("Color_Curve")
+  rows.ColorDuration = knob(1):min(0):aliases("Color_Duration"):unit("seconds")
+
+  rows.FillColor = knob(ColorSequence.new(Color3.new(1, 1, 1))):aliases("Fill_Color")
+  rows.FillColorCurve = knob(linear):aliases("Fill_Color_Curve")
+  rows.FillColorDuration = knob(1):min(0):aliases("Fill_Color_Duration"):unit("seconds")
+  rows.FillDepthMode = knob("Occluded"):options({ "AlwaysOnTop", "Occluded" }):aliases("Fill_DepthMode")
+  rows.FillTransparency = knob(1):aliases("Fill_Transparency"):mod()
+
+  rows.FadeInStart = knob(1):aliases("Fade_In_Start")
+  rows.FadeInDuration = knob(0):min(0):aliases("Fade_In_Duration"):unit("seconds")
+  rows.FadeInCurve = knob(eased):aliases("Fade_In_Curve")
+
+  rows.FadeOutEnd = knob(1):aliases("Fade_Out_End")
+  rows.FadeOutDuration = knob(0):min(0):aliases("Fade_Out_Duration"):unit("seconds")
+  rows.FadeOutCurve = knob(eased):aliases("Fade_Out_Curve")
+
+  rows.DissipateMode = knob("None"):options({ "None", "Retract", "Scale" }):aliases("Dissipate_Mode")
+  rows.DissipateDuration = knob(0.5):min(0):aliases("Dissipate_Duration"):unit("seconds")
+  rows.DissipateCurve = knob(eased):aliases("Dissipate_Curve")
+
+  -- an unauthored bolt thins from two studs to a fifth over its own duration
+  rows.Width = knob(0.2):min(0):unit("studs"):mod(mod.from(2))
+  rows.Length = knob(1):min(0):mod()
+  rows.Transparency = knob(0):mod()
+end
+
+lightning.properties = {}
+
+lightning.layout = bezier_common.layout()
+
+table.insert(lightning.layout, {
+  title = "Segments",
+  entries = {
+    "Segments",
+    "Color",
+    "IndependentSegments",
+    "RefreshRate",
+    "RefreshDuringDissipate",
+    "Transparency",
+    "Width",
+    "Length",
   },
-}
+})
+table.insert(lightning.layout, { title = "Offset", entries = { "Jaggedness", "OffsetScale" } })
+table.insert(lightning.layout, { title = "Nested Effects", entries = { "NestedEffectMode" } })
+table.insert(lightning.layout, {
+  title = "Fill",
+  entries = { "FillColor", "FillColorCurve", "FillColorDuration", "FillDepthMode", "FillTransparency" },
+})
+table.insert(lightning.layout, {
+  title = "Fade",
+  entries = { "FadeInStart", "FadeInDuration", "FadeInCurve", "FadeOutEnd", "FadeOutDuration", "FadeOutCurve" },
+})
+table.insert(
+  lightning.layout,
+  { title = "Dissipation", entries = { "DissipateMode", "DissipateDuration", "DissipateCurve" } }
+)
+table.insert(lightning.layout, { title = "Color", entries = { "ColorCurve", "ColorDuration" } })
+
+function lightning.duration(_, attrs: any)
+  return attrs.Duration.Max
+end
 
 local part_cache: ObjectCache.ObjectCache?
 
@@ -35,45 +114,6 @@ end
 
 function lightning.deinit()
   part_cache = nil
-end
-
-local function readLightningAttributes(ref: Attachment)
-  return {
-    -- lightning
-    segments = math.max(attr.get(ref, "Segments", 8), 2),
-    jaggedness = attr.getRange(ref, "Jaggedness", NumberRange.new(0.5, 1), NumberRange.new(0, math.huge)),
-    offsetScale = attr.get(ref, "OffsetScale", 1),
-    refreshRate = attr.get(ref, "RefreshRate", 15),
-    independentSegments = attr.get(ref, "IndependentSegments", false),
-    refreshDuringDissipate = attr.get(ref, "RefreshDuringDissipate", false),
-    nestedEffectMode = attr.getEnum(ref, "NestedEffectMode", "None", { "None", "All", "Head", "Tail" }),
-
-    -- color
-    colorSequence = attr.get(ref, "Color", ColorSequence.new(Color3.new(1, 1, 1))),
-    colorEasingData = attr.get(ref, "Color_Curve", utility.linear_bezier),
-    colorDuration = attr.get(ref, "Color_Duration", 1),
-
-    -- fill
-    fillColorSequence = attr.get(ref, "Fill_Color", ColorSequence.new(Color3.new(1, 1, 1))),
-    fillColorEasingData = attr.get(ref, "Fill_Color_Curve", utility.linear_bezier),
-    fillColorDuration = attr.get(ref, "Fill_Color_Duration", 1),
-    fillDepthMode = attr.getEnum(ref, "Fill_DepthMode", "Occluded", { "AlwaysOnTop", "Occluded" }),
-
-    -- fade-in
-    fadeInStart = attr.get(ref, "Fade_In_Start", 1),
-    fadeInDuration = attr.get(ref, "Fade_In_Duration", 0),
-    fadeInCurveData = attr.get(ref, "Fade_In_Curve", utility.default_bezier),
-
-    -- fade-out
-    fadeOutEnd = attr.get(ref, "Fade_Out_End", 1),
-    fadeOutDuration = attr.get(ref, "Fade_Out_Duration", 0),
-    fadeOutCurveData = attr.get(ref, "Fade_Out_Curve", utility.default_bezier),
-
-    -- dissipation
-    dissipateMode = attr.getEnum(ref, "Dissipate_Mode", "None", { "None", "Retract", "Scale" }),
-    dissipateDuration = attr.get(ref, "Dissipate_Duration", 0.5),
-    dissipateCurveData = attr.get(ref, "Dissipate_Curve", utility.default_bezier),
-  }
 end
 
 local function createSegmentStates(count: number)
@@ -284,28 +324,38 @@ local function isTransitionComplete(state: TransitionState): boolean
   return state.distanceTraveled >= state.boltLength + state.transitionBuffer
 end
 
-function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit: boolean?)
+function lightning.emit(ctx: reader.Ctx, attrs: any)
+  local ref = ctx.ref :: Attachment
+  local scope = ctx.scope
   local root = ref:FindFirstChild("Points")
+  local template = ref:FindFirstChildOfClass("Part")
 
-  if not root or not root:IsA("Attachment") or not part_cache then
+  if not root or not root:IsA("Attachment") or not part_cache or not template then
     return
   end
 
-  local common = bezier_common.readCommonAttributes(ref)
-  local attrs = readLightningAttributes(ref)
+  -- a plain emit of an enabled bolt switches it off; the tick's own emits
+  -- leave it as it is
+  if attrs.Enabled and not ctx.constant then
+    ref:SetAttribute("Enabled", false)
+  end
 
-  local drawFunc = bezier_common.drawFuncMap[common.shapeType]
-    and bezier_common.drawFuncMap[common.shapeType][common.shapeStyle]
+  local refObj = template:Clone()
+  refObj.Locked = true
+
+  lifetime.hold(scope, refObj)
+
+  local drawFunc = bezier_common.drawFuncMap[attrs.Shape] and bezier_common.drawFuncMap[attrs.Shape][attrs.ShapeStyle]
 
   if not drawFunc then
     return
   end
 
-  local useDuration = common.emitDuration > 0
+  local useDuration = attrs.EmitDuration > 0
 
-  task.wait(common.emitDelay)
+  task.wait(attrs.EmitDelay)
 
-  if useDuration and not mustEmit then
+  if useDuration and not ctx.constant then
     utility.forceEmit(ref, true)
     attr.trigger(ref, "Enabled", true)
 
@@ -317,7 +367,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
       end
     end)
 
-    local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
+    local speed = attrs.Speed
 
     if speed.animated then
       attr.setState(ref, "SpeedTweening", true)
@@ -326,7 +376,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         scope,
         tween.fromParams(
           utility.linear_bezier,
-          speed.span,
+          speed.duration,
           function(_, deltaTime, elapsed)
             attr.setState(ref, "SpeedOverride", speed.at(elapsed))
             return deltaTime
@@ -339,14 +389,14 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
       )
     end
 
-    task.wait(common.emitDuration)
+    task.wait(attrs.EmitDuration)
 
     utility.awaitEmitDuration(utility.stopEmitDuration(ref))
 
     return
   end
 
-  if common.emitCount <= 0 then
+  if attrs.EmitCount <= 0 then
     return
   end
 
@@ -368,61 +418,57 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
   local rng = Random.new()
   local baseBezier = not endPoint and Bezier.new(points)
 
-  local colorEasingBezier = Bezier.new(utility.deserializePath(attrs.colorEasingData), 0)
-  local fillColorEasingBezier = Bezier.new(utility.deserializePath(attrs.fillColorEasingData), 0)
+  local colorEasingBezier = Bezier.new(utility.deserializePath(attrs.ColorCurve), 0)
+  local fillColorEasingBezier = Bezier.new(utility.deserializePath(attrs.FillColorCurve), 0)
 
-  local fadeInEasingBezier = Bezier.new(utility.deserializePath(attrs.fadeInCurveData), 0)
-  local fadeOutEasingBezier = Bezier.new(utility.deserializePath(attrs.fadeOutCurveData), 0)
+  local fadeInEasingBezier = Bezier.new(utility.deserializePath(attrs.FadeInCurve), 0)
+  local fadeOutEasingBezier = Bezier.new(utility.deserializePath(attrs.FadeOutCurve), 0)
 
-  local hitboxParams = bezier_common.createHitboxParams({
-    enabled = common.hitboxEnabled,
-    collisionGroup = common.hitboxCollisionGroup,
-    filterTag = common.hitboxFilterTag,
-    filterType = common.hitboxFilterType,
-    ignoreCanCollide = common.hitboxIgnoreCanCollide,
-  }, parent, root)
+  local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
   local promises = {}
+  local emission = bezier_common.emissionOf(attrs)
 
-  for _ = 1, common.emitCount do
-    local duration = rng:NextNumber(common.duration.Min, common.duration.Max)
-    local projectileLifetime = common.projectileEnabled
-      and rng:NextNumber(common.projectileLifetime.Min, common.projectileLifetime.Max)
+  for _ = 1, attrs.EmitCount do
+    local duration = rng:NextNumber(attrs.Duration.Min, attrs.Duration.Max)
+    local projectileLifetime = attrs.ProjectileEnabled
+      and rng:NextNumber(attrs.ProjectileLifetime.Min, attrs.ProjectileLifetime.Max)
 
     -- one track set per emitted bolt, the same granularity the legacy tweens
-    -- ran at. Fill_Transparency spans fillColorDuration rather than the bolt's,
+    -- ran at. FillTransparency spans FillColorDuration rather than the bolt's,
     -- which is what its tween always did
-    local width = mods.track(ref, "attribute", "Width", mods.ramp(2, 0.2), duration)
-    local length = mods.track(ref, "attribute", "Length", 1, duration)
-    local transparency = mods.track(ref, "attribute", "Transparency", 0, duration)
-    local fillTp = mods.track(ref, "attribute", "Fill_Transparency", 1, attrs.fillColorDuration)
-    local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
+    local width = attrs.Width(nil, duration)
+    local length = attrs.Length(nil, duration)
+    local transparency = attrs.Transparency(nil, duration)
+    local fillTp = attrs.FillTransparency(nil, attrs.FillColorDuration)
+    local speed = attrs.Speed(nil, duration)
 
     table.insert(
       promises,
       Promise.new(function(resolve)
-        local cf = bezier_common.calculateEmissionCFrame(originCFrame, originSize, {
-          face = common.face,
-          spreadAngle = common.spreadAngle,
-          mirror = common.mirror,
-          mirrorRot = common.mirrorRot,
-          partial = common.partial,
-          emissionDirection = common.emissionDirection,
-        }, drawFunc, rng, endPoint, parent:IsA("Attachment"))
+        local cf = bezier_common.calculateEmissionCFrame(
+          originCFrame,
+          originSize,
+          emission,
+          drawFunc,
+          rng,
+          endPoint,
+          parent:IsA("Attachment")
+        )
 
         local bezier = baseBezier or bezier_common.createBezierWithEndpoint(points, cf, endPoint, endT1)
         local getPos = bezier_common.createPosGetter(bezier, points, cf, endPoint, true)
 
         -- create segment parts
-        local segmentRealParts = table.create(attrs.segments)
-        local segmentCacheIds = table.create(attrs.segments)
+        local segmentRealParts = table.create(attrs.Segments)
+        local segmentCacheIds = table.create(attrs.Segments)
 
-        local segmentState = createSegmentStates(attrs.segments)
+        local segmentState = createSegmentStates(attrs.Segments)
 
-        local invSegments = 1 / attrs.segments
-        local segmentBounds = table.create(attrs.segments)
+        local invSegments = 1 / attrs.Segments
+        local segmentBounds = table.create(attrs.Segments)
 
-        for j = 1, attrs.segments do
+        for j = 1, attrs.Segments do
           segmentBounds[j] = {
             start = (j - 1) * invSegments,
             finish = j * invSegments,
@@ -436,7 +482,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
 
         -- create a highlight container if needed. a highlight is built when the
         -- fill is less than opaque at either end of its track
-        local useHighlight = fillTp.at(0) < 1 or fillTp.at(fillTp.span) < 1
+        local useHighlight = fillTp.at(0) < 1 or fillTp.at(fillTp.duration) < 1
 
         local highlight: Highlight?
         local containerModel: Model?
@@ -449,10 +495,10 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
 
           local hl = Instance.new("Highlight")
           hl.Adornee = container
-          hl.FillColor = bezier_common.getColorWithEasingOklab(attrs.fillColorSequence, 0, fillColorEasingBezier)
+          hl.FillColor = bezier_common.getColorWithEasingOklab(attrs.FillColor, 0, fillColorEasingBezier)
           hl.FillTransparency = fillTp.at(0)
           hl.OutlineTransparency = 1
-          hl.DepthMode = Enum.HighlightDepthMode[attrs.fillDepthMode]
+          hl.DepthMode = Enum.HighlightDepthMode[attrs.FillDepthMode]
           hl.Parent = container
 
           highlight = hl
@@ -460,12 +506,12 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
 
         -- determine which segments get nested effects
         local function shouldEmitNested(segmentIndex: number): boolean
-          local mode = attrs.nestedEffectMode
+          local mode = attrs.NestedEffectMode
 
           if mode == "All" then
             return true
           elseif mode == "Head" then
-            return segmentIndex == attrs.segments
+            return segmentIndex == attrs.Segments
           elseif mode == "Tail" then
             return segmentIndex == 1
           end
@@ -473,7 +519,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
           return false
         end
 
-        local emitOnFinish = if attrs.nestedEffectMode ~= "None"
+        local emitOnFinish = if attrs.NestedEffectMode ~= "None"
           then scope.effects.prepareEmitOnFinish(refObj, scope)
           else nil
 
@@ -486,7 +532,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         local initWidth = width.at(0)
 
         -- create segment parts
-        for j = 1, attrs.segments do
+        for j = 1, attrs.Segments do
           local cacheId = utility.getRandomId()
 
           local objAbstr = part_cache:get(cacheId)
@@ -511,7 +557,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
             for _, child in clone:GetChildren() do
               child.Parent = obj
 
-              if attrs.nestedEffectMode == "Head" then
+              if attrs.NestedEffectMode == "Head" then
                 table.insert(nestedEffectChildren, child)
               end
             end
@@ -528,7 +574,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         -- for Head mode, reparent children to segment 1 initially
         local currentNestedParentIndex = nil
 
-        if attrs.nestedEffectMode == "Head" and #nestedEffectChildren > 0 then
+        if attrs.NestedEffectMode == "Head" and #nestedEffectChildren > 0 then
           for _, child in nestedEffectChildren do
             child.Parent = segmentRealParts[1]
           end
@@ -538,7 +584,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         -- cleanup
         lifetime.hold(scope, function()
           if part_cache then
-            for j = 1, attrs.segments do
+            for j = 1, attrs.Segments do
               part_cache:free(segmentCacheIds[j])
             end
 
@@ -565,11 +611,11 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         local lastRefreshTime = 0
 
         local lightningPoints =
-          generateLightningPoints(rng, attrs.segments, getPos, attrs.jaggedness, attrs.offsetScale)
+          generateLightningPoints(rng, attrs.Segments, getPos, attrs.Jaggedness, attrs.OffsetScale)
 
         -- emit nested effects
         for _, j in nestedSegments do
-          local emitFrom = if attrs.nestedEffectMode == "Head" then 1 else j
+          local emitFrom = if attrs.NestedEffectMode == "Head" then 1 else j
           local env = scope.effects.emitNested(segmentRealParts[emitFrom], scope.depth + 1, scope)
           table.insert(promises, env.Finished)
         end
@@ -598,7 +644,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         local speedTween
 
         if speed.animated and not attr.getState(ref, "SpeedOverride", nil) then
-          speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+          speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
             currentSpeed = speed.at(elapsed)
             return deltaTime
           end)
@@ -628,11 +674,11 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         end
 
         local function getHeadSegmentIndex(): number
-          return math.clamp(math.ceil(currentHeadAlpha * attrs.segments), 1, attrs.segments)
+          return math.clamp(math.ceil(currentHeadAlpha * attrs.Segments), 1, attrs.Segments)
         end
 
         local function shapecast()
-          if not common.hitboxEnabled then
+          if not attrs.HitboxEnabled then
             return false
           end
 
@@ -655,23 +701,23 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
             if transitionState and not isTransitionComplete(transitionState) then
               lightningPoints, transitionState.jaggedOffsets = generateTransitionPoints(
                 rng,
-                attrs.segments,
+                attrs.Segments,
                 getPos,
                 projectileTailPos,
                 projectileHeadPos,
-                attrs.jaggedness,
-                attrs.offsetScale,
+                attrs.Jaggedness,
+                attrs.OffsetScale,
                 projectileDir,
                 transitionState
               )
             else
               lightningPoints = generateProjectilePoints(
                 rng,
-                attrs.segments,
+                attrs.Segments,
                 projectileTailPos,
                 projectileHeadPos,
-                attrs.jaggedness,
-                attrs.offsetScale,
+                attrs.Jaggedness,
+                attrs.OffsetScale,
                 projectileDir
               )
 
@@ -680,7 +726,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
               end
             end
           else
-            lightningPoints = generateLightningPoints(rng, attrs.segments, getPos, attrs.jaggedness, attrs.offsetScale)
+            lightningPoints = generateLightningPoints(rng, attrs.Segments, getPos, attrs.Jaggedness, attrs.OffsetScale)
           end
         end
 
@@ -689,7 +735,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
           if transitionState and not isTransitionComplete(transitionState) then
             if transitionState.jaggedOffsets then
               lightningPoints = updateTransitionPoints(
-                attrs.segments,
+                attrs.Segments,
                 getPos,
                 projectileTailPos :: Vector3,
                 projectileHeadPos :: Vector3,
@@ -699,19 +745,19 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
               -- generate offsets on first frame
               lightningPoints, transitionState.jaggedOffsets = generateTransitionPoints(
                 rng,
-                attrs.segments,
+                attrs.Segments,
                 getPos,
                 projectileTailPos :: Vector3,
                 projectileHeadPos :: Vector3,
-                attrs.jaggedness,
-                attrs.offsetScale,
+                attrs.Jaggedness,
+                attrs.OffsetScale,
                 projectileDir :: Vector3,
                 transitionState
               )
             end
           else
             -- fully transitioned, move points along the projectile direction
-            local offset = projectileDir * common.projectileSpeed * deltaTime
+            local offset = projectileDir * attrs.ProjectileSpeed * deltaTime
 
             for j = 1, #lightningPoints do
               lightningPoints[j] = lightningPoints[j] + offset
@@ -734,8 +780,8 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
           local effectiveWidth = widthOverride or currentWidth
 
           -- refresh lightning points
-          if allowRefresh ~= false and attrs.refreshRate > 0 then
-            local refreshInterval = 1 / attrs.refreshRate
+          if allowRefresh ~= false and attrs.RefreshRate > 0 then
+            local refreshInterval = 1 / attrs.RefreshRate
             lastRefreshTime += scaledDelta
 
             if lastRefreshTime >= refreshInterval then
@@ -745,7 +791,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
           end
 
           -- update each segment
-          for j = 1, attrs.segments do
+          for j = 1, attrs.Segments do
             local state = segmentState[j]
 
             local bounds = segmentBounds[j]
@@ -774,28 +820,27 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
               end
 
               -- color
-              segment.Color =
-                bezier_common.getColorWithEasingOklab(attrs.colorSequence, currentColorAlpha, colorEasingBezier)
+              segment.Color = bezier_common.getColorWithEasingOklab(attrs.Color, currentColorAlpha, colorEasingBezier)
 
               -- transparency with fade in/out
-              local baseTransparency = if attrs.independentSegments and state.initialTransparency
+              local baseTransparency = if attrs.IndependentSegments and state.initialTransparency
                 then state.initialTransparency
                 else currentTransparency
 
-              local fadeInAlpha = if attrs.fadeInDuration > 0
-                then math.clamp(scaledElapsedTime / attrs.fadeInDuration, 0, 1)
+              local fadeInAlpha = if attrs.FadeInDuration > 0
+                then math.clamp(scaledElapsedTime / attrs.FadeInDuration, 0, 1)
                 else 1
 
               local fadeInEased = 1 - fadeInEasingBezier:getEase(fadeInAlpha).y
-              local fadeInTransparency = utility.lerp(attrs.fadeInStart, baseTransparency, fadeInEased)
+              local fadeInTransparency = utility.lerp(attrs.FadeInStart, baseTransparency, fadeInEased)
 
               local fadeOutTransparency = baseTransparency
 
-              if isDissipating and attrs.fadeOutDuration > 0 then
-                local fadeOutAlpha = math.clamp(dissipateProgress / attrs.fadeOutDuration, 0, 1)
+              if isDissipating and attrs.FadeOutDuration > 0 then
+                local fadeOutAlpha = math.clamp(dissipateProgress / attrs.FadeOutDuration, 0, 1)
                 local fadeOutEased = 1 - fadeOutEasingBezier:getEase(fadeOutAlpha).y
 
-                fadeOutTransparency = utility.lerp(baseTransparency, attrs.fadeOutEnd, fadeOutEased)
+                fadeOutTransparency = utility.lerp(baseTransparency, attrs.FadeOutEnd, fadeOutEased)
               end
 
               segment.Transparency = if fadeInAlpha < 1
@@ -807,12 +852,12 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
               local useWidth
 
               if widthOverride then
-                local baseWidth = if attrs.independentSegments and state.initialWidth
+                local baseWidth = if attrs.IndependentSegments and state.initialWidth
                   then state.initialWidth
                   else currentWidth
 
                 useWidth = baseWidth * (if currentWidth > 0 then widthOverride / currentWidth else 0)
-              elseif attrs.independentSegments and state.initialWidth then
+              elseif attrs.IndependentSegments and state.initialWidth then
                 useWidth = state.initialWidth
               else
                 useWidth = effectiveWidth
@@ -844,11 +889,8 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
 
           -- update fill
           if highlight then
-            highlight.FillColor = bezier_common.getColorWithEasingOklab(
-              attrs.fillColorSequence,
-              currentFillColorAlpha,
-              fillColorEasingBezier
-            )
+            highlight.FillColor =
+              bezier_common.getColorWithEasingOklab(attrs.FillColor, currentFillColorAlpha, fillColorEasingBezier)
 
             highlight.FillTransparency = currentFillTransparency
           end
@@ -916,15 +958,15 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
             local scaledDelta = deltaTime * getEffectiveSpeed()
             scaledElapsedTime += scaledDelta
 
-            if attrs.refreshDuringDissipate then
-              currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.colorDuration) % 1
-              currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.fillColorDuration) % 1
+            if attrs.RefreshDuringDissipate then
+              currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.ColorDuration) % 1
+              currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.FillColorDuration) % 1
             end
 
             local tailOverride = if mode == "Retract" then utility.lerp(dissipateStartTail, headAlpha, alpha) else nil
             local widthOverrideVal = if mode == "Scale" then utility.lerp(dissipateStartWidth, 0, alpha) else nil
 
-            updateSegments(headAlpha, tailOverride, scaledDelta, attrs.refreshDuringDissipate, widthOverrideVal)
+            updateSegments(headAlpha, tailOverride, scaledDelta, attrs.RefreshDuringDissipate, widthOverrideVal)
 
             return getSpeedDelta(deltaTime, true)
           end, speedTween, onComplete, true, utility.RENDER_PRIORITY + scope.depth)
@@ -957,23 +999,23 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
             end
           end
 
-          if attrs.dissipateMode ~= "None" then
+          if attrs.DissipateMode ~= "None" then
             handleDissipation(
               headAlpha,
               math.max(0, headAlpha - currentLength),
               currentWidth,
-              attrs.dissipateCurveData,
-              attrs.dissipateDuration,
-              attrs.dissipateMode,
+              attrs.DissipateCurve,
+              attrs.DissipateDuration,
+              attrs.DissipateMode,
               onDissipationComplete
             )
-          elseif attrs.fadeOutDuration > 0 then
+          elseif attrs.FadeOutDuration > 0 then
             handleDissipation(
               headAlpha,
               math.max(0, headAlpha - currentLength),
               currentWidth,
-              attrs.fadeOutCurveData,
-              attrs.fadeOutDuration,
+              attrs.FadeOutCurve,
+              attrs.FadeOutDuration,
               "None",
               onDissipationComplete
             )
@@ -986,16 +1028,16 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
         lifetime.hold(
           scope,
           tween.fromParams(
-            attr.get(ref, "Easing_Curve", utility.linear_bezier),
+            utility.linear_bezier,
             duration,
             function(alpha, deltaTime, elapsed)
               local scaledDelta = deltaTime * getEffectiveSpeed()
               scaledElapsedTime += scaledDelta
 
-              currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.colorDuration) % 1
-              currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.fillColorDuration) % 1
+              currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.ColorDuration) % 1
+              currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.FillColorDuration) % 1
 
-              if common.syncPosition then
+              if attrs.SyncPosition then
                 local newOrigin = utility.getTransformedOriginExtents(parent)
                 local offset = newOrigin * currentOriginCFrame:Inverse()
 
@@ -1020,9 +1062,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
                 return nil
               end
 
-              if
-                (common.projectileEnabled and alpha * duration < projectileLifetime) or not common.projectileEnabled
-              then
+              if (attrs.ProjectileEnabled and alpha * duration < projectileLifetime) or not attrs.ProjectileEnabled then
                 return speedDelta
               else
                 startDissipation()
@@ -1036,17 +1076,17 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
               end
 
               -- non-projectile mode
-              if not common.projectileEnabled then
-                if common.destroyDelay > 0 then
+              if not attrs.ProjectileEnabled then
+                if attrs.DestroyDelay > 0 then
                   tween.fromParams(
                     utility.linear_bezier,
-                    common.destroyDelay,
+                    attrs.DestroyDelay,
                     function(_, deltaTime)
                       local scaledDelta = deltaTime * getEffectiveSpeed()
                       scaledElapsedTime += scaledDelta
 
-                      currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.colorDuration) % 1
-                      currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.fillColorDuration) % 1
+                      currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.ColorDuration) % 1
+                      currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.FillColorDuration) % 1
 
                       updateSegments(1, nil, scaledDelta, true)
 
@@ -1072,7 +1112,7 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
               end
 
               -- projectile mode
-              local dir = if common.projectileMatchEnd and endPoint
+              local dir = if attrs.MatchEndDirection and endPoint
                 then endPoint.WorldCFrame.LookVector
                 else lastVelocity.Unit
 
@@ -1093,10 +1133,10 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
               local transitionBuffer = boltLength * 0.3
 
               -- preserve existing jaggedness offsets from bezier phase
-              local existingOffsets = table.create(attrs.segments + 1)
+              local existingOffsets = table.create(attrs.Segments + 1)
 
-              for j = 0, attrs.segments do
-                local t = j / attrs.segments
+              for j = 0, attrs.Segments do
+                local t = j / attrs.Segments
                 local bezierT = curvedTailT + t * curvedLengthT
                 local basePos = getPos(bezierT)
 
@@ -1118,10 +1158,10 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
                 local scaledDelta = deltaTime * getEffectiveSpeed()
                 scaledElapsedTime += scaledDelta
 
-                currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.colorDuration) % 1
-                currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.fillColorDuration) % 1
+                currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.ColorDuration) % 1
+                currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.FillColorDuration) % 1
 
-                local distanceTraveled = elapsed * common.projectileSpeed
+                local distanceTraveled = elapsed * attrs.ProjectileSpeed
                 state.distanceTraveled = distanceTraveled
 
                 local currentHeadPos = initialHeadPos + dir * distanceTraveled
@@ -1131,12 +1171,12 @@ function lightning.emit(ref: Attachment, refObj: Part, scope: types.scope, mustE
                 projectileTailPos = currentTailPos
                 projectileDir = dir
 
-                local shouldRefresh = attrs.refreshRate > 0
+                local shouldRefresh = attrs.RefreshRate > 0
 
                 if shouldRefresh then
                   lastRefreshTime += scaledDelta
 
-                  if lastRefreshTime >= 1 / attrs.refreshRate then
+                  if lastRefreshTime >= 1 / attrs.RefreshRate then
                     refreshPoints()
                     lastRefreshTime = 0
                   else
