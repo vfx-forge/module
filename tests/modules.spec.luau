@@ -1,6 +1,7 @@
 local harness = require("@tests/harness")
 local registry = require("@mod/registry")
 local test, expect = harness.test, harness.expect
+local Vector3 = harness.datatypes.Vector3
 
 local MODULES = {
   "beam",
@@ -18,6 +19,16 @@ local MODULES = {
   "shockwave_line",
   "shockwave_debris",
 }
+
+-- the two piece modules whose Size row rests on a draw between two corners
+local PIECES = { "shockwave_ring", "shockwave_line" }
+
+local MIN_SIZE = Vector3.new(2, 1, 2)
+local MAX_SIZE = Vector3.new(3, 2, 3)
+
+local function inside(v: any, lo: Vector3, hi: Vector3): boolean
+  return v.X >= lo.X and v.X <= hi.X and v.Y >= lo.Y and v.Y <= hi.Y and v.Z >= lo.Z and v.Z <= hi.Z
+end
 
 -- the built-ins are the require cache's own tables and registering freezes
 -- them, so they load once for the whole file rather than once per case
@@ -193,6 +204,70 @@ harness.suite(function()
             end
           end
         end
+      end
+    end)
+
+    test("a piece with no size authored draws between the old corners, once per piece", function()
+      loadAll()
+
+      local _, made = scene()
+
+      for _, id in PIECES do
+        local attrs = registry.read(made[id])
+
+        expect(attrs.Size.animated).toBe(true)
+        expect(inside(attrs.Size().at(0), MIN_SIZE, MAX_SIZE)).toBe(true)
+        expect(inside(attrs.Size().at(0), MIN_SIZE, MAX_SIZE)).toBe(true)
+      end
+    end)
+
+    test("a piece authoring one corner draws between it and the other corner's default", function()
+      loadAll()
+
+      local _, made = scene()
+
+      for _, id in PIECES do
+        made[id]:SetAttribute("MaxSize", MIN_SIZE)
+
+        local drawn = registry.read(made[id]).Size().at(0)
+
+        expect(inside(drawn, MIN_SIZE, MIN_SIZE)).toBe(true)
+      end
+    end)
+
+    test("a piece authoring both corners draws inside them", function()
+      loadAll()
+
+      local _, made = scene()
+
+      local lo = Vector3.new(4, 4, 4)
+      local hi = Vector3.new(8, 8, 8)
+
+      for _, id in PIECES do
+        made[id]:SetAttribute("MinSize", lo)
+        made[id]:SetAttribute("MaxSize", hi)
+
+        local attrs = registry.read(made[id])
+
+        expect(attrs.Size.animated).toBe(true)
+        expect(inside(attrs.Size().at(0), lo, hi)).toBe(true)
+      end
+    end)
+
+    test("a size authored on the row itself is what every piece rests at", function()
+      loadAll()
+
+      local _, made = scene()
+
+      local size = Vector3.new(6, 5, 4)
+
+      for _, id in PIECES do
+        made[id]:SetAttribute("Size", size)
+
+        local attrs = registry.read(made[id])
+
+        expect(attrs.Size.animated).toBe(false)
+        expect(inside(attrs.Size().at(0), size, size)).toBe(true)
       end
     end)
 

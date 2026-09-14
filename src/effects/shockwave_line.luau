@@ -2,6 +2,7 @@ local CollectionService = game:GetService("CollectionService")
 
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local logger = require("@mod/logger")
 local reader = require("@mod/reader")
@@ -23,6 +24,13 @@ end
 
 local function defaultCurve()
   return utility.default_bezier
+end
+
+-- each piece draws its own size between the two corners, which is what the old
+-- pair of reads did with a default each. a size authored on the row itself, or
+-- a queue under it, is the row's state and draws nothing
+local function drawnSize(_, attrs: any)
+  return mods.draw(attrs.MinSize, attrs.MaxSize)
 end
 
 local line = {}
@@ -73,11 +81,11 @@ line.attributes = {
     :aliases("Path_Curve")
     :label("Path")
     :hint("Easing of the sweep along its length."),
-  Size = knob(vector.create(2.5, 1.5, 2.5))
-    :unit("studs")
-    :mod()
-    :label("Size")
-    :hint("Size drawn for each piece, in studs."),
+  Size = knob(drawnSize):unit("studs"):mod():label("Size"):hint("Size drawn for each piece, in studs."),
+  -- the corners are spelled the engine's way, because a draw only runs per
+  -- axis between two values of that spelling
+  MinSize = knob(Vector3.new(2, 1, 2)):aliases("Size_Min"):unit("studs"):hidden(always),
+  MaxSize = knob(Vector3.new(3, 2, 3)):aliases("Size_Max"):unit("studs"):hidden(always),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
   SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   OffsetIn = knob(vector.zero):unit("studs"):mod():label("Offset"):hint("Local offset each piece settles at."),
