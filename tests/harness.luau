@@ -468,6 +468,10 @@ local function parseCompound(s: string): Compound
       local body, after = balanced(s, i + 4)
       local relative = parseSelector(body)
 
+      if #relative > 1 then
+        error(`a selector list inside :has is not supported at {i} in {s}`)
+      end
+
       for _, chain in relative do
         table.insert(out.has, chain)
       end

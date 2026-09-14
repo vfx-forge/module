@@ -97,5 +97,15 @@ harness.suite(function()
       expect(ids(harness.query(root, "Attachment.Shockwave, Model:has(> BasePart#End)"))).toBe("mesh origin")
       expect(ids(harness.query(root, "Attachment.Shockwave,Model:has(> BasePart#End)"))).toBe("mesh origin")
     end)
+
+    test("a selector list inside :has is refused rather than answered as an AND", function()
+      harness.reset()
+
+      local root = harness.make("Folder")
+
+      expect(function()
+        harness.query(root, "Model:has(> Part, > Folder)")
+      end).toThrow()
+    end)
   end)
 end)
