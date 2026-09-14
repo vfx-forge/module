@@ -30,16 +30,26 @@ sound.display = { name = "Sound", icon = "sound", order = 70 }
 sound.classifier = "Sound"
 
 sound.attributes = {
-  EmitCount = knob(1):min(0),
-  EmitDelay = knob(0):min(0):unit("seconds"),
-  EmitDuration = knob(0):min(0):unit("seconds"),
-  EmitInterval = knob(NumberRange.new(0, 0)):min(0):unit("seconds"),
-  RepeatCount = knob(1):min(0),
-  RepeatInterval = knob(NumberRange.new(0, 0)):min(0):unit("seconds"),
-  SoundPoolTag = knob(""),
-  SoundPoolWeight = knob(1):min(0),
-  SoundPoolIsSource = knob(false),
-  SoundPoolInheritAttributes = knob(false),
+  EmitCount = knob(1):min(0):label("Count"):hint("The amount of effects to emit."),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
+  EmitInterval = knob(NumberRange.new(0, 0))
+    :min(0)
+    :unit("seconds")
+    :label("Interval")
+    :hint("Seconds between each emission when using continuous emit."),
+  RepeatCount = knob(1):min(0):label("Count"):hint("How many times each emitted sound is replayed."),
+  RepeatInterval = knob(NumberRange.new(0, 0))
+    :min(0)
+    :unit("seconds")
+    :label("Interval")
+    :hint("Seconds between each repeat of a sound."),
+  SoundPoolTag = knob(""):label("Name"):hint("CollectionService tag grouping sounds into a shared random pool."),
+  SoundPoolWeight = knob(1):min(0):label("Rarity"):hint("Weight for random selection in sound pools."),
+  SoundPoolIsSource = knob(false):label("IsSource"):hint("Whether this sound is the pool's source."),
+  SoundPoolInheritAttributes = knob(false)
+    :label("InheritAttributes")
+    :hint("Whether the played clone inherits the pooled sound's attributes."),
   -- the spans the old quads ran over, read by the old format's reader under
   -- these names and kept as rows so retime reaches them
   VolumeDuration = knob():aliases("Volume_Duration"):unit("seconds"):hidden(always),
@@ -50,9 +60,14 @@ sound.attributes = {
 -- the clone's own properties are its state; the old attribute names are the
 -- rows' aliases, so an old quad or queue under them folds in
 sound.properties = {
-  Volume = knob():mod(),
-  PlaybackSpeed = knob():aliases("Speed"):mod(),
-  RollOffMinDistance = knob():aliases("RollOff"):unit("studs"):mod(),
+  Volume = knob():mod():label("Volume"):hint("Volume each played clone starts at."),
+  PlaybackSpeed = knob():aliases("Speed"):mod():label("Speed"):hint("Playback speed each played clone starts at."),
+  RollOffMinDistance = knob()
+    :aliases("RollOff")
+    :unit("studs")
+    :mod()
+    :label("RollOff")
+    :hint("Distance in studs the clone plays at full volume within."),
 }
 
 sound.layout = {
@@ -61,7 +76,11 @@ sound.layout = {
   { title = "Playback", entries = { "Volume", "PlaybackSpeed", "RollOffMinDistance" } },
   {
     title = "Sound Pool",
-    entries = { "SoundPoolTag", "SoundPoolWeight", "SoundPoolIsSource", "SoundPoolInheritAttributes" },
+    entries = {
+      "SoundPoolTag",
+      "SoundPoolWeight",
+      { title = "Sound", entries = { "SoundPoolIsSource", "SoundPoolInheritAttributes" } },
+    },
   },
 }
 

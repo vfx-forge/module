@@ -77,15 +77,46 @@ do
     end,
   }
 
+  -- every other service is inert: a method answers an empty list and a signal
+  -- connects to nothing, which is all a module touches at load. a module that
+  -- reaches for more inside a function is a Studio concern
+  local function inertService(name: string)
+    local service = {}
+
+    return setmetatable(service, {
+      __index = function(_, key)
+        if key == "Name" then
+          return name
+        end
+
+        return function()
+          return {}
+        end
+      end,
+    })
+  end
+
+  local services: { [string]: any } = {}
+
   game = {
     GetService = function(_, name: string)
       if name == "RunService" then
         return runService
       end
 
-      error(`the test harness has no stand-in for {name}`)
+      local service = services[name]
+
+      if service == nil then
+        service = inertService(name)
+        services[name] = service
+      end
+
+      return service
     end,
   }
+
+  -- the roblox library's own enums, which an effect's constants read at load
+  Enum = roblox.Enum
 
   script = {
     FindFirstAncestorOfClass = function()

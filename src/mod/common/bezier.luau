@@ -250,32 +250,70 @@ end
 -- the registry freezes each module's own
 function common.rows()
   return {
-    EmitCount = knob(1):min(0),
-    EmitDelay = knob(0):min(0):unit("seconds"),
-    EmitDuration = knob(0):min(0):unit("seconds"),
-    DestroyDelay = knob(0):min(0):unit("seconds"),
-    Duration = knob(NumberRange.new(1, 1)):min(0):unit("seconds"),
-    Enabled = knob(false),
-    Rate = knob(5):min(0):unit("perSecond"),
-    SyncPosition = knob(false),
-    Shape = knob("Box"):options({ "Box", "Cylinder", "Sphere", "Disc" }),
-    ShapeStyle = knob("Volume"):options({ "Volume", "Surface" }),
-    EmissionDirection = knob("Top"):options({ "Top", "Bottom", "Left", "Right", "Front", "Back" }),
-    ShapeFace = knob("Outward"):options({ "InAndOut", "Inward", "Outward" }),
-    SpreadAngle = knob(vector.zero),
-    ShapePartial = knob(1),
-    MirrorPaths = knob(true),
-    MirrorRotation = knob(vector.create(0, 0, 180)),
-    ProjectileEnabled = knob(false),
-    MatchEndDirection = knob(false),
-    ProjectileSpeed = knob(30):unit("studsPerSecond"),
-    ProjectileLifetime = knob(NumberRange.new(1, 1)):min(0):unit("seconds"),
-    HitboxEnabled = knob(false),
-    HitboxCollisionGroup = knob("Default"),
-    HitboxFilterTag = knob(""),
-    HitboxFilterType = knob("Exclude"):options({ "Include", "Exclude" }),
-    HitboxIgnoreCanCollide = knob(false),
-    Speed = knob(1):mod(),
+    EmitCount = knob(1):min(0):label("Count"):hint("The amount of effects to emit."),
+    EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+    EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
+    DestroyDelay = knob(0)
+      :min(0)
+      :unit("seconds")
+      :label("DestroyDelay")
+      :hint("Extra seconds to keep the effect alive after emission finishes."),
+    Duration = knob(NumberRange.new(1, 1))
+      :min(0)
+      :unit("seconds")
+      :label("Duration")
+      :hint("Duration range of the effect in seconds."),
+    Enabled = knob(false):label("Enabled"):hint("Whether the effect continuously emits."),
+    Rate = knob(5):min(0):unit("perSecond"):label("Rate"):hint("Effects emitted per second when Enabled is true."),
+    SyncPosition = knob(false):label("SyncPosition"):hint("Whether the effect follows the emitter's position."),
+    Shape = knob("Box")
+      :options({ "Box", "Cylinder", "Disc", "Sphere" })
+      :label("Shape")
+      :hint("Volume shape emission points are sampled from."),
+    ShapeStyle = knob("Volume")
+      :options({ "Surface", "Volume" })
+      :label("Style")
+      :hint("Whether points sample the shape's surface or its volume."),
+    EmissionDirection = knob("Top")
+      :options({ "Back", "Bottom", "Front", "Left", "Right", "Top" })
+      :label("Direction")
+      :hint("Face of the emitter the paths launch from."),
+    ShapeFace = knob("Outward")
+      :options({ "InAndOut", "Inward", "Outward" })
+      :label("Face")
+      :hint("Direction the emission CFrame faces relative to the shape."),
+    SpreadAngle = knob(vector.zero):label("SpreadAngle"):hint("Random rotation spread applied to emitted effects."),
+    ShapePartial = knob(1):label("Partial"):hint("Fraction of the shape used when sampling points."),
+    MirrorPaths = knob(true):label("Mirror"):hint("Whether to mirror bezier paths."),
+    MirrorRotation = knob(vector.create(0, 0, 180)):label("MirrorRotation"):hint("Rotation applied to mirrored paths."),
+    ProjectileEnabled = knob(false)
+      :label("Enabled")
+      :hint("Whether paths continue as projectiles after reaching the end."),
+    MatchEndDirection = knob(false)
+      :label("MatchEndDirection")
+      :hint("Whether the projectile follows the end attachment's facing."),
+    ProjectileSpeed = knob(30)
+      :unit("studsPerSecond")
+      :label("Speed")
+      :hint("Projectile travel speed in studs per second."),
+    ProjectileLifetime = knob(NumberRange.new(1, 1))
+      :min(0)
+      :unit("seconds")
+      :label("Lifetime")
+      :hint("How long the projectile phase lasts in seconds."),
+    HitboxEnabled = knob(false):label("Enabled"):hint("Whether the path detects collisions along its travel."),
+    HitboxCollisionGroup = knob("Default")
+      :label("CollisionGroup")
+      :hint("Collision group used for hitbox overlap queries."),
+    HitboxFilterTag = knob(""):label("Tag"):hint("CollectionService tag used to filter hitbox overlaps."),
+    HitboxFilterType = knob("Exclude")
+      :options({ "Include", "Exclude" })
+      :label("Type")
+      :hint("Whether the tag filter includes or excludes tagged parts."),
+    HitboxIgnoreCanCollide = knob(false)
+      :label("IgnoreCanCollide")
+      :hint("Whether the hitbox ignores non-collidable parts."),
+    Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
     SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   }
 end
@@ -295,9 +333,7 @@ function common.layout()
       entries = {
         "HitboxEnabled",
         "HitboxCollisionGroup",
-        "HitboxFilterTag",
-        "HitboxFilterType",
-        "HitboxIgnoreCanCollide",
+        { title = "Filter", entries = { "HitboxFilterTag", "HitboxFilterType", "HitboxIgnoreCanCollide" } },
       },
     },
   }

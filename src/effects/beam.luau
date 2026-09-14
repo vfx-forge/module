@@ -14,34 +14,56 @@ local rng = Random.new()
 local beam = {}
 
 beam.id = "beam"
-beam.display = { name = "Beam", icon = "beam", order = 20 }
+beam.display = { name = "Beam", icon = "beam", order = 80 }
 beam.classifier = "Beam"
 
 -- the beam runs the effects nested under it itself, per emit, on its clone
 beam.components = "Instance"
 
 beam.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"),
-  EffectDuration = knob(NumberRange.new(1, 1)):min(0):aliases("Duration"):unit("seconds"),
-  Speed = knob(1):mod(),
-  LengthScale = knob(1):aliases("Length_Scale"):mod(),
-  TransparencyScale = knob(1):min(0):aliases("Transparency_Scale"):mod(),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EffectDuration = knob(NumberRange.new(1, 1))
+    :min(0)
+    :aliases("Duration")
+    :unit("seconds")
+    :label("Duration")
+    :hint("Duration range of the effect in seconds."),
+  Speed = knob(1):mod():label("Speed"):hint("Multiplier on the beam's clock."),
+  LengthScale = knob(1)
+    :aliases("Length_Scale")
+    :mod()
+    :label("Scale")
+    :hint("Multiplier on the distance between the beam's attachments."),
+  TransparencyScale = knob(1)
+    :min(0)
+    :aliases("Transparency_Scale")
+    :mod()
+    :label("Scale")
+    :hint("Multiplier on the beam's transparency keypoints."),
 }
 
 -- the beam's own properties are its state; an old attribute of the same name
 -- shadows one, and an old quad on it folds into its queue
 beam.properties = {
-  Width0 = knob():mod(),
-  Width1 = knob():mod(),
-  CurveSize0 = knob():mod(),
-  CurveSize1 = knob():mod(),
-  TextureSpeed = knob():aliases("Speed_Texture"):mod(),
-  TextureLength = knob():aliases("Length_Texture"):mod(),
+  Width0 = knob():mod():label("Width0"):hint("Beam Width0 over the effect."),
+  Width1 = knob():mod():label("Width1"):hint("Beam Width1 over the effect."),
+  CurveSize0 = knob():mod():label("CurveSize0"):hint("Beam CurveSize0 over the effect."),
+  CurveSize1 = knob():mod():label("CurveSize1"):hint("Beam CurveSize1 over the effect."),
+  TextureSpeed = knob():aliases("Speed_Texture"):mod():label("Texture"):hint("Texture speed over the effect."),
+  TextureLength = knob():aliases("Length_Texture"):mod():label("Texture"):hint("Texture length over the effect."),
 }
 
 beam.layout = {
-  { title = "Timing", entries = { "EmitDelay", "EffectDuration", "Speed" } },
-  { title = "Shape", entries = { "Width0", "Width1", "CurveSize0", "CurveSize1", "LengthScale" } },
+  { title = "Emit", entries = { "EmitDelay" } },
+  { title = "Effect", entries = { "EffectDuration", "Speed" } },
+  {
+    title = "Shape",
+    entries = {
+      { title = "Widths", entries = { "Width0", "Width1" } },
+      { title = "Curve Sizes", entries = { "CurveSize0", "CurveSize1" } },
+      "LengthScale",
+    },
+  },
   {
     title = "Texture",
     entries = {

@@ -28,66 +28,136 @@ end
 local line = {}
 
 line.id = "shockwave_line"
-line.display = { name = "Shockwave Line", icon = "shockwave_line", order = 58 }
+line.display = { name = "Shockwave Line", icon = "shockwave_line", order = 52 }
 line.classifier = ".Shockwave > #Lines > BasePart"
 line.components = "Instance"
 
 line.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"),
-  Duration = knob(1):min(0):unit("seconds"),
-  Lifetime = knob(NumberRange.new(2, 3)):min(0):unit("seconds"):mod(),
-  SyncPosition = knob(false),
-  Length = knob(50):min(0):unit("studs"),
-  Direction = knob(vector.create(0, 0, -1)),
-  Rotation = knob(NumberRange.new(-180, 180)),
-  Rate = knob(30):min(0):unit("perSecond"):mod(),
-  FixedAmount = knob(0):min(0),
-  Scale = knob(1):min(0):mod(),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("EmitDelay"):hint("Seconds before the effect starts emitting."),
+  Duration = knob(1):min(0):unit("seconds"):label("Duration"):hint("How long the raycast sweep takes, in seconds."),
+  Lifetime = knob(NumberRange.new(2, 3))
+    :min(0)
+    :unit("seconds")
+    :mod()
+    :label("Lifetime")
+    :hint("How long each spawned line piece lives, in seconds."),
+  SyncPosition = knob(false)
+    :label("SyncPosition")
+    :hint("Whether the sweep re-samples the origin's position every tick."),
+  Length = knob(50):min(0):unit("studs"):label("Length"):hint("Studs the raycast origin sweeps along Direction."),
+  Direction = knob(vector.create(0, 0, -1))
+    :label("Direction")
+    :hint("Local direction the sweep travels away from the origin."),
+  Rotation = knob(NumberRange.new(-180, 180))
+    :label("Rotation")
+    :hint("Random per-piece rotation range around the hit normal, in degrees."),
+  -- a fixed amount spreads the casts over the whole sweep itself, and the rate
+  -- is then read by nothing
+  Rate = knob(30)
+    :min(0)
+    :unit("perSecond")
+    :mod()
+    :readonly(function(_, attrs)
+      return attrs.FixedAmount ~= 0
+    end)
+    :label("Rate")
+    :hint("Raycasts per second over the sweep."),
+  FixedAmount = knob(0)
+    :min(0)
+    :label("FixedAmount")
+    :hint("Total raycasts spread evenly across Duration, overriding Rate."),
+  Scale = knob(1):min(0):mod():label("Scale"):hint("Overall size multiplier over the sweep."),
   PathCurve = knob(function()
-    return utility.linear_bezier
-  end):aliases("Path_Curve"),
-  Size = knob(vector.create(2.5, 1.5, 2.5)):unit("studs"):mod(),
-  Speed = knob(1):mod(),
+      return utility.linear_bezier
+    end)
+    :aliases("Path_Curve")
+    :label("Path")
+    :hint("Easing of the sweep along its length."),
+  Size = knob(vector.create(2.5, 1.5, 2.5))
+    :unit("studs")
+    :mod()
+    :label("Size")
+    :hint("Size drawn for each piece, in studs."),
+  Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
   SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
-  OffsetIn = knob(vector.zero):unit("studs"):mod(),
+  OffsetIn = knob(vector.zero):unit("studs"):mod():label("Offset"):hint("Local offset each piece settles at."),
   OffsetInDuration = knob(0.5)
     :min(0)
     :aliases("OffsetIn_Duration", "Offset_Start_Duration")
     :unit("seconds")
     :hidden(always),
-  SizeScaleIn = knob(vector.one):mod(mod.from(vector.zero):duration(function(_, attrs)
-    return attrs.SizeScaleInDuration
-  end)),
+  SizeScaleIn = knob(vector.one)
+    :mod(mod.from(vector.zero):duration(function(_, attrs)
+      return attrs.SizeScaleInDuration
+    end))
+    :label("Scale")
+    :hint("Fraction of the drawn size each piece settles at."),
   SizeScaleInDuration = knob(0.5)
     :min(0)
     :aliases("SizeScaleIn_Duration", "Size_Start_Duration")
     :unit("seconds")
     :hidden(always),
-  Transparency = knob(0):aliases("Transparency_Start"):mod(mod.to(0):duration(function(_, attrs)
-    return attrs.TransparencyDuration
-  end)),
+  Transparency = knob(0)
+    :aliases("Transparency_Start")
+    :mod(mod.to(0):duration(function(_, attrs)
+      return attrs.TransparencyDuration
+    end))
+    :label("Start")
+    :hint("Transparency applied to each line piece on spawn."),
   TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"):unit("seconds"):hidden(always),
-  ShrinkScale = knob(vector.zero):aliases("SizeScaleOut_End", "SizeScaleEnd"),
+  ShrinkScale = knob(vector.zero)
+    :aliases("SizeScaleOut_End", "SizeScaleEnd")
+    :label("End")
+    :hint("Fraction of the rolled size each line piece tweens to."),
   ShrinkDuration = knob(0.5)
     :min(0)
     :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
-    :unit("seconds"),
-  ShrinkCurve = knob(defaultCurve):aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve"),
-  OffsetOut = knob(vector.zero):aliases("OffsetOut_End", "Offset_End", "PartOffset"):unit("studs"),
-  OffsetOutDuration = knob(0.5):min(0):aliases("OffsetOut_Duration", "Offset_End_Duration"):unit("seconds"),
-  OffsetOutCurve = knob(defaultCurve):aliases("OffsetOut_Curve", "Offset_End_Curve"),
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the shrink takes."),
+  ShrinkCurve = knob(defaultCurve)
+    :aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve")
+    :label("Curve")
+    :hint("Easing of the shrink."),
+  OffsetOut = knob(vector.zero)
+    :aliases("OffsetOut_End", "Offset_End", "PartOffset")
+    :unit("studs")
+    :label("End")
+    :hint("Local offset each line piece tweens to before despawning."),
+  OffsetOutDuration = knob(0.5)
+    :min(0)
+    :aliases("OffsetOut_Duration", "Offset_End_Duration")
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the exit offset takes."),
+  OffsetOutCurve = knob(defaultCurve)
+    :aliases("OffsetOut_Curve", "Offset_End_Curve")
+    :label("Curve")
+    :hint("Easing of the exit offset."),
 }
 
 line.properties = {}
 
 line.layout = {
-  { title = "Emit", entries = { "EmitDelay", "Duration", "Lifetime", "Speed", "SyncPosition" } },
-  { title = "Sweep", entries = { "Length", "Direction", "Rotation", "Rate", "FixedAmount", "PathCurve" } },
-  { title = "Look", entries = { "Size", "Scale", "Transparency" } },
-  { title = "Entry", entries = { "OffsetIn", "SizeScaleIn" } },
+  { title = "Emit", entries = { "EmitDelay", "Speed" } },
+  "Duration",
+  "Lifetime",
+  "SyncPosition",
+  "Length",
+  "Direction",
+  "Rotation",
+  { title = "Offset", entries = { "OffsetIn", "OffsetOut", "OffsetOutDuration", "OffsetOutCurve" } },
+  "Rate",
+  "PathCurve",
+  "FixedAmount",
+  { title = "Transparency", entries = { "Transparency" } },
+  "Scale",
   {
-    title = "Exit",
-    entries = { "ShrinkScale", "ShrinkDuration", "ShrinkCurve", "OffsetOut", "OffsetOutDuration", "OffsetOutCurve" },
+    title = "Size",
+    entries = {
+      "Size",
+      { title = "Scale", entries = { "SizeScaleIn", "ShrinkScale", "ShrinkDuration", "ShrinkCurve" } },
+    },
   },
 }
 

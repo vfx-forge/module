@@ -42,29 +42,54 @@ end
 local mesh = {}
 
 mesh.id = "mesh"
-mesh.display = { name = "Mesh", icon = "mesh", order = 75 }
+mesh.display = { name = "Mesh", icon = "mesh", order = 100 }
 mesh.classifier = "Model:has(> BasePart#Start):has(> BasePart#End)"
 mesh.components = "Instance"
 mesh.constant = true
 
 mesh.attributes = {
-  EmitCount = knob(1):min(0),
-  EmitDelay = knob(0):min(0):unit("seconds"),
-  EmitDuration = knob(0):min(0):unit("seconds"),
-  DestroyDelay = knob(0):min(0):unit("seconds"),
-  EffectDuration = knob(NumberRange.new(1, 1)):min(0):aliases("Duration"):unit("seconds"),
-  SpreadAngle = knob(vector.zero),
-  SyncPosition = knob(false),
-  Enabled = knob(false),
-  Rate = knob(5):min(0):unit("perSecond"),
-  RotAroundOrigin = knob(false),
-  MinInitRot = knob(vector.zero),
-  MaxInitRot = knob(vector.zero),
-  PartRotSpeed = knob(0):aliases("Part_RotSpeed"):unit("perSecond"):mod(),
-  PartCFrameCurve = knob(eased):aliases("Part_CFrame_Curve"),
-  PartSizeCurve = knob(eased):aliases("Part_Size_Curve"),
-  MeshScaleCurve = knob(eased):aliases("Mesh_Scale_Curve"),
-  Speed = knob(1):mod(),
+  EmitCount = knob(1):min(0):label("Count"):hint("The amount of effects to emit."),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
+  DestroyDelay = knob(0)
+    :min(0)
+    :unit("seconds")
+    :label("DestroyDelay")
+    :hint("Extra seconds to keep the part alive after the effect finishes."),
+  EffectDuration = knob(NumberRange.new(1, 1))
+    :min(0)
+    :aliases("Duration")
+    :unit("seconds")
+    :label("Duration")
+    :hint("Duration range of the effect in seconds."),
+  SpreadAngle = knob(vector.zero):label("SpreadAngle"):hint("Random rotation spread applied to emitted effects."),
+  SyncPosition = knob(false):label("SyncPosition"):hint("Whether the effect follows the emitter's position."),
+  Enabled = knob(false):label("Enabled"):hint("Whether the effect continuously emits."),
+  Rate = knob(5):min(0):unit("perSecond"):label("Rate"):hint("Effects emitted per second when Enabled is true."),
+  RotAroundOrigin = knob(false)
+    :label("AroundOrigin")
+    :hint("Rotate around the emitter origin instead of the part's own center."),
+  MinInitRot = knob(vector.zero):label("Min"):hint("Lower per-axis bound for each part's initial rotation."),
+  MaxInitRot = knob(vector.zero):label("Max"):hint("Upper per-axis bound for each part's initial rotation."),
+  PartRotSpeed = knob(0)
+    :aliases("Part_RotSpeed")
+    :unit("perSecond")
+    :mod()
+    :label("Speed")
+    :hint("Rotation speed drawn for each piece, in degrees per second."),
+  PartCFrameCurve = knob(eased)
+    :aliases("Part_CFrame_Curve")
+    :label("CFrame")
+    :hint("Easing of the part's travel from Start to End."),
+  PartSizeCurve = knob(eased)
+    :aliases("Part_Size_Curve")
+    :label("Size")
+    :hint("Easing of the part's size from Start to End."),
+  MeshScaleCurve = knob(eased)
+    :aliases("Mesh_Scale_Curve")
+    :label("Scale")
+    :hint("Easing of the mesh scale from Start to End."),
+  Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
   SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   -- the oldest assets' inputs, read and never renamed. which surface the
   -- stone-age pair means depends on what the model holds, so the per-surface
@@ -103,7 +128,9 @@ mesh.attributes = {
     :aliases("Part_Transparency")
     :mod(mod.from(function(_, attrs)
       return attrs.MeshStartTransparency
-    end)),
+    end))
+    :label("Transparency")
+    :hint("Part transparency over the piece's duration."),
 }
 
 mesh.properties = {}
@@ -111,8 +138,26 @@ mesh.properties = {}
 mesh.layout = {
   { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration", "DestroyDelay" } },
   { title = "Effect", entries = { "EffectDuration", "SpreadAngle", "SyncPosition", "Enabled", "Rate", "Speed" } },
-  { title = "Random Rotation", entries = { "RotAroundOrigin", "MinInitRot", "MaxInitRot", "PartRotSpeed" } },
-  { title = "Part", entries = { "PartTransparency", "PartCFrameCurve", "PartSizeCurve", "MeshScaleCurve" } },
+  {
+    title = "Random Rotation",
+    entries = { "RotAroundOrigin", "MinInitRot", "MaxInitRot", { title = "Speed", entries = { "PartRotSpeed" } } },
+  },
+  {
+    title = "Part",
+    entries = {
+      { title = "Transparency", entries = { "PartTransparency" } },
+      "PartCFrameCurve",
+      "PartSizeCurve",
+      "MeshScaleCurve",
+    },
+  },
+  {
+    title = "Behavior",
+    entries = {
+      { action = "toggle_constant", label = "Add Enabled Tag" },
+      { action = "toggle_textures", label = "Load Textures" },
+    },
+  },
 }
 
 function mesh.duration(_, attrs: any)

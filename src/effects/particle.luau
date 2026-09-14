@@ -11,17 +11,19 @@ end
 local particle = {}
 
 particle.id = "particle"
-particle.display = { name = "Particle", icon = "particle", order = 10 }
+particle.display = { name = "Particle", icon = "particle", order = 20 }
 particle.classifier = "ParticleEmitter"
 
 particle.attributes = {
   -- a count only the plugin defaults: anywhere else a particle emits once an
   -- author has written one
   EmitCount = knob(function()
-    return if utility.PLUGIN_CONTEXT then 1 else nil
-  end),
-  EmitDelay = knob(0):min(0):unit("seconds"),
-  EmitDuration = knob(0):min(0):unit("seconds"),
+      return if utility.PLUGIN_CONTEXT then 1 else nil
+    end)
+    :label("Count")
+    :hint("The amount of effects to emit."),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
   -- the span an old time scale quad ran over, read by the old format's reader
   -- under this name and kept as a row so retime reaches it
   TimeScaleDuration = knob(0.1):min(0):aliases("TimeScale_Duration"):unit("seconds"):hidden(always),
@@ -30,12 +32,19 @@ particle.attributes = {
 -- the emitter's own property: a stored attribute of the same name shadows it
 -- and an old quad on it folds into its queue
 particle.properties = {
-  TimeScale = knob():mod(),
+  TimeScale = knob():mod():label("TimeScale"):hint("Time scale written to the emitter for the length of the effect."),
 }
 
 particle.layout = {
   { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration" } },
   { title = "Motion", entries = { "TimeScale" } },
+  {
+    title = "Behavior",
+    entries = {
+      { action = "toggle_paths", label = "Show Paths" },
+      { action = "toggle_textures", label = "Load Textures" },
+    },
+  },
 }
 
 -- the emitter's own clock: the longest a particle it emits can live, after

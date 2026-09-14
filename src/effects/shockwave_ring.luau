@@ -26,62 +26,104 @@ end
 local ring = {}
 
 ring.id = "shockwave_ring"
-ring.display = { name = "Shockwave Ring", icon = "shockwave_ring", order = 55 }
+ring.display = { name = "Shockwave Ring", icon = "shockwave_ring", order = 51 }
 ring.classifier = ".Shockwave > #Rings > BasePart"
 ring.components = "Instance"
 
 ring.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"),
-  Radius = knob(5):min(0):unit("studs"),
-  Segments = knob(7):min(1),
-  Lifetime = knob(NumberRange.new(2, 3)):min(0):unit("seconds"):mod(),
-  Size = knob(vector.create(2.5, 1.5, 2.5)):unit("studs"):mod(),
-  Speed = knob(1):mod(),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("EmitDelay"):hint("Seconds before the effect starts emitting."),
+  Radius = knob(5):min(0):unit("studs"):label("Radius"):hint("Radius of the effect."),
+  Segments = knob(7):min(1):label("Segments"):hint("Number of raycasts distributed evenly around the ring."),
+  Lifetime = knob(NumberRange.new(2, 3))
+    :min(0)
+    :unit("seconds")
+    :mod()
+    :label("Lifetime")
+    :hint("How long the effect lives in seconds."),
+  Size = knob(vector.create(2.5, 1.5, 2.5))
+    :unit("studs")
+    :mod()
+    :label("Size")
+    :hint("Size drawn for each piece, in studs."),
+  Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
   SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   -- the entry phases rest where the old defaults left them: the offset where
   -- it stands, the size on a rise from nothing to the drawn size, the fade
   -- from where a piece rests to the end. the spans the old quads ran over
   -- are rows of their own, so the defaults keep them and retime reaches them
-  OffsetIn = knob(vector.zero):unit("studs"):mod(),
+  OffsetIn = knob(vector.zero):unit("studs"):mod():label("Offset"):hint("Local offset each piece settles at."),
   OffsetInDuration = knob(0.5)
     :min(0)
     :aliases("OffsetIn_Duration", "Offset_Start_Duration")
     :unit("seconds")
     :hidden(always),
-  SizeScaleIn = knob(vector.one):mod(mod.from(vector.zero):duration(function(_, attrs)
-    return attrs.SizeScaleInDuration
-  end)),
+  SizeScaleIn = knob(vector.one)
+    :mod(mod.from(vector.zero):duration(function(_, attrs)
+      return attrs.SizeScaleInDuration
+    end))
+    :label("Scale")
+    :hint("Fraction of the drawn size each piece settles at."),
   SizeScaleInDuration = knob(0.5)
     :min(0)
     :aliases("SizeScaleIn_Duration", "Size_Start_Duration")
     :unit("seconds")
     :hidden(always),
-  Transparency = knob(0):aliases("Transparency_Start"):mod(mod.to(0):duration(function(_, attrs)
-    return attrs.TransparencyDuration
-  end)),
+  Transparency = knob(0)
+    :aliases("Transparency_Start")
+    :mod(mod.to(0):duration(function(_, attrs)
+      return attrs.TransparencyDuration
+    end))
+    :label("Start")
+    :hint("Transparency applied to each ring piece on spawn."),
   TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"):unit("seconds"):hidden(always),
   -- the exit phases start at each piece's own drawn lifetime, which a default
   -- modifier cannot express yet, so they stay triplets
-  ShrinkScale = knob(vector.zero):aliases("SizeScaleOut_End", "SizeScaleEnd"),
+  ShrinkScale = knob(vector.zero)
+    :aliases("SizeScaleOut_End", "SizeScaleEnd")
+    :label("End")
+    :hint("Fraction of the rolled size each ring piece tweens to."),
   ShrinkDuration = knob(0.5)
     :min(0)
     :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
-    :unit("seconds"),
-  ShrinkCurve = knob(defaultCurve):aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve"),
-  OffsetOut = knob(vector.zero):aliases("OffsetOut_End", "Offset_End", "PartOffset"):unit("studs"),
-  OffsetOutDuration = knob(0.5):min(0):aliases("OffsetOut_Duration", "Offset_End_Duration"):unit("seconds"),
-  OffsetOutCurve = knob(defaultCurve):aliases("OffsetOut_Curve", "Offset_End_Curve"),
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the shrink takes."),
+  ShrinkCurve = knob(defaultCurve)
+    :aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve")
+    :label("Curve")
+    :hint("Easing of the shrink."),
+  OffsetOut = knob(vector.zero)
+    :aliases("OffsetOut_End", "Offset_End", "PartOffset")
+    :unit("studs")
+    :label("End")
+    :hint("Local offset each ring piece tweens to before despawning."),
+  OffsetOutDuration = knob(0.5)
+    :min(0)
+    :aliases("OffsetOut_Duration", "Offset_End_Duration")
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the exit offset takes."),
+  OffsetOutCurve = knob(defaultCurve)
+    :aliases("OffsetOut_Curve", "Offset_End_Curve")
+    :label("Curve")
+    :hint("Easing of the exit offset."),
 }
 
 ring.properties = {}
 
 ring.layout = {
-  { title = "Emit", entries = { "EmitDelay", "Radius", "Segments", "Lifetime", "Speed" } },
-  { title = "Look", entries = { "Size", "Transparency" } },
-  { title = "Entry", entries = { "OffsetIn", "SizeScaleIn" } },
+  { title = "Emit", entries = { "EmitDelay", "Speed" } },
+  "Radius",
+  "Segments",
+  "Lifetime",
+  { title = "Offset", entries = { "OffsetIn", "OffsetOut", "OffsetOutDuration", "OffsetOutCurve" } },
+  { title = "Transparency", entries = { "Transparency" } },
   {
-    title = "Exit",
-    entries = { "ShrinkScale", "ShrinkDuration", "ShrinkCurve", "OffsetOut", "OffsetOutDuration", "OffsetOutCurve" },
+    title = "Size",
+    entries = {
+      "Size",
+      { title = "Scale", entries = { "SizeScaleIn", "ShrinkScale", "ShrinkDuration", "ShrinkCurve" } },
+    },
   },
 }
 

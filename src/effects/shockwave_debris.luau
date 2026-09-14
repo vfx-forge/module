@@ -19,7 +19,7 @@ local rng = Random.new()
 local debris = {}
 
 debris.id = "shockwave_debris"
-debris.display = { name = "Shockwave Debris", icon = "shockwave_debris", order = 62 }
+debris.display = { name = "Shockwave Debris", icon = "shockwave_debris", order = 53 }
 debris.classifier = ".Shockwave > #Debris > BasePart"
 debris.components = "Instance"
 
@@ -27,35 +27,71 @@ debris.components = "Instance"
 -- would scale the dwell and the shrink and leave the flight alone, which reads
 -- worse than having no knob at all
 debris.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"),
-  Amount = knob(NumberRange.new(5, 10)):min(0),
-  Lifetime = knob(NumberRange.new(2, 3)):min(0):unit("seconds"):mod(),
-  Airtime = knob(NumberRange.new(0.5, 0.5)):min(0):unit("seconds"),
-  LinearMagnitude = knob(NumberRange.new(15, 25)),
-  AngularMagnitude = knob(NumberRange.new(5, 15)),
-  InheritanceEnabled = knob(true),
-  InheritanceRadius = knob(5):unit("studs"),
-  InheritanceMaxResults = knob(5),
-  MinDirection = knob(-vector.one),
-  MaxDirection = knob(vector.one),
-  Size = knob(vector.create(2.5, 1.5, 2.5)):unit("studs"):mod(),
-  ShrinkScale = knob(vector.zero):aliases("SizeScaleOut_End", "SizeScaleEnd"),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("EmitDelay"):hint("Seconds before the effect starts emitting."),
+  Amount = knob(NumberRange.new(5, 10)):min(0):label("Amount"):hint("Random range for how many debris pieces spawn."),
+  Lifetime = knob(NumberRange.new(2, 3))
+    :min(0)
+    :unit("seconds")
+    :mod()
+    :label("Lifetime")
+    :hint("How long each debris piece lives, in seconds."),
+  Airtime = knob(NumberRange.new(0.5, 0.5))
+    :min(0)
+    :unit("seconds")
+    :label("Airtime")
+    :hint("Target time-of-flight used to compute launch impulse, in seconds."),
+  LinearMagnitude = knob(NumberRange.new(15, 25))
+    :label("Linear")
+    :hint("Random range for each piece's launch impulse strength."),
+  AngularMagnitude = knob(NumberRange.new(5, 15))
+    :label("Angular")
+    :hint("Random range for each piece's spin impulse strength."),
+  InheritanceEnabled = knob(true)
+    :label("Enabled")
+    :hint("Whether nearby parts can donate their look to spawned debris."),
+  InheritanceRadius = knob(5)
+    :unit("studs")
+    :label("Radius")
+    :hint("Studs around the origin searched for parts to inherit from."),
+  InheritanceMaxResults = knob(5):label("MaxResults"):hint("Maximum parts collected by the inheritance overlap query."),
+  MinDirection = knob(-vector.one):label("Min"):hint("Lower per-axis bound for each piece's random launch direction."),
+  MaxDirection = knob(vector.one):label("Max"):hint("Upper per-axis bound for each piece's random launch direction."),
+  Size = knob(vector.create(2.5, 1.5, 2.5))
+    :unit("studs")
+    :mod()
+    :label("Size")
+    :hint("Size drawn for each piece, in studs."),
+  ShrinkScale = knob(vector.zero)
+    :aliases("SizeScaleOut_End", "SizeScaleEnd")
+    :label("EndScale")
+    :hint("Fraction of the rolled size each debris piece tweens to."),
   ShrinkDuration = knob(0.5)
     :min(0)
     :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
-    :unit("seconds"),
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the shrink takes."),
   ShrinkCurve = knob(function()
-    return utility.default_bezier
-  end):aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve"),
-  Transparency = knob(0):aliases("Transparency_Start"):mod(mod.to(1):duration(0.5)),
+      return utility.default_bezier
+    end)
+    :aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve")
+    :label("Curve")
+    :hint("Easing of the shrink."),
+  Transparency = knob(0)
+    :aliases("Transparency_Start")
+    :mod(mod.to(1):duration(0.5))
+    :label("Start")
+    :hint("Transparency applied to spawned debris without an inherited surface."),
 }
 
 debris.properties = {}
 
 debris.layout = {
-  { title = "Emit", entries = { "EmitDelay", "Amount", "Lifetime", "Airtime" } },
-  { title = "Launch", entries = { "LinearMagnitude", "AngularMagnitude", "MinDirection", "MaxDirection" } },
-  { title = "Look", entries = { "Size", "Transparency", "ShrinkScale", "ShrinkDuration", "ShrinkCurve" } },
+  { title = "Emit", entries = { "EmitDelay" } },
+  { title = "Transparency", entries = { "Transparency" } },
+  "Amount",
+  "Lifetime",
+  "Airtime",
   {
     title = "Inheritance",
     entries = {
@@ -65,6 +101,9 @@ debris.layout = {
       { action = "toggle_paths", label = "Show Paths" },
     },
   },
+  { title = "Magnitude", entries = { "LinearMagnitude", "AngularMagnitude" } },
+  { title = "Size", entries = { "Size", "ShrinkScale", "ShrinkDuration", "ShrinkCurve" } },
+  { title = "Direction", entries = { "MinDirection", "MaxDirection" } },
 }
 
 -- the dwell's ceiling: a piece's own lifetime is drawn below it, and a queue

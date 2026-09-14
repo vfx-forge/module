@@ -16,7 +16,7 @@ local ObjectCache = require("@obj/ObjectCache")
 local bezier = {}
 
 bezier.id = "bezier"
-bezier.display = { name = "Bezier", icon = "bezier", order = 80 }
+bezier.display = { name = "Bezier", icon = "bezier", order = 110 }
 bezier.classifier = "Attachment.BezierParticle"
 
 -- the template part, the points and the end attachments under the bolt are
@@ -26,21 +26,40 @@ bezier.constant = true
 
 bezier.attributes = bezier_common.rows()
 
-bezier.attributes.FacePath = knob(false)
-bezier.attributes.ArcSpace = knob(false)
-bezier.attributes.MinInitRot = knob(vector.zero)
-bezier.attributes.MaxInitRot = knob(vector.zero)
+bezier.attributes.FacePath =
+  knob(false):label("FacePath"):hint("Whether the part orients along its direction of travel.")
+bezier.attributes.ArcSpace = knob(false):label("ArcSpace"):hint("Whether progress is measured by arc length.")
+bezier.attributes.MinInitRot =
+  knob(vector.zero):label("Min"):hint("Lower per-axis bound for each path's initial rotation.")
+bezier.attributes.MaxInitRot =
+  knob(vector.zero):label("Max"):hint("Upper per-axis bound for each path's initial rotation.")
 bezier.attributes.EasingCurve = knob(function()
-  return utility.linear_bezier
-end):aliases("Easing_Curve")
-bezier.attributes.RotSpeed = knob(0):unit("perSecond"):mod()
+    return utility.linear_bezier
+  end)
+  :aliases("Easing_Curve")
+  :label("Easing")
+  :hint("Easing of travel along the path.")
+bezier.attributes.RotSpeed =
+  knob(0):unit("perSecond"):mod():label("Speed"):hint("Rotation speed drawn for each piece, in degrees per second.")
 
 bezier.properties = {}
 
 bezier.layout = bezier_common.layout()
 
-table.insert(bezier.layout, { title = "Random Rotation", entries = { "RotSpeed", "MinInitRot", "MaxInitRot" } })
+-- the rotation rows sit between the shared end point and the projectile phase
+table.insert(bezier.layout, 5, {
+  title = "Random Rotation",
+  entries = { { title = "Speed", entries = { "RotSpeed" } }, "MinInitRot", "MaxInitRot" },
+})
 table.insert(bezier.layout, { title = "Animation", entries = { "FacePath", "ArcSpace", "EasingCurve" } })
+table.insert(bezier.layout, {
+  title = "Behavior",
+  entries = {
+    { action = "edit_path", label = "Edit Bezier" },
+    { action = "toggle_paths", label = "Show Paths" },
+    { action = "toggle_constant", label = "Add Enabled Tag" },
+  },
+})
 
 -- the longest a bolt of this emit can run, which the emit's own queues run over
 function bezier.duration(_, attrs: any)

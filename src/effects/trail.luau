@@ -3,7 +3,7 @@ local reader = require("@mod/reader")
 local trail = {}
 
 trail.id = "trail"
-trail.display = { name = "Trail", icon = "trail", order = 12 }
+trail.display = { name = "Trail", icon = "trail", order = 75 }
 trail.classifier = "Trail"
 
 trail.attributes = {}

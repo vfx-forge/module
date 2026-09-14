@@ -63,21 +63,25 @@ end
 local camera_shake = {}
 
 camera_shake.id = "camera_shake"
-camera_shake.display = { name = "Camera Shake", icon = "camera_shake", order = 15 }
+camera_shake.display = { name = "Camera Shake", icon = "camera_shake", order = 30 }
 camera_shake.classifier = "RayValue.CameraShake"
 
 camera_shake.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"),
-  EmitDuration = knob(0):min(0):unit("seconds"),
-  Falloff = knob(30):min(0):unit("studs"),
-  Amplitude = knob(2.5),
-  Frequency = knob(0.2),
-  FadeInTime = knob(0.3):min(0):unit("seconds"),
-  FadeOutTime = knob(2):min(0):unit("seconds"),
-  SustainTime = knob(1):min(0):unit("seconds"),
-  PositionInfluence = knob(vector.one),
-  RotationInfluence = knob(vector.one * 0.2),
-  Speed = knob(1):mod(),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
+  Falloff = knob(30)
+    :min(0)
+    :unit("studs")
+    :label("Falloff")
+    :hint("How quickly the shake intensity decreases over distance."),
+  Amplitude = knob(2.5):label("Amplitude"):hint("Intensity of the screen shake."),
+  Frequency = knob(0.2):label("Frequency"):hint("Speed of the screen shake oscillation."),
+  FadeInTime = knob(0.3):min(0):unit("seconds"):label("FadeIn"):hint("Duration to fade into the shake effect."),
+  FadeOutTime = knob(2):min(0):unit("seconds"):label("FadeOut"):hint("Duration to fade out of the shake effect."),
+  SustainTime = knob(1):min(0):unit("seconds"):label("Sustain"):hint("Duration to hold the shake at full intensity."),
+  PositionInfluence = knob(vector.one):label("Position"):hint("Per-axis multiplier for positional shake."),
+  RotationInfluence = knob(vector.one * 0.2):label("Rotation"):hint("Per-axis multiplier for rotational shake."),
+  Speed = knob(1):mod():label("Speed"):hint("Multiplier on the shake's clock."),
   SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
 }
 
@@ -85,9 +89,16 @@ camera_shake.properties = {}
 
 camera_shake.layout = {
   { title = "Emit", entries = { "EmitDelay", "EmitDuration", "Speed" } },
-  { title = "Effect", entries = { "Falloff", "Amplitude", "Frequency" } },
-  { title = "Time", entries = { "FadeInTime", "FadeOutTime", "SustainTime" } },
-  { title = "Influence", entries = { "PositionInfluence", "RotationInfluence" } },
+  {
+    title = "Effect",
+    entries = {
+      "Falloff",
+      "Amplitude",
+      "Frequency",
+      { title = "Time", entries = { "FadeInTime", "FadeOutTime", "SustainTime" } },
+      { title = "Influence", entries = { "PositionInfluence", "RotationInfluence" } },
+    },
+  },
 }
 
 -- how long the shake runs: its own envelope, or the emit window and the fade

@@ -11,7 +11,7 @@ local Spin = require("@vfx/spin")
 local screen = {}
 
 screen.id = "screen"
-screen.display = { name = "Screen Effect", icon = "screen", order = 65 }
+screen.display = { name = "Screen Effect", icon = "screen", order = 60 }
 
 -- an enabled part that is not a shockwave piece. its descendants are its own:
 -- the emit below runs them under the placed part
@@ -19,17 +19,21 @@ screen.classifier = "BasePart[$Enabled=true]:not(.Shockwave >> BasePart)"
 screen.components = "Instance"
 
 screen.attributes = {
-  Enabled = knob(false),
-  PartDistance = knob(1.5):min(0):unit("studs"),
-  PartScale = knob(vector.one),
-  OffsetPosition = knob(vector.zero):unit("studs"),
-  OffsetRotation = knob(vector.zero),
+  Enabled = knob(false):label("Enabled"):hint("Whether the screen effect is active."),
+  PartDistance = knob(1.5):min(0):unit("studs"):label("Distance"):hint("Studs from the camera the part is held at."),
+  PartScale = knob(vector.one):label("Scale"):hint("Multiplier on the computed full-frustum size."),
+  OffsetPosition = knob(vector.zero)
+    :unit("studs")
+    :label("Position")
+    :hint("Local offset from the camera-relative placement."),
+  OffsetRotation = knob(vector.zero):label("Rotation"):hint("Initial rotation offset applied to the effect."),
 }
 
 screen.properties = {}
 
 screen.layout = {
-  { title = "Part", entries = { "Enabled", "PartDistance", "PartScale" } },
+  "Enabled",
+  { title = "Part", entries = { "PartDistance", "PartScale" } },
   { title = "Offset", entries = { "OffsetPosition", "OffsetRotation" } },
 }
 

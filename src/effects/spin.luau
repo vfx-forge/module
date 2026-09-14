@@ -18,26 +18,40 @@ end
 local spin = {}
 
 spin.id = "model_spin"
-spin.display = { name = "Model", icon = "model_spin", order = 5 }
+spin.display = { name = "Model", icon = "model_spin", order = 10 }
 
 -- every model that is not a mesh effect, which is a model with a Start and an
 -- End part directly under it
 spin.classifier = "Model:not(Model:has(> BasePart#Start):has(> BasePart#End))"
 
 spin.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"),
-  ResetDelay = knob(0):min(0):unit("seconds"),
-  ResetOnFinish = knob(true),
-  SpinRotation = knob(vector.zero):unit("perSecond"),
-  SpinDuration = knob(0.5):min(0):unit("seconds"),
-  SyncPosition = knob(false),
-  Scale = knob(1):min(MIN_SCALE):mod(),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  ResetDelay = knob(0)
+    :min(0)
+    :unit("seconds")
+    :label("ResetDelay")
+    :hint("Extra seconds to hold the finished pose before resetting."),
+  ResetOnFinish = knob(true):label("ResetOnFinish"):hint("Whether to reset the effect state after it finishes."),
+  SpinRotation = knob(vector.zero)
+    :unit("perSecond")
+    :label("Rotation")
+    :hint("Per-axis spin speed in degrees per second."),
+  SpinDuration = knob(0.5)
+    :min(0)
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the rotation sweep takes to complete."),
+  SyncPosition = knob(false):label("SyncPosition"):hint("Whether the effect follows the emitter's position."),
+  Scale = knob(1):min(MIN_SCALE):mod():label("Scale"):hint("Model scale factor over the spin."),
   -- an unauthored model rests on a ramp from nought to one, and that ramp is
   -- load bearing: a speed that is zero for good returns nil from the rotation
   -- timer's counter and stops it on frame one
-  SpinSpeed = knob(1):mod(mod.from(0):duration(function(_, attrs)
-    return attrs.SpinSpeedDuration
-  end)),
+  SpinSpeed = knob(1)
+    :mod(mod.from(0):duration(function(_, attrs)
+      return attrs.SpinSpeedDuration
+    end))
+    :label("Speed")
+    :hint("Multiplier on the spin's clock over its duration."),
   SpinSpeedDuration = knob(0.1):min(0):aliases("SpinSpeed_Duration"):unit("seconds"):hidden(always),
 }
 

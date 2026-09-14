@@ -1,0 +1,218 @@
+local harness = require("@tests/harness")
+local registry = require("@mod/registry")
+local test, expect = harness.test, harness.expect
+
+local MODULES = {
+  "beam",
+  "mesh",
+  "spin",
+  "sound",
+  "trail",
+  "bezier",
+  "screen",
+  "particle",
+  "lightning",
+  "shockwave",
+  "camera_shake",
+  "shockwave_ring",
+  "shockwave_line",
+  "shockwave_debris",
+}
+
+-- the built-ins are the require cache's own tables and registering freezes
+-- them, so they load once for the whole file rather than once per case
+local loaded = false
+
+local function loadAll()
+  if loaded then
+    return
+  end
+
+  registry.clear()
+  registry.configure({ query = harness.query })
+
+  for _, name in MODULES do
+    registry.register(require(`@vfx/{name}`))
+  end
+
+  loaded = true
+end
+
+-- one of everything, the way the plugin authors it
+local function scene()
+  harness.reset()
+
+  local root = harness.make("Folder")
+  local made = {}
+
+  made.trail = harness.make("Trail", root)
+  made.particle = harness.make("ParticleEmitter", root)
+  made.beam = harness.make("Beam", root)
+  made.sound = harness.make("Sound", root)
+
+  made.camera_shake = harness.make("RayValue", root)
+  made.camera_shake:AddTag("CameraShake")
+
+  made.model_spin = harness.make("Model", root)
+  harness.make("Part", made.model_spin)
+
+  made.mesh = harness.make("Model", root)
+  harness.make("Part", made.mesh).Name = "Start"
+  harness.make("Part", made.mesh).Name = "End"
+
+  made.screen = harness.make("Part", root)
+  made.screen:SetAttribute("Enabled", true)
+
+  made.shockwave = harness.make("Attachment", root)
+  made.shockwave:AddTag("Shockwave")
+
+  for _, folder in { "Rings", "Lines", "Debris" } do
+    local f = harness.make("Folder", made.shockwave)
+    f.Name = folder
+    made[`shockwave_{string.lower(folder)}`] = harness.make("Part", f)
+  end
+
+  made.shockwave_ring = made.shockwave_rings
+  made.shockwave_line = made.shockwave_lines
+  made.shockwave_rings, made.shockwave_lines = nil, nil
+
+  made.bezier = harness.make("Attachment", root)
+  made.bezier:AddTag("BezierParticle")
+  harness.make("Part", made.bezier)
+
+  made.lightning = harness.make("Attachment", root)
+  made.lightning:AddTag("LightningBolt")
+  harness.make("Part", made.lightning)
+
+  return root, made
+end
+
+harness.suite(function()
+  harness.describe("the built-in modules", function()
+    test("every one registers, with a distinct id and order", function()
+      loadAll()
+
+      local list = registry.list()
+
+      expect(#list).toBe(#MODULES)
+
+      local seen = {}
+
+      for _, module in list do
+        expect(seen[module.display.order]).toBe(nil)
+        seen[module.display.order] = module.id
+      end
+    end)
+
+    test("every module classifies its own instance and no other", function()
+      loadAll()
+
+      local root, made = scene()
+
+      for id, inst in made do
+        local module = registry.of(inst)
+
+        expect(module ~= nil and module.id).toBe(id)
+      end
+
+      local hits = {}
+
+      for _, hit in registry.scan(root) do
+        hits[hit.effect.id] = (hits[hit.effect.id] or 0) + 1
+      end
+
+      for id in made do
+        expect(hits[id]).toBe(1)
+      end
+
+      local count = 0
+
+      for _ in hits do
+        count += 1
+      end
+
+      expect(count).toBe(#MODULES)
+    end)
+
+    test("only the three constant modules may be ticked", function()
+      loadAll()
+
+      local constant = {}
+
+      for _, module in registry.list() do
+        if module.constant then
+          table.insert(constant, module.id)
+        end
+      end
+
+      table.sort(constant)
+
+      expect(constant).toEqual({ "bezier", "lightning", "mesh" })
+    end)
+
+    test("every row the plugin shows has a label and a hint", function()
+      loadAll()
+
+      for _, module in registry.list() do
+        for _, rows in { module.attributes, module.properties } do
+          for name, row in rows do
+            if row.hiddenRule ~= nil then
+              continue
+            end
+
+            expect(type(row.title) == "string" and row.title ~= "").toBe(true)
+            expect(type(row.details) == "string" and row.details ~= "").toBe(true)
+          end
+        end
+      end
+    end)
+
+    test("every visible row is placed by the layout exactly once", function()
+      loadAll()
+
+      for _, module in registry.list() do
+        local placed = {}
+
+        local function walk(entries)
+          for _, entry in entries do
+            if type(entry) == "string" then
+              expect(placed[entry]).toBe(nil)
+              placed[entry] = true
+            elseif type(entry) == "table" and type(entry.entries) == "table" then
+              walk(entry.entries)
+            end
+          end
+        end
+
+        walk(module.layout or {})
+
+        for _, rows in { module.attributes, module.properties } do
+          for name, row in rows do
+            if row.hiddenRule == nil then
+              expect(placed[name]).toBe(true)
+            end
+          end
+        end
+      end
+    end)
+
+    test("a read of every module against its bare instance answers every row", function()
+      loadAll()
+
+      local _, made = scene()
+
+      for id, inst in made do
+        local attrs, props = registry.read(inst)
+        local module = registry.get(id)
+
+        for name in module.attributes do
+          expect(rawget(attrs, name) ~= nil or module.attributes[name].hasDefault == false).toBe(true)
+        end
+
+        for name in module.properties do
+          expect(rawget(props, name) ~= nil or module.properties[name].hasDefault == false).toBe(true)
+        end
+      end
+    end)
+  end)
+end)
