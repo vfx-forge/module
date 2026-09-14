@@ -1,4 +1,5 @@
 local mod = require("@mod/mod")
+local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local knob = require("@mod/knob")
 local codec = require("@mod/modifier_codec")
@@ -608,6 +609,72 @@ harness.suite(function()
       expect(near(attrs.Width(nil, 1).at(1), 0.2)).toBe(true)
       expect(attrs.Width(0.5, 2).duration).toBe(2)
       expect(near(attrs.Width(0.5, 2).at(0), 2)).toBe(true)
+    end)
+
+    test("a read finds its queues in the map it already holds", function()
+      local obj = Instance.new("Part")
+      obj:SetAttribute("Old_Start", 0)
+      obj:SetAttribute("Old_End", 1)
+
+      local m = module({}, { Transparency = knob(1):mod():aliases("Old") })
+
+      local calls = 0
+      local original = attr.get
+
+      local ok, err = pcall(function()
+        attr.get = function(...)
+          calls += 1
+          return original(...)
+        end
+
+        local _, props = reader.resolve(m, ctxFor(obj))
+
+        expect(calls).toBe(0)
+        expect(props.Transparency.animated).toBe(true)
+      end)
+
+      attr.get = original
+
+      if not ok then
+        error(err, 0)
+      end
+    end)
+
+    test("a piece's call reads nothing the read did not", function()
+      local obj = Instance.new("Part")
+      obj:SetAttribute("Old_Start", 0)
+      obj:SetAttribute("Old_End", 1)
+
+      local m = module({}, { Transparency = knob(1):mod():aliases("Old") })
+
+      local calls = 0
+      local original = attr.get
+
+      local ok, err = pcall(function()
+        attr.get = function(...)
+          calls += 1
+          return original(...)
+        end
+
+        local _, props = reader.resolve(m, ctxFor(obj))
+        local afterRead = calls
+
+        local track
+        for _ = 1, 3 do
+          track = props.Transparency(nil, 2)
+        end
+
+        expect(calls).toBe(afterRead)
+        expect(track.duration).toBe(2)
+        expect(near(track.at(0), 0)).toBe(true)
+        expect(near(track.at(2), 1)).toBe(true)
+      end)
+
+      attr.get = original
+
+      if not ok then
+        error(err, 0)
+      end
     end)
   end)
 end)

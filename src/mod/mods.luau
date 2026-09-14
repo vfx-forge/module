@@ -87,8 +87,9 @@ end
 -- queue is a tombstone the authoring side writes deliberately, so a caller
 -- asking whether anything is authored here has to tell it apart from an absent
 -- attribute, which mods.read cannot once it has fallen through
-function mods.framed(ref: Instance, source: string, name: string): { any }?
-  local raw = attr.get(ref, mods.attrName(source, name), nil, true)
+function mods.framed(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
+  local key = mods.attrName(source, name)
+  local raw = if map ~= nil then map[key] else attr.get(ref, key, nil, true)
 
   if not frame.isFramed(raw) then
     return nil
@@ -115,14 +116,14 @@ end
 -- the second return says whether the queue came out of the framed attribute, so
 -- a caller that has to tell an authored queue from an old row does not pay the
 -- decode a second time to ask
-function mods.read(ref: Instance, source: string, name: string): ({ any }?, boolean)
-  local queue = mods.framed(ref, source, name)
+function mods.read(ref: Instance, source: string, name: string, map: { [string]: any }?): ({ any }?, boolean)
+  local queue = mods.framed(ref, source, name, map)
 
   if queue ~= nil then
     return queue, true
   end
 
-  return legacy_mods.read(ref, source, name), false
+  return legacy_mods.read(ref, source, name, map), false
 end
 
 -- the value a target already carries, which is what a base entry resolves to

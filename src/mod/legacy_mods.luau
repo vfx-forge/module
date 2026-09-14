@@ -2,6 +2,20 @@ local attr = require("@mod/attributes")
 local value = require("@mod/value")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
+local numeric_common = require("@mod/common/numeric")
+
+-- a stored value, read from the map a caller already holds when it hands one
+-- in, and from the instance otherwise. a value no clock or lerp can use reads
+-- as absent either way, as the soft read with no default always did
+local function stored(ref: Instance, key: string, map: { [string]: any }?): any
+  if map == nil then
+    return attr.get(ref, key, nil, true)
+  end
+
+  local v = map[key]
+
+  return if v ~= nil and numeric_common.usable(v) then v else nil
+end
 
 local legacy_mods = {}
 
@@ -63,8 +77,8 @@ legacy_mods.ALIASES = {
   Transparency_Scale_End = { "EndTransparencyScale" },
 }
 
-function legacy_mods.alias(ref: Instance, name: string, default: any): any
-  local v = attr.get(ref, name, nil, true)
+function legacy_mods.alias(ref: Instance, name: string, default: any, map: { [string]: any }?): any
+  local v = stored(ref, name, map)
 
   if v ~= nil then
     return v
@@ -74,7 +88,7 @@ function legacy_mods.alias(ref: Instance, name: string, default: any): any
 
   if olds then
     for _, old in olds do
-      v = attr.get(ref, old, nil, true)
+      v = stored(ref, old, map)
 
       if v ~= nil then
         return v
@@ -305,9 +319,9 @@ function legacy_mods.readChild(child: Instance): Child?
   }
 end
 
-function legacy_mods.readQuad(ref: Instance, source: string, name: string): { any }?
-  local startV = legacy_mods.alias(ref, `{name}_Start`, nil)
-  local finishV = legacy_mods.alias(ref, `{name}_End`, nil)
+function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
+  local startV = legacy_mods.alias(ref, `{name}_Start`, nil, map)
+  local finishV = legacy_mods.alias(ref, `{name}_End`, nil, map)
 
   if startV == nil and finishV == nil then
     return nil
@@ -328,8 +342,8 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string): { an
     finishV = startV
   end
 
-  local durationV = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil)) or legacy_mods.SPANS[name]
-  local curveV = curveOf(legacy_mods.alias(ref, `{name}_Curve`, nil)) or legacy_mods.defaultCurve(`{name}_Curve`)
+  local durationV = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil, map)) or legacy_mods.SPANS[name]
+  local curveV = curveOf(legacy_mods.alias(ref, `{name}_Curve`, nil, map)) or legacy_mods.defaultCurve(`{name}_Curve`)
 
   local drawn = legacy_mods.isDrawnRange(source, name)
 
@@ -385,27 +399,27 @@ end
 -- against a property source would collide with real property names: a Part
 -- carries MinSize-ish attributes and a `Size` property that mean nothing to
 -- each other.
-function legacy_mods.readRange(ref: Instance, source: string, name: string): { any }?
+function legacy_mods.readRange(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
   if source ~= "attribute" then
     return nil
   end
 
-  local range = attr.get(ref, name, nil, true)
+  local range = stored(ref, name, map)
 
   if typeof(range) == "NumberRange" then
     return { { kind = "randomizer", chain = false, start = value.lit(range.Min), finish = value.lit(range.Max) } }
   end
 
-  local min = attr.get(ref, `{name}_Min`, nil, true)
-  local max = attr.get(ref, `{name}_Max`, nil, true)
+  local min = stored(ref, `{name}_Min`, map)
+  local max = stored(ref, `{name}_Max`, map)
 
   -- the prefixed spelling is tried unless the underscore pair reads WHOLE. half
   -- of a pair says nothing on its own, and gating this on "neither half is
   -- there" would let one stray Size_Max suppress a complete MinSize and MaxSize,
   -- which is the spelling every shockwave in the wild actually carries
   if min == nil or max == nil then
-    min = attr.get(ref, `Min{name}`, nil, true)
-    max = attr.get(ref, `Max{name}`, nil, true)
+    min = stored(ref, `Min{name}`, map)
+    max = stored(ref, `Max{name}`, map)
   end
 
   -- half a pair cannot say what the other half was, and that default belongs to
@@ -420,8 +434,8 @@ end
 -- a curve authored with neither end of its quad. it eases whatever ramp the
 -- effect would have run by default, so both halves are left for mods.track to
 -- fill; it says nothing about a constant knob, which mods.track decides
-function legacy_mods.readCurve(ref: Instance, _source: string, name: string): { any }?
-  local curveV = curveOf(legacy_mods.alias(ref, `{name}_Curve`, nil))
+function legacy_mods.readCurve(ref: Instance, _source: string, name: string, map: { [string]: any }?): { any }?
+  local curveV = curveOf(legacy_mods.alias(ref, `{name}_Curve`, nil, map))
 
   if curveV == nil then
     return nil
@@ -431,24 +445,24 @@ function legacy_mods.readCurve(ref: Instance, _source: string, name: string): { 
     {
       kind = "tween",
       chain = false,
-      duration = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil)) or legacy_mods.SPANS[name],
+      duration = durationOf(legacy_mods.alias(ref, `{name}_Duration`, nil, map)) or legacy_mods.SPANS[name],
       curve = curveV,
       partial = "both",
     },
   }
 end
 
-function legacy_mods.read(ref: Instance, source: string, name: string): { any }?
+function legacy_mods.read(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
   local ok, result = pcall(function()
     -- range last: it is the broadest of the three shapes, matching on a single
     -- attribute named exactly for the row, so it must not shadow a quad or a
     -- RayValue child that says something more specific. the curve-only shape
     -- trails even range, because a curve with no value behind it is the least
     -- specific thing an author can have left
-    return legacy_mods.readQuad(ref, source, name)
+    return legacy_mods.readQuad(ref, source, name, map)
       or legacy_mods.readChildren(ref, source, name)
-      or legacy_mods.readRange(ref, source, name)
-      or legacy_mods.readCurve(ref, source, name)
+      or legacy_mods.readRange(ref, source, name, map)
+      or legacy_mods.readCurve(ref, source, name, map)
   end)
 
   if not ok then

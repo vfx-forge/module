@@ -68,14 +68,25 @@ local function propertyOf(obj: Instance, name: string)
   return if ok then v else nil
 end
 
-type Lookup = (ref: Instance, source: string, name: string) -> { any }?
+type Lookup = (ref: Instance, source: string, name: string, map: { [string]: any }) -> { any }?
+
+-- a row's queue, its framed flag and the spelling it was found under, kept
+-- together so a piece calling the row a second time is handed the one lookup
+-- rather than paying for it again
+type Found = { queue: { any }?, framed: boolean, under: string? }
 
 -- the old spellings of a row, after its own name has already missed. walked in
 -- place rather than gathered into a table the row would pay for on every read.
 -- the second return is the spelling it answered under
-local function aliasOf(look: Lookup, ref: Instance, source: string, row: knob.Knob): ({ any }?, string?)
+local function aliasOf(
+  look: Lookup,
+  ref: Instance,
+  source: string,
+  row: knob.Knob,
+  map: { [string]: any }
+): ({ any }?, string?)
   for _, alias in row.names do
-    local queue = look(ref, source, alias)
+    local queue = look(ref, source, alias, map)
 
     if queue ~= nil then
       return queue, alias
@@ -91,20 +102,26 @@ end
 -- on the row's own side and then, for a property row, on the attribute side
 -- old content authored on. the third return is the alias it was found under,
 -- which is the name the base behind it is stored under too
-local function queueOf(ref: Instance, source: string, name: string, row: knob.Knob): ({ any }?, boolean, string?)
+local function queueOf(
+  ref: Instance,
+  source: string,
+  name: string,
+  row: knob.Knob,
+  map: { [string]: any }
+): ({ any }?, boolean, string?)
   local aliased = row.names[1] ~= nil
-  local queue = mods.framed(ref, source, name)
+  local queue = mods.framed(ref, source, name, map)
   local under: string? = nil
 
   if queue == nil and aliased then
-    queue, under = aliasOf(mods.framed, ref, source, row)
+    queue, under = aliasOf(mods.framed, ref, source, row, map)
   end
 
   if queue == nil and source == "property" then
-    queue = mods.framed(ref, "attribute", name)
+    queue = mods.framed(ref, "attribute", name, map)
 
     if queue == nil and aliased then
-      queue, under = aliasOf(mods.framed, ref, "attribute", row)
+      queue, under = aliasOf(mods.framed, ref, "attribute", row, map)
     end
   end
 
@@ -112,17 +129,17 @@ local function queueOf(ref: Instance, source: string, name: string, row: knob.Kn
     return queue, true, under
   end
 
-  queue = legacy_mods.read(ref, source, name)
+  queue = legacy_mods.read(ref, source, name, map)
 
   if queue == nil and aliased then
-    queue, under = aliasOf(legacy_mods.read, ref, source, row)
+    queue, under = aliasOf(legacy_mods.read, ref, source, row, map)
   end
 
   if queue == nil and source == "property" then
-    queue = legacy_mods.read(ref, "attribute", name)
+    queue = legacy_mods.read(ref, "attribute", name, map)
 
     if queue == nil and aliased then
-      queue, under = aliasOf(legacy_mods.read, ref, "attribute", row)
+      queue, under = aliasOf(legacy_mods.read, ref, "attribute", row, map)
     end
   end
 
@@ -151,6 +168,26 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
   local propPending: { [string]: boolean } = {}
   local deciding = false
   local duration: number? = nil
+
+  -- the queue a row carries, found once per read: a piece calling the row for
+  -- a track of its own runs the rules again over what was stored at the read,
+  -- since the stored content does not change between the read and the piece
+  local attrQueues: { [string]: Found } = {}
+  local propQueues: { [string]: Found } = {}
+
+  local function queueFor(source: string, name: string, row: knob.Knob): Found
+    local memo = if source == "property" then propQueues else attrQueues
+    local found = memo[name]
+
+    if found == nil then
+      local queue, framed, under = queueOf(ctx.ref, source, name, row, map)
+
+      found = { queue = queue, framed = framed, under = under }
+      memo[name] = found
+    end
+
+    return found
+  end
 
   local function durationOf(): number
     if duration ~= nil then
@@ -256,13 +293,13 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
   end
 
   local function trackOf(source: string, name: string, row: knob.Knob, rest: any, seeded: boolean, span: number): Track
-    local queue, framed, under = queueOf(ctx.ref, source, name, row)
+    local found = queueFor(source, name, row)
 
     -- an existing queue, even an empty one or one that only waits, means the
     -- author owns the row: it is a tombstone, deliberately silencing even the
     -- row's own default modifier rather than falling back to it, which is
     -- what mods.build would otherwise read such a queue as
-    local tombstone = framed and queue ~= nil and (#queue == 0 or mods.inert(queue))
+    local tombstone = found.framed and found.queue ~= nil and (#found.queue == 0 or mods.inert(found.queue))
 
     local default: any = rest
 
@@ -280,8 +317,8 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     -- an attribute row builds under the name its queue was found under, since
     -- that is where the value it chains from and the range it draws inside are
     -- stored too; a property row's base is the property, whatever the spelling
-    local built = if source == "property" then name else under or name
-    local inner = mods.build(ctx.ref, source, built, default, span, nil, queue, framed, opts)
+    local built = if source == "property" then name else found.under or name
+    local inner = mods.build(ctx.ref, source, built, default, span, nil, found.queue, found.framed, opts)
 
     local track = {
       at = inner.at,

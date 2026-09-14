@@ -34,7 +34,7 @@ sound.attributes = {
   EmitDelay = knob(0):min(0):unit("seconds"),
   EmitDuration = knob(0):min(0):unit("seconds"),
   EmitInterval = knob(NumberRange.new(0, 0)):min(0):unit("seconds"),
-  RepeatCount = knob(1):min(1),
+  RepeatCount = knob(1):min(0),
   RepeatInterval = knob(NumberRange.new(0, 0)):min(0):unit("seconds"),
   SoundPoolTag = knob(""),
   SoundPoolWeight = knob(1):min(0),
@@ -362,6 +362,10 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
       if pickedAttrs ~= nil then
         ref = picked
         attrs, props = pickedAttrs, pickedProps
+
+        -- rows read through the registry keep the context they were read
+        -- with, so play's ctx.obj = clone below never moves their seed there,
+        -- which is fine since the clone is a copy of the sound they read
         ctx = { ref = picked, obj = picked, scope = scope, scale = ctx.scale, effect = ctx.effect, shared = ctx.shared }
       end
     end
