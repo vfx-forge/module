@@ -1,5 +1,4 @@
 local Mesh = require("@vfx/mesh")
-local Bezier = require("@vfx/bezier")
 local Lightning = require("@vfx/lightning")
 
 local attr = require("@mod/attributes")
@@ -342,25 +341,6 @@ function emitters.applyMods(
   end
 end
 
-function emitters.bezier(obj: Instance, scope: types.scope, skipEnabledCheck: boolean?)
-  local part = obj:FindFirstChildOfClass("Part")
-
-  if not part then
-    return
-  end
-
-  if not skipEnabledCheck and obj:GetAttribute("Enabled") then
-    obj:SetAttribute("Enabled", false)
-  end
-
-  local clone = part:Clone()
-  clone.Locked = true
-
-  lifetime.hold(scope, clone)
-
-  utility.try(`failed to emit bezier with error: %s`, Bezier.emit, obj, clone, scope, skipEnabledCheck)
-end
-
 function emitters.lightning(obj: Instance, scope: types.scope, skipEnabledCheck: boolean?)
   local part = obj:FindFirstChildOfClass("Part")
 
@@ -465,10 +445,6 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
     return if utility.isMeshVFX(obj) then Mesh.OWNS else nil
   end
 
-  if obj:HasTag(utility.BEZIER_TAG) then
-    return Bezier.OWNS
-  end
-
   if obj:HasTag(utility.LIGHTNING_TAG) then
     return Lightning.OWNS
   end
@@ -490,11 +466,6 @@ local function route(
 
   if className == "RayValue" then
     emitters.legacy_child(obj, scope)
-    return
-  end
-
-  if obj:HasTag(utility.BEZIER_TAG) then
-    emitters.bezier(obj, scope)
     return
   end
 
@@ -572,15 +543,6 @@ emitters.enabled_registry = {
     end,
     emit = function(obj: Instance, scope: types.scope, shared_part_cache: any)
       emitters.mesh(obj, scope, shared_part_cache, 1, true)
-    end,
-  },
-
-  bezier = {
-    check = function(obj: Instance)
-      return obj:HasTag(utility.BEZIER_TAG)
-    end,
-    emit = function(obj: Instance, scope: types.scope, shared_part_cache: any)
-      emitters.bezier(obj, scope, true)
     end,
   },
 

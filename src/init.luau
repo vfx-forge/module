@@ -135,6 +135,7 @@ registry.register(Shockwave)
 registry.register(ShockwaveRing)
 registry.register(ShockwaveLine)
 registry.register(ShockwaveDebris)
+registry.register(Bezier)
 
 function api.init(params: params?)
   if api.setup then

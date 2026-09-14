@@ -2,9 +2,9 @@
 local RunService = game:GetService("RunService")
 
 local attr = require("@mod/attributes")
-local mods = require("@mod/mods")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local bezier_common = require("@mod/common/bezier")
@@ -15,16 +15,37 @@ local ObjectCache = require("@obj/ObjectCache")
 
 local bezier = {}
 
--- both knobs are driven through samplers of their own, so emitters.applyMods
--- leaves them alone. RotSpeed's endpoints are NumberRanges this effect used to
--- draw a scalar from per emitted part; they read back as rand endpoints now and
--- the sampler makes the same two draws
-bezier.OWNS = {
-  attribute = {
-    Speed = true,
-    RotSpeed = true,
-  },
-}
+bezier.id = "bezier"
+bezier.display = { name = "Bezier", icon = "bezier", order = 80 }
+bezier.classifier = "Attachment.BezierParticle"
+
+-- the template part, the points and the end attachments under the bolt are
+-- its own; the effects nested in the template part run per emitted piece
+bezier.components = "Instance"
+bezier.constant = true
+
+bezier.attributes = bezier_common.rows()
+
+bezier.attributes.FacePath = knob(false)
+bezier.attributes.ArcSpace = knob(false)
+bezier.attributes.MinInitRot = knob(vector.zero)
+bezier.attributes.MaxInitRot = knob(vector.zero)
+bezier.attributes.EasingCurve = knob(function()
+  return utility.linear_bezier
+end):aliases("Easing_Curve")
+bezier.attributes.RotSpeed = knob(0):unit("perSecond"):mod()
+
+bezier.properties = {}
+
+bezier.layout = bezier_common.layout()
+
+table.insert(bezier.layout, { title = "Random Rotation", entries = { "RotSpeed", "MinInitRot", "MaxInitRot" } })
+table.insert(bezier.layout, { title = "Animation", entries = { "FacePath", "ArcSpace", "EasingCurve" } })
+
+-- the longest a bolt of this emit can run, which the emit's own queues run over
+function bezier.duration(_, attrs: any)
+  return attrs.Duration.Max
+end
 
 local part_cache: ObjectCache.ObjectCache?
 
@@ -36,44 +57,38 @@ function bezier.deinit()
   part_cache = nil
 end
 
-local function readBezierAttributes(ref: Attachment)
-  return {
-    -- animation
-    facePath = attr.get(ref, "FacePath", false),
-    arcSpace = attr.get(ref, "ArcSpace", false),
-
-    -- rotation
-    minInitRot = attr.get(ref, "MinInitRot", vector.zero),
-    maxInitRot = attr.get(ref, "MaxInitRot", vector.zero),
-
-    -- curves
-    speedDuration = attr.get(ref, "Speed_Duration", 0.1, true),
-    easingCurve = attr.get(ref, "Easing_Curve", utility.linear_bezier),
-  }
-end
-
-function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit: boolean?)
+function bezier.emit(ctx: reader.Ctx, attrs: any)
+  local ref = ctx.ref :: Attachment
+  local scope = ctx.scope
   local root = ref:FindFirstChild("Points")
+  local template = ref:FindFirstChildOfClass("Part")
 
-  if not root or not root:IsA("Attachment") or not part_cache then
+  if not root or not root:IsA("Attachment") or not part_cache or not template then
     return
   end
 
-  local common = bezier_common.readCommonAttributes(ref)
-  local attrs = readBezierAttributes(ref)
+  -- a plain emit of an enabled bolt switches it off; the tick's own emits
+  -- leave it as it is
+  if attrs.Enabled and not ctx.constant then
+    ref:SetAttribute("Enabled", false)
+  end
 
-  local drawFunc = bezier_common.drawFuncMap[common.shapeType]
-    and bezier_common.drawFuncMap[common.shapeType][common.shapeStyle]
+  local refObj = template:Clone()
+  refObj.Locked = true
+
+  lifetime.hold(scope, refObj)
+
+  local drawFunc = bezier_common.drawFuncMap[attrs.Shape] and bezier_common.drawFuncMap[attrs.Shape][attrs.ShapeStyle]
 
   if not drawFunc then
     return
   end
 
-  local useDuration = common.emitDuration > 0
+  local useDuration = attrs.EmitDuration > 0
 
-  task.wait(common.emitDelay)
+  task.wait(attrs.EmitDelay)
 
-  if useDuration and not mustEmit then
+  if useDuration and not ctx.constant then
     utility.forceEmit(ref, true)
     attr.trigger(ref, "Enabled", true)
 
@@ -85,7 +100,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
       end
     end)
 
-    local speed = mods.track(ref, "attribute", "Speed", 1, attrs.speedDuration)
+    local speed = attrs.Speed
 
     if speed.animated then
       attr.setState(ref, "SpeedTweening", true)
@@ -94,7 +109,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
         scope,
         tween.fromParams(
           utility.linear_bezier,
-          speed.span,
+          speed.duration,
           function(_, deltaTime, elapsed)
             attr.setState(ref, "SpeedOverride", speed.at(elapsed))
             return deltaTime
@@ -107,14 +122,14 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
       )
     end
 
-    task.wait(common.emitDuration)
+    task.wait(attrs.EmitDuration)
 
     utility.awaitEmitDuration(utility.stopEmitDuration(ref))
 
     return
   end
 
-  if common.emitCount <= 0 then
+  if attrs.EmitCount <= 0 then
     return
   end
 
@@ -137,48 +152,43 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
   local baseBezier = not endPoint and Bezier.new(points)
 
   -- Hitbox params
-  local hitboxParams = bezier_common.createHitboxParams({
-    enabled = common.hitboxEnabled,
-    collisionGroup = common.hitboxCollisionGroup,
-    filterTag = common.hitboxFilterTag,
-    filterType = common.hitboxFilterType,
-    ignoreCanCollide = common.hitboxIgnoreCanCollide,
-  }, parent, root)
+  local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
   local promises = {}
 
-  for _ = 1, common.emitCount do
+  for _ = 1, attrs.EmitCount do
     local initRot = vector.create(
-      rng:NextNumber(attrs.minInitRot.x, attrs.maxInitRot.x),
-      rng:NextNumber(attrs.minInitRot.y, attrs.maxInitRot.y),
-      rng:NextNumber(attrs.minInitRot.z, attrs.maxInitRot.z)
+      rng:NextNumber(attrs.MinInitRot.x, attrs.MaxInitRot.x),
+      rng:NextNumber(attrs.MinInitRot.y, attrs.MaxInitRot.y),
+      rng:NextNumber(attrs.MinInitRot.z, attrs.MaxInitRot.z)
     )
 
-    local duration = rng:NextNumber(common.duration.Min, common.duration.Max)
-    local projectileLifetime = common.projectileEnabled
-      and rng:NextNumber(common.projectileLifetime.Min, common.projectileLifetime.Max)
+    local duration = rng:NextNumber(attrs.Duration.Min, attrs.Duration.Max)
+    local projectileLifetime = attrs.ProjectileEnabled
+      and rng:NextNumber(attrs.ProjectileLifetime.Min, attrs.ProjectileLifetime.Max)
 
     -- one track per emitted part rather than one per emit, because the two
     -- endpoints are drawn per part and a sampler is what draws them
-    local rotSpeed = mods.track(ref, "attribute", "RotSpeed", 0, duration)
+    local rotSpeed = attrs.RotSpeed(nil, duration)
     local rotSpeedStart = rotSpeed.at(0)
 
     table.insert(
       promises,
       Promise.new(function(resolve)
         -- Calculate emission CFrame
-        local cf = bezier_common.calculateEmissionCFrame(originCFrame, originSize, {
-          face = common.face,
-          spreadAngle = common.spreadAngle,
-          mirror = common.mirror,
-          mirrorRot = common.mirrorRot,
-          partial = common.partial,
-          emissionDirection = common.emissionDirection,
-        }, drawFunc, rng, endPoint, parent:IsA("Attachment"))
+        local cf = bezier_common.calculateEmissionCFrame(
+          originCFrame,
+          originSize,
+          bezier_common.emissionOf(attrs),
+          drawFunc,
+          rng,
+          endPoint,
+          parent:IsA("Attachment")
+        )
 
         -- create bezier
         local pathBezier = baseBezier or bezier_common.createBezierWithEndpoint(points, cf, endPoint, endT1)
-        local getPos = bezier_common.createPosGetter(pathBezier, points, cf, endPoint, attrs.arcSpace)
+        local getPos = bezier_common.createPosGetter(pathBezier, points, cf, endPoint, attrs.ArcSpace)
 
         -- get part from cache
         local cacheId = utility.getRandomId()
@@ -234,7 +244,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
             return
           end
 
-          if common.syncPosition then
+          if attrs.SyncPosition then
             local initOrigin = utility.getTransformedOriginExtents(parent)
             local initPartPos = objAbstr.CFrame
 
@@ -260,7 +270,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
         end
 
         local function shapecast()
-          if not common.hitboxEnabled then
+          if not attrs.HitboxEnabled then
             return false
           end
 
@@ -270,13 +280,13 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
 
         -- Speed tween
         local speedTween
-        local speed = mods.track(ref, "attribute", "Speed", 1, attrs.speedDuration)
+        local speed = attrs.Speed(nil, duration)
 
         if not attr.getState(ref, "SpeedOverride", nil) then
           currentSpeed = speed.at(0)
 
           if speed.animated then
-            speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, sampledAt)
+            speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, sampledAt)
               currentSpeed = speed.at(sampledAt)
               return deltaTime
             end)
@@ -302,13 +312,13 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
         lifetime.hold(
           scope,
           tween.fromParams(
-            attrs.easingCurve,
+            attrs.EasingCurve,
             duration,
             function(alpha, deltaTime, elapsed)
               local pos1 = getPos(alpha)
               local newCF = CFrame.new(pos1)
 
-              if attrs.facePath then
+              if attrs.FacePath then
                 local pos2 = getPos(math.clamp((elapsed + (1 / 60)) / duration, 0, 1))
 
                 if pos1 ~= pos2 then
@@ -325,7 +335,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
               prevCF = newCF
               newCF *= currentRot
 
-              if common.syncPosition then
+              if attrs.SyncPosition then
                 objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * originCFrame:ToObjectSpace(newCF)
               else
                 objAbstr.CFrame = newCF
@@ -347,9 +357,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
                 return nil
               end
 
-              if
-                (common.projectileEnabled and alpha * duration < projectileLifetime) or not common.projectileEnabled
-              then
+              if (attrs.ProjectileEnabled and alpha * duration < projectileLifetime) or not attrs.ProjectileEnabled then
                 return deltaTime * speed
               else
                 onFinish()
@@ -358,7 +366,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
             end,
             speedTween,
             function(organic)
-              if not common.projectileEnabled or didHit then
+              if not attrs.ProjectileEnabled or didHit then
                 if organic then
                   onFinish()
                 end
@@ -366,7 +374,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
               end
 
               -- Projectile mode
-              local dir = if common.projectileMatchEnd and endPoint
+              local dir = if attrs.MatchEndDirection and endPoint
                 then endPoint.WorldCFrame.LookVector
                 else lastVelocity.Unit
 
@@ -374,13 +382,13 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
                 dir = Vector3.zero
               end
 
-              lastVelocity = dir * common.projectileSpeed
+              lastVelocity = dir * attrs.ProjectileSpeed
 
               local projectileOrigin = obj.Position
               local originCFrameAtProjectileInit = utility.getTransformedOriginExtents(parent)
 
               tween.timer(projectileLifetime, function(deltaTime, elapsed)
-                if common.syncPosition then
+                if attrs.SyncPosition then
                   objAbstr.CFrame = utility.getTransformedOriginExtents(parent)
                     * originCFrameAtProjectileInit:ToObjectSpace(CFrame.new(projectileOrigin + lastVelocity * elapsed))
                 else
@@ -413,7 +421,7 @@ function bezier.emit(ref: Attachment, refObj: Part, scope: types.scope, mustEmit
 
   Promise.all(promises):await()
 
-  task.wait(common.destroyDelay)
+  task.wait(attrs.DestroyDelay)
 end
 
 return bezier

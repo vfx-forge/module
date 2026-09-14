@@ -1,8 +1,7 @@
 --!nolint LocalShadow
 local CollectionService = game:GetService("CollectionService")
 
-local attr = require("@mod/attributes")
-local mods = require("@mod/mods")
+local knob = require("@mod/knob")
 local shape = require("@mod/shape")
 local tween = require("@mod/tween")
 local utility = require("@mod/utility")
@@ -243,45 +242,87 @@ function common.createPosGetter(
   end
 end
 
-function common.readCommonAttributes(ref: Attachment)
+local function always()
+  return true
+end
+
+-- the rows a bezier and a lightning bolt share, a fresh table per module so
+-- the registry freezes each module's own
+function common.rows()
   return {
-    -- timing
-    emitDelay = attr.get(ref, "EmitDelay", 0),
-    emitCount = attr.get(ref, "EmitCount", 1),
-    emitDuration = attr.get(ref, "EmitDuration", 0),
-    destroyDelay = attr.get(ref, "DestroyDelay", 0),
-    duration = attr.getRange(ref, "Duration", NumberRange.new(1, 1), NumberRange.new(0, math.huge)),
+    EmitCount = knob(1):min(0),
+    EmitDelay = knob(0):min(0):unit("seconds"),
+    EmitDuration = knob(0):min(0):unit("seconds"),
+    DestroyDelay = knob(0):min(0):unit("seconds"),
+    Duration = knob(NumberRange.new(1, 1)):min(0):unit("seconds"),
+    Enabled = knob(false),
+    Rate = knob(5):min(0):unit("perSecond"),
+    SyncPosition = knob(false),
+    Shape = knob("Box"):options({ "Box", "Cylinder", "Sphere", "Disc" }),
+    ShapeStyle = knob("Volume"):options({ "Volume", "Surface" }),
+    EmissionDirection = knob("Top"):options({ "Top", "Bottom", "Left", "Right", "Front", "Back" }),
+    ShapeFace = knob("Outward"):options({ "InAndOut", "Inward", "Outward" }),
+    SpreadAngle = knob(vector.zero),
+    ShapePartial = knob(1),
+    MirrorPaths = knob(true),
+    MirrorRotation = knob(vector.create(0, 0, 180)),
+    ProjectileEnabled = knob(false),
+    MatchEndDirection = knob(false),
+    ProjectileSpeed = knob(30):unit("studsPerSecond"),
+    ProjectileLifetime = knob(NumberRange.new(1, 1)):min(0):unit("seconds"),
+    HitboxEnabled = knob(false),
+    HitboxCollisionGroup = knob("Default"),
+    HitboxFilterTag = knob(""),
+    HitboxFilterType = knob("Exclude"):options({ "Include", "Exclude" }),
+    HitboxIgnoreCanCollide = knob(false),
+    Speed = knob(1):mod(),
+    SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
+  }
+end
 
-    -- shape/emission
-    shapeType = attr.getEnum(ref, "Shape", "Box", { "Box", "Cylinder", "Sphere", "Disc" }),
-    shapeStyle = attr.getEnum(ref, "ShapeStyle", "Volume", { "Volume", "Surface" }),
-    emissionDirection = Enum.NormalId[attr.getEnum(
-      ref,
-      "EmissionDirection",
-      "Top",
-      { "Top", "Bottom", "Left", "Right", "Front", "Back" }
-    )],
-    face = attr.getEnum(ref, "ShapeFace", "Outward", { "InAndOut", "Inward", "Outward" }),
-    spreadAngle = attr.get(ref, "SpreadAngle", vector.zero),
-    partial = attr.get(ref, "ShapePartial", 1),
+function common.layout()
+  return {
+    { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration", "DestroyDelay" } },
+    { title = "Effect", entries = { "Duration", "SpreadAngle", "Enabled", "Rate", "SyncPosition", "Speed" } },
+    { title = "Shape", entries = { "EmissionDirection", "Shape", "ShapePartial", "ShapeStyle", "ShapeFace" } },
+    { title = "Shared End Point", entries = { "MirrorPaths", "MirrorRotation" } },
+    {
+      title = "Projectile Motion",
+      entries = { "ProjectileEnabled", "ProjectileLifetime", "ProjectileSpeed", "MatchEndDirection" },
+    },
+    {
+      title = "Hitbox",
+      entries = {
+        "HitboxEnabled",
+        "HitboxCollisionGroup",
+        "HitboxFilterTag",
+        "HitboxFilterType",
+        "HitboxIgnoreCanCollide",
+      },
+    },
+  }
+end
 
-    -- path
-    syncPosition = attr.get(ref, "SyncPosition", false),
-    mirror = attr.get(ref, "MirrorPaths", true),
-    mirrorRot = attr.get(ref, "MirrorRotation", vector.create(0, 0, 180)),
+-- the hitbox parameters as the two modules' rows spell them
+function common.hitboxOf(attrs: any): HitboxConfig
+  return {
+    enabled = attrs.HitboxEnabled,
+    collisionGroup = attrs.HitboxCollisionGroup,
+    filterTag = attrs.HitboxFilterTag,
+    filterType = attrs.HitboxFilterType,
+    ignoreCanCollide = attrs.HitboxIgnoreCanCollide,
+  }
+end
 
-    -- projectile
-    projectileEnabled = attr.get(ref, "ProjectileEnabled", false),
-    projectileMatchEnd = attr.get(ref, "MatchEndDirection", false),
-    projectileSpeed = attr.get(ref, "ProjectileSpeed", 30),
-    projectileLifetime = attr.getRange(ref, "ProjectileLifetime", NumberRange.new(1, 1), NumberRange.new(0, math.huge)),
-
-    -- hitbox
-    hitboxEnabled = attr.get(ref, "HitboxEnabled", false),
-    hitboxCollisionGroup = attr.get(ref, "HitboxCollisionGroup", "Default"),
-    hitboxFilterTag = attr.get(ref, "HitboxFilterTag", ""),
-    hitboxFilterType = attr.get(ref, "HitboxFilterType", "Exclude"),
-    hitboxIgnoreCanCollide = attr.get(ref, "HitboxIgnoreCanCollide", false),
+-- the emission parameters as the two modules' rows spell them
+function common.emissionOf(attrs: any)
+  return {
+    face = attrs.ShapeFace,
+    spreadAngle = attrs.SpreadAngle,
+    mirror = attrs.MirrorPaths,
+    mirrorRot = attrs.MirrorRotation,
+    partial = attrs.ShapePartial,
+    emissionDirection = Enum.NormalId[attrs.EmissionDirection],
   }
 end
 
@@ -343,7 +384,7 @@ end
 -- speed. a constant track costs no stepper
 function common.drivePropertyTrack(
   scope: lifetime.effect,
-  track: mods.Track,
+  track: any,
   setter: (number) -> (),
   getSpeed: () -> number,
   speedTween: any?
@@ -356,7 +397,7 @@ function common.drivePropertyTrack(
 
   lifetime.hold(
     scope,
-    tween.fromParams(utility.linear_bezier, track.span, function(_, deltaTime, elapsed)
+    tween.fromParams(utility.linear_bezier, track.duration, function(_, deltaTime, elapsed)
       setter(track.at(elapsed))
       return deltaTime * getSpeed()
     end, speedTween)

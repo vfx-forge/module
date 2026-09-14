@@ -9,9 +9,6 @@ local lifetime = require("@mod/lifetime")
 local Promise = require("@pkg/Promise")
 
 local EffectSelectors = table.concat({
-  -- Beziers
-  `.{utility.BEZIER_TAG}`,
-
   -- Lightning bolts
   `.{utility.LIGHTNING_TAG}`,
 
