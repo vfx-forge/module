@@ -3,7 +3,6 @@ local Mesh = require("@vfx/mesh")
 local Sound = require("@vfx/sound")
 local Bezier = require("@vfx/bezier")
 local Screen = require("@vfx/screen")
-local Particle = require("@vfx/particle")
 local Lightning = require("@vfx/lightning")
 local CameraShake = require("@vfx/camera_shake")
 local ShockwaveRing = require("@vfx/shockwave_ring")
@@ -349,56 +348,6 @@ function emitters.applyMods(
   end
 end
 
-function emitters.particle(
-  obj: ParticleEmitter,
-  scope: types.scope,
-  sharedUncMap: { [Instance]: number },
-  sharedRefMap: { [Instance]: Instance },
-  legacyScale: number
-)
-  local count = attr.get(obj, "EmitCount", utility.PLUGIN_CONTEXT and 1 or nil)
-  local duration = attr.get(obj, "EmitDuration", 0, true)
-
-  if not count or (count <= 0 and duration <= 0) then
-    return
-  end
-
-  if not obj:IsDescendantOf(workspace) then
-    local parent, ancestor = utility.cloneParticleAncestry(obj, sharedRefMap)
-
-    if not parent then
-      return
-    end
-
-    local clone = obj:Clone()
-    clone.Archivable = false
-    clone.Parent = parent
-
-    if not sharedUncMap[ancestor] then
-      ancestor.Parent = workspace.Terrain
-      sharedUncMap[ancestor] = 1
-    else
-      sharedUncMap[ancestor] += 1
-    end
-
-    lifetime.hold(scope, function()
-      sharedUncMap[ancestor] -= 1
-
-      if sharedUncMap[ancestor] <= 0 then
-        ancestor:Destroy()
-      end
-    end)
-
-    utility.try(`failed to emit particle with error: %s`, Particle.emit, obj, clone, scope, legacyScale)
-  else
-    utility.try(`failed to emit particle with error: %s`, Particle.emit, obj, obj, scope, legacyScale)
-  end
-end
-
-function emitters.trail(obj: Trail)
-  obj.Enabled = true
-end
-
 function emitters.bezier(obj: Instance, scope: types.scope, skipEnabledCheck: boolean?)
   local part = obj:FindFirstChildOfClass("Part")
 
@@ -562,10 +511,6 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
     return Sound.OWNS
   end
 
-  if className == "ParticleEmitter" then
-    return Particle.OWNS
-  end
-
   if obj:HasTag(utility.BEZIER_TAG) then
     return Bezier.OWNS
   end
@@ -605,13 +550,7 @@ local function route(
 )
   local className = obj.ClassName
 
-  if className == "ParticleEmitter" then
-    emitters.particle(obj, scope, sharedUncMap, sharedRefMap, legacyScale)
-    return
-  elseif className == "Trail" then
-    emitters.trail(obj)
-    return
-  elseif className == "Sound" then
+  if className == "Sound" then
     emitters.sound(obj, scope)
     return
   elseif className == "RayValue" then

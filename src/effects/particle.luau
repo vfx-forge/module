@@ -1,47 +1,126 @@
-local attr = require("@mod/attributes")
-local mods = require("@mod/mods")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 
+local function always()
+  return true
+end
+
 local particle = {}
 
--- TimeScale is driven through a sampler of its own, so emitters.applyMods
--- leaves it alone. unlike sound's Speed this is not a clock multiplier: it
--- writes the real ParticleEmitter property and the engine does the scaling
-particle.OWNS = {
-  attribute = {
-    TimeScale = true,
-  },
+particle.id = "particle"
+particle.display = { name = "Particle", icon = "particle", order = 10 }
+particle.classifier = "ParticleEmitter"
+
+particle.attributes = {
+  -- a count only the plugin defaults: anywhere else a particle emits once an
+  -- author has written one
+  EmitCount = knob(function()
+    return if utility.PLUGIN_CONTEXT then 1 else nil
+  end),
+  EmitDelay = knob(0):min(0):unit("seconds"),
+  EmitDuration = knob(0):min(0):unit("seconds"),
+  -- the span an old time scale quad ran over, read by the old format's reader
+  -- under this name and kept as a row so retime reaches it
+  TimeScaleDuration = knob(0.1):min(0):aliases("TimeScale_Duration"):unit("seconds"):hidden(always),
 }
 
-function particle.emit(ref: ParticleEmitter, obj: ParticleEmitter, scope: types.scope)
+-- the emitter's own property: a stored attribute of the same name shadows it
+-- and an old quad on it folds into its queue
+particle.properties = {
+  TimeScale = knob():mod(),
+}
+
+particle.layout = {
+  { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration" } },
+  { title = "Motion", entries = { "TimeScale" } },
+}
+
+-- the emitter's own clock: the longest a particle it emits can live, after
+-- the window it emits over
+function particle.duration(ctx: reader.Ctx, attrs: any)
+  return attrs.EmitDuration + (ctx.ref :: ParticleEmitter).Lifetime.Max
+end
+
+-- the clone an emitter outside the workspace plays on, under a copy of its
+-- ancestry that every particle of the same emit shares and the last one frees
+local function prepare(ctx: reader.Ctx): ParticleEmitter?
+  local ref = ctx.ref :: ParticleEmitter
+  local scope = ctx.scope
+  local shared = ctx.shared :: reader.Shared
+
+  if ref:IsDescendantOf(workspace) then
+    return ref
+  end
+
+  local parent, ancestor = utility.cloneParticleAncestry(ref, shared.ref)
+
+  if not parent then
+    return nil
+  end
+
+  local clone = ref:Clone()
+  clone.Archivable = false
+  clone.Parent = parent
+
+  if not shared.unc[ancestor] then
+    ancestor.Parent = workspace.Terrain
+    shared.unc[ancestor] = 1
+  else
+    shared.unc[ancestor] += 1
+  end
+
+  lifetime.hold(scope, function()
+    shared.unc[ancestor] -= 1
+
+    if shared.unc[ancestor] <= 0 then
+      ancestor:Destroy()
+    end
+  end)
+
+  return clone
+end
+
+function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
+  local ref = ctx.ref :: ParticleEmitter
+  local scope = ctx.scope
+
+  local count = attrs.EmitCount
+  local duration = attrs.EmitDuration
+
+  if count == nil or (count <= 0 and duration <= 0) then
+    return
+  end
+
+  local obj = prepare(ctx)
+
+  if obj == nil then
+    return
+  end
+
+  ctx.obj = obj
+
   if ref.Enabled then
     ref.Enabled = false
   end
 
-  local delay = attr.get(ref, "EmitDelay", 0)
-  local count = attr.get(ref, "EmitCount", 1)
-  local duration = attr.get(ref, "EmitDuration", 0)
-
   local useDuration = duration > 0
 
-  task.wait(delay)
+  task.wait(attrs.EmitDelay)
 
   if useDuration then
     obj.Enabled = true
   end
 
-  local timeScale =
-    mods.track(ref, "attribute", "TimeScale", obj.TimeScale, attr.get(ref, "TimeScale_Duration", 0.1, true))
-
+  local timeScale = props.TimeScale
   local speedTween
 
   obj.TimeScale = timeScale.at(0)
 
   if timeScale.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, timeScale.span, function(_, deltaTime, elapsed)
+    speedTween = tween.fromParams(utility.linear_bezier, timeScale.duration, function(_, deltaTime, elapsed)
       obj.TimeScale = timeScale.at(elapsed)
       return deltaTime
     end)

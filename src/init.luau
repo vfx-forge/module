@@ -96,7 +96,9 @@ local attributes = require("@mod/attributes")
 
 local Beam = require("@vfx/beam")
 local Sound = require("@vfx/sound")
+local Trail = require("@vfx/trail")
 local Bezier = require("@vfx/bezier")
+local Particle = require("@vfx/particle")
 local Lightning = require("@vfx/lightning")
 local CameraShake = require("@vfx/camera_shake")
 local ShockwaveRing = require("@vfx/shockwave_ring")
@@ -120,6 +122,8 @@ api.setup = false
 
 -- the built-ins register once, when the module loads
 registry.register(Beam)
+registry.register(Trail)
+registry.register(Particle)
 registry.register(ShockwaveDebris)
 
 function api.init(params: params?)
