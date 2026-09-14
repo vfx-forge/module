@@ -124,6 +124,28 @@ harness.suite(function()
       expect(#warnings).toBe(1)
     end)
 
+    test("an unusable stored number rests at the fallback without a warning", function()
+      local obj = Instance.new("Part")
+      obj:SetAttribute("A", 0 / 0)
+      obj:SetAttribute("B", math.huge)
+
+      local m = module({
+        A = knob(1),
+        B = knob(function()
+          return 3
+        end),
+      })
+
+      local attrs
+      local warnings = harness.captureWarnings(function()
+        attrs = reader.resolve(m, ctxFor(obj))
+      end)
+
+      expect(attrs.A).toBe(1)
+      expect(attrs.B).toBe(3)
+      expect(#warnings).toBe(0)
+    end)
+
     test("a readonly row ignores what was stored", function()
       local obj = Instance.new("Part")
       obj:SetAttribute("A", 5)

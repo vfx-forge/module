@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local knob = require("@mod/knob")
 local logger = require("@mod/logger")
 local legacy_mods = require("@mod/legacy_mods")
+local numeric_common = require("@mod/common/numeric")
 
 local reader = {}
 
@@ -209,6 +210,12 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
           break
         end
       end
+    end
+
+    -- an authored value no clock or lerp can use reads as the row's fallback,
+    -- the way every read did before rows
+    if v ~= nil and not numeric_common.usable(v) then
+      v = fallbackOf(row, base)
     end
 
     if v == nil then
