@@ -1,13 +1,13 @@
 local CollectionService = game:GetService("CollectionService")
 
-local attr = require("@mod/attributes")
-local mods = require("@mod/mods")
+local mod = require("@mod/mod")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
 local logger = require("@mod/logger")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
-local legacy_mods = require("@mod/legacy_mods")
+local registry = require("@mod/registry")
 
 local Bezier = require("@obj/Bezier")
 local Promise = require("@pkg/Promise")
@@ -15,24 +15,87 @@ local ObjectCache = require("@obj/ObjectCache")
 
 local rng = Random.new()
 
+local function always()
+  return true
+end
+
+local function defaultCurve()
+  return utility.default_bezier
+end
+
 local line = {}
 
--- every one of these is driven here, so the applier must not drive them as
--- well. Lifetime and Size especially: their legacy attributes are a NumberRange
--- and a Min/Max pair, and an applier writing a sample back would replace the
--- range with a scalar
-line.OWNS = {
-  attribute = {
-    Rate = true,
-    Size = true,
-    Scale = true,
-    Speed = true,
-    Lifetime = true,
-    OffsetIn = true,
-    SizeScaleIn = true,
-    Transparency = true,
+line.id = "shockwave_line"
+line.display = { name = "Shockwave Line", icon = "shockwave_line", order = 58 }
+line.classifier = ".Shockwave > #Lines > BasePart"
+line.components = "Instance"
+
+line.attributes = {
+  EmitDelay = knob(0):min(0):unit("seconds"),
+  Duration = knob(1):min(0):unit("seconds"),
+  Lifetime = knob(NumberRange.new(2, 3)):min(0):unit("seconds"):mod(),
+  SyncPosition = knob(false),
+  Length = knob(50):min(0):unit("studs"),
+  Direction = knob(vector.create(0, 0, -1)),
+  Rotation = knob(NumberRange.new(-180, 180)),
+  Rate = knob(30):min(0):unit("perSecond"):mod(),
+  FixedAmount = knob(0):min(0),
+  Scale = knob(1):min(0):mod(),
+  PathCurve = knob(function()
+    return utility.linear_bezier
+  end):aliases("Path_Curve"),
+  Size = knob(vector.create(2.5, 1.5, 2.5)):unit("studs"):mod(),
+  Speed = knob(1):mod(),
+  SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
+  OffsetIn = knob(vector.zero):unit("studs"):mod(),
+  OffsetInDuration = knob(0.5)
+    :min(0)
+    :aliases("OffsetIn_Duration", "Offset_Start_Duration")
+    :unit("seconds")
+    :hidden(always),
+  SizeScaleIn = knob(vector.one):mod(mod.from(vector.zero):duration(function(_, attrs)
+    return attrs.SizeScaleInDuration
+  end)),
+  SizeScaleInDuration = knob(0.5)
+    :min(0)
+    :aliases("SizeScaleIn_Duration", "Size_Start_Duration")
+    :unit("seconds")
+    :hidden(always),
+  Transparency = knob(0):aliases("Transparency_Start"):mod(mod.to(0):duration(function(_, attrs)
+    return attrs.TransparencyDuration
+  end)),
+  TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"):unit("seconds"):hidden(always),
+  ShrinkScale = knob(vector.zero):aliases("SizeScaleOut_End", "SizeScaleEnd"),
+  ShrinkDuration = knob(0.5)
+    :min(0)
+    :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
+    :unit("seconds"),
+  ShrinkCurve = knob(defaultCurve):aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve"),
+  OffsetOut = knob(vector.zero):aliases("OffsetOut_End", "Offset_End", "PartOffset"):unit("studs"),
+  OffsetOutDuration = knob(0.5):min(0):aliases("OffsetOut_Duration", "Offset_End_Duration"):unit("seconds"),
+  OffsetOutCurve = knob(defaultCurve):aliases("OffsetOut_Curve", "Offset_End_Curve"),
+}
+
+line.properties = {}
+
+line.layout = {
+  { title = "Emit", entries = { "EmitDelay", "Duration", "Lifetime", "Speed", "SyncPosition" } },
+  { title = "Sweep", entries = { "Length", "Direction", "Rotation", "Rate", "FixedAmount", "PathCurve" } },
+  { title = "Look", entries = { "Size", "Scale", "Transparency" } },
+  { title = "Entry", entries = { "OffsetIn", "SizeScaleIn" } },
+  {
+    title = "Exit",
+    entries = { "ShrinkScale", "ShrinkDuration", "ShrinkCurve", "OffsetOut", "OffsetOutDuration", "OffsetOutCurve" },
   },
 }
+
+-- the longest a piece emitted at the very end can last: the whole emission,
+-- then the longest dwell it can draw, then the longest exit it can run
+function line.duration(_, attrs: any)
+  return attrs.Duration
+    + attrs.Lifetime.value.Max
+    + math.max(attrs.ShrinkDuration, attrs.OffsetOutDuration, attrs.TransparencyDuration)
+end
 
 local part_cache: ObjectCache.ObjectCache?
 
@@ -44,90 +107,70 @@ function line.deinit()
   part_cache = nil
 end
 
-function line.emit(origin: Attachment, ref: Part, scope: types.scope)
-  if not part_cache then
-    return
-  end
-
-  local raydir = attr.get(origin, "RayDirection", vector.create(0, -50, 0))
-
-  local rayColGroup = attr.get(origin, "RayCollisionGroup", "Default")
-  local rayFilterTag = attr.get(origin, "FilterTag", "")
-  local rayFilterType = attr.get(origin, "FilterType", "Exclude")
-
-  local rayIgnoreWater = attr.get(origin, "IgnoreWater", true)
-  local rayIgnoreCanCollide = attr.get(origin, "IgnoreCanCollide", false)
-
+-- the raycast parameters every piece effect builds from the origin's rows
+local function paramsOf(origin: any): (RaycastParams, Vector3)
   local params = RaycastParams.new()
-  params.CollisionGroup = rayColGroup
-  params.IgnoreWater = rayIgnoreWater
-  params.RespectCanCollide = not rayIgnoreCanCollide
-  params.FilterType = Enum.RaycastFilterType[rayFilterType]
-  params.FilterDescendantsInstances = CollectionService:GetTagged(rayFilterTag)
+  params.CollisionGroup = origin.RayCollisionGroup
+  params.IgnoreWater = origin.IgnoreWater
+  params.RespectCanCollide = not origin.IgnoreCanCollide
+  params.FilterType = Enum.RaycastFilterType[origin.FilterType]
+  params.FilterDescendantsInstances = CollectionService:GetTagged(origin.FilterTag)
 
-  if rayFilterType == "Exclude" then
+  if origin.FilterType == "Exclude" then
     params:AddToFilter({ workspace.Terrain })
   end
 
-  local emitDelay = attr.get(ref, "EmitDelay", 0)
+  return params, origin.RayDirection
+end
 
-  local fixedAmount = attr.get(ref, "FixedAmount", 0)
+function line.emit(ctx: reader.Ctx, attrs: any)
+  local ref = ctx.ref :: BasePart
+  local scope = ctx.scope
+  local origin = utility.findFirstClassWithTag(ref, "Attachment", utility.SHOCKWAVE_TAG)
 
-  local duration = attr.get(ref, "Duration", 1)
-  local direction = attr.get(ref, "Direction", vector.create(0, 0, -1))
-  local lineLength = attr.get(ref, "Length", 50)
+  if not part_cache or not origin then
+    return
+  end
 
-  local rot = attr.getRange(ref, "Rotation", NumberRange.new(-180, 180))
+  local originAttrs = registry.read(origin)
 
-  local offsetOutEnd = legacy_mods.alias(ref, "OffsetOut_End", Vector3.zero)
-  local offsetOutDuration = legacy_mods.alias(ref, "OffsetOut_Duration", 0.5)
-  local offsetOutCurve = legacy_mods.alias(ref, "OffsetOut_Curve", utility.default_bezier)
+  if originAttrs == nil then
+    return
+  end
 
-  local lifeRange = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
+  local params, raydir = paramsOf(originAttrs)
 
-  local sizeOutEnd = legacy_mods.alias(ref, "SizeScaleOut_End", Vector3.zero)
-  local sizeOutDuration = legacy_mods.alias(ref, "SizeScaleOut_Duration", 0.5)
-  local sizeOutCurve = legacy_mods.alias(ref, "SizeScaleOut_Curve", utility.default_bezier)
+  local fixedAmount = attrs.FixedAmount
 
-  local minSize = attr.get(ref, "MinSize", vector.create(2, 1, 2))
-  local maxSize = attr.get(ref, "MaxSize", vector.create(3, 2, 3))
+  local duration = math.max(attrs.Duration, 0.001)
+  local direction = attrs.Direction
+  local lineLength = attrs.Length
 
-  local tpDuration = attr.get(ref, "Transparency_Duration", 0.5, true)
+  local rot = attrs.Rotation
 
-  -- an old row's start was only ever a seed for a piece carrying nothing of its
-  -- own, so it is read here and applied per piece. a framed queue says where the
-  -- fade starts itself, and a piece takes it at its word
-  local framedTp = mods.framed(ref, "attribute", "Transparency") ~= nil
-  local tpSeed = legacy_mods.alias(ref, "Transparency_Start", 0)
+  local lifeMin = attrs.Lifetime.value.Min
+  local lifeMax = attrs.Lifetime.value.Max
 
-  -- the entry phases run over their own clocks, which are the durations the
-  -- rows always carried, and rest where the old defaults left them: the offset
-  -- where it stands, the size on a rise from nothing to the drawn size
-  local offsetIn =
-    mods.track(ref, "attribute", "OffsetIn", Vector3.zero, legacy_mods.alias(ref, "OffsetIn_Duration", 0.5))
-  local sizeIn = mods.track(
-    ref,
-    "attribute",
-    "SizeScaleIn",
-    mods.ramp(Vector3.zero, Vector3.one),
-    legacy_mods.alias(ref, "SizeScaleIn_Duration", 0.5)
-  )
+  local shrinkTo = attrs.ShrinkScale
+  local shrinkCurve = attrs.ShrinkCurve
+  local shrinkDuration = attrs.ShrinkDuration
+
+  local offsetOut = attrs.OffsetOut
+  local offsetOutCurve = attrs.OffsetOutCurve
+  local offsetOutDuration = attrs.OffsetOutDuration
+
+  local offsetIn = attrs.OffsetIn
+  local sizeIn = attrs.SizeScaleIn
 
   local offsetInStart = offsetIn.at(0)
   local sizeInStart = sizeIn.at(0)
 
-  -- a phase that starts where it already ends has nothing to do. an authored
-  -- queue is taken at its word
-  local offsetInMoves = offsetIn.animated
-    and (mods.framed(ref, "attribute", "OffsetIn") ~= nil or offsetIn.at(0) ~= offsetIn.at(offsetIn.span))
-  local sizeInMoves = sizeIn.animated
-    and (mods.framed(ref, "attribute", "SizeScaleIn") ~= nil or sizeIn.at(0) ~= sizeIn.at(sizeIn.span))
+  local offsetInMoves = offsetIn.animated and offsetInStart ~= offsetIn.at(offsetIn.duration)
+  local sizeInMoves = sizeIn.animated and sizeInStart ~= sizeIn.at(sizeIn.duration)
 
-  -- the longest a piece emitted at the very end can last: the whole emission,
-  -- then the longest dwell it can draw, then the longest exit it can run
-  local runLength = duration + lifeRange.Max + math.max(sizeOutDuration, offsetOutDuration, tpDuration)
+  local runLength = ctx.duration :: number
 
-  local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
+  local speed = attrs.Speed
 
   local speedTween
 
@@ -151,12 +194,11 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
     return nil
   end
 
-  local sync = attr.get(ref, "SyncPosition", false)
+  local sync = attrs.SyncPosition
 
-  duration = math.max(duration, 0.001)
-
-  local rate = mods.track(ref, "attribute", "Rate", 30, duration)
-  local scale = mods.track(ref, "attribute", "Scale", 1, duration)
+  -- the sweep's own rows run over the sweep, not over the whole run
+  local rate = attrs.Rate(nil, duration)
+  local scale = attrs.Scale(nil, duration)
 
   direction = direction.Unit
 
@@ -164,7 +206,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
     direction = -Vector3.zAxis
   end
 
-  task.wait(emitDelay)
+  task.wait(attrs.EmitDelay)
 
   local promises = {}
 
@@ -182,7 +224,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
   elseif rate.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, rate.span, function(_, deltaTime, elapsed)
+      tween.fromParams(utility.linear_bezier, rate.duration, function(_, deltaTime, elapsed)
         currentRate = rate.at(elapsed)
         return step(deltaTime, elapsed)
       end)
@@ -192,7 +234,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
   if scale.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, scale.span, function(_, deltaTime, elapsed)
+      tween.fromParams(utility.linear_bezier, scale.duration, function(_, deltaTime, elapsed)
         currentScale = scale.at(elapsed)
         return step(deltaTime, elapsed)
       end)
@@ -202,7 +244,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
   -- the speed tween is the clock itself, so it is the one stepper that does not
   -- scale by it
   if speed.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
       currentSpeed = speed.at(elapsed)
       return deltaTime
     end)
@@ -210,7 +252,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
     lifetime.hold(scope, speedTween)
   end
 
-  local pathCurve = attr.get(ref, "Path_Curve", utility.linear_bezier)
+  local pathCurve = attrs.PathCurve
 
   local ok, points = pcall(function()
     return utility.deserializePath(pathCurve)
@@ -277,7 +319,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
         -- same measurements. the track's queue default is the Min and Max pair,
         -- a randomizer between two Vector3s that draws once per component,
         -- which is exactly the three NextNumber calls this replaces
-        local drawnSize = mods.track(ref, "attribute", "Size", mods.draw(minSize, maxSize), runLength).at(0)
+        local drawnSize = attrs.Size().at(0)
 
         local id = utility.getRandomId()
 
@@ -310,28 +352,13 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
         part.Material = result.Material
         part.Transparency = result.Instance.Transparency
 
-        if not framedTp and part.Transparency == 0 then
-          part.Transparency = tpSeed
+        if part.Transparency == 0 then
+          part.Transparency = attrs.Transparency.value
         end
 
-        -- the fade a piece runs after its dwell goes from where the piece rests,
-        -- which a piece that inherits its hit surface knows only now, to where
-        -- the row ends. a framed queue names both ends and is taken at its word
-        local transparency = mods.track(
-          ref,
-          "attribute",
-          "Transparency",
-          mods.ramp(part.Transparency, 0),
-          tpDuration,
-          nil,
-          { ownStart = true }
-        )
+        local fade = attrs.Transparency(part.Transparency)
 
-        if framedTp then
-          part.Transparency = transparency.at(0)
-        end
-
-        local tpMoves = transparency.animated and (framedTp or transparency.at(0) ~= transparency.at(transparency.span))
+        part.Transparency = fade.at(0)
 
         part.Size = Vector3.zero
 
@@ -354,7 +381,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
         local currentOffset = Vector3.zero
 
         if offsetInMoves then
-          offsetTween = tween.fromParams(utility.linear_bezier, offsetIn.span, function(_, deltaTime, elapsed)
+          offsetTween = tween.fromParams(utility.linear_bezier, offsetIn.duration, function(_, deltaTime, elapsed)
             local at = offsetIn.at(elapsed)
 
             -- a queue that stops resolving partway would throw here every frame, and a
@@ -375,7 +402,7 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
         part.Size = size * sizeInStart
 
         if sizeInMoves then
-          sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.span, function(_, deltaTime, elapsed)
+          sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.duration, function(_, deltaTime, elapsed)
             local factor = sizeIn.at(elapsed)
 
             if typeof(factor) == "Vector3" then
@@ -395,13 +422,13 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
         -- Lifetime track is sampled on the piece's dwell clock, which never
         -- reaches the run. a zero there reads as fully elapsed, which would pin
         -- a linked modifier at its end value from the first frame
-        local life = mods.track(ref, "attribute", "Lifetime", mods.draw(lifeRange.Min, lifeRange.Max), lifeRange.Max)
+        local life = attrs.Lifetime(nil, lifeMax)
         local drawn = life.at(0)
 
         -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
         -- ever and the piece dwells for the life of the session
         if typeof(drawn) ~= "number" or drawn ~= drawn then
-          drawn = rng:NextNumber(lifeRange.Min, lifeRange.Max)
+          drawn = rng:NextNumber(lifeMin, lifeMax)
         end
 
         -- the dwell belongs to the effect rather than to the scheduler: its
@@ -433,31 +460,31 @@ function line.emit(origin: Attachment, ref: Part, scope: types.scope)
 
             local startSize = part.Size
 
-            if startSize ~= size * sizeOutEnd then
+            if startSize ~= size * shrinkTo then
               lifetime.hold(
                 scope,
-                tween.fromParams(sizeOutCurve, sizeOutDuration, function(alpha, deltaTime, elapsed)
-                  part.Size = startSize:Lerp(size * sizeOutEnd, alpha)
+                tween.fromParams(shrinkCurve, shrinkDuration, function(alpha, deltaTime, elapsed)
+                  part.Size = startSize:Lerp(size * shrinkTo, alpha)
                   return step(deltaTime, elapsed)
                 end)
               )
             end
 
-            if currentOffset ~= offsetOutEnd then
+            if currentOffset ~= offsetOut then
               lifetime.hold(
                 scope,
                 tween.fromParams(offsetOutCurve, offsetOutDuration, function(alpha, deltaTime, elapsed)
-                  part.CFrame = CFrame.new(currentOffset:Lerp(offsetOutEnd, alpha)) * rotCF
+                  part.CFrame = CFrame.new(currentOffset:Lerp(offsetOut, alpha)) * rotCF
                   return step(deltaTime, elapsed)
                 end)
               )
             end
 
-            if tpMoves then
+            if fade.animated then
               lifetime.hold(
                 scope,
-                tween.fromParams(utility.linear_bezier, transparency.span, function(_, deltaTime, elapsed)
-                  local v = transparency.at(elapsed)
+                tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
+                  local v = fade.at(elapsed)
 
                   if typeof(v) == "number" then
                     part.Transparency = v

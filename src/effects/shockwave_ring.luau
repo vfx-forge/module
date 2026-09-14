@@ -1,34 +1,93 @@
 local CollectionService = game:GetService("CollectionService")
 
-local attr = require("@mod/attributes")
-local mods = require("@mod/mods")
+local mod = require("@mod/mod")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
-local legacy_mods = require("@mod/legacy_mods")
+local registry = require("@mod/registry")
 
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
 
 local rng = Random.new()
 
+local function always()
+  return true
+end
+
+local function defaultCurve()
+  return utility.default_bezier
+end
+
 local ring = {}
 
--- every one of these is driven here, so the applier must not drive them as
--- well. Lifetime and Size especially: their legacy attributes are a NumberRange
--- and a Min/Max pair, and an applier writing a sample back would replace the
--- range with a scalar
-ring.OWNS = {
-  attribute = {
-    Size = true,
-    Speed = true,
-    Lifetime = true,
-    OffsetIn = true,
-    SizeScaleIn = true,
-    Transparency = true,
+ring.id = "shockwave_ring"
+ring.display = { name = "Shockwave Ring", icon = "shockwave_ring", order = 55 }
+ring.classifier = ".Shockwave > #Rings > BasePart"
+ring.components = "Instance"
+
+ring.attributes = {
+  EmitDelay = knob(0):min(0):unit("seconds"),
+  Radius = knob(5):min(0):unit("studs"),
+  Segments = knob(7):min(1),
+  Lifetime = knob(NumberRange.new(2, 3)):min(0):unit("seconds"):mod(),
+  Size = knob(vector.create(2.5, 1.5, 2.5)):unit("studs"):mod(),
+  Speed = knob(1):mod(),
+  SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
+  -- the entry phases rest where the old defaults left them: the offset where
+  -- it stands, the size on a rise from nothing to the drawn size, the fade
+  -- from where a piece rests to the end. the spans the old quads ran over
+  -- are rows of their own, so the defaults keep them and retime reaches them
+  OffsetIn = knob(vector.zero):unit("studs"):mod(),
+  OffsetInDuration = knob(0.5)
+    :min(0)
+    :aliases("OffsetIn_Duration", "Offset_Start_Duration")
+    :unit("seconds")
+    :hidden(always),
+  SizeScaleIn = knob(vector.one):mod(mod.from(vector.zero):duration(function(_, attrs)
+    return attrs.SizeScaleInDuration
+  end)),
+  SizeScaleInDuration = knob(0.5)
+    :min(0)
+    :aliases("SizeScaleIn_Duration", "Size_Start_Duration")
+    :unit("seconds")
+    :hidden(always),
+  Transparency = knob(0):aliases("Transparency_Start"):mod(mod.to(0):duration(function(_, attrs)
+    return attrs.TransparencyDuration
+  end)),
+  TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"):unit("seconds"):hidden(always),
+  -- the exit phases start at each piece's own drawn lifetime, which a default
+  -- modifier cannot express yet, so they stay triplets
+  ShrinkScale = knob(vector.zero):aliases("SizeScaleOut_End", "SizeScaleEnd"),
+  ShrinkDuration = knob(0.5)
+    :min(0)
+    :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
+    :unit("seconds"),
+  ShrinkCurve = knob(defaultCurve):aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve"),
+  OffsetOut = knob(vector.zero):aliases("OffsetOut_End", "Offset_End", "PartOffset"):unit("studs"),
+  OffsetOutDuration = knob(0.5):min(0):aliases("OffsetOut_Duration", "Offset_End_Duration"):unit("seconds"),
+  OffsetOutCurve = knob(defaultCurve):aliases("OffsetOut_Curve", "Offset_End_Curve"),
+}
+
+ring.properties = {}
+
+ring.layout = {
+  { title = "Emit", entries = { "EmitDelay", "Radius", "Segments", "Lifetime", "Speed" } },
+  { title = "Look", entries = { "Size", "Transparency" } },
+  { title = "Entry", entries = { "OffsetIn", "SizeScaleIn" } },
+  {
+    title = "Exit",
+    entries = { "ShrinkScale", "ShrinkDuration", "ShrinkCurve", "OffsetOut", "OffsetOutDuration", "OffsetOutCurve" },
   },
 }
+
+-- the longest a segment can last, which is the ring's own clock: the longest
+-- dwell it can draw, then the longest exit it can run
+function ring.duration(_, attrs: any)
+  return attrs.Lifetime.value.Max + math.max(attrs.ShrinkDuration, attrs.OffsetOutDuration, attrs.TransparencyDuration)
+end
 
 local part_cache: ObjectCache.ObjectCache?
 
@@ -40,85 +99,66 @@ function ring.deinit()
   part_cache = nil
 end
 
-function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
-  if not part_cache then
-    return
-  end
-
-  local raydir = attr.get(origin, "RayDirection", vector.create(0, -50, 0))
-
-  local rayColGroup = attr.get(origin, "RayCollisionGroup", "Default")
-  local rayFilterTag = attr.get(origin, "FilterTag", "")
-  local rayFilterType = attr.get(origin, "FilterType", "Exclude")
-
-  local rayIgnoreWater = attr.get(origin, "IgnoreWater", true)
-  local rayIgnoreCanCollide = attr.get(origin, "IgnoreCanCollide", false)
-
+-- the raycast parameters every piece effect builds from the origin's rows
+local function paramsOf(origin: any): (RaycastParams, Vector3)
   local params = RaycastParams.new()
-  params.CollisionGroup = rayColGroup
-  params.IgnoreWater = rayIgnoreWater
-  params.RespectCanCollide = not rayIgnoreCanCollide
-  params.FilterType = Enum.RaycastFilterType[rayFilterType]
-  params.FilterDescendantsInstances = CollectionService:GetTagged(rayFilterTag)
+  params.CollisionGroup = origin.RayCollisionGroup
+  params.IgnoreWater = origin.IgnoreWater
+  params.RespectCanCollide = not origin.IgnoreCanCollide
+  params.FilterType = Enum.RaycastFilterType[origin.FilterType]
+  params.FilterDescendantsInstances = CollectionService:GetTagged(origin.FilterTag)
 
-  if rayFilterType == "Exclude" then
+  if origin.FilterType == "Exclude" then
     params:AddToFilter({ workspace.Terrain })
   end
 
-  local emitDelay = attr.get(ref, "EmitDelay", 0)
+  return params, origin.RayDirection
+end
 
-  local radius = attr.get(ref, "Radius", 5)
-  local segments = attr.get(ref, "Segments", 7)
+function ring.emit(ctx: reader.Ctx, attrs: any)
+  local ref = ctx.ref :: BasePart
+  local scope = ctx.scope
+  local origin = utility.findFirstClassWithTag(ref, "Attachment", utility.SHOCKWAVE_TAG)
 
-  local lifeRange = attr.getRange(ref, "Lifetime", NumberRange.new(2, 3), NumberRange.new(0, math.huge))
+  if not part_cache or not origin then
+    return
+  end
 
-  local offsetOutEnd = legacy_mods.alias(ref, "OffsetOut_End", Vector3.zero)
-  local offsetOutDuration = legacy_mods.alias(ref, "OffsetOut_Duration", 0.5)
-  local offsetOutCurve = legacy_mods.alias(ref, "OffsetOut_Curve", utility.default_bezier)
+  local originAttrs = registry.read(origin)
 
-  local sizeOutEnd = legacy_mods.alias(ref, "SizeScaleOut_End", Vector3.zero)
-  local sizeOutDuration = legacy_mods.alias(ref, "SizeScaleOut_Duration", 0.5)
-  local sizeOutCurve = legacy_mods.alias(ref, "SizeScaleOut_Curve", utility.default_bezier)
+  if originAttrs == nil then
+    return
+  end
 
-  local minSize = attr.get(ref, "MinSize", vector.create(2, 1, 2))
-  local maxSize = attr.get(ref, "MaxSize", vector.create(3, 2, 3))
+  local params, raydir = paramsOf(originAttrs)
 
-  local tpDuration = attr.get(ref, "Transparency_Duration", 0.5, true)
+  local radius = attrs.Radius
+  local segments = attrs.Segments
 
-  -- an old row's start was only ever a seed for a piece carrying nothing of its
-  -- own, so it is read here and applied per piece. a framed queue says where the
-  -- fade starts itself, and a piece takes it at its word
-  local framedTp = mods.framed(ref, "attribute", "Transparency") ~= nil
-  local tpSeed = legacy_mods.alias(ref, "Transparency_Start", 0)
+  local lifeMin = attrs.Lifetime.value.Min
+  local lifeMax = attrs.Lifetime.value.Max
 
-  -- the entry phases run over their own clocks, which are the durations the
-  -- rows always carried, and rest where the old defaults left them: the offset
-  -- where it stands, the size on a rise from nothing to the drawn size
-  local offsetIn =
-    mods.track(ref, "attribute", "OffsetIn", Vector3.zero, legacy_mods.alias(ref, "OffsetIn_Duration", 0.5))
-  local sizeIn = mods.track(
-    ref,
-    "attribute",
-    "SizeScaleIn",
-    mods.ramp(Vector3.zero, Vector3.one),
-    legacy_mods.alias(ref, "SizeScaleIn_Duration", 0.5)
-  )
+  local shrinkTo = attrs.ShrinkScale
+  local shrinkCurve = attrs.ShrinkCurve
+  local shrinkDuration = attrs.ShrinkDuration
+
+  local offsetOut = attrs.OffsetOut
+  local offsetOutCurve = attrs.OffsetOutCurve
+  local offsetOutDuration = attrs.OffsetOutDuration
+
+  local offsetIn = attrs.OffsetIn
+  local sizeIn = attrs.SizeScaleIn
 
   local offsetInStart = offsetIn.at(0)
   local sizeInStart = sizeIn.at(0)
 
-  -- a phase that starts where it already ends has nothing to do. an authored
-  -- queue is taken at its word
-  local offsetInMoves = offsetIn.animated
-    and (mods.framed(ref, "attribute", "OffsetIn") ~= nil or offsetIn.at(0) ~= offsetIn.at(offsetIn.span))
-  local sizeInMoves = sizeIn.animated
-    and (mods.framed(ref, "attribute", "SizeScaleIn") ~= nil or sizeIn.at(0) ~= sizeIn.at(sizeIn.span))
+  -- a phase that starts where it already ends has nothing to do
+  local offsetInMoves = offsetIn.animated and offsetInStart ~= offsetIn.at(offsetIn.duration)
+  local sizeInMoves = sizeIn.animated and sizeInStart ~= sizeIn.at(sizeIn.duration)
 
-  -- the longest a segment can last, which is the ring's own clock: the longest
-  -- dwell it can draw, then the longest exit it can run
-  local runLength = lifeRange.Max + math.max(sizeOutDuration, offsetOutDuration, tpDuration)
+  local runLength = ctx.duration :: number
 
-  local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
+  local speed = attrs.Speed
 
   local speedTween
 
@@ -142,12 +182,12 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     return nil
   end
 
-  task.wait(emitDelay)
+  task.wait(attrs.EmitDelay)
 
   -- the speed tween is the clock itself, so it is the one stepper that does not
   -- scale by it
   if speed.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
       currentSpeed = speed.at(elapsed)
       return deltaTime
     end)
@@ -171,13 +211,8 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
       continue
     end
 
-    -- per SEGMENT, like the lifetime: a size is drawn per emitted instance, and
-    -- one track for the ring would cut every piece to the same measurements.
-    --
-    -- the track's queue default is the Min and Max pair, a randomizer between
-    -- two Vector3s that draws once per component, which is exactly the three
-    -- NextNumber calls this replaces
-    local size = mods.track(ref, "attribute", "Size", mods.draw(minSize, maxSize), runLength).at(0)
+    -- per SEGMENT: the row is called again so a drawn size is this piece's own
+    local size = attrs.Size().at(0)
 
     local id = utility.getRandomId()
 
@@ -210,28 +245,18 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     part.Material = result.Material
     part.Transparency = result.Instance.Transparency
 
-    if not framedTp and part.Transparency == 0 then
-      part.Transparency = tpSeed
+    -- an opaque surface leaves the piece where the row rests
+    if part.Transparency == 0 then
+      part.Transparency = attrs.Transparency.value
     end
 
-    -- the fade a segment runs after its dwell goes from where the segment rests,
-    -- which a segment that inherits its hit surface knows only now, to where the
-    -- row ends. a framed queue names both ends and is taken at its word
-    local transparency = mods.track(
-      ref,
-      "attribute",
-      "Transparency",
-      mods.ramp(part.Transparency, 0),
-      tpDuration,
-      nil,
-      { ownStart = true }
-    )
+    -- the fade a segment runs after its dwell goes from where the segment
+    -- rests, which a segment inheriting its hit surface knows only now, to
+    -- where the row ends. a framed queue names both ends and is taken at its
+    -- word
+    local fade = attrs.Transparency(part.Transparency)
 
-    if framedTp then
-      part.Transparency = transparency.at(0)
-    end
-
-    local tpMoves = transparency.animated and (framedTp or transparency.at(0) ~= transparency.at(transparency.span))
+    part.Transparency = fade.at(0)
 
     part.Size = Vector3.zero
 
@@ -252,11 +277,11 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     local currentOffset = Vector3.zero
 
     if offsetInMoves then
-      offsetTween = tween.fromParams(utility.linear_bezier, offsetIn.span, function(_, deltaTime, elapsed)
+      offsetTween = tween.fromParams(utility.linear_bezier, offsetIn.duration, function(_, deltaTime, elapsed)
         local at = offsetIn.at(elapsed)
 
-        -- a queue that stops resolving partway would throw here every frame, and a
-        -- stepper that throws is never cleaned up
+        -- a queue that stops resolving partway would throw here every frame,
+        -- and a stepper that throws is never cleaned up
         if typeof(at) == "Vector3" then
           currentOffset = at
           part.CFrame = CFrame.new(currentOffset) * rotCF
@@ -271,7 +296,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     part.Size = size * sizeInStart
 
     if sizeInMoves then
-      sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.span, function(_, deltaTime, elapsed)
+      sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.duration, function(_, deltaTime, elapsed)
         local factor = sizeIn.at(elapsed)
 
         if typeof(factor) == "Vector3" then
@@ -287,36 +312,23 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
     local env = scope.effects.emitNested(part, scope.depth + 1, scope)
     table.insert(promises, env.Finished)
 
-    -- asked for per SEGMENT, not once for the ring: a lifetime is drawn per
-    -- emitted instance, and a track asked for once would hand every segment the
-    -- same draw and break them apart into one synchronised flash.
-    --
-    -- the span is the dwell's own ceiling rather than the effect's run: a
-    -- Lifetime track is sampled on the piece's dwell clock, which never reaches
-    -- the run. a zero there reads as fully elapsed, which would pin a linked
-    -- modifier at its end value from the first frame
-    local life = mods.track(ref, "attribute", "Lifetime", mods.draw(lifeRange.Min, lifeRange.Max), lifeRange.Max)
+    -- per SEGMENT, over the dwell's own ceiling rather than the ring's run: a
+    -- Lifetime track is sampled on the piece's dwell clock, which never
+    -- reaches the run, and a zero there would read as fully elapsed
+    local life = attrs.Lifetime(nil, lifeMax)
     local drawn = life.at(0)
 
     -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
     -- ever and the piece dwells for the life of the session
     if typeof(drawn) ~= "number" or drawn ~= drawn then
-      drawn = rng:NextNumber(lifeRange.Min, lifeRange.Max)
+      drawn = rng:NextNumber(lifeMin, lifeMax)
     end
 
     -- the dwell is part of the effect, not of the scheduler: its cleanup lives
     -- in the scope, so tearing the effect down cancels it rather than letting it
     -- fire into a part the cache has already handed to someone else, and it runs
-    -- on the effect's clock, so speed scales it.
-    --
-    -- the length is the counter's to decide rather than the duration's, so a
-    -- Lifetime a modifier is moving is read every frame instead of being baked
-    -- at emit. with nothing authored that reads the value this segment drew and
-    -- the two are the same thing.
-    --
-    -- the body still runs on its own thread, the way task.delay ran it: what
-    -- resumes it is a render step, and emitOnFinish is not something to hand a
-    -- render step
+    -- on the effect's clock, so speed scales it. its length is the counter's to
+    -- decide, so a Lifetime a modifier is moving is read every frame
     tween.after(math.huge, function(deltaTime, elapsed)
       local target = life.at(elapsed)
 
@@ -341,31 +353,31 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
 
         local startSize = part.Size
 
-        if startSize ~= size * sizeOutEnd then
+        if startSize ~= size * shrinkTo then
           lifetime.hold(
             scope,
-            tween.fromParams(sizeOutCurve, sizeOutDuration, function(alpha, deltaTime, elapsed)
-              part.Size = startSize:Lerp(size * sizeOutEnd, alpha)
+            tween.fromParams(shrinkCurve, shrinkDuration, function(alpha, deltaTime, elapsed)
+              part.Size = startSize:Lerp(size * shrinkTo, alpha)
               return step(deltaTime, elapsed)
             end)
           )
         end
 
-        if currentOffset ~= offsetOutEnd then
+        if currentOffset ~= offsetOut then
           lifetime.hold(
             scope,
             tween.fromParams(offsetOutCurve, offsetOutDuration, function(alpha, deltaTime, elapsed)
-              part.CFrame = CFrame.new(currentOffset:Lerp(offsetOutEnd, alpha)) * rotCF
+              part.CFrame = CFrame.new(currentOffset:Lerp(offsetOut, alpha)) * rotCF
               return step(deltaTime, elapsed)
             end)
           )
         end
 
-        if tpMoves then
+        if fade.animated then
           lifetime.hold(
             scope,
-            tween.fromParams(utility.linear_bezier, transparency.span, function(_, deltaTime, elapsed)
-              local v = transparency.at(elapsed)
+            tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
+              local v = fade.at(elapsed)
 
               if typeof(v) == "number" then
                 part.Transparency = v
@@ -383,9 +395,7 @@ function ring.emit(origin: Attachment, ref: Part, scope: types.scope)
   end
 
   -- the hold has to run on the same clock the dwells do, or a speed below one
-  -- stretches them past it and the scope tears down mid dwell. the transparency
-  -- exit is one of the three a dwell starts, so it counts here too or a long one
-  -- is cut off partway
+  -- stretches them past it and the scope tears down mid dwell
   tween.timer(runLength, function(deltaTime, elapsed)
     return step(deltaTime, elapsed)
   end, nil, scope)

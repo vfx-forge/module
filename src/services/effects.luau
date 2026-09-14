@@ -25,10 +25,6 @@ local EffectSelectors = table.concat({
   -- target that is not otherwise an effect. overlaps every clause above on
   -- purpose; queryAndEmitDescendants dedupes
   `.{utility.MODIFIERS_TAG}`,
-
-  -- Shockwave effects
-  "#Rings > Part",
-  "#Lines > Part",
 }, ",")
 
 local effects = {}

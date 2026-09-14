@@ -2,12 +2,12 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
 local mod = require("@mod/mod")
-local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local registry = require("@mod/registry")
 
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
@@ -19,6 +19,7 @@ local debris = {}
 debris.id = "shockwave_debris"
 debris.display = { name = "Shockwave Debris", icon = "shockwave_debris", order = 62 }
 debris.classifier = ".Shockwave > #Debris > BasePart"
+debris.components = "Instance"
 
 -- no Speed row. debris flies under physics impulses, so a speed multiplier
 -- would scale the dwell and the shrink and leave the flight alone, which reads
@@ -119,14 +120,18 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
   local params
 
-  -- the origin's rows belong to the shockwave attachment, which has no module
-  -- yet, so they are still read here
-  local rayColGroup = attr.get(origin, "RayCollisionGroup", "Default")
+  local originAttrs = registry.read(origin)
 
-  local rayFilterTag = attr.get(origin, "FilterTag", "")
-  local rayFilterType = attr.get(origin, "FilterType", "Exclude")
+  if originAttrs == nil then
+    return
+  end
 
-  local rayIgnoreCanCollide = attr.get(origin, "IgnoreCanCollide", false)
+  local rayColGroup = originAttrs.RayCollisionGroup
+
+  local rayFilterTag = originAttrs.FilterTag
+  local rayFilterType = originAttrs.FilterType
+
+  local rayIgnoreCanCollide = originAttrs.IgnoreCanCollide
 
   if attrs.InheritanceEnabled then
     params = OverlapParams.new()

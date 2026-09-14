@@ -1,8 +1,6 @@
 local Mesh = require("@vfx/mesh")
 local Bezier = require("@vfx/bezier")
 local Lightning = require("@vfx/lightning")
-local ShockwaveRing = require("@vfx/shockwave_ring")
-local ShockwaveLine = require("@vfx/shockwave_line")
 
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
@@ -458,14 +456,6 @@ function emitters.legacy_child(obj: RayValue, scope: types.scope)
   drive(target, read.source, read.name, read.queue, scope, fallbackDuration(obj))
 end
 
-function emitters.shockwave_ring(att: Attachment, obj: Part, scope: types.scope)
-  utility.try(`failed to emit shockwave ring with error: %s`, ShockwaveRing.emit, att, obj, scope)
-end
-
-function emitters.shockwave_line(att: Attachment, obj: Part, scope: types.scope)
-  utility.try(`failed to emit shockwave line with error: %s`, ShockwaveLine.emit, att, obj, scope)
-end
-
 -- the ownership table of an effect that still routes through the arms below:
 -- the rows it drives through its own sampler, which the applier must leave
 -- alone. it mirrors route's own discriminators and has to move with them. a
@@ -481,18 +471,6 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
 
   if obj:HasTag(utility.LIGHTNING_TAG) then
     return Lightning.OWNS
-  end
-
-  -- the same discriminator dispatch uses for a shockwave: a Part under a tagged
-  -- Attachment, told apart by the folder it sits in
-  if className == "Part" and utility.findFirstClassWithTag(obj, "Attachment", utility.SHOCKWAVE_TAG) then
-    local folder = obj.Parent and obj.Parent.Name or ""
-
-    if folder == "Rings" then
-      return ShockwaveRing.OWNS
-    elseif folder == "Lines" then
-      return ShockwaveLine.OWNS
-    end
   end
 
   return nil
@@ -531,20 +509,6 @@ local function route(
     end
 
     return
-  end
-
-  if className == "Part" then
-    local att = utility.findFirstClassWithTag(obj, "Attachment", utility.SHOCKWAVE_TAG)
-
-    if att then
-      local name = obj.Parent and obj.Parent.Name or ""
-
-      if name == "Rings" then
-        emitters.shockwave_ring(att, obj, scope)
-      elseif name == "Lines" then
-        emitters.shockwave_line(att, obj, scope)
-      end
-    end
   end
 end
 
