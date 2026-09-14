@@ -457,6 +457,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
           frames = flipbook,
           speedTween = speedTween,
           effectDuration = duration,
+          syncDuration = from:GetAttribute("SyncDuration") == true,
 
           curve = attr.get(from, "Flipbook_Change_Curve", utility.linear_bezier),
           duration = attr.get(from, "Flipbook_Change_Duration", duration),

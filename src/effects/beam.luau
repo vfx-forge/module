@@ -40,6 +40,16 @@ beam.attributes = {
     :mod()
     :label("Scale")
     :hint("Multiplier on the beam's transparency keypoints."),
+  -- a cycle nothing authors runs over the effect's own duration, which the
+  -- reader has decided by the time a row resolves
+  FlipbookChangeDuration = knob(function(ctx)
+      return ctx.duration
+    end)
+    :aliases("Flipbook_Change_Duration")
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds for one full flipbook cycle."),
+  SyncDuration = knob(false):label("SyncDuration"):hint("Match the flipbook cycle to the effect duration."),
 }
 
 -- the beam's own properties are its state; an old attribute of the same name
@@ -56,6 +66,7 @@ beam.properties = {
 beam.layout = {
   { title = "Emit", entries = { "EmitDelay" } },
   { title = "Effect", entries = { "EffectDuration", "Speed" } },
+  { title = "Flipbook", entries = { "FlipbookChangeDuration", "SyncDuration" } },
   {
     title = "Shape",
     entries = {
@@ -309,9 +320,10 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
       frames = flipbook,
       speedTween = speedTween,
       effectDuration = duration,
+      syncDuration = attrs.SyncDuration,
 
       curve = attr.get(ref, "Flipbook_Change_Curve", utility.linear_bezier),
-      duration = attr.get(ref, "Flipbook_Change_Duration", duration),
+      duration = attrs.FlipbookChangeDuration,
 
       getSpeed = function()
         return currentSpeed

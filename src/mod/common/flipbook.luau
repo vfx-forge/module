@@ -71,6 +71,7 @@ export type FlipbookConfig = {
 
   duration: number,
   effectDuration: number,
+  syncDuration: boolean?,
 
   frames: { number },
 
@@ -81,7 +82,7 @@ export type FlipbookConfig = {
 function common.getChangeDuration(config: FlipbookConfig)
   local changeDuration = config.duration
 
-  if config.ref:GetAttribute("SyncDuration") then
+  if config.syncDuration then
     changeDuration = config.effectDuration
   end
 
