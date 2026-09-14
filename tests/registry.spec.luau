@@ -1,5 +1,6 @@
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
+local mods = require("@mod/mods")
 local harness = require("@tests/harness")
 local registry = require("@mod/registry")
 local test, expect = harness.test, harness.expect
@@ -384,6 +385,71 @@ harness.suite(function()
 
       expect(ids.mesh == model).toBe(true)
       expect(ids.beam == outside).toBe(true)
+    end)
+
+    test("scan over every classifier shape finds each effect once and nothing else", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(stub("trail", { classifier = "Trail" }))
+      registry.register(stub("particle", { classifier = "ParticleEmitter" }))
+      registry.register(stub("sound", { classifier = "Sound" }))
+      registry.register(stub("shake", { classifier = "RayValue.CameraShake" }))
+      registry.register(stub("spin", { classifier = "Model:not(Model:has(> BasePart#Start):has(> BasePart#End))" }))
+      registry.register(
+        stub("mesh", { classifier = "Model:has(> BasePart#Start):has(> BasePart#End)", components = "Instance" })
+      )
+      registry.register(
+        stub("screen", { classifier = "BasePart[$Enabled=true]:not(.Shockwave >> BasePart)", components = "Instance" })
+      )
+      registry.register(stub("origin", { classifier = "Attachment.Shockwave" }))
+      registry.register(stub("ring", { classifier = ".Shockwave > #Rings > BasePart", components = "Instance" }))
+      registry.register(stub("bolt", { classifier = "Attachment.LightningBolt", components = "Instance" }))
+
+      harness.reset()
+
+      local root = harness.make("Folder")
+      harness.make("Trail", root)
+      harness.make("ParticleEmitter", root)
+      harness.make("Sound", root)
+      harness.make("RayValue", root):AddTag("CameraShake")
+      harness.make("RayValue", root)
+      local spin = harness.make("Model", root)
+      harness.make("Part", spin).Name = "Start"
+      local mesh = harness.make("Model", root)
+      harness.make("Part", mesh).Name = "Start"
+      harness.make("Part", mesh).Name = "End"
+      harness.make("ParticleEmitter", mesh)
+      local screen = harness.make("Part", root)
+      screen:SetAttribute("Enabled", true)
+      harness.make("Sound", screen)
+      local origin = harness.make("Attachment", root)
+      origin:AddTag("Shockwave")
+      local rings = harness.make("Folder", origin)
+      rings.Name = "Rings"
+      local piece = harness.make("Part", rings)
+      piece:SetAttribute("Enabled", true)
+      harness.make("Attachment", root):AddTag("LightningBolt")
+      local plain = harness.make("Part", root)
+      plain:SetAttribute(mods.attrName("attribute", "Transparency"), "x")
+
+      local counts = {}
+
+      for _, hit in registry.scan(root) do
+        counts[hit.effect.id] = (counts[hit.effect.id] or 0) + 1
+      end
+
+      expect(counts).toEqual({
+        trail = 1,
+        particle = 1,
+        sound = 1,
+        shake = 1,
+        spin = 1,
+        mesh = 1,
+        screen = 1,
+        origin = 1,
+        ring = 1,
+        bolt = 1,
+      })
     end)
   end)
 end)

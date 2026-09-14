@@ -325,7 +325,6 @@ end
 api.retime = require("@mod/retime").batch
 api.resize = require("@mod/resize").batch
 api.recolor = require("@mod/recolor")
-api.Schema = require("@root/schema")
 api.effects = registry
 api.knob = knob
 api.mod = mod

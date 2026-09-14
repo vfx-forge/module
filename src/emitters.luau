@@ -291,11 +291,9 @@ end
 
 -- drives every Forge*Mods_* target on an instance that no effect module claims,
 -- with no effect code written for that target. it only ever sees what
--- emitters.dispatch is handed, and services/effects.luau's EffectSelectors
--- never selects a plain descendant Part, so a tween authored on
--- Part.Transparency runs only when that Part is already selected for some other
--- reason. see the 2026-07-25 modifier accordion and runtime design spec,
--- Section 3, "Known limitation, recorded 2026-08-01"
+-- emitters.dispatch is handed, and the registry scan never selects a plain
+-- descendant Part, so a tween authored on Part.Transparency runs only when
+-- that Part is already selected for some other reason, a known limitation.
 -- `owned` is keyed by source first, then name, because a name alone is not a
 -- target: an instance can carry both a property and an attribute called Scale,
 -- which is the ambiguity the two prefixes exist to remove
@@ -356,32 +354,16 @@ function emitters.legacy_child(obj: RayValue, scope: types.scope)
   drive(target, read.source, read.name, read.queue, scope, fallbackDuration(obj))
 end
 
--- picks the emitter for an instance and calls it. wrapped by emitters.dispatch,
--- which owns the prologue
-local function route(
-  obj: any, -- since we don't use IsA(...), we don't get type narrowing
-  scope: types.scope,
-  sharedUncMap: { [Instance]: number },
-  sharedRefMap: { [Instance]: Instance },
-  legacyScale: number
-)
-  local className = obj.ClassName
-
-  if className == "RayValue" then
-    emitters.legacy_child(obj, scope)
-    return
-  end
-end
-
 -- picks the emitter for an instance and calls it, after the randomizer
 -- children under it have drawn and the queues on it have started. a driver is
 -- an effect of the same emit, so nothing here has to wait for it: the emit
 -- stays open until the last driver ends.
 --
 -- an instance the registry matched runs its module: every row read once, the
--- applier told which rows the module drives itself, then emit. everything else
--- takes the route below until its module exists. `constant` marks an emit the
--- ConstantVFX tick started, which a module reads as ctx.constant
+-- applier told which rows the module drives itself, then emit. everything
+-- else gets only the applier and, for a legacy RayValue, its own drive.
+-- `constant` marks an emit the ConstantVFX tick started, which a module reads
+-- as ctx.constant
 function emitters.dispatch(
   obj: any,
   scope: types.scope,
@@ -416,7 +398,12 @@ function emitters.dispatch(
 
   emitters.applyMods(obj, scope, fallbackDuration(obj), nil)
 
-  route(obj, scope, shared.unc, shared.ref, legacyScale)
+  -- a legacy tween RayValue emitted on its own is the one effect left with no
+  -- module: it drives what it targets. anything else nothing classifies is
+  -- only a carrier of queues, which the applier has just started
+  if obj:IsA("RayValue") then
+    emitters.legacy_child(obj, scope)
+  end
 end
 
 return emitters

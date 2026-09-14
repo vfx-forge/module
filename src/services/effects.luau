@@ -8,21 +8,7 @@ local lifetime = require("@mod/lifetime")
 
 local Promise = require("@pkg/Promise")
 
-local EffectSelectors = table.concat({
-  -- Legacy tween children, until the union goes
-  "RayValue",
-
-  -- anything carrying a modifier queue, which is how the applier reaches a
-  -- target that is not otherwise an effect. overlaps every clause above on
-  -- purpose; queryAndEmitDescendants dedupes
-  `.{utility.MODIFIERS_TAG}`,
-}, ",")
-
 local effects = {}
-
--- exposed so the selector spec can query against the real string instead of
--- keeping a copy that drifts
-effects.SELECTORS = EffectSelectors
 
 local api_ref: types.Api?
 
@@ -111,37 +97,23 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
     baseDepth: number,
     claimant: registry.Module?
   )
-    -- the registry's matches first, each with its module, then the union
-    -- selector for everything still routed by class and tag. an instance the
-    -- registry matched is never dispatched again by the union
     local found = registry.scan(obj, claimant)
-    local allDesc = obj:QueryDescendants(EffectSelectors)
 
-    if #found == 0 and #allDesc == 0 then
+    if #found == 0 then
       return
     end
 
     local skipCache: { [Instance]: boolean } = {}
     local depthCache: { [Instance]: number } = {}
 
-    -- QueryDescendants returns one entry per MATCHING CLAUSE, not per instance,
-    -- and the clauses overlap: a bezier-tagged part that is also Enabled matches
-    -- both its tag and BasePart[$Enabled=true], and a shockwave ring part
-    -- matches both its group and that same clause. Without this the instance is
-    -- dispatched once per clause, which emits it twice and, since the applier
-    -- runs in dispatch's prologue, puts two drivers on every modifier target
-    local emitted: { [Instance]: boolean } = {}
-
     skipCache[obj] = false
     depthCache[obj] = baseDepth
 
-    local function visit(desc: Instance, effect: registry.Module?)
-      if emitted[desc] then
-        return
-      end
-
-      emitted[desc] = true
-
+    -- a hit's depth is how many ancestors lie between it and the root, and a
+    -- hit under an ancestor excluded from emitting is left alone. the walk
+    -- caches every ancestor it passes, so a tree of many hits walks each
+    -- branch once
+    local function visit(desc: Instance, effect: registry.Module)
       local ancestors = {}
       local current = desc.Parent
 
@@ -160,8 +132,7 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
         depthCache[ancestor] = currentDepth
 
         if not shouldSkip then
-          local claim = registry.of(ancestor)
-          shouldSkip = (claim ~= nil and claim.components == "Instance") or ancestor:HasTag(utility.EMIT_EXCLUDE_TAG)
+          shouldSkip = ancestor:HasTag(utility.EMIT_EXCLUDE_TAG)
         end
 
         skipCache[ancestor] = shouldSkip
@@ -174,10 +145,6 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
 
     for _, hit in found do
       visit(hit.instance, hit.effect)
-    end
-
-    for _, desc in allDesc do
-      visit(desc, nil)
     end
   end
 

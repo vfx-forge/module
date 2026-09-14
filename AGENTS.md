@@ -12,16 +12,17 @@ Follow this whether you are changing code here directly or preparing a PR. Code 
 
 | Path | Contents |
 |---|---|
-| `src/effects/` | One module per effect (`beam`, `lightning`, `shockwave_ring`, ...) |
+| `src/effects/` | One module per effect, every effect there is; each declares its rows and `emit(ctx, attrs, props)` |
 | `src/mod/` | Plain-table helper namespaces (`tween`, `lerp`, `logger`, `attributes`) |
 | `src/mod/lifetime.luau` | Emit and effect records: `hold`, `defer`, `lock`, `run`, `clear`, `await`. Effects file resources through `lifetime.hold(scope, x)`, never `table.insert(scope, x)` |
 | `src/mod/mods.luau` | Modifier queues. `mods.build` turns a queue into a Track; `mods.track` is the read-and-build an unconverted effect still calls. `legacy_mods` reads the old attribute format and owns every quirk of it (`ALIASES`, `CURVES`, `SPANS`, `DRAWN_RANGES`) |
 | `src/mod/knob.luau`, `src/mod/mod.luau` | Row and default-modifier builders an effect module declares its rows with: `knob(x)` chained `min max aliases options label hint curve unit hidden readonly mod`; `mod.from(a)` / `mod.to(b)` chained `duration curve start` |
 | `src/mod/registry.luau`, `src/mod/reader.luau` | The effect registry (`register get list of scan read source`) and the reader that resolves a module's rows into one frozen `attrs, props` pair per emit |
+| `src/services/effects.luau` | Scans a root through the registry and dispatches every hit at its depth; nothing else selects instances |
 | `src/mod/common/` | Pure helpers with no engine access, requirable under lune |
 | `src/obj/` | Class modules with metatables (`Bezier`, `ObjectCache`) |
 | `src/services/` | Long-lived services (`effects`, `caches`, `texture_loader`) |
-| `src/emitters.luau` | Dispatch layer mapping instances to effect modules |
+| `src/emitters.luau` | The dispatcher: the reader, the applier and the module's emit for a classified instance; the legacy RayValue remnant for the rest |
 | `src/types.luau` | Shared exported types |
 
 Require via the `.luaurc` aliases (`@mod`, `@obj`, `@vfx`, `@srv`, `@root`, `@pkg`). Do not write relative requires; there is exactly one in the whole tree and it is an outlier.
