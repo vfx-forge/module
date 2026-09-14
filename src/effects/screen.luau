@@ -43,8 +43,9 @@ function screen.emit(ctx: reader.Ctx, attrs: any)
 
   -- a part under a model that moves would fight it for the camera
   local anc = ref:FindFirstAncestorOfClass("Model")
+  local ancModule = if anc then registry.of(anc) else nil
 
-  if anc and registry.of(anc) == Spin and not Spin.static(registry.read(anc)) then
+  if anc and ancModule == Spin and not Spin.static((registry.read(anc, ancModule))) then
     return
   end
 

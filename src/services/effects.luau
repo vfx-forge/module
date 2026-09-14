@@ -202,7 +202,8 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
 
     dispatchInto(emit, obj, depth, module)
 
-    if not utility.shouldSkipNested(obj) then
+    -- a module that claims its whole subtree runs the effects under it itself
+    if not (module and module.components == "Instance") and not utility.shouldSkipNested(obj) then
       queryAndEmitDescendants(emit, obj, depth + 1, module)
     end
   end

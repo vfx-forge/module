@@ -316,6 +316,22 @@ harness.suite(function()
       end
     end)
 
+    test("read given its module already known answers the same as read that resolves it", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(stub("beam", { attributes = { A = knob(3) } }))
+
+      harness.reset()
+
+      local beam = harness.make("Beam")
+      local module = registry.of(beam)
+
+      local attrs = registry.read(beam)
+      local attrsWithModule = registry.read(beam, module)
+
+      expect(attrsWithModule).toEqual(attrs)
+    end)
+
     test("scan returns nothing under a claimant that claims every descendant, without a query", function()
       registry.clear()
 

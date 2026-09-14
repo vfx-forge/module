@@ -523,8 +523,11 @@ function registry.source(fn: ((inst: Instance) -> { [string]: any })?)
   reader.source = fn or reader.defaultSource
 end
 
-function registry.read(inst: Instance): (any, any)
-  local module = registry.of(inst)
+-- an instance's resolved attrs and props, through its module. a caller that
+-- already has the module in hand passes it and skips classifying the
+-- instance a second time; left nil, the module is found the usual way
+function registry.read(inst: Instance, module: Module?): (any, any)
+  module = if module ~= nil then module else registry.of(inst)
 
   if module == nil then
     return nil, nil
