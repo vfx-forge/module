@@ -4,7 +4,6 @@ local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
 local debris = require("@vfx/shockwave_debris")
-local ring = require("@vfx/shockwave_ring")
 local resize = require("@mod/resize")
 local retime = require("@mod/retime")
 local harness = require("@tests/harness")
@@ -267,26 +266,22 @@ harness.suite(function()
       expect(obj:GetAttribute("Scale")).toBe(2)
     end)
 
-    test("a ring piece's offsets scale under every old spelling, and each of them once", function()
-      expect(table.find(ring.attributes.OffsetIn.names, "BaseOffset") ~= nil).toBe(true)
-
+    test("a ring piece's entry offset spellings scale, and each of them once", function()
       effectStub("shockwave_ring", "Part", {
-        OffsetIn = knob(Vector3.new()):aliases("BaseOffset"):unit("studs"):mod(),
+        OffsetIn = knob(Vector3.new()):unit("studs"):mod(),
         OffsetOut = knob(Vector3.new()):aliases("OffsetOut_End", "Offset_End", "PartOffset"):unit("studs"):mod(),
       })
 
       local obj = Instance.new("Part")
-      obj:SetAttribute("BaseOffset", Vector3.new(1, 1, 1))
       obj:SetAttribute("OffsetIn_Start", Vector3.new(1, 1, 1))
       obj:SetAttribute("PartOffset", Vector3.new(1, 1, 1))
 
       resize.apply(obj, 2)
 
-      expect(obj:GetAttribute("BaseOffset") == Vector3.new(2, 2, 2)).toBe(true)
+      -- the entry quad's own keys come from the row's name, and PartOffset
+      -- from the exit row alone: a key two rows named would be scaled once by
+      -- each of them
       expect(obj:GetAttribute("OffsetIn_Start") == Vector3.new(2, 2, 2)).toBe(true)
-
-      -- the exit row already names PartOffset, and a key two rows named would
-      -- be scaled once by each of them
       expect(obj:GetAttribute("PartOffset") == Vector3.new(2, 2, 2)).toBe(true)
     end)
 

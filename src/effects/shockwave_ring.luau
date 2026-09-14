@@ -61,12 +61,7 @@ ring.attributes = {
   -- it stands, the size on a rise from nothing to the drawn size, the fade
   -- from where a piece rests to the end. the spans the old quads ran over
   -- are rows of their own, so the defaults keep them and retime reaches them
-  OffsetIn = knob(vector.zero)
-    :aliases("BaseOffset")
-    :unit("studs")
-    :mod()
-    :label("Offset")
-    :hint("Local offset each piece settles at."),
+  OffsetIn = knob(vector.zero):unit("studs"):mod():label("Offset"):hint("Local offset each piece settles at."),
   OffsetInDuration = knob(0.5)
     :min(0)
     :aliases("OffsetIn_Duration", "Offset_Start_Duration")

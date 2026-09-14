@@ -90,12 +90,7 @@ line.attributes = {
   -- the span an old speed quad ran over, read by the old format's reader under
   -- this name and kept as a row so retime reaches it
   SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
-  OffsetIn = knob(vector.zero)
-    :aliases("BaseOffset")
-    :unit("studs")
-    :mod()
-    :label("Offset")
-    :hint("Local offset each piece settles at."),
+  OffsetIn = knob(vector.zero):unit("studs"):mod():label("Offset"):hint("Local offset each piece settles at."),
   OffsetInDuration = knob(0.5)
     :min(0)
     :aliases("OffsetIn_Duration", "Offset_Start_Duration")
