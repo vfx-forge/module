@@ -112,8 +112,9 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
     -- a hit's depth is how many ancestors lie between it and the root, and a
     -- hit under an ancestor excluded from emitting is left alone. the walk
     -- caches every ancestor it passes, so a tree of many hits walks each
-    -- branch once
-    local function visit(desc: Instance, effect: registry.Module)
+    -- branch once. a hit with no effect is a legacy tween child, which the
+    -- dispatcher drives without a module
+    local function visit(desc: Instance, effect: registry.Module?)
       local ancestors = {}
       local current = desc.Parent
 

@@ -60,6 +60,42 @@ do
   }
 end
 
+-- the render step under lune. nothing advances a frame here, so a spec that
+-- drives a target advances it itself through harness.render: the bound
+-- steppers in priority order, then the plain connections, which is the order
+-- the engine runs them in
+type Binding = { id: string?, priority: number, step: (deltaTime: number) -> (), live: boolean }
+
+local bindings: { Binding } = {}
+
+local function bind(binding: Binding)
+  table.insert(bindings, binding)
+
+  table.sort(bindings, function(a, b)
+    return a.priority < b.priority
+  end)
+end
+
+local function unbind(binding: Binding)
+  binding.live = false
+
+  local index = table.find(bindings, binding)
+
+  if index then
+    table.remove(bindings, index)
+  end
+end
+
+-- a frame. the list is copied first, because a stepper that ends unbinds
+-- itself from inside its own call
+local function renderFrame(deltaTime: number)
+  for _, binding in table.clone(bindings) do
+    if binding.live then
+      binding.step(deltaTime)
+    end
+  end
+end
+
 -- @mod/attributes asks RunService and the script's ancestry for its context
 -- once at load; under lune the answer is "a plain client", which is also the
 -- context where a write-back must never happen
@@ -75,6 +111,33 @@ do
     IsRunning = function()
       return false
     end,
+
+    BindToRenderStep = function(_, id: string, priority: number, step: (deltaTime: number) -> ())
+      bind({ id = id, priority = priority, step = step, live = true })
+    end,
+
+    UnbindFromRenderStep = function(_, id: string)
+      for _, binding in table.clone(bindings) do
+        if binding.id == id then
+          unbind(binding)
+        end
+      end
+    end,
+
+    RenderStepped = {
+      Connect = function(_, step: (deltaTime: number) -> ())
+        local binding: Binding = { id = nil, priority = math.huge, step = step, live = true }
+        bind(binding)
+
+        return {
+          Connected = true,
+
+          Disconnect = function()
+            unbind(binding)
+          end,
+        }
+      end,
+    },
   }
 
   -- every other service is inert: a method answers an empty list and a signal
@@ -237,6 +300,10 @@ local function deepEqual(a: any, b: any): boolean
 end
 
 local harness = {}
+
+-- one frame of the render step, for a spec that drives a target through an
+-- effect. nothing advances a frame under lune, so a spec advances its own
+harness.render = renderFrame
 
 -- roblox datatype constructors (Vector2, Vector3, CFrame, NumberSequence, ...)
 -- for specs to destructure explicitly, e.g.

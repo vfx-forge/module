@@ -4,12 +4,15 @@ local mods = require("@mod/mods")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local reader = require("@mod/reader")
+local legacy_mods = require("@mod/legacy_mods")
 
 local registry = {}
 
 export type Module = reader.Module
 
-export type Hit = { instance: Instance, effect: Module }
+-- an effect of nil is the old format's tween child, which drives what it
+-- targets with no module behind it
+export type Hit = { instance: Instance, effect: Module? }
 
 type Owned = { [string]: { [string]: boolean } }
 
@@ -464,10 +467,37 @@ function registry.of(inst: Instance): Module?
   return nil
 end
 
--- every descendant of root that some module classifies, less the ones another
--- hit or the root's own module claims as components. a module whose
--- components selector is the whole subtree is answered by ancestry rather
--- than by a query, since every instance below it is claimed
+-- the module a legacy child's parent was classified as, which is the only one
+-- that could already be reading the child: the parent is either a hit of this
+-- scan or the root, whose own module the claimant is. walked rather than kept
+-- in a map, because the parent an instance hands back is equal to the hit
+-- rather than the same table
+local function classifierOf(hits: { Hit }, parent: Instance): Module?
+  for _, hit in hits do
+    if hit.effect ~= nil and hit.instance == parent then
+      return hit.effect
+    end
+  end
+
+  return nil
+end
+
+-- whether a legacy child under a classified instance names a mod row that
+-- instance's module already reads, which the reader folds into the row on the
+-- clone. dispatching it as well would drive the template at the same time
+local function readsChild(module: Module?, child: Instance): boolean
+  if module == nil then
+    return false
+  end
+
+  return owned[module][legacy_mods.childSource(child)][child.Name] == true
+end
+
+-- every descendant of root that some module classifies, plus every legacy
+-- tween child no module reads, less the ones another hit or the root's own
+-- module claims as components. a module whose components selector is the whole
+-- subtree is answered by ancestry rather than by a query, since every instance
+-- below it is claimed
 function registry.scan(root: Instance, claimant: Module?): { Hit }
   if claimant ~= nil and claimant.components == "Instance" then
     return {}
@@ -489,6 +519,26 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
     end
   end
 
+  -- the old format's tween children, which drove their targets long before any
+  -- effect had a module and still do: every RayValue no module classified, at
+  -- one query for the scan. what the child carries is dispatch's business, so
+  -- nothing here reads it
+  for _, inst in query(root, "RayValue") do
+    if taken[inst] then
+      continue
+    end
+
+    local parent = inst.Parent
+    local module = if parent == root then claimant else classifierOf(hits, parent :: Instance)
+
+    if readsChild(module, inst) then
+      continue
+    end
+
+    taken[inst] = true
+    table.insert(hits, { instance = inst, effect = nil })
+  end
+
   local component: { [Instance]: boolean } = {}
 
   if claimant ~= nil and claimant.components ~= nil then
@@ -498,7 +548,7 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
   end
 
   for _, hit in hits do
-    local selector = hit.effect.components
+    local selector = if hit.effect ~= nil then hit.effect.components else nil
 
     if selector == nil then
       continue

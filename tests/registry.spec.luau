@@ -399,6 +399,84 @@ harness.suite(function()
       expect(ids.beam == outside).toBe(true)
     end)
 
+    test("scan hands back a legacy tween child with no effect, and a tagged one as its module's", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(stub("shake", { classifier = "RayValue.CameraShake" }))
+
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local part = harness.make("Part", root)
+      local child = harness.make("RayValue", part)
+      local shake = harness.make("RayValue", root)
+      shake:AddTag("CameraShake")
+
+      local hits = registry.scan(root)
+      local byInstance = {}
+
+      for _, hit in hits do
+        byInstance[hit.instance] = hit
+      end
+
+      expect(#hits).toBe(2)
+      expect(byInstance[shake].effect.id).toBe("shake")
+      expect(byInstance[child].effect).toBe(nil)
+      expect(byInstance[part]).toBe(nil)
+    end)
+
+    test("a legacy child under a subtree a module claims is that module's, not a hit", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(stub("mesh", { classifier = "Model", components = "Instance" }))
+
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local model = harness.make("Model", root)
+      harness.make("RayValue", harness.make("Part", model))
+
+      expect(#registry.scan(model, registry.get("mesh"))).toBe(0)
+      expect(#registry.scan(root)).toBe(1)
+    end)
+
+    test("a legacy child naming a mod row of its parent's module is left to the row", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(stub("sound", { classifier = "Sound", properties = { Volume = knob():mod() } }))
+      registry.register(stub("trail", { classifier = "Trail" }))
+
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local sound = harness.make("Sound", root)
+      local trail = harness.make("Trail", root)
+
+      harness.make("RayValue", sound).Name = "Volume"
+
+      local tagged = harness.make("RayValue", sound)
+      tagged.Name = "Volume"
+      tagged:AddTag("AttributeTweener")
+
+      local lifetime = harness.make("RayValue", trail)
+      lifetime.Name = "Lifetime"
+
+      local hits = registry.scan(root)
+      local byInstance = {}
+
+      for _, hit in hits do
+        byInstance[hit.instance] = hit
+      end
+
+      -- a property row's queues lived on the attribute side too, so neither
+      -- spelling of the sound's child is dispatched; the trail declares no
+      -- rows at all, so its child still drives what it targets
+      expect(#hits).toBe(3)
+      expect(byInstance[sound].effect.id).toBe("sound")
+      expect(byInstance[trail].effect.id).toBe("trail")
+      expect(byInstance[lifetime].effect).toBe(nil)
+    end)
+
     test("scan over every classifier shape finds each effect once and nothing else", function()
       registry.clear()
       registry.configure({ query = harness.query })
@@ -447,9 +525,12 @@ harness.suite(function()
       local counts = {}
 
       for _, hit in registry.scan(root) do
-        counts[hit.effect.id] = (counts[hit.effect.id] or 0) + 1
+        local id = if hit.effect ~= nil then hit.effect.id else "legacy"
+        counts[id] = (counts[id] or 0) + 1
       end
 
+      -- the untagged RayValue is the old format's tween child, and the part
+      -- carrying nothing but a modifier attribute is still not a hit at all
       expect(counts).toEqual({
         trail = 1,
         particle = 1,
@@ -461,6 +542,7 @@ harness.suite(function()
         origin = 1,
         ring = 1,
         bolt = 1,
+        legacy = 1,
       })
     end)
   end)

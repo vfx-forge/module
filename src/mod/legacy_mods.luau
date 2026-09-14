@@ -192,6 +192,10 @@ local function legacySource(child: Instance): string
   return "property"
 end
 
+-- the same question asked from outside, for a caller deciding whether a child
+-- belongs to a row the walk below already folds it into
+legacy_mods.childSource = legacySource
+
 local function isRandomizer(child: Instance): boolean
   return child:HasTag(PROPERTY_RANDOMIZER_TAG) or child:HasTag(ATTRIBUTE_RANDOMIZER_TAG)
 end
