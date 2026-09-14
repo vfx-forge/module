@@ -363,7 +363,8 @@ end
 -- applier told which rows the module drives itself, then emit. everything
 -- else gets only the applier and, for a legacy RayValue, its own drive.
 -- `constant` marks an emit the ConstantVFX tick started, which a module reads
--- as ctx.constant
+-- as ctx.constant. such a tick runs on a clock where an emit runs once, and
+-- the randomizer draw and the applier belong to an emit, so it gets neither
 function emitters.dispatch(
   obj: any,
   scope: types.scope,
@@ -372,7 +373,9 @@ function emitters.dispatch(
   effect: registry.Module?,
   constant: boolean?
 )
-  processRandomizers(obj)
+  if not constant then
+    processRandomizers(obj)
+  end
 
   if effect then
     local ctx: reader.Ctx = {
@@ -390,7 +393,10 @@ function emitters.dispatch(
       return
     end
 
-    emitters.applyMods(obj, scope, ctx.duration :: number, registry.owned(effect))
+    if not constant then
+      emitters.applyMods(obj, scope, ctx.duration :: number, registry.owned(effect))
+    end
+
     utility.try(`failed to emit {effect.id} with error: %s`, effect.emit, ctx, attrs, props)
 
     return
