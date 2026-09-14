@@ -1,8 +1,6 @@
-local Spin = require("@vfx/spin")
 local Mesh = require("@vfx/mesh")
 local Sound = require("@vfx/sound")
 local Bezier = require("@vfx/bezier")
-local Screen = require("@vfx/screen")
 local Lightning = require("@vfx/lightning")
 local CameraShake = require("@vfx/camera_shake")
 local ShockwaveRing = require("@vfx/shockwave_ring")
@@ -442,14 +440,6 @@ function emitters.mesh(
   end
 end
 
-function emitters.spin(obj: Model, scope: types.scope)
-  if lifetime.lock(scope, obj) then
-    return
-  end
-
-  utility.try(`failed to emit spinning model with error: %s`, Spin.emit, obj, scope)
-end
-
 function emitters.camera_shake(obj: RayValue, scope: types.scope)
   utility.try(`failed to emit camera shake with error: %s`, CameraShake.emit, obj, scope)
 end
@@ -472,12 +462,6 @@ function emitters.legacy_child(obj: RayValue, scope: types.scope)
   end
 
   drive(target, read.source, read.name, read.queue, scope, fallbackDuration(obj))
-end
-
-function emitters.screen(obj: BasePart, scope: types.scope)
-  local ok, result = utility.try(`failed to emit screen effect with error: %s`, Screen.emit, obj, scope)
-
-  return if ok then result else false
 end
 
 function emitters.shockwave_ring(att: Attachment, obj: Part, scope: types.scope)
@@ -504,7 +488,7 @@ end
 -- registered effect never reaches here; its rows come from registry.owned
 local function ownedFor(obj: any, className: string): { [string]: { [string]: boolean } }?
   if className == "Model" then
-    return if utility.isMeshVFX(obj) then Mesh.OWNS else Spin.OWNS
+    return if utility.isMeshVFX(obj) then Mesh.OWNS else nil
   end
 
   if className == "Sound" then
@@ -573,26 +557,9 @@ local function route(
     return
   end
 
-  -- a screen effect reached as a DESCENDANT. the top-level loop in
-  -- services/effects.luau handles a directly emitted one and never calls
-  -- dispatch for it, so without this branch an Enabled BasePart is selected,
-  -- handed here, and falls through every case. the predicate mirrors that
-  -- loop's, including the shockwave exclusion, so the two paths agree on what
-  -- a screen effect is
-  if
-    obj:IsA("BasePart")
-    and obj:GetAttribute("Enabled")
-    and not utility.findFirstClassWithTag(obj, "Attachment", utility.SHOCKWAVE_TAG)
-  then
-    emitters.screen(obj, scope)
-    return
-  end
-
   if className == "Model" then
     if utility.isMeshVFX(obj) then
       emitters.mesh(obj, scope, shared_part_cache, legacyScale)
-    else
-      emitters.spin(obj, scope)
     end
 
     return

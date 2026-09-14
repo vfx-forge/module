@@ -1,22 +1,58 @@
 local RunService = game:GetService("RunService")
 
-local attr = require("@mod/attributes")
-local types = require("@root/types")
+local knob = require("@mod/knob")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local registry = require("@mod/registry")
+
+local Spin = require("@vfx/spin")
 
 local screen = {}
 
-function screen.emit(ref: BasePart, scope: types.scope)
-  if not ref:GetAttribute("Enabled") then
+screen.id = "screen"
+screen.display = { name = "Screen Effect", icon = "screen", order = 65 }
+
+-- an enabled part that is not a shockwave piece. its descendants are its own:
+-- the emit below runs them under the placed part
+screen.classifier = "BasePart[$Enabled=true]:not(.Shockwave >> BasePart)"
+screen.components = "Instance"
+
+screen.attributes = {
+  Enabled = knob(false),
+  PartDistance = knob(1.5):min(0):unit("studs"),
+  PartScale = knob(vector.one),
+  OffsetPosition = knob(vector.zero):unit("studs"),
+  OffsetRotation = knob(vector.zero),
+}
+
+screen.properties = {}
+
+screen.layout = {
+  { title = "Part", entries = { "Enabled", "PartDistance", "PartScale" } },
+  { title = "Offset", entries = { "OffsetPosition", "OffsetRotation" } },
+}
+
+function screen.emit(ctx: reader.Ctx, attrs: any)
+  local ref = ctx.ref :: BasePart
+  local scope = ctx.scope
+
+  if not attrs.Enabled or lifetime.lock(scope, ref) then
     return
   end
 
-  local scale = attr.get(ref, "PartScale", vector.one)
-  local distance = attr.get(ref, "PartDistance", 1.5)
+  -- a part under a model that moves would fight it for the camera
+  local anc = ref:FindFirstAncestorOfClass("Model")
 
-  local pos = attr.get(ref, "OffsetPosition", vector.zero)
-  local rot = attr.get(ref, "OffsetRotation", vector.zero) * utility.DEG_TO_RAD
+  if anc and registry.of(anc) == Spin and not Spin.static(registry.read(anc)) then
+    return
+  end
+
+  local scale = attrs.PartScale
+  local distance = attrs.PartDistance
+
+  local pos = attrs.OffsetPosition
+  local rot = attrs.OffsetRotation * utility.DEG_TO_RAD
 
   local originalCF = ref.CFrame
   local originalSize = ref.Size
@@ -30,7 +66,7 @@ function screen.emit(ref: BasePart, scope: types.scope)
     ref.CollisionGroup = originalColGroup ~= "" and originalColGroup or "Default"
   end)
 
-  -- crazy how BindToRenderStep will always run before RenderStepped in studio
+  -- a render step binding always runs before RenderStepped in the editor
   local function frame()
     local camera = workspace.CurrentCamera
 
@@ -56,7 +92,9 @@ function screen.emit(ref: BasePart, scope: types.scope)
     end)
   end
 
-  return true
+  -- the part stays placed until the last effect under it finishes
+  local env = scope.effects.emitNested(ref, scope.depth + 1, scope)
+  env.Finished:await()
 end
 
 return screen

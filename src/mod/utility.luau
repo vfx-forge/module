@@ -186,32 +186,6 @@ function utility.isMeshVFX(obj: Instance)
     and (obj :: any).End:IsA("BasePart")
 end
 
--- the names src/effects/spin.luau drives through samplers of its own. a
--- new-format queue on either is animation no legacy quad can express, and
--- emitters.applyMods skips them precisely because the effect claims them, so
--- an early return out of spin.emit leaves nothing driving them at all
-local SPIN_SAMPLED = { "Scale", "SpinSpeed" }
-
-function utility.isSpinModelStatic(model: Model)
-  for _, name in SPIN_SAMPLED do
-    -- decoded, not merely present: modifier_store.clear writes an EMPTY queue
-    -- as a tombstone, so presence alone judges a model whose only modifier was
-    -- authored and then deleted animated forever. the framed read is also why
-    -- mods.read is wrong here, because its legacy fallback finds a quad that an
-    -- earlier non-soft attr.get self-wrote
-    local queue = mods.framed(model, "attribute", name)
-
-    if queue ~= nil and #queue > 0 then
-      return false
-    end
-  end
-
-  return attr.get(model, "SpinRotation", vector.zero, true) == vector.zero
-    and attr.get(model, "Scale_Start", 1, true) == 1
-    and attr.get(model, "Scale_End", 1, true) == 1
-    and (attr.get(model, "SyncPosition", false, true) == false)
-end
-
 function utility.shouldSkipNested(obj: Instance)
   return obj:IsA("Beam")
     or obj:HasTag(utility.BEZIER_TAG)

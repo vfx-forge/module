@@ -17,14 +17,11 @@ local EffectSelectors = table.concat({
   -- Lightning bolts
   `.{utility.LIGHTNING_TAG}`,
 
-  -- Spin models
+  -- Mesh effects, until their module exists; a spin model is the registry's first
   "Model",
 
   -- Camera shakes
   "RayValue",
-
-  -- Screen effects
-  "BasePart[$Enabled=true]",
 
   -- anything carrying a modifier queue, which is how the applier reaches a
   -- target that is not otherwise an effect. overlaps every clause above on
@@ -106,13 +103,6 @@ local function envOf(emit: lifetime.emit): types.EmitEnv
   })
 
   return env :: any
-end
-
-local function isScreen(obj: Instance): boolean
-  return obj:IsA("BasePart")
-    and obj:GetAttribute("Enabled") ~= nil
-    and obj:GetAttribute("Enabled") ~= false
-    and not utility.findFirstClassWithTag(obj, "Attachment", utility.SHOCKWAVE_TAG)
 end
 
 local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
@@ -208,41 +198,12 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
   end
 
   for _, obj in list do
-    if isScreen(obj) then
-      -- the screen is an effect of its own whose lock and restore live in its
-      -- record, and its children run under a child emit it waits on, so the
-      -- part stays placed until the last of them finishes
-      local fx = lifetime.effect(emit, depth, effects)
+    local module = registry.of(obj)
 
-      lifetime.run(fx, function(scope)
-        if lifetime.lock(scope, obj) then
-          return
-        end
+    dispatchInto(emit, obj, depth, module)
 
-        local anc = obj:FindFirstAncestorOfClass("Model")
-
-        if anc and not utility.isSpinModelStatic(anc) then
-          return
-        end
-
-        if not emitters.screen(obj, scope) then
-          return
-        end
-
-        local inner = lifetime.emit(emit)
-
-        queryAndEmitDescendants(inner, obj, depth + 1, nil)
-        lifetime.seal(inner)
-        lifetime.await(inner)
-      end)
-    else
-      local module = registry.of(obj)
-
-      dispatchInto(emit, obj, depth, module)
-
-      if not utility.shouldSkipNested(obj) then
-        queryAndEmitDescendants(emit, obj, depth + 1, module)
-      end
+    if not utility.shouldSkipNested(obj) then
+      queryAndEmitDescendants(emit, obj, depth + 1, module)
     end
   end
 end
