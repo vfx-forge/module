@@ -9,7 +9,7 @@ description: Use when writing, editing, reviewing, or refactoring any .luau file
 
 House Luau style for `pkg/forge-vfx`. It is derived from the code, not from prose: every rule below was measured across the package, and the counts are quoted so you can re-verify.
 
-**Core principle: the code is the spec, but not every file is evidence.** Three files in this package have drifted from house style, and they are the newest ones. Recency is not authority.
+**Core principle: the code is the spec, but not every file is evidence.** Two files in this package have drifted from house style, and they are the newest ones. Recency is not authority.
 
 ## Do not imitate these files
 
@@ -23,7 +23,7 @@ House Luau style for `pkg/forge-vfx`. It is derived from the code, not from pros
 - `src/mod/color/Oklab.luau`
 - `src/mod/color/sRGB.luau`
 
-Those two vendored files are the only ones left carrying `--!strict`, and only because editing vendored code to match house style would fork it from upstream for nothing. Everything else in `src/` and `tests/` has no mode comment at all. The three drifted files above did carry one, which is what marked them as drifted; adding another is the exact mistake this section exists to stop.
+Those two vendored files are the only ones left carrying `--!strict`, and only because editing vendored code to match house style would fork it from upstream for nothing. Everything else in `src/` and `tests/` has no mode comment at all. The two drifted files above did carry one, which is what marked them as drifted; adding another is the exact mistake this section exists to stop.
 
 **`pkg/` is third-party in its entirety** (`Z`, `tiniest`, `Promise.luau`, `Shake.luau`). Read it to understand an API you are calling; never cite it as precedent, never reformat it, and keep stylua off it.
 
@@ -34,39 +34,71 @@ Those two vendored files are the only ones left carrying `--!strict`, and only b
 Every module has these parts, in this order. Omit a part you don't need; never reorder.
 
 ```luau
-local CollectionService = game:GetService("CollectionService")
-
-local attr = require("@mod/attributes")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 
-local Promise = require("@pkg/Promise")
-local ObjectCache = require("@obj/ObjectCache")
+local MIN_SCALE = 0.001
 
-local RECYCLE_INTERVAL = 5
+local function always()
+  return true
+end
 
-local shockwave = {}
+local spin = {}
 
-local part_cache: ObjectCache.ObjectCache? = nil
+spin.id = "model_spin"
+spin.display = { name = "Model", icon = "model_spin", order = 10 }
+spin.classifier = "Model:not(Model:has(> BasePart#Start):has(> BasePart#End))"
 
-function shockwave.emit(ref: Instance, scope: types.scope)
-  if not part_cache then
+spin.attributes = {
+  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  Scale = knob(1):min(MIN_SCALE):mod():label("Scale"):hint("Model scale factor over the spin."),
+  ScaleDuration = knob(0.5):min(0):aliases("Scale_Duration"):unit("seconds"):hidden(always),
+}
+
+spin.properties = {}
+
+spin.layout = {
+  { title = "Emit", entries = { "EmitDelay" } },
+  "Scale",
+}
+
+-- the clock this module's rows run on, decided once per emit
+function spin.duration(_, attrs: any)
+  return attrs.ScaleDuration
+end
+
+function spin.emit(ctx: reader.Ctx, attrs: any)
+  local ref = ctx.ref :: Model
+  local scope = ctx.scope
+
+  if lifetime.lock(scope, ref) then
     return
   end
 
-  local scaleStart = attr.get(ref, "Scale_Start", 1)
-  local scaleEnd = attr.get(ref, "Scale_End", 1)
+  local scale = attrs.Scale
 
-  return scaleStart + scaleEnd
+  task.wait(attrs.EmitDelay)
+
+  lifetime.hold(
+    scope,
+    tween.fromParams(utility.linear_bezier, scale.duration, function(_, deltaTime, elapsed)
+      ref:ScaleTo(math.max(scale.at(elapsed), MIN_SCALE))
+      return deltaTime
+    end)
+  )
 end
 
-return shockwave
+return spin
 ```
 
-No mode comment. No header comment. Module state sits immediately after the module table, never mid-file.
+No mode comment. No header comment. Module state sits immediately after the module table, never mid-file. A module's fields go in this order: `id display classifier components attributes properties layout duration constant`, then its functions.
 
-The module table is named for the file (`local shockwave = {}`), with one exception: modules under `src/mod/common/` name it `local common = {}` and callers alias them `<file>_common`, as in `local flipbook_common = require("@mod/common/flipbook")`.
+**An effect module never reads its own instance.** Every value it needs is a row, read through `emit(ctx, attrs, props)`; `attr.get` on `ctx.ref` is the mistake this shape exists to stop, and a `_Start`, `_End` or `_Curve` attribute is `legacy_mods`' business, reached through the row's aliases. Resources go through `lifetime.hold(scope, x)`, never `table.insert(scope, x)`.
+
+The module table is named for the file (`local spin = {}`), with one exception: modules under `src/mod/common/` name it `local common = {}` and callers alias them `<file>_common`, as in `local flipbook_common = require("@mod/common/flipbook")`.
 
 ## Quick reference
 
@@ -74,7 +106,7 @@ The module table is named for the file (`local shockwave = {}`), with one except
 |---|---|---|
 | Mode comments | No `--!strict`. `--!nolint LocalShadow`, `--!native`, `--!optimize 2`, `--!nocheck` only when warranted | 0 canonical files use `--!strict` |
 | Header comments | None. Ever | 0 canonical files have one |
-| Comments | Rare, lowercase fragment, no terminal period, labels the next few lines | 13 of 31 files have zero comments |
+| Comments | Rare, lowercase fragment, no terminal period, labels the next few lines | 4 canonical files have none at all |
 | Blank line after `end` | Always | 576 vs 30 (95%) |
 | Params | Always annotate | 240/251 (96%) |
 | Return types | Leave inferred unless optional, tuple, or a named type | only 19/128 (15%) explicit |
@@ -93,23 +125,28 @@ The rule is **not** "sort lines by length". It is:
 Key is the identifier, not the line. Requires follow this 29/30 times:
 
 ```luau
-local attr = require("@mod/attributes")    -- name 4, line 39
+local mod = require("@mod/mod")            -- name 3, line 31
+local knob = require("@mod/knob")          -- name 4, line 33
+local mods = require("@mod/mods")          -- name 4, line 33
 local tween = require("@mod/tween")        -- name 5, line 35
-local types = require("@root/types")       -- name 5, line 36
 local logger = require("@mod/logger")      -- name 6, line 37
+local reader = require("@mod/reader")      -- name 6, line 37
 local utility = require("@mod/utility")    -- name 7, line 39
+local lifetime = require("@mod/lifetime")  -- name 8, line 41
+local registry = require("@mod/registry")  -- name 8, line 41
 ```
 
-`attr` leads despite its line being the longest. Sorting by line length would put `tween` first.
+`mod` leads on its identifier, not its line, and the whole block is taken from `src/effects/shockwave_line.luau`. Sorting alphabetically would put `knob` first.
 
-**Semantic order beats length.** Inside function bodies the rule is near-chance (15/23) because meaning wins:
+**Semantic order beats length.** Inside function bodies the rule is near-chance because meaning wins:
 
 ```luau
-local scaleStart = attr.get(ref, "Scale_Start", 1)   -- longer, but Start
-local scaleEnd = attr.get(ref, "Scale_End", 1)       -- shorter, but End
+-- src/effects/shockwave_ring.luau, the entry phases in the order a piece runs them
+local offsetInStart = offsetIn.at(0)   -- longer, but the offset settles first
+local sizeInStart = sizeIn.at(0)       -- shorter, but the size follows it
 ```
 
-Start-before-End, base/start/end, `.Name` first, numbered pairs: leave them alone. Sort only when the lines are genuinely interchangeable.
+Start-before-End, base/start/end, `.Name` first, numbered pairs, the order an effect's own phases run: leave them alone. Sort only when the lines are genuinely interchangeable.
 
 ## Naming
 
@@ -154,7 +191,7 @@ Every one of these came from a real agent writing a real module in this package.
 
 | Rationalization | Reality |
 |---|---|
-| "I followed the siblings written most recently" | The newest three files are the drifted ones. Recency is not authority. |
+| "I followed the siblings written most recently" | The newest files are the drifted ones. Recency is not authority. |
 | "`--!strict` is the trend in the newest work" | It is the drift marker. 0 canonical files use it. |
 | "Where two styles compete, follow the newer" | Follow `recolor.luau` / `shockwave_ring.luau` / `types.luau`. |
 | "`path.luau` is the sibling in the directory I'm writing into" | `path.luau` is on the do-not-imitate list. |
