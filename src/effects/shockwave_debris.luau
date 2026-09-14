@@ -9,6 +9,8 @@ local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 
+local Shockwave = require("@vfx/shockwave")
+
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
 
@@ -120,7 +122,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
   local params
 
-  local originAttrs = registry.read(origin)
+  local originAttrs = registry.read(origin, Shockwave)
 
   if originAttrs == nil then
     return

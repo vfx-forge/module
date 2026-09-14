@@ -8,6 +8,8 @@ local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 
+local Shockwave = require("@vfx/shockwave")
+
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
 
@@ -124,7 +126,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
     return
   end
 
-  local originAttrs = registry.read(origin)
+  local originAttrs = registry.read(origin, Shockwave)
 
   if originAttrs == nil then
     return

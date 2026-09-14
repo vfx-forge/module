@@ -9,6 +9,8 @@ local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 
+local Shockwave = require("@vfx/shockwave")
+
 local Bezier = require("@obj/Bezier")
 local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
@@ -132,7 +134,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
     return
   end
 
-  local originAttrs = registry.read(origin)
+  local originAttrs = registry.read(origin, Shockwave)
 
   if originAttrs == nil then
     return
@@ -314,11 +316,8 @@ function line.emit(ctx: reader.Ctx, attrs: any)
           return deltaTime
         end
 
-        -- per emitted PIECE, like the lifetime below: a size is drawn per
-        -- instance, and one track for the line would cut every piece to the
-        -- same measurements. the track's queue default is the Min and Max pair,
-        -- a randomizer between two Vector3s that draws once per component,
-        -- which is exactly the three NextNumber calls this replaces
+        -- per emitted PIECE: the row is called again so a drawn size is this
+        -- piece's own
         local drawnSize = attrs.Size().at(0)
 
         local id = utility.getRandomId()
@@ -352,10 +351,15 @@ function line.emit(ctx: reader.Ctx, attrs: any)
         part.Material = result.Material
         part.Transparency = result.Instance.Transparency
 
+        -- an opaque surface leaves the piece where the row rests
         if part.Transparency == 0 then
           part.Transparency = attrs.Transparency.value
         end
 
+        -- the fade a piece runs after its dwell goes from where the piece
+        -- rests, which a piece inheriting its hit surface knows only now,
+        -- to where the row ends. a framed queue names both ends and is
+        -- taken at its word
         local fade = attrs.Transparency(part.Transparency)
 
         part.Transparency = fade.at(0)
@@ -418,10 +422,9 @@ function line.emit(ctx: reader.Ctx, attrs: any)
         local env = scope.effects.emitNested(realPart, scope.depth + 1, scope)
         table.insert(promises, env.Finished)
 
-        -- the span is the dwell's own ceiling rather than the effect's run: a
+        -- per PIECE, over the dwell's own ceiling rather than the line's run: a
         -- Lifetime track is sampled on the piece's dwell clock, which never
-        -- reaches the run. a zero there reads as fully elapsed, which would pin
-        -- a linked modifier at its end value from the first frame
+        -- reaches the run, and a zero there would read as fully elapsed
         local life = attrs.Lifetime(nil, lifeMax)
         local drawn = life.at(0)
 
