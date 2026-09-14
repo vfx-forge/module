@@ -67,6 +67,10 @@ do
   rows.Width = knob(0.2):min(0):unit("studs"):mod(mod.from(2))
   rows.Length = knob(1):min(0):mod()
   rows.Transparency = knob(0):mod()
+
+  rows.EasingCurve = knob(function()
+    return utility.linear_bezier
+  end):aliases("Easing_Curve")
 end
 
 lightning.properties = {}
@@ -100,7 +104,7 @@ table.insert(
   lightning.layout,
   { title = "Dissipation", entries = { "DissipateMode", "DissipateDuration", "DissipateCurve" } }
 )
-table.insert(lightning.layout, { title = "Color", entries = { "ColorCurve", "ColorDuration" } })
+table.insert(lightning.layout, { title = "Color", entries = { "ColorCurve", "ColorDuration", "EasingCurve" } })
 
 function lightning.duration(_, attrs: any)
   return attrs.Duration.Max
@@ -1028,7 +1032,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         lifetime.hold(
           scope,
           tween.fromParams(
-            utility.linear_bezier,
+            attrs.EasingCurve,
             duration,
             function(alpha, deltaTime, elapsed)
               local scaledDelta = deltaTime * getEffectiveSpeed()
