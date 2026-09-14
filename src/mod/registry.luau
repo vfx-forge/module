@@ -210,6 +210,17 @@ local function checkLayout(id: string, entries: { any }, rows: { [string]: boole
   end
 end
 
+-- freezing a frozen table errors, and a table here is frozen either because
+-- this registry froze it on an earlier registration or because its author did.
+-- every check still runs over it; only the freeze is skipped
+local function freeze(t: any)
+  if table.isfrozen(t) then
+    return
+  end
+
+  table.freeze(t)
+end
+
 local function freezeLayout(entries: { any })
   for _, entry in entries do
     if type(entry) == "table" then
@@ -217,30 +228,30 @@ local function freezeLayout(entries: { any })
         freezeLayout(entry.entries)
       end
 
-      table.freeze(entry)
+      freeze(entry)
     end
   end
 
-  table.freeze(entries)
+  freeze(entries)
 end
 
 local function freezeRows(rows: { [string]: any })
   for _, row in rows do
-    table.freeze(row.names)
+    freeze(row.names)
 
     if row.choices then
-      table.freeze(row.choices)
+      freeze(row.choices)
     end
 
     if row.modDefault then
-      table.freeze(row.modDefault.opts)
-      table.freeze(row.modDefault)
+      freeze(row.modDefault.opts)
+      freeze(row.modDefault)
     end
 
-    table.freeze(row)
+    freeze(row)
   end
 
-  table.freeze(rows)
+  freeze(rows)
 end
 
 local function mark(out: { [string]: boolean }, name: string, row: any)
@@ -330,18 +341,9 @@ function registry.register(module: Module)
     rows[name] = true
   end
 
-  -- a frozen module is one this registry already validated and froze on an
-  -- earlier registration, before a clear(); the checks above and below still
-  -- run against it, but freezing an already-frozen table errors, so a second
-  -- pass over the same table skips the freezing rather than the checking
-  local frozen = table.isfrozen(module)
-
   if module.layout ~= nil then
     checkLayout(id, module.layout, rows)
-
-    if not frozen then
-      freezeLayout(module.layout)
-    end
+    freezeLayout(module.layout)
   end
 
   local subjects = registry.subjects(module.classifier)
@@ -354,12 +356,10 @@ function registry.register(module: Module)
     sole = soleClass(module.classifier, subjects),
   }
 
-  if not frozen then
-    freezeRows(module.attributes)
-    freezeRows(module.properties)
-    table.freeze(module.display)
-    table.freeze(module)
-  end
+  freezeRows(module.attributes)
+  freezeRows(module.properties)
+  freeze(module.display)
+  freeze(module)
 
   byId[id] = module
   table.insert(modules, module)

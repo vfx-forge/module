@@ -61,6 +61,21 @@ harness.suite(function()
       expect(registry.get("x")).toBe(m)
     end)
 
+    test("a module frozen by its author still has its rows and layout frozen", function()
+      registry.clear()
+
+      local m = table.freeze(stub("x", { layout = { { title = "T", entries = { "EmitDelay" } } } }))
+      registry.register(m)
+
+      expect(table.isfrozen(m.attributes)).toBe(true)
+      expect(table.isfrozen(m.attributes.EmitDelay)).toBe(true)
+      expect(table.isfrozen(m.attributes.EmitDelay.names)).toBe(true)
+      expect(table.isfrozen(m.properties)).toBe(true)
+      expect(table.isfrozen(m.display)).toBe(true)
+      expect(table.isfrozen(m.layout)).toBe(true)
+      expect(table.isfrozen(m.layout[1])).toBe(true)
+    end)
+
     test("a row that is not a knob errors", function()
       registry.clear()
 

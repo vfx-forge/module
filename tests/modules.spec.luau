@@ -271,6 +271,31 @@ harness.suite(function()
       end
     end)
 
+    test("every hidden duration row carries the seconds unit", function()
+      loadAll()
+
+      local seen = 0
+
+      for _, module in registry.list() do
+        for _, rows in { module.attributes, module.properties } do
+          for name, row in rows do
+            if row.hiddenRule == nil or string.sub(name, -8) ~= "Duration" then
+              continue
+            end
+
+            -- a hidden span is reached by nothing but retime, which finds it
+            -- by its unit alone: without one the key is claimed and scaled by
+            -- no one
+            seen += 1
+
+            expect(row.units).toBe("seconds")
+          end
+        end
+      end
+
+      expect(seen > 0).toBe(true)
+    end)
+
     test("a read of every module against its bare instance answers every row", function()
       loadAll()
 

@@ -706,6 +706,51 @@ harness.suite(function()
       end
     end)
 
+    test("a row's queue is looked for once per read, however many spellings it has", function()
+      local obj = Instance.new("Part")
+
+      local child = Instance.new("RayValue")
+      child.Name = "Old"
+      child:SetAttribute("_START_VALUE", 0)
+      child:SetAttribute("_END_VALUE", 1)
+      child:SetAttribute("Duration", 2)
+      child.Parent = obj
+
+      local m = module({}, { Transparency = knob(1):mod():aliases("Old") })
+
+      local probes = 0
+      local original = attr.get
+
+      local ok, err = pcall(function()
+        attr.get = function(inst, key, ...)
+          if inst == child and key == "_START_VALUE" then
+            probes += 1
+          end
+
+          return original(inst, key, ...)
+        end
+
+        local _, props = reader.resolve(m, ctxFor(obj))
+
+        -- the row is looked for on its own side and the attribute side old
+        -- content authored on, under its name and under its alias; the child
+        -- behind it is read once for all four
+        expect(probes).toBe(1)
+        expect(props.Transparency.animated).toBe(true)
+
+        props.Transparency(nil, 2)
+        props.Transparency(0.5)
+
+        expect(probes).toBe(1)
+      end)
+
+      attr.get = original
+
+      if not ok then
+        error(err, 0)
+      end
+    end)
+
     test("a piece's call reads nothing the read did not", function()
       local obj = Instance.new("Part")
       obj:SetAttribute("Old_Start", 0)
