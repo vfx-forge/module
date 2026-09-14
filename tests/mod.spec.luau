@@ -61,6 +61,14 @@ harness.suite(function()
       expect(queue[2].curve).toBe(curves.linear())
     end)
 
+    test("a duration of zero is a span the queue keeps, where nothing named falls back", function()
+      local snapped = mod.queue(mod.to(1):duration(0), ctx, {}, {}, 0, nil)
+      local unnamed = mod.queue(mod.to(1), ctx, {}, {}, 0, nil)
+
+      expect(snapped[1].duration).toBe(0)
+      expect(unnamed[1].duration).toBe(nil)
+    end)
+
     test("an endpoint and a duration given as rules are called with ctx, attrs and props", function()
       local seen = {}
 

@@ -60,7 +60,9 @@ end
 
 -- the queue a default modifier runs over a row resting at `rest`, with the
 -- row's own state as the end the spec did not name. nil when the two ends
--- agree, so a row at rest costs no stepper
+-- agree, so a row at rest costs no stepper. an authored duration of zero is a
+-- phase that snaps, not an unnamed one, so only a missing or negative span
+-- falls back to the module's clock
 function mod.queue(spec: Spec, ctx: any, attrs: any, props: any, rest: any, rowCurve: string?): { any }?
   local endpoint = pick(spec.endpoint, ctx, attrs, props)
 
@@ -83,7 +85,7 @@ function mod.queue(spec: Spec, ctx: any, attrs: any, props: any, rest: any, rowC
   table.insert(out, {
     kind = "tween",
     chain = false,
-    duration = if typeof(runFor) == "number" and runFor > 0 then runFor else nil,
+    duration = if typeof(runFor) == "number" and runFor >= 0 then runFor else nil,
     start = value.lit(startV),
     finish = value.lit(finishV),
     curve = curves.preset(spec.opts.curve or rowCurve),

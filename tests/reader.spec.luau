@@ -518,6 +518,31 @@ harness.suite(function()
       expect(near(attrs.A.at(2), 0)).toBe(true)
     end)
 
+    test("a duration row stored as zero snaps the phase the module's clock would ramp", function()
+      local obj = Instance.new("Part")
+      obj:SetAttribute("ADuration", 0)
+
+      local m = module(
+        {
+          A = knob(0):mod(mod.to(1):duration(function(_, attrs)
+            return attrs.ADuration
+          end)),
+          ADuration = knob(0.5),
+        },
+        nil,
+        function()
+          return 2
+        end
+      )
+
+      local attrs = reader.resolve(m, ctxFor(obj))
+      local ramped = reader.resolve(m, ctxFor(Instance.new("Part")))
+
+      expect(near(attrs.A.at(0), 1)).toBe(true)
+      expect(near(attrs.A.at(attrs.A.duration), 1)).toBe(true)
+      expect(near(ramped.A.at(0), 0)).toBe(true)
+    end)
+
     test("a range row draws a number per resolution and keeps the range as its value", function()
       local attrs = reader.resolve(module({ Life = knob(NumberRange.new(2, 3)):mod() }), ctxFor(Instance.new("Part")))
 
