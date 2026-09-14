@@ -6,6 +6,7 @@ local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
 local reader = require("@mod/reader")
 local harness = require("@tests/harness")
+local registry = require("@mod/registry")
 local test, expect = harness.test, harness.expect
 local Instance = harness.datatypes.Instance
 local NumberRange = harness.datatypes.NumberRange
@@ -83,6 +84,26 @@ local function oldRead(obj: Instance)
   return out
 end
 
+-- what the converted particle read on every emit, before it was a module: its
+-- three plain attributes with their defaults, the emitter's own TimeScale as
+-- the start of a track whose span is the soft read behind it, and the lifetime
+-- the emit ran over
+local function oldParticleRead(obj: Instance)
+  local emitter = obj :: ParticleEmitter
+  local out = {}
+
+  out.EmitDelay = attr.get(obj, "EmitDelay", 0)
+  out.EmitCount = attr.get(obj, "EmitCount", 1)
+  out.EmitDuration = attr.get(obj, "EmitDuration", 0)
+
+  out.TimeScale =
+    mods.track(obj, "attribute", "TimeScale", emitter.TimeScale, attr.get(obj, "TimeScale_Duration", 0.1, true))
+
+  out.Lifetime = emitter.Lifetime.Max
+
+  return out
+end
+
 local function best(fn: () -> ()): number
   local fastest = math.huge
 
@@ -123,5 +144,68 @@ harness.suite(function()
     -- of this few non mod rows does not read enough of them to pay it back,
     -- even though every row costs less than the read it replaced
     expect(new <= old * 1.1).toBe(true)
+  end)
+
+  test("a read of every built-in against its bare instance is reported, and the particle's is bounded", function()
+    registry.clear()
+    registry.configure({ query = harness.query })
+
+    for _, name in
+      {
+        "beam",
+        "mesh",
+        "spin",
+        "sound",
+        "trail",
+        "bezier",
+        "screen",
+        "particle",
+        "lightning",
+        "shockwave",
+        "camera_shake",
+        "shockwave_ring",
+        "shockwave_line",
+        "shockwave_debris",
+      }
+    do
+      registry.register(require(`@vfx/{name}`))
+    end
+
+    local lines = {}
+    local newParticle = 0
+    local particleInst: Instance? = nil
+
+    for _, module in registry.list() do
+      local class = registry.subjects(module.classifier)
+      local name = if class ~= nil and class[1] ~= "BasePart" then class[1] else "Part"
+      local inst = Instance.new(name)
+      local ctx = { ref = inst, obj = inst, scale = 1, effect = module }
+
+      local took = best(function()
+        reader.resolve(module, ctx)
+      end)
+
+      table.insert(lines, `{module.id} {string.format("%.1f", took / ITERATIONS * 1e6)} us`)
+
+      if module.id == "particle" then
+        newParticle = took
+        particleInst = inst
+      end
+    end
+
+    print(`one read per built-in: {table.concat(lines, ", ")}`)
+
+    local oldParticle = best(function()
+      oldParticleRead(particleInst :: Instance)
+    end)
+
+    print(
+      `particle read cost over {ITERATIONS} emits: old {string.format("%.1f", oldParticle * 1000)} ms, new {string.format(
+        "%.1f",
+        newParticle * 1000
+      )} ms`
+    )
+
+    expect(newParticle <= oldParticle * 1.1).toBe(true)
   end)
 end)

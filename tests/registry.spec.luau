@@ -49,6 +49,18 @@ harness.suite(function()
       end).toThrow()
     end)
 
+    test("registering the same table again after a clear succeeds", function()
+      registry.clear()
+
+      local m = stub("x", { layout = { { title = "T", entries = { "EmitDelay" } } } })
+      registry.register(m)
+
+      registry.clear()
+      registry.register(m)
+
+      expect(registry.get("x")).toBe(m)
+    end)
+
     test("a row that is not a knob errors", function()
       registry.clear()
 

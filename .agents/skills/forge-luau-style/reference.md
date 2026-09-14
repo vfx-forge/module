@@ -6,7 +6,7 @@ Evidence-backed rule set for `pkg/forge-vfx`. Every count below was measured acr
 
 **Canonical (read these):** `src/mod/recolor.luau`, `src/effects/*.luau`, `src/obj/*.luau`, `src/services/*.luau`, `src/emitters.luau`, `src/types.luau`, `src/mod/tween.luau`, `src/mod/logger.luau`, `src/mod/attributes.luau`.
 
-**Drifted (do not imitate):** `src/schema.luau`, `src/mod/common/path.luau`, `src/mod/modifiers.luau`.
+**Drifted (do not imitate):** `src/mod/common/path.luau`, `src/mod/modifiers.luau`.
 
 **Vendored, MIT, by Daniel P H Fox (not house style):** `src/mod/color/Oklab.luau`, `src/mod/color/sRGB.luau`. `Oklab.luau` lines 1 to 23 are a verbatim license block.
 
@@ -233,7 +233,7 @@ Honest caveats: casing is not perfectly consistent (about 10 capitalized instanc
 ### Blank lines after `end`, and return-type noise
 
 ```luau
--- BEFORE (src/schema.luau, isArray)
+-- BEFORE (a former schema module, isArray)
 local function isArray(t: { [any]: any }): boolean
   local n = 0
   for _ in t do
@@ -257,7 +257,7 @@ end
 ### Bare `error`, missing blank lines, single-letter param
 
 ```luau
--- BEFORE (src/schema.luau, Schema.define)
+-- BEFORE (a former schema module, Schema.define)
 function Schema.define(d: any): Schema
   local ok, why = Schema.validate(d)
   if not ok then

@@ -15,7 +15,6 @@ House Luau style for `pkg/forge-vfx`. It is derived from the code, not from pros
 
 **Known-drifted. Never cite them as precedent:**
 
-- `src/schema.luau`
 - `src/mod/common/path.luau`
 - `src/mod/modifiers.luau`
 
@@ -138,7 +137,7 @@ stylua is necessary, not sufficient: it will not sort your requires, delete your
 
 ## No em or en dashes
 
-Never `—` or `–` in code, comments, or docs.
+Never an em dash or en dash in code, comments, or docs.
 
 **This includes the ASCII surrogate.** Using ` -- ` as a prose dash is the same construct spelled differently:
 

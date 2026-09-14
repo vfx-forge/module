@@ -16,13 +16,13 @@ Follow this whether you are changing code here directly or preparing a PR. Code 
 | `src/mod/` | Plain-table helper namespaces (`tween`, `lerp`, `logger`, `attributes`) |
 | `src/mod/lifetime.luau` | Emit and effect records: `hold`, `defer`, `lock`, `run`, `clear`, `await`. Effects file resources through `lifetime.hold(scope, x)`, never `table.insert(scope, x)` |
 | `src/mod/mods.luau` | Modifier queues. `mods.build` turns a queue into a Track; `mods.track` is the read-and-build an unconverted effect still calls. `legacy_mods` reads the old attribute format and owns every quirk of it (`ALIASES`, `CURVES`, `SPANS`, `DRAWN_RANGES`) |
-| `src/mod/knob.luau`, `src/mod/mod.luau` | Row and default-modifier builders an effect module declares its rows with: `knob(x)` chained `min max aliases options label hint curve unit hidden readonly mod`; `mod.from(a)` / `mod.to(b)` chained `duration curve start` |
-| `src/mod/registry.luau`, `src/mod/reader.luau` | The effect registry (`register get list of scan read source`) and the reader that resolves a module's rows into one frozen `attrs, props` pair per emit |
-| `src/services/effects.luau` | Scans a root through the registry and dispatches every hit at its depth; nothing else selects instances |
+| `src/mod/knob.luau`, `src/mod/mod.luau` | Row and default-modifier builders an effect module declares its rows with: `knob(x)` chained `min max aliases options label hint curve unit hidden readonly mod`; a knob's unit is one of `seconds perSecond perSecondSquared studs studsPerSecond studsPerSecondSquared`; `mod.from(a)` / `mod.to(b)` chained `duration curve start` |
+| `src/mod/registry.luau`, `src/mod/reader.luau` | The effect registry (`register get list of scan read source`; `scan(root, claimant)` drops what the root's own module claims; a Track is called as `track(current, span)` for a piece's own state and clock) and the reader that resolves a module's rows into one frozen `attrs, props` pair per emit |
 | `src/mod/common/` | Pure helpers with no engine access, requirable under lune |
 | `src/obj/` | Class modules with metatables (`Bezier`, `ObjectCache`) |
 | `src/services/` | Long-lived services (`effects`, `caches`, `texture_loader`) |
 | `src/emitters.luau` | The dispatcher: the reader, the applier and the module's emit for a classified instance; the legacy RayValue remnant for the rest |
+| `src/services/effects.luau` | Scans a root through the registry and dispatches every hit at its depth; nothing else selects instances |
 | `src/types.luau` | Shared exported types |
 
 Require via the `.luaurc` aliases (`@mod`, `@obj`, `@vfx`, `@srv`, `@root`, `@pkg`). Do not write relative requires; there is exactly one in the whole tree and it is an outlier.
@@ -68,16 +68,15 @@ Build with `rojo-build-noalias -o output.rbxm`. The TypeScript surface (`index.d
 - **Sort interchangeable siblings by identifier length, ascending, within each blank-line group.** Governs requires and flat lists. It does not override semantic order: `scaleStart` still precedes `scaleEnd`.
 - **Naming:** `snake_case` files and object internals, `camelCase` locals and functions and config fields, `PascalCase` class modules and exported types and public API fields, `UPPER_CASE` constants.
 - **No em or en dashes anywhere**, in code, comments, or docs. This includes ` -- ` used as a prose dash. Rewrite with a comma or a second sentence.
-- **A registered effect module declares every value it needs as a row and reads it through `emit(ctx, attrs, props)`; it never calls `attr.get` on its own instance.** An unconverted effect reads a knob once through `mods.track` and never reads a `_Start`, `_End` or `_Curve` attribute; the old format is `legacy_mods`' business.
-- **Row ids carry no underscores; old spellings are aliases.** A value that is a Roblox property is a property row. The vocabulary is fixed: module fields `id display classifier components attributes properties layout duration emit selected`; never name a new public thing `select`, `claims`, `draw`, `rest`, `ramp`, `each`, `ownStart`, `span`, `stamp`, `drive` or `track`.
+- **A registered effect module declares every value it needs as a row and reads it through `emit(ctx, attrs, props)`; it never calls `attr.get` on its own instance.** An unconverted effect reads a knob once through `mods.track` and never reads a `_Start`, `_End` or `_Curve` attribute; the old format is `legacy_mods`' business. Every effect is registered; there is no unconverted effect. A module that the ConstantVFX tick may emit declares `constant = true` and reads `ctx.constant`; `ctx.shared` carries the per-emit maps.
+- **Row ids carry no underscores; old spellings are aliases.** A value that is a Roblox property is a property row. The vocabulary is fixed: module fields `id display classifier components attributes properties layout duration constant emit selected`; ctx fields `ref obj scope scale effect duration shared constant`; never name a new public thing `select`, `claims`, `draw`, `rest`, `ramp`, `each`, `ownStart`, `span`, `stamp`, `drive` or `track`. `walk` is not reserved. `PROPERTY_UNITS` and `RATIOS` are the two tables `retime` and `resize` keep for engine properties and old ratios.
 
 Where this package and the [Roblox Lua style guide](https://roblox.github.io/lua-style-guide/) disagree, this package wins. The guide is a gap-filler only.
 
 ## Files that are not examples
 
-Three files have drifted and are **not** precedent. Do not copy their conventions, however recent they are. Recency is not authority:
+Two files have drifted and are **not** precedent. Do not copy their conventions, however recent they are. Recency is not authority:
 
-- `src/schema.luau`
 - `src/mod/common/path.luau`
 - `src/mod/modifiers.luau`
 

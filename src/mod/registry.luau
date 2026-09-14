@@ -327,9 +327,18 @@ function registry.register(module: Module)
     rows[name] = true
   end
 
+  -- a frozen module is one this registry already validated and froze on an
+  -- earlier registration, before a clear(); the checks above and below still
+  -- run against it, but freezing an already-frozen table errors, so a second
+  -- pass over the same table skips the freezing rather than the checking
+  local frozen = table.isfrozen(module)
+
   if module.layout ~= nil then
     checkLayout(id, module.layout, rows)
-    freezeLayout(module.layout)
+
+    if not frozen then
+      freezeLayout(module.layout)
+    end
   end
 
   local subjects = registry.subjects(module.classifier)
@@ -342,10 +351,12 @@ function registry.register(module: Module)
     sole = soleClass(module.classifier, subjects),
   }
 
-  freezeRows(module.attributes)
-  freezeRows(module.properties)
-  table.freeze(module.display)
-  table.freeze(module)
+  if not frozen then
+    freezeRows(module.attributes)
+    freezeRows(module.properties)
+    table.freeze(module.display)
+    table.freeze(module)
+  end
 
   byId[id] = module
   table.insert(modules, module)
