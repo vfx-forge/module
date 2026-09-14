@@ -73,7 +73,7 @@ Where no semantic order exists, length ascending reappears (the row locals at th
 
 ## 2. Blank lines and density
 
-Canonical blank-line density is 23.8%. The three drifted files sit at 15.4%.
+Canonical blank-line density is 23.8%. The two drifted files sit at 15.4%.
 
 **Blank line after every block-closing `end`:** 576 vs 30, about 95%. The 30 exceptions are nearly all `end)` or `end,` closing a call or table argument, a different construct.
 
@@ -168,7 +168,7 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
 
 **Prefer `continue` over nesting** in loops. 17 uses.
 
-**`elseif` chains for type or class dispatch, no `else` fallback.** `resize.scaleShape` branches on the module's id and falls through; `retime.scaleProperty` branches on `typeof(v)` the same way. Neither has an `else`.
+**`elseif` chains for type or class dispatch, no `else` fallback.** `resize.luau`'s file local `scaleShape` branches on the module's id and falls through; `retime.luau`'s file local `scaleProperty` branches on `typeof(v)` the same way. Neither has an `else`.
 
 ## 6. Error handling
 
@@ -209,11 +209,11 @@ Canonical files use exactly four, and most files use none:
 - `--!optimize 2` (`shape.luau`, `Bezier.luau`)
 - `--!nocheck` (`Bezier.luau`)
 
-**No canonical file uses `--!strict`.** The only occurrences in the tree are the three drifted files plus the two vendored color files. This is the sharpest canonical/drift tell.
+**No canonical file uses `--!strict`.** The only occurrences in the tree are the two vendored color files. The drifted files carried it once, which is what marked them; the marker is still the sharpest canonical/drift tell.
 
 ## 9. Comments
 
-**Comment rarely.** Four canonical files carry none at all, `ObjectCache.luau` (289 lines) and `texture_loader.luau` (175) among them. The rest run from about 1% to 11%, and the densest are the dispatcher and the shockwave pieces, where every comment says why a phase runs at all rather than what a line does. A comment earns its place by saying what the code cannot.
+**Comment rarely.** Five canonical files carry none at all: `types.luau`, `logger.luau`, `ObjectCache.luau` (289 lines), `texture_loader.luau` (175) and `common/flipbook.luau`. The rest run from about 1% to 11%, and the densest are the dispatcher and the shockwave pieces, where every comment says why a phase runs at all rather than what a line does. A comment earns its place by saying what the code cannot.
 
 **No canonical file has a header or module doc comment.**
 
@@ -221,7 +221,7 @@ Canonical files use exactly four, and most files use none:
 
 ```luau
 src/effects/beam.luau      -- scale the half-offsets and apply from center
-src/effects/mesh.luau      -- stone age compatibility
+src/effects/mesh.luau      -- the oldest assets' inputs, read and never renamed
 src/effects/particle.luau  -- the emitter's own property: a stored attribute of the same name shadows it
 ```
 

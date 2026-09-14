@@ -106,7 +106,7 @@ The module table is named for the file (`local spin = {}`), with one exception: 
 |---|---|---|
 | Mode comments | No `--!strict`. `--!nolint LocalShadow`, `--!native`, `--!optimize 2`, `--!nocheck` only when warranted | 0 canonical files use `--!strict` |
 | Header comments | None. Ever | 0 canonical files have one |
-| Comments | Rare, lowercase fragment, no terminal period, labels the next few lines | 4 canonical files have none at all |
+| Comments | Rare, lowercase fragment, no terminal period, labels the next few lines | 5 canonical files have none at all |
 | Blank line after `end` | Always | 576 vs 30 (95%) |
 | Params | Always annotate | 240/251 (96%) |
 | Return types | Leave inferred unless optional, tuple, or a named type | only 19/128 (15%) explicit |

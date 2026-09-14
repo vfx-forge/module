@@ -27,7 +27,7 @@ end
 -- each piece draws its own size between the two corners, which is what the old
 -- pair of reads did with a default each. a size authored on the row itself, or
 -- a queue under it, is the row's state and draws nothing
-local function drawnSize(_, attrs: any)
+local function sizeFromCorners(_, attrs: any)
   return mods.draw(attrs.MinSize, attrs.MaxSize)
 end
 
@@ -52,7 +52,7 @@ ring.attributes = {
   -- spelled the engine's way because a draw only runs per axis between two
   -- values of that spelling. the drawn size between them is the row a queue or
   -- a bare Size attribute overrides, which is all it is ever named for
-  Size = knob(drawnSize):unit("studs"):mod():hidden(always),
+  Size = knob(sizeFromCorners):unit("studs"):mod():hidden(always),
   MinSize = knob(Vector3.new(2, 1, 2))
     :aliases("Size_Min")
     :unit("studs")
