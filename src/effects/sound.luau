@@ -3,12 +3,12 @@ local PluginGuiService = game:GetService("PluginGuiService")
 local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
-
-local mods = require("@mod/mods")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local registry = require("@mod/registry")
 
 local Promise = require("@pkg/Promise")
 
@@ -19,17 +19,62 @@ local rng = Random.new()
 -- still lets the emit finish
 local LOAD_TIMEOUT = 5
 
+local function always()
+  return true
+end
+
 local sound = {}
 
--- the three knobs sound drives through samplers of its own, so
--- emitters.applyMods leaves them alone rather than writing the same targets
-sound.OWNS = {
-  attribute = {
-    Volume = true,
-    Speed = true,
-    RollOff = true,
+sound.id = "sound"
+sound.display = { name = "Sound", icon = "sound", order = 70 }
+sound.classifier = "Sound"
+
+sound.attributes = {
+  EmitCount = knob(1):min(0),
+  EmitDelay = knob(0):min(0):unit("seconds"),
+  EmitDuration = knob(0):min(0):unit("seconds"),
+  EmitInterval = knob(NumberRange.new(0, 0)):min(0):unit("seconds"),
+  RepeatCount = knob(1):min(1),
+  RepeatInterval = knob(NumberRange.new(0, 0)):min(0):unit("seconds"),
+  SoundPoolTag = knob(""),
+  SoundPoolWeight = knob(1):min(0),
+  SoundPoolIsSource = knob(false),
+  SoundPoolInheritAttributes = knob(false),
+  -- the spans the old quads ran over, read by the old format's reader under
+  -- these names and kept as rows so retime reaches them
+  VolumeDuration = knob():aliases("Volume_Duration"):unit("seconds"):hidden(always),
+  SpeedDuration = knob():aliases("Speed_Duration"):unit("seconds"):hidden(always),
+  RollOffDuration = knob():aliases("RollOff_Duration"):unit("seconds"):hidden(always),
+}
+
+-- the clone's own properties are its state; the old attribute names are the
+-- rows' aliases, so an old quad or queue under them folds in
+sound.properties = {
+  Volume = knob():mod(),
+  PlaybackSpeed = knob():aliases("Speed"):mod(),
+  RollOffMinDistance = knob():aliases("RollOff"):unit("studs"):mod(),
+}
+
+sound.layout = {
+  { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration", "EmitInterval" } },
+  { title = "Repeat", entries = { "RepeatCount", "RepeatInterval" } },
+  { title = "Playback", entries = { "Volume", "PlaybackSpeed", "RollOffMinDistance" } },
+  {
+    title = "Sound Pool",
+    entries = { "SoundPoolTag", "SoundPoolWeight", "SoundPoolIsSource", "SoundPoolInheritAttributes" },
   },
 }
+
+-- the asset's own length, which an asset that has not loaded reports as zero
+-- and the reader then maps to one. a host without the engine's sound clock
+-- answers nothing, which the reader reads the same way
+function sound.duration(ctx: reader.Ctx)
+  local ok, length = pcall(function()
+    return (ctx.ref :: Sound).TimeLength
+  end)
+
+  return if ok then length else nil
+end
 
 -- process wide rather than per plugin instance: the launcher keeps two payload
 -- generations alive at once, so init runs while the outgoing one still holds a
@@ -44,9 +89,7 @@ local function clearClones(widget: DockWidgetPluginGui)
   end
 end
 
-local function selectRandomSound(ref: Sound): Sound?
-  local poolTag = attr.get(ref, "SoundPoolTag", "")
-
+local function selectRandomSound(ref: Sound, poolTag: string): Sound?
   if poolTag == "" then
     return ref
   end
@@ -91,7 +134,7 @@ local function selectRandomSound(ref: Sound): Sound?
   return validSounds[rng:NextInteger(1, #validSounds)]
 end
 
-local function createSoundClone(ref: Sound, sourceSound: Sound, scope: types.scope): (Sound, Part?)
+local function createSoundClone(ref: Sound, sourceSound: Sound, scope: lifetime.effect): (Sound, Part?)
   local clone = sourceSound:Clone()
 
   for _, tag in clone:GetTags() do
@@ -136,14 +179,19 @@ local function createSoundClone(ref: Sound, sourceSound: Sound, scope: types.sco
   return clone, partClone
 end
 
-local function playSingleSound(
-  ref: Sound,
-  src: Sound,
+-- one clone played to its end: its three tracks are seeded from its own
+-- properties once it has loaded, over its own asset length, through the rows
+-- of whichever sound the emit reads
+local function play(
+  ctx: reader.Ctx,
+  props: any,
   clone: Sound,
   partClone: Part?,
-  scope: types.scope,
   emitDuration: number
 ): RBXScriptConnection?
+  local ref = ctx.ref :: Sound
+  local scope = ctx.scope
+
   if clone.SoundId ~= "" and not clone.IsLoaded then
     local waited = 0
 
@@ -156,30 +204,37 @@ local function playSingleSound(
     end
   end
 
-  local currentSpeed = clone.PlaybackSpeed
+  -- the rows read the clone's properties as the state they start from (a
+  -- drawn pool sound's rows read that sound's, which the clone was copied
+  -- from); the three calls below run without a yield between them, so no
+  -- other clone of this emit can move the seam in the meantime
+  ctx.obj = clone
 
-  local volume = mods.track(src, "attribute", "Volume", clone.Volume, clone.TimeLength)
+  local volume = props.Volume(nil, clone.TimeLength)
+  local speed = props.PlaybackSpeed(nil, clone.TimeLength)
+  local rolloff = props.RollOffMinDistance(nil, clone.TimeLength)
+
+  local currentSpeed = clone.PlaybackSpeed
 
   clone.Volume = volume.at(0)
 
   if volume.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, volume.span, function(_, deltaTime, elapsed)
+      tween.fromParams(utility.linear_bezier, volume.duration, function(_, deltaTime, elapsed)
         clone.Volume = volume.at(elapsed)
         return deltaTime * currentSpeed
       end)
     )
   end
 
-  local speed = mods.track(src, "attribute", "Speed", clone.PlaybackSpeed, clone.TimeLength)
   local speedTween: RBXScriptConnection? = nil
 
   currentSpeed = speed.at(0)
   clone.PlaybackSpeed = currentSpeed
 
   if speed.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, elapsed)
+    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
       currentSpeed = speed.at(elapsed)
       clone.PlaybackSpeed = currentSpeed
       return deltaTime
@@ -188,14 +243,12 @@ local function playSingleSound(
     lifetime.hold(scope, speedTween)
   end
 
-  local rolloff = mods.track(src, "attribute", "RollOff", clone.RollOffMinDistance, clone.TimeLength)
-
   clone.RollOffMinDistance = rolloff.at(0)
 
   if rolloff.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, rolloff.span, function(_, deltaTime, elapsed)
+      tween.fromParams(utility.linear_bezier, rolloff.duration, function(_, deltaTime, elapsed)
         clone.RollOffMinDistance = rolloff.at(elapsed)
         return deltaTime * currentSpeed
       end, speedTween)
@@ -282,39 +335,55 @@ function sound.deinit()
   end
 end
 
-function sound.emit(ref: Sound, scope: types.scope)
+function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
+  local scope = ctx.scope
+
+  if attrs.EmitCount <= 0 then
+    return
+  end
+
+  local ref = ctx.ref :: Sound
+
   if ref.Playing then
     ref:Stop()
   end
 
-  local isSource = attr.get(ref, "SoundPoolIsSource", false)
-  local inheritPoolAttributes = attr.get(ref, "SoundPoolInheritAttributes", false)
+  local isSource = attrs.SoundPoolIsSource
+  local inherit = attrs.SoundPoolInheritAttributes
 
-  if inheritPoolAttributes then
-    ref = not isSource and selectRandomSound(ref) or ref
+  -- with inheritance on, the pool is drawn once and the emit is the drawn
+  -- sound's in every respect, its rows read through its own module
+  if inherit and not isSource then
+    local picked = selectRandomSound(ref, attrs.SoundPoolTag)
+
+    if picked ~= nil and picked ~= ref then
+      local pickedAttrs, pickedProps = registry.read(picked)
+
+      if pickedAttrs ~= nil then
+        ref = picked
+        attrs, props = pickedAttrs, pickedProps
+        ctx = { ref = picked, obj = picked, scope = scope, scale = ctx.scale, effect = ctx.effect, shared = ctx.shared }
+      end
+    end
   end
 
-  local emitDelay = attr.get(ref, "EmitDelay", 0)
-  local emitDuration = attr.get(ref, "EmitDuration", 0)
+  local emitDuration = attrs.EmitDuration
+  local emitCount = attrs.EmitCount
+  local emitInterval = attrs.EmitInterval
 
-  local emitCount = attr.get(ref, "EmitCount", 1)
-  local emitInterval = attr.getRange(ref, "EmitInterval", NumberRange.new(0, 0))
+  local repeatCount = attrs.RepeatCount
+  local repeatInterval = attrs.RepeatInterval
 
-  local repeatCount = attr.get(ref, "RepeatCount", 1)
-  local repeatInterval = attr.getRange(ref, "RepeatInterval", NumberRange.new(0, 0))
-
-  task.wait(emitDelay)
+  task.wait(attrs.EmitDelay)
 
   local promises = {}
 
   for i = 1, emitCount do
-    local sourceSound = inheritPoolAttributes and ref or (not isSource and selectRandomSound(ref) or ref)
+    local sourceSound = if inherit or isSource then ref else selectRandomSound(ref, attrs.SoundPoolTag)
 
     if not sourceSound then
       continue
     end
-
-    local src = if inheritPoolAttributes and sourceSound ~= ref then sourceSound else ref
 
     for r = 1, repeatCount do
       table.insert(
@@ -322,7 +391,7 @@ function sound.emit(ref: Sound, scope: types.scope)
         Promise.new(function(resolve)
           local clone, partClone = createSoundClone(ref, sourceSound, scope)
 
-          playSingleSound(ref, src, clone, partClone, scope, emitDuration)
+          play(ctx, props, clone, partClone, emitDuration)
 
           if partClone then
             partClone:Destroy()

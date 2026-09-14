@@ -128,6 +128,8 @@ registry.register(Trail)
 registry.register(Particle)
 registry.register(Spin)
 registry.register(Screen)
+registry.register(CameraShake)
+registry.register(Sound)
 registry.register(ShockwaveDebris)
 
 function api.init(params: params?)

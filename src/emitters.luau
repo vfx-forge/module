@@ -1,8 +1,6 @@
 local Mesh = require("@vfx/mesh")
-local Sound = require("@vfx/sound")
 local Bezier = require("@vfx/bezier")
 local Lightning = require("@vfx/lightning")
-local CameraShake = require("@vfx/camera_shake")
 local ShockwaveRing = require("@vfx/shockwave_ring")
 local ShockwaveLine = require("@vfx/shockwave_line")
 
@@ -440,10 +438,6 @@ function emitters.mesh(
   end
 end
 
-function emitters.camera_shake(obj: RayValue, scope: types.scope)
-  utility.try(`failed to emit camera shake with error: %s`, CameraShake.emit, obj, scope)
-end
-
 -- a legacy tween RayValue emitted on its own: the queue it spells drives
 -- whatever it targets, under a lock so two emits of one template cannot drive
 -- the same target twice. a randomizer RayValue is applied by the prologue of
@@ -472,16 +466,6 @@ function emitters.shockwave_line(att: Attachment, obj: Part, scope: types.scope)
   utility.try(`failed to emit shockwave line with error: %s`, ShockwaveLine.emit, att, obj, scope)
 end
 
-function emitters.sound(obj: Sound, scope: types.scope)
-  local emitCount = attr.get(obj, "EmitCount", 1, true)
-
-  if emitCount <= 0 then
-    return
-  end
-
-  utility.try(`failed to emit sound with error: %s`, Sound.emit, obj, scope)
-end
-
 -- the ownership table of an effect that still routes through the arms below:
 -- the rows it drives through its own sampler, which the applier must leave
 -- alone. it mirrors route's own discriminators and has to move with them. a
@@ -491,20 +475,12 @@ local function ownedFor(obj: any, className: string): { [string]: { [string]: bo
     return if utility.isMeshVFX(obj) then Mesh.OWNS else nil
   end
 
-  if className == "Sound" then
-    return Sound.OWNS
-  end
-
   if obj:HasTag(utility.BEZIER_TAG) then
     return Bezier.OWNS
   end
 
   if obj:HasTag(utility.LIGHTNING_TAG) then
     return Lightning.OWNS
-  end
-
-  if className == "RayValue" and obj:HasTag(utility.SCREENSHAKE_TAG) then
-    return CameraShake.OWNS
   end
 
   -- the same discriminator dispatch uses for a shockwave: a Part under a tagged
@@ -534,16 +510,8 @@ local function route(
 )
   local className = obj.ClassName
 
-  if className == "Sound" then
-    emitters.sound(obj, scope)
-    return
-  elseif className == "RayValue" then
-    if obj:HasTag(utility.SCREENSHAKE_TAG) then
-      emitters.camera_shake(obj, scope)
-    else
-      emitters.legacy_child(obj, scope)
-    end
-
+  if className == "RayValue" then
+    emitters.legacy_child(obj, scope)
     return
   end
 

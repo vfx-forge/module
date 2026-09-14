@@ -9,8 +9,6 @@ local lifetime = require("@mod/lifetime")
 local Promise = require("@pkg/Promise")
 
 local EffectSelectors = table.concat({
-  "Sound",
-
   -- Beziers
   `.{utility.BEZIER_TAG}`,
 
@@ -20,7 +18,7 @@ local EffectSelectors = table.concat({
   -- Mesh effects, until their module exists; a spin model is the registry's first
   "Model",
 
-  -- Camera shakes
+  -- Legacy tween children, until the union goes
   "RayValue",
 
   -- anything carrying a modifier queue, which is how the applier reaches a

@@ -1,9 +1,8 @@
 local RunService = game:GetService("RunService")
 
-local attr = require("@mod/attributes")
-local mods = require("@mod/mods")
+local knob = require("@mod/knob")
 local tween = require("@mod/tween")
-local types = require("@root/types")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 
@@ -57,16 +56,49 @@ local function updateCamera()
   camera.CFrame *= total
 end
 
+local function always()
+  return true
+end
+
 local camera_shake = {}
 
--- Speed is driven through a sampler of its own, so emitters.applyMods leaves it
--- alone. it is a clock multiplier like sound's, not a property write: the shake
--- reads its own elapsed, advanced by deltaTime * currentSpeed
-camera_shake.OWNS = {
-  attribute = {
-    Speed = true,
-  },
+camera_shake.id = "camera_shake"
+camera_shake.display = { name = "Camera Shake", icon = "camera_shake", order = 15 }
+camera_shake.classifier = "RayValue.CameraShake"
+
+camera_shake.attributes = {
+  EmitDelay = knob(0):min(0):unit("seconds"),
+  EmitDuration = knob(0):min(0):unit("seconds"),
+  Falloff = knob(30):min(0):unit("studs"),
+  Amplitude = knob(2.5),
+  Frequency = knob(0.2),
+  FadeInTime = knob(0.3):min(0):unit("seconds"),
+  FadeOutTime = knob(2):min(0):unit("seconds"),
+  SustainTime = knob(1):min(0):unit("seconds"),
+  PositionInfluence = knob(vector.one),
+  RotationInfluence = knob(vector.one * 0.2),
+  Speed = knob(1):mod(),
+  SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
 }
+
+camera_shake.properties = {}
+
+camera_shake.layout = {
+  { title = "Emit", entries = { "EmitDelay", "EmitDuration", "Speed" } },
+  { title = "Effect", entries = { "Falloff", "Amplitude", "Frequency" } },
+  { title = "Time", entries = { "FadeInTime", "FadeOutTime", "SustainTime" } },
+  { title = "Influence", entries = { "PositionInfluence", "RotationInfluence" } },
+}
+
+-- how long the shake runs: its own envelope, or the emit window and the fade
+-- out after it
+function camera_shake.duration(_, attrs: any)
+  if attrs.EmitDuration > 0 then
+    return attrs.EmitDuration + attrs.FadeOutTime
+  end
+
+  return attrs.FadeInTime + attrs.SustainTime + attrs.FadeOutTime
+end
 
 local conn
 local lastCameraCf
@@ -98,33 +130,26 @@ function camera_shake.deinit()
   RunService:UnbindFromRenderStep("forge_updateCameraShake")
 end
 
-function camera_shake.emit(ref: RayValue, scope: types.scope)
-  local emitDelay = attr.get(ref, "EmitDelay", 0)
-  local emitDuration = attr.get(ref, "EmitDuration", 0)
+function camera_shake.emit(ctx: reader.Ctx, attrs: any)
+  local ref = ctx.ref :: RayValue
+  local scope = ctx.scope
 
-  local falloff = attr.get(ref, "Falloff", 30)
+  local emitDelay = attrs.EmitDelay
+  local emitDuration = attrs.EmitDuration
 
-  local amplitude = attr.get(ref, "Amplitude", 2.5)
-  local frequency = attr.get(ref, "Frequency", 0.2)
-
-  local fadeInTime = attr.get(ref, "FadeInTime", 0.3)
-  local fadeOutTime = attr.get(ref, "FadeOutTime", 2)
-  local sustainTime = attr.get(ref, "SustainTime", 1)
-
-  local posInfluence = attr.get(ref, "PositionInfluence", vector.one)
-  local rotInfluence = attr.get(ref, "RotationInfluence", vector.one * 0.2)
+  local falloff = attrs.Falloff
 
   local sustained = emitDuration > 0
 
   local shake = Shake.new()
   shake.Sustain = sustained
-  shake.Amplitude = amplitude
-  shake.Frequency = frequency
-  shake.FadeInTime = fadeInTime
-  shake.FadeOutTime = fadeOutTime
-  shake.SustainTime = sustainTime
-  shake.PositionInfluence = posInfluence
-  shake.RotationInfluence = rotInfluence
+  shake.Amplitude = attrs.Amplitude
+  shake.Frequency = attrs.Frequency
+  shake.FadeInTime = attrs.FadeInTime
+  shake.FadeOutTime = attrs.FadeOutTime
+  shake.SustainTime = attrs.SustainTime
+  shake.PositionInfluence = attrs.PositionInfluence
+  shake.RotationInfluence = attrs.RotationInfluence
 
   local currentSpeed = 1
 
@@ -134,14 +159,14 @@ function camera_shake.emit(ref: RayValue, scope: types.scope)
     return elapsed
   end
 
-  local speed = mods.track(ref, "attribute", "Speed", 1, attr.get(ref, "Speed_Duration", 0.1, true))
+  local speed = attrs.Speed
 
   currentSpeed = speed.at(0)
 
   if speed.animated then
     lifetime.hold(
       scope,
-      tween.fromParams(utility.linear_bezier, speed.span, function(_, deltaTime, sampledAt)
+      tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, sampledAt)
         currentSpeed = speed.at(sampledAt)
         return deltaTime
       end)
