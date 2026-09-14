@@ -65,6 +65,8 @@ mesh.attributes = {
   SpreadAngle = knob(vector.zero):label("SpreadAngle"):hint("Random rotation spread applied to emitted effects."),
   SyncPosition = knob(false):label("SyncPosition"):hint("Whether the effect follows the emitter's position."),
   Enabled = knob(false):label("Enabled"):hint("Whether the effect continuously emits."),
+  -- the tick reads the rate off the instance itself, so the row is here for
+  -- the plugin and for retime rather than for any emit
   Rate = knob(5):min(0):unit("perSecond"):label("Rate"):hint("Effects emitted per second when Enabled is true."),
   RotAroundOrigin = knob(false)
     :label("AroundOrigin")
@@ -90,6 +92,8 @@ mesh.attributes = {
     :label("Scale")
     :hint("Easing of the mesh scale from Start to End."),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
+  -- the span an old speed quad ran over, read by the old format's reader under
+  -- this name and kept as a row so retime reaches it
   SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   -- the oldest assets' inputs, read and never renamed. which surface the
   -- stone-age pair means depends on what the model holds, so the per-surface

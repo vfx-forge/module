@@ -58,7 +58,7 @@ line.attributes = {
     :hint("Local direction the sweep travels away from the origin."),
   Rotation = knob(NumberRange.new(-180, 180))
     :label("Rotation")
-    :hint("Random per-piece rotation range around the hit normal, in degrees."),
+    :hint("Random per-piece rotation range around the hit normal, in radians."),
   -- a fixed amount spreads the casts over the whole sweep itself, and the rate
   -- is then read by nothing
   Rate = knob(30)
@@ -87,8 +87,15 @@ line.attributes = {
   MinSize = knob(Vector3.new(2, 1, 2)):aliases("Size_Min"):unit("studs"):hidden(always),
   MaxSize = knob(Vector3.new(3, 2, 3)):aliases("Size_Max"):unit("studs"):hidden(always),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
+  -- the span an old speed quad ran over, read by the old format's reader under
+  -- this name and kept as a row so retime reaches it
   SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
-  OffsetIn = knob(vector.zero):unit("studs"):mod():label("Offset"):hint("Local offset each piece settles at."),
+  OffsetIn = knob(vector.zero)
+    :aliases("BaseOffset")
+    :unit("studs")
+    :mod()
+    :label("Offset")
+    :hint("Local offset each piece settles at."),
   OffsetInDuration = knob(0.5)
     :min(0)
     :aliases("OffsetIn_Duration", "Offset_Start_Duration")
@@ -245,8 +252,11 @@ function line.emit(ctx: reader.Ctx, attrs: any)
   local offsetInStart = offsetIn.at(0)
   local sizeInStart = sizeIn.at(0)
 
-  local offsetInMoves = offsetIn.animated and offsetInStart ~= offsetIn.at(offsetIn.duration)
-  local sizeInMoves = sizeIn.animated and sizeInStart ~= sizeIn.at(sizeIn.duration)
+  -- a queue-backed phase is taken at its word and gets its stepper, the rule
+  -- the fade already follows: one that ends where it began still moves in
+  -- between, and one behind a leading delay has not started at all yet
+  local offsetInMoves = offsetIn.animated
+  local sizeInMoves = sizeIn.animated
 
   local runLength = ctx.duration :: number
 

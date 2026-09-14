@@ -662,6 +662,11 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         local currentColorAlpha = 0
         local currentFillColorAlpha = 0
 
+        -- a cycle of no length holds its alpha where it stands. dividing the
+        -- frame by it would hand every frame after it a nan
+        local colorCycle = if attrs.ColorDuration > 0 then attrs.ColorDuration else math.huge
+        local fillColorCycle = if attrs.FillColorDuration > 0 then attrs.FillColorDuration else math.huge
+
         local lastRefreshTime = 0
 
         local lightningPoints =
@@ -1013,8 +1018,8 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             scaledElapsedTime += scaledDelta
 
             if attrs.RefreshDuringDissipate then
-              currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.ColorDuration) % 1
-              currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.FillColorDuration) % 1
+              currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
+              currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
             end
 
             local tailOverride = if mode == "Retract" then utility.lerp(dissipateStartTail, headAlpha, alpha) else nil
@@ -1088,8 +1093,8 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
               local scaledDelta = deltaTime * getEffectiveSpeed()
               scaledElapsedTime += scaledDelta
 
-              currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.ColorDuration) % 1
-              currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.FillColorDuration) % 1
+              currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
+              currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
 
               if attrs.SyncPosition then
                 local newOrigin = utility.getTransformedOriginExtents(parent)
@@ -1139,8 +1144,8 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                       local scaledDelta = deltaTime * getEffectiveSpeed()
                       scaledElapsedTime += scaledDelta
 
-                      currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.ColorDuration) % 1
-                      currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.FillColorDuration) % 1
+                      currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
+                      currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
 
                       updateSegments(1, nil, scaledDelta, true)
 
@@ -1212,8 +1217,8 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                 local scaledDelta = deltaTime * getEffectiveSpeed()
                 scaledElapsedTime += scaledDelta
 
-                currentColorAlpha = (currentColorAlpha + scaledDelta / attrs.ColorDuration) % 1
-                currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / attrs.FillColorDuration) % 1
+                currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
+                currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
 
                 local distanceTraveled = elapsed * attrs.ProjectileSpeed
                 state.distanceTraveled = distanceTraveled

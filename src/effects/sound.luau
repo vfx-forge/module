@@ -127,7 +127,9 @@ local function selectRandomSound(ref: Sound, poolTag: string): Sound?
 
     table.insert(validSounds, obj)
 
-    local weight = attr.get(obj, "SoundPoolWeight", 1)
+    -- a pool member is somebody else's instance, and a weight it never
+    -- authored is this draw's business alone, so the read stamps nothing
+    local weight = attr.get(obj, "SoundPoolWeight", 1, true)
 
     table.insert(weights, weight)
     totalWeight += weight

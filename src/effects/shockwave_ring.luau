@@ -54,12 +54,19 @@ ring.attributes = {
   MinSize = knob(Vector3.new(2, 1, 2)):aliases("Size_Min"):unit("studs"):hidden(always),
   MaxSize = knob(Vector3.new(3, 2, 3)):aliases("Size_Max"):unit("studs"):hidden(always),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
+  -- the span an old speed quad ran over, read by the old format's reader under
+  -- this name and kept as a row so retime reaches it
   SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   -- the entry phases rest where the old defaults left them: the offset where
   -- it stands, the size on a rise from nothing to the drawn size, the fade
   -- from where a piece rests to the end. the spans the old quads ran over
   -- are rows of their own, so the defaults keep them and retime reaches them
-  OffsetIn = knob(vector.zero):unit("studs"):mod():label("Offset"):hint("Local offset each piece settles at."),
+  OffsetIn = knob(vector.zero)
+    :aliases("BaseOffset")
+    :unit("studs")
+    :mod()
+    :label("Offset")
+    :hint("Local offset each piece settles at."),
   OffsetInDuration = knob(0.5)
     :min(0)
     :aliases("OffsetIn_Duration", "Offset_Start_Duration")
@@ -204,9 +211,11 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
   local offsetInStart = offsetIn.at(0)
   local sizeInStart = sizeIn.at(0)
 
-  -- a phase that starts where it already ends has nothing to do
-  local offsetInMoves = offsetIn.animated and offsetInStart ~= offsetIn.at(offsetIn.duration)
-  local sizeInMoves = sizeIn.animated and sizeInStart ~= sizeIn.at(sizeIn.duration)
+  -- a queue-backed phase is taken at its word and gets its stepper, the rule
+  -- the fade already follows: one that ends where it began still moves in
+  -- between, and one behind a leading delay has not started at all yet
+  local offsetInMoves = offsetIn.animated
+  local sizeInMoves = sizeIn.animated
 
   local runLength = ctx.duration :: number
 
