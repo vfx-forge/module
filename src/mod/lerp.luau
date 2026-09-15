@@ -213,4 +213,16 @@ function lerp.Other(a: any, b: any, t: number)
   return b
 end
 
+-- dispatches on the type of `a` to the matching lerp above, falling back to
+-- lerp.Other for anything with no typed lerp of its own
+function lerp.any(a: any, b: any, t: number)
+  local fn = (lerp :: any)[typeof(a)]
+
+  if fn then
+    return fn(a, b, t)
+  end
+
+  return lerp.Other(a, b, t)
+end
+
 return lerp

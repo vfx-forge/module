@@ -67,7 +67,7 @@ harness.suite(function()
     -- spanned at the value drawn for it rather than at its midpoint
     test("spans a drawn wait at the value the rolls drew", function()
       local queue = {
-        { kind = "delay", wait = { t = "rand", min = 0, max = 4 } },
+        { kind = "delay", wait = { t = "draw", a = 0, b = 4 } },
         { kind = "tween", duration = 1 },
       }
 

@@ -39,12 +39,13 @@ harness.suite(function()
     expect(queue[1].partial).toBe("start")
   end)
 
-  test("an endpoint on a drawn range is a rand", function()
+  test("an endpoint on a drawn range is a draw", function()
     local ep = legacy_mods.endpoint("attribute", "RotSpeed", NumberRange.new(1, 2))
 
-    expect(ep.t).toBe("rand")
-    expect(ep.min).toBe(1)
-    expect(ep.max).toBe(2)
+    expect(ep.t).toBe("draw")
+    expect(ep.a).toBe(1)
+    expect(ep.b).toBe(2)
+    expect(ep.weight).toBe(nil)
   end)
 
   test("an endpoint elsewhere is a lit", function()

@@ -271,14 +271,14 @@ harness.suite(function()
     -- a legacy RotSpeed / Part_RotSpeed / Length_Scale quad authors a
     -- NumberRange per endpoint and the effect used to draw a scalar from each
     -- one per emitted part. the draws arrive the same way a randomizer's does
-    test("rand endpoints tween between the two values ctx.picks drew", function()
+    test("draw endpoints tween between the two values ctx.picks drew", function()
       local queue = {
         {
           kind = "tween",
           chain = false,
           duration = 1,
-          start = { t = "rand", min = 0, max = 100 },
-          finish = { t = "rand", min = 200, max = 300 },
+          start = { t = "draw", a = 0, b = 100 },
+          finish = { t = "draw", a = 200, b = 300 },
           curve = linear,
         },
       }
@@ -290,13 +290,13 @@ harness.suite(function()
       expect(near(modifiers.evaluate(queue, 0.5, ctx) :: number, 137.5)).ok()
     end)
 
-    test("a rand endpoint with no pick falls back to its midpoint", function()
+    test("a draw endpoint with no pick falls back to its midpoint", function()
       local queue = {
         {
           kind = "tween",
           chain = false,
           duration = 1,
-          start = { t = "rand", min = 0, max = 100 },
+          start = { t = "draw", a = 0, b = 100 },
           finish = { t = "lit", v = 0 },
           curve = linear,
         },
@@ -313,8 +313,8 @@ harness.suite(function()
           kind = "tween",
           chain = false,
           duration = 1,
-          start = { t = "rand", min = min, max = max },
-          finish = { t = "rand", min = min, max = max },
+          start = { t = "draw", a = min, b = max },
+          finish = { t = "draw", a = min, b = max },
           curve = linear,
         }
       end
@@ -324,6 +324,28 @@ harness.suite(function()
 
       -- entry 1 has no pick and takes its midpoint; entry 2 runs last and wins
       expect(near(modifiers.evaluate(queue, 0, ctx) :: number, 200)).ok()
+    end)
+
+    -- the weight curve an authored randomizer endpoint carries shapes the pick
+    -- before the two ends are read, which is the same shaping a randomizer
+    -- entry's own draw gets
+    test("a weighted draw endpoint shapes its pick through the curve", function()
+      local queue = {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "draw", a = 0, b = 100, weight = linear },
+          finish = { t = "lit", v = 0 },
+          curve = linear,
+        },
+      }
+
+      local ctx = { duration = 1, picks = { [1] = { start = 0.25 } } }
+
+      -- the linear control points sample as identity, so the shaped pick is the
+      -- pick and the endpoint is a quarter of the way along
+      expect(near(modifiers.evaluate(queue, 0, ctx) :: number, 25)).ok()
     end)
   end)
 
@@ -501,7 +523,7 @@ harness.suite(function()
     end)
 
     test("a drawn wait lands on the pick made for it", function()
-      local queue = { { kind = "delay", chain = false, wait = { t = "rand", min = 0, max = 2 } }, phase(0, 10, false) }
+      local queue = { { kind = "delay", chain = false, wait = { t = "draw", a = 0, b = 2 } }, phase(0, 10, false) }
 
       local ctx = { duration = 9, picks = { [1] = { wait = 0.25 } } }
 
@@ -523,11 +545,11 @@ harness.suite(function()
       expect(near(modifiers.evaluate(queue, 3, ctx) :: number, 10)).ok()
     end)
 
-    -- two knobs are two queues sampled independently, so a rand in each would
+    -- two knobs are two queues sampled independently, so a draw in each would
     -- draw twice and break them apart. one env is what holds them together
     test("two queues sharing one environment wait the same wait", function()
       local named = { { kind = "delay", chain = false, wait = { t = "var", ref = "Lifetime" } }, phase(0, 10, false) }
-      local drawn = { { kind = "delay", chain = false, wait = { t = "rand", min = 0, max = 4 } }, phase(0, 10, false) }
+      local drawn = { { kind = "delay", chain = false, wait = { t = "draw", a = 0, b = 4 } }, phase(0, 10, false) }
 
       local env = { Lifetime = 2 }
       local a = { duration = 9, env = env }
@@ -536,7 +558,7 @@ harness.suite(function()
       expect(modifiers.evaluate(named, 2.5, a)).toBe(modifiers.evaluate(named, 2.5, b))
 
       -- and the same two queues on separate draws do not, which is the whole
-      -- reason the wait cannot just be a rand per knob
+      -- reason the wait cannot just be a draw per knob
       local one = { duration = 9, picks = { [1] = { wait = 0.25 } } }
       local two = { duration = 9, picks = { [1] = { wait = 0.75 } } }
 
@@ -568,7 +590,7 @@ harness.suite(function()
     end)
 
     test("a drawn wait with no pick takes its midpoint", function()
-      local queue = { { kind = "delay", chain = false, wait = { t = "rand", min = 0, max = 2 } }, phase(0, 10, false) }
+      local queue = { { kind = "delay", chain = false, wait = { t = "draw", a = 0, b = 2 } }, phase(0, 10, false) }
 
       expect(near(modifiers.evaluate(queue, 1.5, { duration = 9 }) :: number, 5)).ok()
     end)

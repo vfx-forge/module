@@ -200,11 +200,11 @@ local function isRandomizer(child: Instance): boolean
   return child:HasTag(PROPERTY_RANDOMIZER_TAG) or child:HasTag(ATTRIBUTE_RANDOMIZER_TAG)
 end
 
--- a drawn-range endpoint is a rand rather than a lit so the sampler draws it
+-- a drawn-range endpoint is a draw rather than a lit so the sampler draws it
 -- once per emitted instance the way the effect used to itself
 local function endpointOf(v: any, drawn: boolean): value.Value?
   if drawn and typeof(v) == "NumberRange" then
-    return value.rand(v.Min, v.Max)
+    return value.draw(v.Min, v.Max)
   end
 
   return litOrNil(v)

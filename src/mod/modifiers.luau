@@ -4,7 +4,7 @@ local value = require("@mod/value")
 
 local modifiers = {}
 
--- the [0,1] draw behind each rand endpoint of one modifier, made once per
+-- the [0,1] draw behind each drawn endpoint of one modifier, made once per
 -- emitted instance beside ctx.draws. a delay's wait is drawn the same way
 export type Picks = { start: number?, finish: number?, wait: number? }
 
@@ -32,16 +32,6 @@ modifiers.BASE_KINDS = {
   sequence = true,
   gradient = true,
 }
-
-local function typeLerp(a: any, b: any, t: number): any
-  local fn = (lerp :: any)[typeof(a)]
-
-  if fn then
-    return fn(a, b, t)
-  end
-
-  return lerp.Other(a, b, t)
-end
 
 -- envelope widths are f32 per keypoint in ALPHA units, because the authoring
 -- side divides each NumberSequenceKeypoint.Envelope by the value range before
@@ -422,6 +412,17 @@ local function componentDraw(m: any, startVal: any, finishVal: any, draws: { num
   return Vector3.new(out[1], out[2], out[3])
 end
 
+-- an endpoint's own pick, shaped by the weight curve the endpoint carries
+-- before it is resolved, the same way a randomizer entry's draw is shaped. a
+-- lit and a var carry none, so they cost one nil test
+local function endpointAt(x: any, pick: number?, env: { [string]: any }?): any
+  if pick ~= nil and x.weight ~= nil then
+    pick = modifiers.alphaFromCurve(x.weight, pick)
+  end
+
+  return value.resolve(x, pick, env)
+end
+
 function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
   local prevOut: any = ctx.base
   local haveOut = ctx.base ~= nil
@@ -444,9 +445,9 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
       continue
     end
 
-    -- endpoints go through value.resolve rather than a raw field read, so a
-    -- rand endpoint lands on the draw the sampler made for it and a var still
-    -- resolves to nothing
+    -- endpoints go through the resolver rather than a raw field read, so a
+    -- drawn endpoint lands on the pick the sampler made for it, shaped by its
+    -- own weight, and a var still resolves to nothing
     local picks = if ctx.picks then ctx.picks[i] else nil
 
     local startVal: any = nil
@@ -454,10 +455,10 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
     if m.chain and haveOut then
       startVal = prevOut
     elseif m.start then
-      startVal = value.resolve(m.start, picks and picks.start, ctx.env)
+      startVal = endpointAt(m.start, picks and picks.start, ctx.env)
     end
 
-    local finishVal = if m.finish then value.resolve(m.finish, picks and picks.finish, ctx.env) else startVal
+    local finishVal = if m.finish then endpointAt(m.finish, picks and picks.finish, ctx.env) else startVal
 
     local offset = if offsets then offsets[i] or 0 else 0
     local progress = steppedProgress(m, elapsed - offset, ctx)
@@ -499,7 +500,7 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
       alpha = math.clamp(alpha + envelopeAt(m.envelope, progress) * ctx.envelope, 0, 1)
     end
 
-    prevOut = typeLerp(startVal, finishVal, alpha)
+    prevOut = lerp.any(startVal, finishVal, alpha)
     haveOut = true
   end
 

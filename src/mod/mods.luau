@@ -161,7 +161,7 @@ local function componentEnds(m: any, env: { [string]: any }?): boolean
   return typeof(startVal) == "Vector3" and typeof(finishVal) == "Vector3"
 end
 
--- randomizer alphas, rand endpoints, delayed waits and the envelope offset are
+-- randomizer alphas, drawn endpoints, drawn waits and the envelope offset are
 -- all drawn HERE, once, which is once per emitted instance. that makes "one
 -- draw per instance" structural rather than a rule every call site has to
 -- remember. it is its own function because a drawn delay moves the far end of
@@ -185,15 +185,15 @@ function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
       end
     end
 
-    local startRand = m.start ~= nil and value.isRand(m.start)
-    local finishRand = m.finish ~= nil and value.isRand(m.finish)
-    local waitRand = type(m.wait) == "table" and value.isRand(m.wait)
+    local startDrawn = m.start ~= nil and value.isDraw(m.start)
+    local finishDrawn = m.finish ~= nil and value.isDraw(m.finish)
+    local waitDrawn = type(m.wait) == "table" and value.isDraw(m.wait)
 
-    if startRand or finishRand or waitRand then
+    if startDrawn or finishDrawn or waitDrawn then
       picks[i] = {
-        start = if startRand then rng:NextNumber() else nil,
-        finish = if finishRand then rng:NextNumber() else nil,
-        wait = if waitRand then rng:NextNumber() else nil,
+        start = if startDrawn then rng:NextNumber() else nil,
+        finish = if finishDrawn then rng:NextNumber() else nil,
+        wait = if waitDrawn then rng:NextNumber() else nil,
       }
     end
   end
@@ -497,9 +497,9 @@ local function scaleEndpoint(x: any, factor: number)
 
   if x.t == "lit" then
     x.v = scaleValue(x.v, factor)
-  elseif x.t == "rand" then
-    x.min *= factor
-    x.max *= factor
+  elseif x.t == "draw" then
+    x.a = scaleValue(x.a, factor)
+    x.b = scaleValue(x.b, factor)
   end
 end
 

@@ -18,15 +18,15 @@ harness.suite(function()
     local queue = {
       { kind = "delay", chain = false, wait = value.lit(1) },
       tween(0, 1, 2),
-      { kind = "delay", chain = false, wait = value.rand(1, 3) },
+      { kind = "delay", chain = false, wait = value.draw(1, 3) },
     }
 
     mods.scaleTime(queue, 0.5)
 
     expect(queue[1].wait.v).toBe(0.5)
     expect(queue[2].duration).toBe(1)
-    expect(queue[3].wait.min).toBe(0.5)
-    expect(queue[3].wait.max).toBe(1.5)
+    expect(queue[3].wait.a).toBe(0.5)
+    expect(queue[3].wait.b).toBe(1.5)
   end)
 
   test("scaleTime scales a carried speed ramp's duration", function()
@@ -51,7 +51,7 @@ harness.suite(function()
       tween(1, 2, 1),
       tween(Vector3.new(1, 2, 3), Vector3.new(2, 4, 6)),
       tween(NumberRange.new(1, 2), NumberRange.new(3, 4)),
-      { kind = "tween", chain = false, start = value.rand(1, 2), finish = value.var("x") },
+      { kind = "tween", chain = false, start = value.draw(1, 2), finish = value.var("x") },
     }
 
     mods.scaleValues(queue, 2)
@@ -60,8 +60,8 @@ harness.suite(function()
     expect(queue[1].finish.v).toBe(4)
     expect(queue[2].start.v).toEqual(Vector3.new(2, 4, 6))
     expect(queue[3].finish.v.Min).toBe(6)
-    expect(queue[4].start.min).toBe(2)
-    expect(queue[4].start.max).toBe(4)
+    expect(queue[4].start.a).toBe(2)
+    expect(queue[4].start.b).toBe(4)
     expect(queue[4].finish.t).toBe("var")
   end)
 
