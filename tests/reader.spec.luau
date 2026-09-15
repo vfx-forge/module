@@ -494,7 +494,7 @@ harness.suite(function()
 
     test("an inert framed queue silences the default modifier", function()
       local obj = Instance.new("Part")
-      framed(obj, "attribute", "A", {})
+      framed(obj, "attribute", "A", { { kind = "sequence", chain = false } })
 
       local attrs = reader.resolve(module({ A = knob(0):mod(mod.to(1)) }), ctxFor(obj))
 

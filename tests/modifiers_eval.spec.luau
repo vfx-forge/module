@@ -380,8 +380,7 @@ harness.suite(function()
     -- an offset is the entry's own and nothing to do with how long its
     -- neighbours run. that is the only reading under which one offset means the
     -- same moment to knobs whose phases differ in length, which is what an
-    -- effect drawing a single lifetime per emitted instance needs, and it is
-    -- also what lets a phase start BEFORE the phase it chains from has finished
+    -- effect drawing a single lifetime per emitted instance needs
     test("an offset is the entry's own, not a sum over its neighbours", function()
       local queue = { phase(0, 10, false), phase(nil, 20, true, lit(1)) }
 
@@ -389,6 +388,34 @@ harness.suite(function()
 
       expect(near(modifiers.evaluate(queue, 1, ctx) :: number, 10)).ok()
       expect(near(modifiers.evaluate(queue, 1.5, ctx) :: number, 15)).ok()
+      expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 20)).ok()
+    end)
+
+    -- the shape the frontier reading could not express at all: an offset
+    -- shorter than the phase it chains from. the legacy effect reads its
+    -- target's live value at the moment the offset is up, and mid-flight is a
+    -- value the phase is still moving through, so an offset has to be able to
+    -- land there.
+    --
+    -- KNOWN DIVERGENCE. the legacy effect DISCONNECTS the entry tween when the
+    -- offset fires and lerps from a snapshot, while a chain here re-reads the
+    -- entry at the current elapsed, so the value it chains from keeps moving.
+    -- the two agree wherever the entry has already clamped, which is every
+    -- offset longer than the phase before it
+    test("an offset can land before the phase it chains from has finished", function()
+      local queue = {
+        { kind = "tween", chain = false, duration = 2, start = lit(0), finish = lit(10), curve = linear },
+        { kind = "tween", chain = true, duration = 1, offset = lit(1), finish = lit(20), curve = linear },
+      }
+
+      local ctx = { duration = 9 }
+
+      -- at the offset the entry is halfway, and the exit starts from there
+      expect(near(modifiers.evaluate(queue, 1, ctx) :: number, 5)).ok()
+
+      -- half a second later the entry has reached 7.5 and the exit is halfway
+      -- from it, which is the divergence above: a snapshot would read 12.5
+      expect(near(modifiers.evaluate(queue, 1.5, ctx) :: number, 13.75)).ok()
       expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 20)).ok()
     end)
 
