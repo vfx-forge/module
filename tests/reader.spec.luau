@@ -28,6 +28,10 @@ local function framed(obj: Instance, source: string, name: string, queue: { any 
   obj:SetAttribute(mods.attrName(source, name), frame.frame(codec.encode({ v = 1, queue = queue })))
 end
 
+local function framedLanes(obj: Instance, source: string, name: string, lanes: { [string]: { any } })
+  obj:SetAttribute(mods.attrName(source, name), frame.frame(codec.encode({ v = 2, lanes = lanes })))
+end
+
 local function noop() end
 
 -- a module built per case, so every case owns its rows
@@ -508,9 +512,9 @@ harness.suite(function()
       expect(attrs.A.animated).toBe(false)
     end)
 
-    test("a default modifier's own duration and start are honoured", function()
+    test("a default modifier's own duration and offset are honoured", function()
       local attrs =
-        reader.resolve(module({ A = knob(0):mod(mod.from(5):duration(1):start(1)) }), ctxFor(Instance.new("Part")))
+        reader.resolve(module({ A = knob(0):mod(mod.from(5):duration(1):offset(1)) }), ctxFor(Instance.new("Part")))
 
       expect(attrs.A.duration).toBe(2)
       expect(near(attrs.A.at(0), 5)).toBe(true)
@@ -786,6 +790,41 @@ harness.suite(function()
       if not ok then
         error(err, 0)
       end
+    end)
+
+    test("a read makes one piece for its rows and hands it back on the ctx", function()
+      local ctx = ctxFor(Instance.new("Part"))
+      local m = module({ A = knob(0):mod(), B = knob(0):mod() })
+      m.events = { "dissipate" }
+
+      local attrs = reader.resolve(m, ctx)
+
+      expect(ctx.piece ~= nil).toBe(true)
+      expect(ctx.piece.events[1]).toBe("dissipate")
+      expect(attrs.A.has("dissipate")).toBe(false)
+      expect(attrs.B.has("dissipate")).toBe(false)
+    end)
+
+    test("an event lane runs on the piece the call form was handed", function()
+      local obj = Instance.new("Part")
+
+      framedLanes(obj, "attribute", "A", {
+        start = { tween(0, 1, 4) },
+        dissipate = { { kind = "tween", chain = true, duration = 1, finish = value.lit(0) } },
+      })
+
+      local m = module({ A = knob(0):mod() })
+      m.events = { "dissipate" }
+
+      local attrs = reader.resolve(m, ctxFor(obj))
+      local piece = mods.piece(m.events)
+      local track = attrs.A(nil, 4, piece)
+
+      expect(track.has("dissipate")).toBe(true)
+
+      piece:fire("dissipate", 2)
+
+      expect(near(track.at(2.5), 0.25)).toBe(true)
     end)
   end)
 end)

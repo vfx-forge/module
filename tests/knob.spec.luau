@@ -1,3 +1,4 @@
+local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local harness = require("@tests/harness")
 local test, expect = harness.test, harness.expect
@@ -79,6 +80,18 @@ harness.suite(function()
       expect(row.hiddenRule).toBe(fn)
       expect(row.readonlyRule).toBe(fn)
       expect(row.choices[2]).toBe("y")
+    end)
+
+    test("mod takes any number of specs, and none is still a mod row", function()
+      local bare = knob(1):mod()
+      local one = knob(1):mod(mod.to(2))
+      local two = knob(1):mod(mod.to(2), mod.from(0):lane("dissipate"))
+
+      expect(bare.isMod).toBe(true)
+      expect(bare.modDefault).toBe(nil)
+      expect(#one.modDefault).toBe(1)
+      expect(#two.modDefault).toBe(2)
+      expect(two.modDefault[2].opts.lane).toBe("dissipate")
     end)
   end)
 

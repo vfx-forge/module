@@ -39,15 +39,24 @@ curves.PRESETS = {
 }
 
 -- a row names its curve by preset; nil is the out cubic every effect always
--- eased with
-function curves.preset(name: string?)
-  local build = curves.PRESETS[name or "easeOut"]
-
-  if build == nil then
-    logger.error(`unknown curve preset {tostring(name)}`)
+-- eased with. a string naming no preset is a serialized path when it holds
+-- points, which is what a rule reading a curve row hands back
+function curves.preset(name: (string | buffer)?)
+  if typeof(name) == "buffer" then
+    return name
   end
 
-  return build()
+  local build = curves.PRESETS[name or "easeOut"]
+
+  if build ~= nil then
+    return build()
+  end
+
+  if typeof(name) == "string" and #path.deserializePath(name) > 0 then
+    return name
+  end
+
+  logger.error(`unknown curve preset {tostring(name)}`)
 end
 
 return curves

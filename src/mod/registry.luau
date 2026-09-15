@@ -177,8 +177,12 @@ local function checkRow(id: string, source: string, name: string, row: any, take
     fail(id, `{name} has an unknown curve preset {row.preset}`)
   end
 
-  if row.modDefault ~= nil and not mod.is(row.modDefault) then
-    fail(id, `the default modifier of {name} is not a mod spec`)
+  if row.modDefault ~= nil then
+    for _, spec in row.modDefault do
+      if not mod.is(spec) then
+        fail(id, `a default modifier of {name} is not a mod spec`)
+      end
+    end
   end
 
   for _, field in { "hiddenRule", "readonlyRule", "rule" } do
@@ -197,6 +201,16 @@ local function checkLayout(id: string, entries: { any }, rows: { [string]: boole
     elseif type(entry) == "table" and entry.action ~= nil then
       if type(entry.action) ~= "string" or type(entry.label) ~= "string" then
         fail(id, "an action row needs a string action and label")
+      end
+    elseif type(entry) == "table" and entry.curve ~= nil then
+      -- a compound entry draws a set of rows as one; the runtime reads nothing
+      -- from it, so only the rows it points at are checked
+      for _, key in { "curve", "duration" } do
+        local named = entry[key]
+
+        if named ~= nil and (type(named) ~= "string" or not rows[named]) then
+          fail(id, `a compound row names no row {tostring(named)}`)
+        end
       end
     elseif type(entry) == "table" and type(entry.entries) == "table" then
       if entry.hidden ~= nil and type(entry.hidden) ~= "function" then
@@ -244,7 +258,11 @@ local function freezeRows(rows: { [string]: any })
     end
 
     if row.modDefault then
-      freeze(row.modDefault.opts)
+      for _, spec in row.modDefault do
+        freeze(spec.opts)
+        freeze(spec)
+      end
+
       freeze(row.modDefault)
     end
 
@@ -320,6 +338,30 @@ function registry.register(module: Module)
     fail(id, "constant must be a boolean")
   end
 
+  if module.events ~= nil then
+    if type(module.events) ~= "table" then
+      fail(id, "events must be a list of lane names")
+    end
+
+    local named = {}
+
+    for _, event in module.events do
+      if type(event) ~= "string" or event == "" then
+        fail(id, "an event needs a name")
+      end
+
+      if event == "start" or event == "end" then
+        fail(id, `{event} is a built in lane rather than an event`)
+      end
+
+      if named[event] then
+        fail(id, `event {event} is declared twice`)
+      end
+
+      named[event] = true
+    end
+  end
+
   if module.attributes == nil then
     module.attributes = {}
   end
@@ -359,6 +401,11 @@ function registry.register(module: Module)
   freezeRows(module.attributes)
   freezeRows(module.properties)
   freeze(module.display)
+
+  if module.events ~= nil then
+    freeze(module.events)
+  end
+
   freeze(module)
 
   byId[id] = module

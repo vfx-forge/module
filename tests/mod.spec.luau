@@ -18,57 +18,84 @@ harness.suite(function()
 
     test("the chain returns the same spec", function()
       local spec = mod.to(1)
-      local same = spec:duration(0.5):curve("linear"):start(0.2)
+      local same = spec:duration(0.5):curve("linear"):offset(0.2):lane("dissipate")
 
       expect(same).toBe(spec)
       expect(spec.opts.duration).toBe(0.5)
       expect(spec.opts.curve).toBe("linear")
-      expect(spec.opts.start).toBe(0.2)
+      expect(spec.opts.offset).toBe(0.2)
+      expect(spec.opts.lane).toBe("dissipate")
     end)
   end)
 
-  harness.describe("mod.queue", function()
+  harness.describe("mod.lanes", function()
     test("to runs from the row's state to the endpoint on the row's preset", function()
-      local queue = mod.queue(mod.to(1), ctx, {}, {}, 0, "linear")
+      local lanes = mod.lanes({ mod.to(1) }, ctx, {}, {}, 0, "linear")
 
-      expect(#queue).toBe(1)
-      expect(queue[1].kind).toBe("tween")
-      expect(value.resolve(queue[1].start)).toBe(0)
-      expect(value.resolve(queue[1].finish)).toBe(1)
-      expect(queue[1].duration).toBe(nil)
-      expect(queue[1].curve).toBe(curves.linear())
+      expect(#lanes.start).toBe(1)
+      expect(lanes.start[1].kind).toBe("tween")
+      expect(value.resolve(lanes.start[1].start)).toBe(0)
+      expect(value.resolve(lanes.start[1].finish)).toBe(1)
+      expect(lanes.start[1].duration).toBe(nil)
+      expect(lanes.start[1].curve).toBe(curves.linear())
     end)
 
     test("from runs from the endpoint to the row's state", function()
-      local queue = mod.queue(mod.from(0), ctx, {}, {}, 1, nil)
+      local lanes = mod.lanes({ mod.from(0) }, ctx, {}, {}, 1, nil)
 
-      expect(value.resolve(queue[1].start)).toBe(0)
-      expect(value.resolve(queue[1].finish)).toBe(1)
-      expect(queue[1].curve).toBe(curves.default())
+      expect(value.resolve(lanes.start[1].start)).toBe(0)
+      expect(value.resolve(lanes.start[1].finish)).toBe(1)
+      expect(lanes.start[1].curve).toBe(curves.default())
     end)
 
     test("an endpoint equal to the state is no modifier at all", function()
-      expect(mod.queue(mod.to(1), ctx, {}, {}, 1, nil)).toBe(nil)
+      expect(mod.lanes({ mod.to(1) }, ctx, {}, {}, 1, nil)).toBe(nil)
     end)
 
-    test("duration, curve and start are honoured, and a start becomes the entry's offset", function()
-      local queue = mod.queue(mod.to(1):duration(0.5):curve("linear"):start(0.2), ctx, {}, {}, 0, nil)
+    test("a lane name places the entry, and two specs of one lane queue up", function()
+      local lanes = mod.lanes({
+        mod.from(1),
+        mod.to(1):lane("dissipate"),
+        mod.to(2):lane("dissipate"),
+      }, ctx, {}, {}, 0, nil)
 
-      expect(#queue).toBe(1)
-      expect(value.resolve(queue[1].offset)).toBe(0.2)
-      expect(queue[1].duration).toBe(0.5)
-      expect(queue[1].curve).toBe(curves.linear())
+      expect(#lanes.start).toBe(1)
+      expect(#lanes.dissipate).toBe(2)
+      expect(value.resolve(lanes.dissipate[2].finish)).toBe(2)
     end)
 
-    test("a duration of zero is a span the queue keeps, where nothing named falls back", function()
-      local snapped = mod.queue(mod.to(1):duration(0), ctx, {}, {}, 0, nil)
-      local unnamed = mod.queue(mod.to(1), ctx, {}, {}, 0, nil)
+    -- a lane fired mid run has to pick the row up where it stands, so a `to`
+    -- there chains instead of naming the row's resting value as its start
+    test("a to on a module's own lane begins where the row stands", function()
+      local lanes = mod.lanes({ mod.to(1):lane("dissipate"), mod.to(1) }, ctx, {}, {}, 0, nil)
 
-      expect(snapped[1].duration).toBe(0)
-      expect(unnamed[1].duration).toBe(nil)
+      expect(lanes.dissipate[1].chain).toBe(true)
+      expect(lanes.dissipate[1].start).toBe(nil)
+      expect(lanes.start[1].chain).toBe(false)
+      expect(value.resolve(lanes.start[1].start)).toBe(0)
     end)
 
-    test("an endpoint and a duration given as rules are called with ctx, attrs and props", function()
+    test("an offset rides the entry rather than leading it", function()
+      local lanes = mod.lanes({ mod.to(1):duration(0.5):curve("linear"):offset(0.2) }, ctx, {}, {}, 0, nil)
+
+      expect(#lanes.start).toBe(1)
+      expect(value.resolve(lanes.start[1].offset)).toBe(0.2)
+      expect(lanes.start[1].duration).toBe(0.5)
+      expect(lanes.start[1].curve).toBe(curves.linear())
+    end)
+
+    -- a snap TO somewhere is a step the author asked for; a snap FROM somewhere
+    -- to where the row already is is the row's own value and costs no sampler
+    test("a duration of zero snaps a to and drops a from", function()
+      local snapped = mod.lanes({ mod.to(1):duration(0) }, ctx, {}, {}, 0, nil)
+      local unnamed = mod.lanes({ mod.to(1) }, ctx, {}, {}, 0, nil)
+
+      expect(snapped.start[1].duration).toBe(0)
+      expect(unnamed.start[1].duration).toBe(nil)
+      expect(mod.lanes({ mod.from(1):duration(0) }, ctx, {}, {}, 0, nil)).toBe(nil)
+    end)
+
+    test("an endpoint, a duration and a curve given as rules are called with ctx, attrs and props", function()
       local seen = {}
 
       local spec = mod
@@ -79,15 +106,19 @@ harness.suite(function()
         :duration(function()
           return 3
         end)
+        :curve(function()
+          return "linear"
+        end)
 
       local attrs, props = {}, {}
-      local queue = mod.queue(spec, ctx, attrs, props, 0, nil)
+      local lanes = mod.lanes({ spec }, ctx, attrs, props, 0, nil)
 
       expect(seen.ctx).toBe(ctx)
       expect(seen.attrs).toBe(attrs)
       expect(seen.props).toBe(props)
-      expect(value.resolve(queue[1].finish)).toBe(2)
-      expect(queue[1].duration).toBe(3)
+      expect(value.resolve(lanes.start[1].finish)).toBe(2)
+      expect(lanes.start[1].duration).toBe(3)
+      expect(lanes.start[1].curve).toBe(curves.linear())
     end)
   end)
 
@@ -99,9 +130,22 @@ harness.suite(function()
       expect(curves.PRESETS.linear ~= nil).toBe(true)
     end)
 
-    test("an unknown preset errors", function()
+    -- a rule reading a curve row hands back the serialized path that row holds,
+    -- which names no preset and is already the curve
+    test("a serialized path is the curve it already is", function()
+      local buf = buffer.fromstring(curves.default())
+
+      expect(curves.preset(curves.default())).toBe(curves.default())
+      expect(curves.preset(buf)).toBe(buf)
+    end)
+
+    test("a name that is neither a preset nor a path errors", function()
       expect(function()
         curves.preset("bounce")
+      end).toThrow()
+
+      expect(function()
+        curves.preset(7 :: any)
       end).toThrow()
     end)
   end)

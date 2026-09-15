@@ -139,9 +139,15 @@ function Knob.readonly(self: Knob, rule: Rule): Knob
   return self
 end
 
-function Knob.mod(self: Knob, default: any): Knob
+-- a row may declare more than one default modifier, since its phases can run
+-- from different triggers. an authored lane map replaces every one of them
+function Knob.mod(self: Knob, ...: any): Knob
   self.isMod = true
-  self.modDefault = default
+
+  if select("#", ...) > 0 then
+    self.modDefault = { ... }
+  end
+
   return self
 end
 

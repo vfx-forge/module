@@ -203,6 +203,58 @@ harness.suite(function()
         registry.register(stub("d", { constant = 1 }))
       end).toThrow()
     end)
+
+    test("events must be unique names and never a built in lane", function()
+      registry.clear()
+
+      expect(function()
+        registry.register(stub("a", { events = "dissipate" }))
+      end).toThrow()
+
+      expect(function()
+        registry.register(stub("b", { events = { "start" } }))
+      end).toThrow()
+
+      expect(function()
+        registry.register(stub("c", { events = { "one", "one" } }))
+      end).toThrow()
+
+      registry.register(stub("d", { events = { "one", "two" } }))
+
+      expect(registry.get("d").events[2]).toBe("two")
+      expect(table.isfrozen(registry.get("d").events)).toBe(true)
+    end)
+
+    test("a row may declare more than one default modifier", function()
+      registry.clear()
+
+      expect(function()
+        registry.register(stub("a", { attributes = { A = knob(1):mod(mod.to(2), {}) } }))
+      end).toThrow()
+
+      registry.register(stub("ok", { attributes = { A = knob(1):mod(mod.to(2), mod.from(0):lane("dissipate")) } }))
+
+      expect(#registry.get("ok").attributes.A.modDefault).toBe(2)
+      expect(table.isfrozen(registry.get("ok").attributes.A.modDefault[2].opts)).toBe(true)
+    end)
+
+    test("a compound layout entry names rows the module has", function()
+      registry.clear()
+
+      expect(function()
+        registry.register(stub("a", {
+          attributes = { A = knob(1) },
+          layout = { { title = "One", entries = { "A", { curve = "Nope" } } } },
+        }))
+      end).toThrow()
+
+      registry.register(stub("ok", {
+        attributes = { A = knob(1), ACurve = knob(1), ADuration = knob(1) },
+        layout = { { title = "One", entries = { "A", { curve = "ACurve", duration = "ADuration" } } } },
+      }))
+
+      expect(registry.get("ok").id).toBe("ok")
+    end)
   end)
 
   harness.describe("registry.depth and registry.subjects", function()

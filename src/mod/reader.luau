@@ -18,6 +18,7 @@ export type Module = {
   layout: { any }?,
   duration: knob.Rule?,
   constant: boolean?,
+  events: { string }?,
   emit: (ctx: any, attrs: any, props: any) -> (),
   selected: ((ctx: any) -> ())?,
 }
@@ -38,6 +39,7 @@ export type Ctx = {
   duration: number?,
   shared: Shared?,
   constant: boolean?,
+  piece: mods.Piece?,
 }
 
 export type Track = {
@@ -93,6 +95,7 @@ type State = {
   duration: number?,
   deciding: boolean,
   children: { Instance }?,
+  piece: mods.Piece?,
   attrPending: { [string]: boolean },
   propPending: { [string]: boolean },
   attrQueues: { [string]: Found }?,
@@ -285,6 +288,21 @@ local function fallbackOf(state: State, row: knob.Knob, base: any)
   return base
 end
 
+-- the piece a row's lanes fire on when the caller named none: one per read,
+-- which is what a module emitting a single piece per emit wants. built on the
+-- first mod row that asks for one, so a module with none allocates nothing
+local function pieceOf(state: State): mods.Piece
+  local piece = state.piece
+
+  if piece == nil then
+    piece = mods.piece(state.module.events)
+    state.piece = piece
+    state.ctx.piece = piece
+  end
+
+  return piece
+end
+
 local function plainOf(state: State, source: string, name: string, row: knob.Knob)
   local ctx = state.ctx
   local base = if source == "property" then propertyOf(ctx.obj, name) else nil
@@ -374,7 +392,8 @@ local function trackOf(
   row: knob.Knob,
   rest: any,
   seeded: boolean,
-  span: number
+  span: number,
+  piece: mods.Piece?
 ): Track
   local ctx = state.ctx
   local found = queueFor(state, source, name, row)
@@ -394,17 +413,16 @@ local function trackOf(
   if typeof(rest) == "NumberRange" then
     default = mods.draw(rest.Min, rest.Max)
   elseif not tombstone and row.modDefault ~= nil then
-    local queue = mod.queue(row.modDefault, ctx, state.attrs, state.props, rest, row.preset)
-
-    default = if queue ~= nil then { start = queue } else rest
+    default = mod.lanes(row.modDefault, ctx, state.attrs, state.props, rest, row.preset) or rest
   end
 
+  local own = if piece ~= nil then piece else pieceOf(state)
   local opts = if seeded then SEEDED else nil
   -- an attribute row builds under the name its queue was found under, since
   -- that is where the value it chains from and the range it draws inside are
   -- stored too; a property row's base is the property, whatever the spelling
   local built = if source == "property" then name else found.under or name
-  local inner = mods.build(ctx.ref, source, built, default, span, nil, found.lanes, found.framed, opts)
+  local inner = mods.build(ctx.ref, source, built, default, span, nil, found.lanes, found.framed, opts, own)
 
   local track = {
     at = inner.at,
@@ -425,13 +443,14 @@ local function trackOf(
   end
 
   -- a piece calls the row for a track of its own: rules run again, a value
-  -- handed in is where this piece's state is, and a span handed in is the
-  -- clock this piece runs over when it drew one of its own
+  -- handed in is where this piece's state is, a span handed in is the clock this
+  -- piece runs over when it drew one, and a piece handed in is the clock its own
+  -- event lanes fire on
   setmetatable(track, {
-    __call = function(_, current: any, span: number?)
+    __call = function(_, current: any, span: number?, own: mods.Piece?)
       local held = if current ~= nil then current else plainOf(state, source, name, row)
 
-      return trackOf(state, source, name, row, held, current ~= nil, span or durationOf(state))
+      return trackOf(state, source, name, row, held, current ~= nil, span or durationOf(state), own)
     end,
   })
 
@@ -511,6 +530,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
     duration = nil,
     deciding = false,
     children = nil,
+    piece = nil,
     attrPending = {},
     propPending = {},
     attrQueues = nil,
