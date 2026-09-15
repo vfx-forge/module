@@ -170,6 +170,26 @@ harness.suite(function()
       expect(#warnings).toBe(0)
     end)
 
+    -- a default made of lanes rests where its lead begins, so a lane that
+    -- chains with nothing under it reads from there rather than from nothing
+    test("a chaining lane with no own composes over where the default lane begins", function()
+      local track = built({ start = { onward(4, 1) } }, { start = { tween(0, 2, 1) } }, 1, nil)
+
+      expect(near(track.at(0), 0)).toBe(true)
+      expect(near(track.at(0.25), 1)).toBe(true)
+      expect(near(track.at(0.5), 2)).toBe(true)
+      expect(near(track.at(0.75), 3)).toBe(true)
+      expect(near(track.at(1), 4)).toBe(true)
+    end)
+
+    test("a drawn default rests at the corner its draw begins from", function()
+      local track = built({ start = { onward(4, 1) } }, mods.draw(1, 5), 1, nil)
+
+      expect(near(track.at(0), 1)).toBe(true)
+      expect(near(track.at(0.5), 2.5)).toBe(true)
+      expect(near(track.at(1), 4)).toBe(true)
+    end)
+
     test("an empty map rests at the row's own value", function()
       local track = built({}, 3, 5, nil)
 

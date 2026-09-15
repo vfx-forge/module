@@ -622,6 +622,10 @@ function mods.build(
   -- has run at the moment it is built
   local seed: any = if fillStart ~= nil then value.resolve(fillStart, nil, env) else rest
 
+  -- what a lane that chains composes over when nothing under it has run: where
+  -- the row rests, which for a default made of lanes is where its lead begins
+  local footing: any = if rest ~= nil then rest else seed
+
   local seeded = opts ~= nil and opts.ownStart == true
 
   -- a default lane is taken as it stands: the two old-format rewrites answer for
@@ -675,7 +679,7 @@ function mods.build(
       return constant(nil, span)
     end
 
-    return trackFrom(set, piece, span, rest)
+    return trackFrom(set, piece, span, footing)
   end
 
   if lanes == nil then
@@ -699,7 +703,7 @@ function mods.build(
     end
   end
 
-  return trackFrom(set, piece, span, rest)
+  return trackFrom(set, piece, span, footing)
 end
 
 -- the read half: what an effect that still names its own knobs calls
