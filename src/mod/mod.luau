@@ -64,15 +64,29 @@ local function pick(x: any, ctx: any, attrs: any, props: any)
 end
 
 -- the entry a default modifier runs over a row resting at `rest`, with the
--- row's own state as the end the spec did not name. nil when the two ends
--- agree, so a row at rest costs no stepper. an authored duration of zero is a
+-- row's own state as the end the spec did not name. nil when the two ends agree
+-- and the entry begins at that rest, so a row at rest costs no stepper. an
+-- authored duration of zero is a
 -- phase that snaps, not an unnamed one, so only a missing or negative span
 -- falls back to the module's clock, and a phase snapping FROM somewhere to
 -- where the row already stands is the row's own value and no entry at all
 local function entryOf(spec: Spec, ctx: any, attrs: any, props: any, rest: any, rowCurve: string?): any?
   local endpoint = pick(spec.endpoint, ctx, attrs, props)
 
-  if endpoint == nil or endpoint == rest then
+  if endpoint == nil then
+    return nil
+  end
+
+  -- a `to` on a lane the module fires begins where the row stands rather than
+  -- at its resting value, which is the only reading under which a phase
+  -- composes over whatever ran before it. a `from` names its own start, so it
+  -- never chains, and on the emit's own lane the row stands at its rest anyway
+  local onward = spec.side == "to" and spec.opts.lane ~= nil and spec.opts.lane ~= "start"
+
+  -- an endpoint standing where the row rests moves nothing only for an entry
+  -- that begins at that rest. a chained one begins wherever the lanes before it
+  -- left the row, so it is the phase that carries the row back and is kept
+  if not onward and endpoint == rest then
     return nil
   end
 
@@ -85,12 +99,6 @@ local function entryOf(spec: Spec, ctx: any, attrs: any, props: any, rest: any, 
 
   local offset = pick(spec.opts.offset, ctx, attrs, props)
   local curve = pick(spec.opts.curve, ctx, attrs, props)
-
-  -- a `to` on a lane the module fires begins where the row stands rather than
-  -- at its resting value, which is the only reading under which a phase
-  -- composes over whatever ran before it. a `from` names its own start, so it
-  -- never chains, and on the emit's own lane the row stands at its rest anyway
-  local onward = spec.side == "to" and spec.opts.lane ~= nil and spec.opts.lane ~= "start"
 
   return {
     kind = "tween",

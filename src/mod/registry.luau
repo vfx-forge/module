@@ -178,10 +178,23 @@ local function checkRow(id: string, source: string, name: string, row: any, take
   end
 
   if row.modDefault ~= nil then
+    local leads = row.modDefault[1] == nil
+
     for _, spec in row.modDefault do
       if not mod.is(spec) then
         fail(id, `a default modifier of {name} is not a mod spec`)
       end
+
+      if spec.opts.lane == nil or spec.opts.lane == "start" then
+        leads = true
+      end
+    end
+
+    -- a default made of lanes is footed on where the emit's own lane begins, so
+    -- a row whose every default modifier waits on an event has nothing to rest
+    -- on and would read as no value at all
+    if not leads then
+      fail(id, `every default modifier of {name} waits on an event lane`)
     end
   end
 

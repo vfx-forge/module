@@ -238,6 +238,21 @@ harness.suite(function()
       expect(table.isfrozen(registry.get("ok").attributes.A.modDefault[2].opts)).toBe(true)
     end)
 
+    test("every default modifier of a row waiting on an event is rejected", function()
+      registry.clear()
+
+      local ok, err = pcall(function()
+        registry.register(stub("a", { attributes = { Fade = knob(0):mod(mod.to(1):lane("dissipate")) } }))
+      end)
+
+      expect(ok).toBe(false)
+      expect(string.find(tostring(err), "Fade", 1, true) ~= nil).toBe(true)
+
+      registry.register(stub("ok", { attributes = { Fade = knob(0):mod(mod.to(1), mod.to(0):lane("dissipate")) } }))
+
+      expect(#registry.get("ok").attributes.Fade.modDefault).toBe(2)
+    end)
+
     test("a compound layout entry names rows the module has", function()
       registry.clear()
 

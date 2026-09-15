@@ -75,6 +75,18 @@ harness.suite(function()
       expect(value.resolve(lanes.start[1].start)).toBe(0)
     end)
 
+    -- a chained entry begins where the lanes before it left the row, so an
+    -- endpoint standing at the row's rest is the phase that carries it back
+    test("a chained lane whose endpoint is the row's rest is kept", function()
+      local lanes = mod.lanes({ mod.to(1), mod.to(0):lane("dissipate") }, ctx, {}, {}, 0, nil)
+
+      expect(value.resolve(lanes.start[1].finish)).toBe(1)
+      expect(#lanes.dissipate).toBe(1)
+      expect(lanes.dissipate[1].chain).toBe(true)
+      expect(lanes.dissipate[1].start).toBe(nil)
+      expect(value.resolve(lanes.dissipate[1].finish)).toBe(0)
+    end)
+
     test("an offset rides the entry rather than leading it", function()
       local lanes = mod.lanes({ mod.to(1):duration(0.5):curve("linear"):offset(0.2) }, ctx, {}, {}, 0, nil)
 
