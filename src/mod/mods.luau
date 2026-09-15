@@ -60,27 +60,23 @@ function mods.span(queue: { any }, fallback: number, rolls: Rolls?): (number, nu
   return frontier, linked
 end
 
--- a queue that waits and does nothing else. its delays still push a clock
--- around, but nothing in it produces a value, so driving it writes the target's
--- own value back every frame for the length of the waits and holds the emit
--- open while it does. mods.track's sample(0) guard catches the base-only case
--- on an attribute, whose base is usually nil, but not on a property, whose base
--- is whatever it currently holds
+-- a queue that moves nothing: every entry holds a value the target already
+-- carries, so driving it writes that value back every frame for the length of
+-- the run and holds the emit open while it does. mods.build's sample(0) guard
+-- catches the base-only case on an attribute, whose base is usually nil, but
+-- not on a property, whose base is whatever it currently holds
 function mods.inert(queue: { any }): boolean
-  local waits = false
+  if #queue == 0 then
+    return false
+  end
 
   for _, m in queue do
-    if m.kind == "delay" then
-      waits = true
-      continue
-    end
-
     if not modifiers.BASE_KINDS[m.kind] then
       return false
     end
   end
 
-  return waits
+  return true
 end
 
 -- the framed attribute decoded on its own, with no legacy fallback. an EMPTY
@@ -161,10 +157,10 @@ local function componentEnds(m: any, env: { [string]: any }?): boolean
   return typeof(startVal) == "Vector3" and typeof(finishVal) == "Vector3"
 end
 
--- randomizer alphas, drawn endpoints, drawn waits and the envelope offset are
+-- randomizer alphas, drawn endpoints, drawn offsets and the envelope offset are
 -- all drawn HERE, once, which is once per emitted instance. that makes "one
 -- draw per instance" structural rather than a rule every call site has to
--- remember. it is its own function because a drawn delay moves the far end of
+-- remember. it is its own function because a drawn offset moves the far end of
 -- the queue, so a caller that needs the SPAN first has to draw before it can
 -- ask for one, and then hand the same rolls to the sampler
 function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
@@ -187,13 +183,13 @@ function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
 
     local startDrawn = m.start ~= nil and value.isDraw(m.start)
     local finishDrawn = m.finish ~= nil and value.isDraw(m.finish)
-    local waitDrawn = type(m.wait) == "table" and value.isDraw(m.wait)
+    local offsetDrawn = type(m.offset) == "table" and value.isDraw(m.offset)
 
-    if startDrawn or finishDrawn or waitDrawn then
+    if startDrawn or finishDrawn or offsetDrawn then
       picks[i] = {
         start = if startDrawn then rng:NextNumber() else nil,
         finish = if finishDrawn then rng:NextNumber() else nil,
-        wait = if waitDrawn then rng:NextNumber() else nil,
+        offset = if offsetDrawn then rng:NextNumber() else nil,
       }
     end
   end

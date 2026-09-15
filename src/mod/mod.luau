@@ -74,24 +74,19 @@ function mod.queue(spec: Spec, ctx: any, attrs: any, props: any, rest: any, rowC
   local finishV = if spec.side == "from" then rest else endpoint
 
   local runFor = pick(spec.opts.duration, ctx, attrs, props)
-  local wait = pick(spec.opts.start, ctx, attrs, props)
+  local offset = pick(spec.opts.start, ctx, attrs, props)
 
-  local out = {}
-
-  if typeof(wait) == "number" and wait > 0 then
-    table.insert(out, { kind = "delay", chain = false, wait = value.lit(wait) })
-  end
-
-  table.insert(out, {
-    kind = "tween",
-    chain = false,
-    duration = if typeof(runFor) == "number" and runFor >= 0 then runFor else nil,
-    start = value.lit(startV),
-    finish = value.lit(finishV),
-    curve = curves.preset(spec.opts.curve or rowCurve),
-  })
-
-  return out
+  return {
+    {
+      kind = "tween",
+      chain = false,
+      duration = if typeof(runFor) == "number" and runFor >= 0 then runFor else nil,
+      offset = if typeof(offset) == "number" and offset > 0 then value.lit(offset) else nil,
+      start = value.lit(startV),
+      finish = value.lit(finishV),
+      curve = curves.preset(spec.opts.curve or rowCurve),
+    },
+  }
 end
 
 return mod

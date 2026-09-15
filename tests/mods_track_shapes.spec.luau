@@ -24,12 +24,15 @@ end
 
 -- no curve, so alpha is progress outright and every reading below is the plain
 -- fraction of the way along rather than a bezier's approximation of one
-local function tween(startV: any, finishV: any, duration: number?)
-  return { kind = "tween", chain = false, duration = duration, start = value.lit(startV), finish = value.lit(finishV) }
-end
-
-local function delay(wait: number)
-  return { kind = "delay", chain = false, wait = value.lit(wait) }
+local function tween(startV: any, finishV: any, duration: number?, offset: number?)
+  return {
+    kind = "tween",
+    chain = false,
+    duration = duration,
+    offset = if offset then value.lit(offset) else nil,
+    start = value.lit(startV),
+    finish = value.lit(finishV),
+  }
 end
 
 -- an instance carrying the queue the way an authored one does, framed and
@@ -46,13 +49,13 @@ end
 local still: mods.Rolls = { draws = {}, picks = {}, envelope = 0 }
 
 harness.suite(function()
-  harness.describe("mods.sampler over a delayed queue", function()
-    -- the reach is 7 here: a wait of 2 pushes a modifier that runs for 5 out to
-    -- it. seeding the linked run from that reach measured a 5 second phase
+  harness.describe("mods.sampler over an offset queue", function()
+    -- the reach is 7 here: an offset of 2 pushes a modifier that runs for 5 out
+    -- to it. seeding the linked run from that reach measured a 5 second phase
     -- against 7, and the knob stopped 71% of the way along and stayed there for
     -- the rest of every emit
     test("a lent run seeds a linked modifier rather than the reach", function()
-      local queue = { delay(2), tween(0, 10) }
+      local queue = { tween(0, 10, nil, 2) }
       local span, linked = mods.span(queue, 5)
       local sample = mods.sampler(Instance.new("Attachment"), "attribute", "Size", span, queue, still, linked) :: any
 
@@ -67,7 +70,7 @@ harness.suite(function()
     -- agree: a caller that lends nothing has only the reach to measure against,
     -- which is the 71% reading above
     test("a sampler told nothing about the run measures against the reach", function()
-      local queue = { delay(2), tween(0, 10) }
+      local queue = { tween(0, 10, nil, 2) }
       local sample = mods.sampler(Instance.new("Attachment"), "attribute", "Size", 7, queue, still) :: any
 
       expect(near(sample(7), 10 * (5 / 7))).ok()
@@ -78,7 +81,7 @@ harness.suite(function()
     -- the same threading through the function every effect actually calls: the
     -- span it hands back is the reach, and what it hands the sampler is the run
     test("threads the run it took beside the reach", function()
-      local obj = authored("Size", { delay(2), tween(0, 10) })
+      local obj = authored("Size", { tween(0, 10, nil, 2) })
       local track = mods.track(obj, "attribute", "Size", 0, 5)
 
       expect(track.span).toBe(7)

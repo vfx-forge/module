@@ -17,12 +17,15 @@ local function near(a: number, b: number): boolean
   return math.abs(a - b) < EPSILON
 end
 
-local function tween(startV: any, finishV: any, duration: number?)
-  return { kind = "tween", chain = false, duration = duration, start = value.lit(startV), finish = value.lit(finishV) }
-end
-
-local function delay(wait: number)
-  return { kind = "delay", chain = false, wait = value.lit(wait) }
+local function tween(startV: any, finishV: any, duration: number?, offset: number?)
+  return {
+    kind = "tween",
+    chain = false,
+    duration = duration,
+    offset = if offset then value.lit(offset) else nil,
+    start = value.lit(startV),
+    finish = value.lit(finishV),
+  }
 end
 
 local function authored(name: string, queue: { any })
@@ -78,8 +81,8 @@ harness.suite(function()
     expect(near(track.at(40), 10)).toBe(true)
   end)
 
-  test("a queue that only waits is the constant default", function()
-    local obj = authored("Width", { delay(1) })
+  test("a queue that moves nothing is the constant default", function()
+    local obj = authored("Width", { { kind = "sequence", chain = false } })
     local track = mods.track(obj, "attribute", "Width", 3, 2)
 
     expect(track.animated).toBe(false)
@@ -278,10 +281,10 @@ harness.suite(function()
     expect(track.at(0)).toBe(3)
   end)
 
-  test("a default queue led by a delay still lends its ends to a half quad", function()
+  test("a default queue whose entry carries an offset still lends its ends to a half quad", function()
     local obj = Instance.new("Attachment")
     local queue = { { kind = "tween", chain = false, finish = value.lit(9), partial = "start" } }
-    local default = { delay(1), tween(0, 5) }
+    local default = { tween(0, 5, nil, 1) }
     local track = mods.build(obj, "attribute", "Width", default, 2, nil, queue, false)
 
     expect(near(track.at(0), 0)).toBe(true)

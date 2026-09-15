@@ -126,7 +126,7 @@ harness.suite(function()
     return child
   end
 
-  test("a tween child with a delay leads with one", function()
+  test("a tween child with a delay carries it as an offset", function()
     local obj = Instance.new("Part")
     local child = tweenChild("Transparency")
     child:SetAttribute("EmitDelay", 0.5)
@@ -134,11 +134,10 @@ harness.suite(function()
 
     local queue = legacy_mods.readChildren(obj, "property", "Transparency")
 
-    expect(#queue).toBe(2)
-    expect(queue[1].kind).toBe("delay")
-    expect(queue[1].wait.v).toBe(0.5)
-    expect(queue[2].kind).toBe("tween")
-    expect(queue[2].duration).toBe(2)
+    expect(#queue).toBe(1)
+    expect(queue[1].kind).toBe("tween")
+    expect(queue[1].offset.v).toBe(0.5)
+    expect(queue[1].duration).toBe(2)
   end)
 
   test("a tween child with no delay has none", function()

@@ -5,8 +5,8 @@ local value = require("@mod/value")
 local modifiers = {}
 
 -- the [0,1] draw behind each drawn endpoint of one modifier, made once per
--- emitted instance beside ctx.draws. a delay's wait is drawn the same way
-export type Picks = { start: number?, finish: number?, wait: number? }
+-- emitted instance beside ctx.draws. an offset's draw is drawn the same way
+export type Picks = { start: number?, finish: number?, offset: number? }
 
 -- a randomizer's draw is one alpha, except over a Vector3, where it is one
 -- alpha PER COMPONENT: a legacy Min/Max pair over a size means three
@@ -61,9 +61,9 @@ local function envelopeAt(buf: buffer, progress: number): number
 end
 
 -- how far through its own run a modifier is, given an elapsed already measured
--- from where the delays before it put it, so a negative one means it has not
--- started. a nil duration means it runs for ctx.linked, the delay-free span, so
--- a delay moves a modifier without changing how long it takes once it starts
+-- from where its offset put it, so a negative one means it has not started. a
+-- nil duration means it runs for ctx.linked, the offset-free span, so an offset
+-- moves a modifier without changing how long it takes once it starts
 local function durationOf(m: any, ctx: Ctx): number?
   local d = m.duration
 
@@ -266,44 +266,37 @@ local function steppedProgress(m: any, elapsed: number, ctx: Ctx): number
   return progressOf(m, math.floor(elapsed * fps) / fps, ctx)
 end
 
--- a delay carries its wait in `wait`, a Value, so a drawn one is the same rand
--- tag every other randomizable number here uses, and so a runtime that predates
--- the kind sees a modifier with no start and passes the previous value through
--- untouched. a plain number in `duration` is honoured too, since that is how a
--- delay reads if you write one by hand
-function modifiers.waitOf(m: any, picks: Picks?, env: { [string]: any }?): number
-  local wait = m.wait
+-- an entry carries its offset in `offset`, a Value, so a drawn one is the same
+-- draw tag every other randomizable number here uses. a plain number is
+-- honoured too, since that is how an offset reads if you write one by hand
+function modifiers.offsetOf(m: any, picks: Picks?, env: { [string]: any }?): number
+  local offset = m.offset
 
-  if type(wait) == "table" then
-    wait = value.resolve(wait, picks and picks.wait, env)
+  if type(offset) == "table" then
+    offset = value.resolve(offset, picks and picks.offset, env)
   end
 
-  if typeof(wait) ~= "number" then
-    wait = m.duration
-  end
-
-  if typeof(wait) ~= "number" then
+  if typeof(offset) ~= "number" then
     return 0
   end
 
-  -- a wait that is not finite cannot place anything on a clock, and it would
+  -- an offset that is not finite cannot place anything on a clock, and it would
   -- carry through mods.span into tween.timer, which then never satisfies
-  -- elapsed >= duration and never finishes the emit. the arithmetic here
-  -- propagates a NaN where the comparison it replaced used to reject one
-  if wait ~= wait or wait == math.huge then
+  -- elapsed >= duration and never finishes the emit
+  if offset ~= offset or offset == math.huge then
     return 0
   end
 
-  return math.max(wait, 0)
+  return math.max(offset, 0)
 end
 
--- where each modifier begins once the delays before it are counted, and how far
--- the queue reaches in all. one walk, so evaluate and mods.span can never
--- disagree about when a delayed modifier starts.
+-- where each modifier begins once its own offset is counted, and how far the
+-- queue reaches in all. one walk, so evaluate and mods.span can never disagree
+-- about when an offset modifier starts.
 --
 -- `fallback` is the duration a caller is prepared to lend the queue, and it
 -- only ever affects the reach. a caller that just wants the offsets leaves it
--- out. the offsets come back nil for a queue that delays nothing, which is
+-- out. the offsets come back nil for a queue that offsets nothing, which is
 -- every queue authored so far, so the common path carries no table and reads
 -- none per frame
 function modifiers.schedule(
@@ -313,16 +306,16 @@ function modifiers.schedule(
   env: { [string]: any }?
 ): ({ [number]: number }?, number, number)
   -- the longest duration the queue NAMES, which is what a modifier that names
-  -- none runs for. taken from durations alone, with no offset in it: a delay
+  -- none runs for. taken from durations alone, with no offset in it: an offset
   -- lengthens the run of the queue, but it must not stretch the modifier it
-  -- delays, and it must not reach backwards and stretch one that ran before it
+  -- moves, and it must not reach backwards and stretch one that ran before it
   local linked = 0
 
   for _, m in queue do
     -- an infinite duration is excluded rather than allowed to win: it would
     -- make every modifier that names no duration read a progress of zero and
     -- sit on its start value for the whole run
-    if m.kind ~= "delay" and typeof(m.duration) == "number" and m.duration ~= math.huge and m.duration > linked then
+    if typeof(m.duration) == "number" and m.duration ~= math.huge and m.duration > linked then
       linked = m.duration
     end
   end
@@ -332,12 +325,11 @@ function modifiers.schedule(
   end
 
   local offsets: { [number]: number }? = nil
-  local offset = 0
   local frontier = 0
 
   for i, m in queue do
     -- a base entry is not on the clock, but a duration on one still lengthened
-    -- the run before delays existed and has to keep doing so
+    -- the run before offsets existed and has to keep doing so
     if modifiers.BASE_KINDS[m.kind] then
       if typeof(m.duration) == "number" and m.duration > frontier then
         frontier = m.duration
@@ -346,38 +338,17 @@ function modifiers.schedule(
       continue
     end
 
-    -- a delay shifts what follows by its own wait and by nothing else, so a
-    -- modifier's offset is the SUM of the waits before it rather than anything
-    -- to do with how long its neighbours run. that is the only reading under
-    -- which one wait means the same moment to knobs whose own phases differ in
-    -- length, which is what an effect drawing a single lifetime per emitted
-    -- instance needs, and it is also what lets a phase be delayed to a moment
-    -- BEFORE the phase it chains from has finished
-    if m.kind == "delay" then
-      -- waitOf makes every wait finite on its own, but a sum of finite waits
-      -- need not be. an infinite offset would make the span infinite too, and a
-      -- knob whose span never ends holds its emit open for good, which is the
-      -- hang the per-wait guard exists to prevent. a sum that cannot grow leaves
-      -- the offset where it was rather than poisoning every modifier after it
-      local sum = offset + modifiers.waitOf(m, if picks then picks[i] else nil, env)
+    local offset = modifiers.offsetOf(m, if picks then picks[i] else nil, env)
 
-      if sum == math.huge then
-        sum = offset
-      end
-
-      offset = sum
+    -- an entry that is not moved is absent from the table rather than written
+    -- down as the zero it is
+    if offset > 0 then
       offsets = offsets or {}
-      continue
-    end
-
-    -- nothing ahead of the first delay is moved, so its absence from the table
-    -- reads as the zero it is
-    if offsets then
       offsets[i] = offset
     end
 
-    -- a modifier naming no duration of its own runs for the delay-free span,
-    -- wherever a delay placed it, so its reach is that span past its own start
+    -- a modifier naming no duration of its own runs for the offset-free span,
+    -- wherever its offset placed it, so its reach is that span past its start
     local d = if typeof(m.duration) == "number" then m.duration else linked
 
     if offset + d > frontier then
@@ -427,22 +398,19 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
   local prevOut: any = ctx.base
   local haveOut = ctx.base ~= nil
   local offsets = ctx.offsets
+  local walked = offsets ~= nil
 
   for i, m in queue do
     if modifiers.BASE_KINDS[m.kind] then
       continue
     end
 
-    -- a delay contributes no value at all, so it leaves prevOut alone and a
-    -- chain reaches across it. the offsets it imposes are worked out once per
-    -- emitted instance in mods.sampler; a caller evaluating a queue directly
-    -- pays for that walk here, and only if the queue actually delays something
-    if m.kind == "delay" then
-      if offsets == nil then
-        offsets = modifiers.schedule(queue, ctx.picks, nil, ctx.env)
-      end
-
-      continue
+    -- the offsets are worked out once per emitted instance in mods.sampler; a
+    -- caller evaluating a queue directly pays for that walk here, and only if
+    -- the queue moves anything at all
+    if not walked and m.offset ~= nil then
+      offsets = modifiers.schedule(queue, ctx.picks, nil, ctx.env)
+      walked = true
     end
 
     -- endpoints go through the resolver rather than a raw field read, so a
