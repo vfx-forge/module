@@ -223,6 +223,27 @@ harness.suite(function()
       expect(near(track.at(0.5 + FADE_OUT_DURATION, born, birthElapsed), FADE_OUT_END)).toBe(true)
     end)
 
+    -- a segment born at the emit is born into the fade rather than past it, so
+    -- the lane that starts there still runs over the value it is holding. this
+    -- is the call form the module uses with IndependentSegments on
+    test("a segment born at the emit still fades in", function()
+      local _, attrs = bolt()
+      local module = registry.get("lightning")
+      local piece = mods.piece(module.events)
+      local track = attrs.Transparency(nil, 1, piece)
+
+      local birth = track.at(0)
+
+      expect(near(birth, FADE_IN_START)).toBe(true)
+
+      for _, at in { 0.1, 0.2, 0.3 } do
+        expect(near(track.at(at, birth, 0), oldFadeIn(attrs, 0, at))).toBe(true)
+      end
+
+      expect(near(track.at(FADE_IN_DURATION, birth, 0), 0)).toBe(true)
+      expect(near(track.at(9, birth, 0), 0)).toBe(true)
+    end)
+
     -- a fade nobody authored is not a lane, which is what keeps an unauthored
     -- bolt free of a sampler it would only ever sample at rest
     test("a fade of no length is no lane", function()

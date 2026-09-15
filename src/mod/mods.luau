@@ -332,7 +332,10 @@ end
 -- which lane owns the row at `elapsed`: the one that started last at or before
 -- it, and the later of two that started together. `under` is the lane a base is
 -- being folded for, which cannot own the moment it starts and neither can a lane
--- after it in the same frame, so the fold always descends
+-- after it in the same frame, so the fold always descends. `since` is where a
+-- caller froze the row, and only a lane that had already started is inside the
+-- value it froze: one starting exactly there is part of what the caller was
+-- born into, so it still composes
 local function ownerAt(lanes: { Lane }, piece: Piece?, elapsed: number, since: number?, under: number?): number?
   local best: number? = nil
   local at = -1
@@ -348,7 +351,7 @@ local function ownerAt(lanes: { Lane }, piece: Piece?, elapsed: number, since: n
       continue
     end
 
-    if since ~= nil and from <= since then
+    if since ~= nil and from < since then
       continue
     end
 

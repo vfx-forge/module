@@ -97,8 +97,8 @@ harness.suite(function()
       expect(near(track.at(2), 0.75)).toBe(true)
     end)
 
-    -- a piece that froze the row at a moment composes only what fired after it,
-    -- over the value it is holding
+    -- a piece that froze the row at a moment composes only what started at or
+    -- after it, over the value it is holding
     test("since skips every lane that had already started", function()
       local piece = mods.piece({ "dissipate" })
       local track = built({ start = { tween(0, 1, 4) }, dissipate = { onward(0, 1) } }, 0, 4, piece)
@@ -107,6 +107,29 @@ harness.suite(function()
 
       expect(near(track.at(1.5, 0.8, 1), 0.8)).toBe(true)
       expect(near(track.at(2.5, 0.8, 1), 0.4)).toBe(true)
+    end)
+
+    -- a lane that begins the instant a piece is born is part of what it is born
+    -- into rather than something it already carries, so the boundary is the
+    -- lane's and not the piece's
+    test("a lane starting exactly at since composes, one below it is skipped", function()
+      local piece = mods.piece({ "dissipate" })
+      local track = built({ start = { tween(0, 1, 4) }, dissipate = { onward(0, 1) } }, 0, 4, piece)
+
+      piece:fire("dissipate", 2)
+
+      expect(near(track.at(1.9, 0.8, 2), 0.8)).toBe(true)
+      expect(near(track.at(2, 0.8, 2), 0.8)).toBe(true)
+      expect(near(track.at(2.5, 0.8, 2), 0.4)).toBe(true)
+      expect(near(track.at(3, 0.8, 2), 0)).toBe(true)
+    end)
+
+    test("a row frozen at the emit still runs the lane that starts there", function()
+      local track = built({ start = { tween(0, 1, 4) } }, 0, 4, nil)
+
+      expect(near(track.at(0, 0.9, 0), 0)).toBe(true)
+      expect(near(track.at(2, 0.9, 0), 0.5)).toBe(true)
+      expect(near(track.at(4, 0.9, 0), 1)).toBe(true)
     end)
 
     test("own replaces the value the lanes compose over", function()
