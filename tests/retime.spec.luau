@@ -88,7 +88,9 @@ local function framed(obj: Instance, source: string, name: string, queue: { any 
 end
 
 local function queueOf(obj: Instance, source: string, name: string)
-  return mods.framed(obj, source, name)
+  local lanes = mods.framed(obj, source, name)
+
+  return if lanes then lanes.start else nil
 end
 
 harness.suite(function()

@@ -62,9 +62,9 @@ end
 
 -- a queue that moves nothing: every entry holds a value the target already
 -- carries, so driving it writes that value back every frame for the length of
--- the run and holds the emit open while it does. mods.build's sample(0) guard
--- catches the base-only case on an attribute, whose base is usually nil, but
--- not on a property, whose base is whatever it currently holds
+-- the run and holds the emit open while it does. the sample guard behind
+-- mods.build catches the base-only case only where nothing rests at all, since
+-- such a queue hands back whatever the row does rest at
 function mods.inert(queue: { any }): boolean
   if #queue == 0 then
     return false
@@ -83,7 +83,7 @@ end
 -- queue is a tombstone the authoring side writes deliberately, so a caller
 -- asking whether anything is authored here has to tell it apart from an absent
 -- attribute, which mods.read cannot once it has fallen through
-function mods.framed(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
+function mods.framed(ref: Instance, source: string, name: string, map: { [string]: any }?): { [string]: { any } }?
   local key = mods.attrName(source, name)
   local raw = if map ~= nil then map[key] else attr.get(ref, key, nil, true)
 
@@ -101,7 +101,7 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
   local ok, decoded = pcall(codec.decode, body)
 
   if ok and decoded then
-    return decoded.lanes.start or {}
+    return decoded.lanes
   end
 
   logger.warn(`failed to decode the modifier queue on {name}`)
@@ -109,17 +109,29 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
   return nil
 end
 
--- the second return says whether the queue came out of the framed attribute, so
--- a caller that has to tell an authored queue from an old row does not pay the
+-- the second return says whether the lanes came out of the framed attribute, so
+-- a caller that has to tell an authored row from an old one does not pay the
 -- decode a second time to ask
-function mods.read(ref: Instance, source: string, name: string, map: { [string]: any }?): ({ any }?, boolean)
-  local queue = mods.framed(ref, source, name, map)
+function mods.read(
+  ref: Instance,
+  source: string,
+  name: string,
+  map: { [string]: any }?
+): ({ [string]: { any } }?, boolean)
+  local lanes = mods.framed(ref, source, name, map)
 
-  if queue ~= nil then
-    return queue, true
+  if lanes ~= nil then
+    return lanes, true
   end
 
-  return legacy_mods.read(ref, source, name, map), false
+  local queue = legacy_mods.read(ref, source, name, map)
+
+  if queue == nil then
+    return nil, false
+  end
+
+  -- the old format had one trigger, which is the lane every queue was
+  return { start = queue }, false
 end
 
 -- the value a target already carries, which is what a base entry resolves to
@@ -206,13 +218,11 @@ function mods.sampler(
   source: string,
   name: string,
   duration: number,
-  preread: { any }?,
+  queue: { any },
   rolls: Rolls?,
   linked: number?
-): ((number) -> any)?
-  local queue = preread or mods.read(ref, source, name)
-
-  if queue == nil or #queue == 0 then
+): ((elapsed: number, own: any?) -> any)?
+  if #queue == 0 then
     return nil
   end
 
@@ -223,9 +233,11 @@ function mods.sampler(
   local lent = if linked ~= nil then linked else duration
   local offsets, _, resolved = modifiers.schedule(queue, rolled.picks, lent, rolled.env)
 
+  local base = baseOf(ref, source, name)
+
   local ctx: modifiers.Ctx = {
     duration = duration,
-    base = baseOf(ref, source, name),
+    base = base,
     draws = rolled.draws,
     picks = rolled.picks,
     offsets = offsets,
@@ -234,16 +246,166 @@ function mods.sampler(
     envelope = rolled.envelope,
   }
 
-  return function(elapsed: number)
+  -- a lane fired over a running row begins from the value under it rather than
+  -- from what the instance itself carries, so the base is the caller's per call
+  return function(elapsed: number, own: any?)
+    ctx.base = if own ~= nil then own else base
+
     return modifiers.evaluate(queue, elapsed, ctx)
   end
 end
 
 export type Track = {
-  at: (elapsed: number) -> any,
+  at: (elapsed: number, own: any?, since: number?) -> any,
   span: number,
   animated: boolean,
+  has: (lane: string) -> boolean,
 }
+
+local Piece = {}
+Piece.__index = Piece
+
+-- the clock a lane fires on belongs to the emitted piece rather than to the
+-- read: one ctx serves every piece of an emit and each piece has tracks of its
+-- own. a module declares the names it may fire and the piece refuses any other,
+-- since a name nothing declares can only be a module bug
+export type Piece = typeof(setmetatable({} :: { fired: { [string]: number }, events: { string }? }, Piece))
+
+type Lane = {
+  name: string,
+  order: number,
+  from: number?,
+  reach: number,
+  sample: (elapsed: number, own: any?) -> any,
+}
+
+function Piece.fire(self: Piece, name: string, elapsed: number)
+  local events = self.events
+
+  if events == nil or table.find(events, name) == nil then
+    logger.error(`no lane named {name} is declared here`)
+  end
+
+  -- firing again restarts the lane, and a clock nobody can read starts it where
+  -- the piece already is rather than nowhere at all
+  self.fired[name] = if typeof(elapsed) == "number" and elapsed == elapsed then math.max(elapsed, 0) else 0
+end
+
+function mods.piece(events: { string }?): Piece
+  return setmetatable({ fired = {}, events = events }, Piece)
+end
+
+-- where a lane sits when two of them fired in the same frame: the built ins
+-- first, then the piece's events in the order the module declared them, and the
+-- later one owns the row. a name the piece does not declare can never have
+-- fired, so it is not a lane at all
+local function orderOf(piece: Piece?, lane: string): number?
+  if lane == "start" then
+    return 1
+  end
+
+  if lane == "end" then
+    return 2
+  end
+
+  local events = if piece then piece.events else nil
+  local at = if events then table.find(events, lane) else nil
+
+  return if at then 2 + at else nil
+end
+
+local function byOrder(a: Lane, b: Lane): boolean
+  return a.order < b.order
+end
+
+-- when a lane's clock started, on the piece's own clock: the emit for start, the
+-- moment the row's span leaves room for its reach for end, and the elapsed a
+-- module fired an event at, which is nothing until it does
+local function firedAt(lane: Lane, piece: Piece?): number?
+  if lane.from ~= nil then
+    return lane.from
+  end
+
+  return if piece then piece.fired[lane.name] else nil
+end
+
+-- which lane owns the row at `elapsed`: the one that started last at or before
+-- it, and the later of two that started together. `under` is the lane a base is
+-- being folded for, which cannot own the moment it starts and neither can a lane
+-- after it in the same frame, so the fold always descends
+local function ownerAt(lanes: { Lane }, piece: Piece?, elapsed: number, since: number?, under: number?): number?
+  local best: number? = nil
+  local at = -1
+
+  for i, lane in lanes do
+    local from = firedAt(lane, piece)
+
+    if from == nil or from > elapsed then
+      continue
+    end
+
+    if under ~= nil and from == elapsed and i >= under then
+      continue
+    end
+
+    if since ~= nil and from <= since then
+      continue
+    end
+
+    if from >= at then
+      at = from
+      best = i
+    end
+  end
+
+  return best
+end
+
+-- the row's value at `elapsed`: the owning lane's queue run from its own
+-- trigger, over what the lanes under it hold at that trigger. a lane producing
+-- nothing passes that value through, and a row nobody owns rests where the
+-- caller says it rests
+local function valueAt(lanes: { Lane }, piece: Piece?, elapsed: number, own: any, since: number?, under: number?): any
+  local i = ownerAt(lanes, piece, elapsed, since, under)
+
+  if i == nil then
+    return own
+  end
+
+  local lane = lanes[i]
+  local from = firedAt(lane, piece) :: number
+  local base = valueAt(lanes, piece, from, own, since, i)
+  local v = lane.sample(elapsed - from, base)
+
+  return if v ~= nil then v else base
+end
+
+local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any): Track
+  local reach = span
+
+  for _, lane in set do
+    if lane.name == "start" then
+      reach = lane.reach
+    end
+  end
+
+  return {
+    at = function(elapsed: number, own: any?, since: number?)
+      return valueAt(set, piece, elapsed, if own ~= nil then own else rest, since, nil)
+    end,
+    span = reach,
+    animated = true,
+    has = function(lane: string)
+      for _, held in set do
+        if held.name == lane then
+          return true
+        end
+      end
+
+      return false
+    end,
+  }
+end
 
 -- one warning per knob per instance: a mismatch repeats on every emit of the
 -- same template, and the first one already says everything
@@ -274,12 +436,14 @@ function mods.ramp(startV: any, finishV: any): any
   end
 
   return {
-    {
-      kind = "tween",
-      chain = false,
-      start = value.lit(startV),
-      finish = value.lit(finishV),
-      curve = curves.default(),
+    start = {
+      {
+        kind = "tween",
+        chain = false,
+        start = value.lit(startV),
+        finish = value.lit(finishV),
+        curve = curves.default(),
+      },
     },
   }
 end
@@ -287,25 +451,32 @@ end
 -- the default for a knob drawn once per emitted instance between two corners,
 -- which is what a Min and Max pair or a NumberRange attribute always meant. a
 -- vector pair draws each axis on its own
-function mods.draw(minV: any, maxV: any): { any }
+function mods.draw(minV: any, maxV: any): { [string]: { any } }
   return {
-    {
-      kind = "randomizer",
-      chain = false,
-      start = value.lit(minV),
-      finish = value.lit(maxV),
-      perComponent = true,
+    start = {
+      {
+        kind = "randomizer",
+        chain = false,
+        start = value.lit(minV),
+        finish = value.lit(maxV),
+        perComponent = true,
+      },
     },
   }
 end
 
+local function noLane(): boolean
+  return false
+end
+
 local function constant(default: any, span: number): Track
   return {
-    at = function()
-      return default
+    at = function(_, own: any?)
+      return if own ~= nil then own else default
     end,
     span = span,
     animated = false,
+    has = noLane,
   }
 end
 
@@ -313,28 +484,40 @@ end
 -- the callers that already hold mods
 mods.kindOf = knob.kindOf
 
-local function sampleQueue(
+-- one lane as a sampler on its own clock, drawn once for this instance. the
+-- probe is where the row rests, which is what a lane whose first entry chains
+-- begins from when nothing under it has run yet
+local function laneOf(
   ref: Instance,
   source: string,
   name: string,
   queue: { any },
   span: number,
-  env: { [string]: any }?
-): (((number) -> any)?, number)
+  env: { [string]: any }?,
+  probe: any
+): (((elapsed: number, own: any?) -> any)?, number)
   local rolls = mods.roll(queue, env)
   local reach, linked = mods.span(queue, span, rolls)
   local sample = mods.sampler(ref, source, name, reach, queue, rolls, linked)
 
-  if sample == nil or sample(0) == nil then
+  if sample == nil then
+    return nil, span
+  end
+
+  if sample(0) == nil and (probe == nil or sample(0, probe) == nil) then
     return nil, span
   end
 
   return sample, reach
 end
 
--- the entry of a default queue whose ends complete a half quad: the first
--- tween, since a default may lead with a wait
-local function leadTween(queue: { any }): any
+-- the entry of a default lane whose ends complete a half quad: the first tween,
+-- since a default may lead with something else
+local function leadTween(queue: { any }?): any
+  if queue == nil then
+    return nil
+  end
+
   for _, m in queue do
     if m.kind == "tween" then
       return m
@@ -344,13 +527,59 @@ local function leadTween(queue: { any }): any
   return queue[1]
 end
 
+-- a lane's entries with the two old-format rewrites applied: an effect-owned
+-- start becomes a half quad, and a half quad is completed from the default. nil
+-- when the lane cannot be completed at all, which is a lane that says nothing
+local function completed(
+  queue: { any },
+  framed: boolean,
+  seeded: boolean,
+  lead: any,
+  fillStart: value.Value?,
+  fillFinish: value.Value?
+): { any }?
+  -- an old row whose start was only ever a seed for a target carrying nothing
+  -- of its own says where the value ENDS, and the effect says where it comes
+  -- from. handing that start back makes it a half quad, which the block below
+  -- completes from the default. a row that already named no finish gives up
+  -- both ends and keeps only its duration and curve, which is what such a row
+  -- did when the effect ran the other half itself. only the old format reads
+  -- this way: a framed lane was authored to mean exactly what it says
+  if
+    seeded
+    and #queue == 1
+    and queue[1].kind == "tween"
+    and (queue[1].partial == nil or queue[1].partial == "finish")
+    and not framed
+  then
+    local m = table.clone(queue[1])
+
+    m.partial = if queue[1].partial == "finish" then "both" else "start"
+    queue = { m }
+  end
+
+  if #queue == 1 and queue[1].partial then
+    -- a curve alone can only ease a ramp. a constant default has no ramp and a
+    -- drawn default is not a tween, so the curve is dropped as the old arms
+    -- dropped it for those knobs
+    if queue[1].partial == "both" and (lead == nil or lead.kind ~= "tween") then
+      return nil
+    end
+
+    return legacy_mods.complete(queue, fillStart, fillFinish)
+  end
+
+  return queue
+end
+
 -- the one way a knob becomes a track. it always answers: what rests when nothing
--- usable is authored, else a sampler over the queue's own reach. a default given
--- as a queue is what runs when nothing is authored, for a knob whose resting
--- state is a ramp or a draw rather than a value.
+-- usable is authored, else one sampler per lane over that lane's own reach. a
+-- default given as a lane map is what runs when nothing is authored, for a knob
+-- whose resting state is a ramp or a draw rather than a value.
 --
 -- `ownStart` is for a knob whose start belongs to the effect rather than to the
--- row, which is the shape below
+-- row. `piece` is the clock the row's event lanes fire on, and the row carries
+-- none without one
 function mods.build(
   ref: Instance,
   source: string,
@@ -358,22 +587,23 @@ function mods.build(
   default: any,
   span: number,
   env: { [string]: any }?,
-  queue: { any }?,
+  lanes: { [string]: { any } }?,
   framed: boolean,
-  opts: { ownStart: boolean? }?
+  opts: { ownStart: boolean? }?,
+  piece: Piece?
 ): Track
-  local fallback: { any }? = if type(default) == "table" then default else nil
+  local fallback: { [string]: { any } }? = if type(default) == "table" then default else nil
   local rest: any = if fallback then nil else default
+
+  local lead = if fallback then leadTween(fallback.start) else nil
 
   local fillStart: value.Value? = nil
   local fillFinish: value.Value? = nil
   local want: string? = nil
 
   if fallback then
-    local first = leadTween(fallback)
-
-    fillStart = first and first.start
-    fillFinish = first and first.finish
+    fillStart = lead and lead.start
+    fillFinish = lead and lead.finish
 
     if fillStart and value.isLit(fillStart) then
       want = mods.kindOf(value.resolve(fillStart))
@@ -387,66 +617,79 @@ function mods.build(
     end
   end
 
+  -- where a blank start begins, which is where the row rests: the probe a lane
+  -- whose first entry chains is judged against, since nothing under such a lane
+  -- has run at the moment it is built
+  local seed: any = if fillStart ~= nil then value.resolve(fillStart, nil, env) else rest
+
+  local seeded = opts ~= nil and opts.ownStart == true
+
+  -- a default lane is taken as it stands: the two old-format rewrites answer for
+  -- what an author stored, and a row's own defaults were never read that way
+  local function setOf(map: { [string]: { any } }, authored: boolean): { Lane }
+    local out: { Lane } = {}
+
+    for lane, queue in map do
+      local order = orderOf(piece, lane)
+
+      if order == nil or #queue == 0 or mods.inert(queue) then
+        continue
+      end
+
+      local entries = if authored then completed(queue, framed, seeded, lead, fillStart, fillFinish) else queue
+
+      if entries == nil then
+        continue
+      end
+
+      local sample, reach = laneOf(ref, source, name, entries, span, env, seed)
+
+      if sample == nil then
+        continue
+      end
+
+      table.insert(out, {
+        name = lane,
+        order = order,
+        -- the end lane fires once the piece's own clock has only its reach
+        -- left, and an event lane has no trigger until the module gives it one
+        from = if lane == "start" then 0 elseif lane == "end" then math.max(0, span - reach) else nil,
+        reach = reach,
+        sample = sample,
+      })
+    end
+
+    table.sort(out, byOrder)
+
+    return out
+  end
+
   local function resting(): Track
     if fallback == nil then
       return constant(rest, span)
     end
 
-    local sample, reach = sampleQueue(ref, source, name, fallback, span, env)
+    local set = setOf(fallback, false)
 
-    if sample == nil then
+    if #set == 0 then
       return constant(nil, span)
     end
 
-    return { at = sample, span = reach, animated = true }
+    return trackFrom(set, piece, span, rest)
   end
 
-  if queue == nil or #queue == 0 or mods.inert(queue) then
+  if lanes == nil then
     return resting()
   end
 
-  -- an old row whose start was only ever a seed for a target carrying nothing
-  -- of its own says where the value ENDS, and the effect says where it comes
-  -- from. handing that start back makes it a half quad, which the block below
-  -- completes from the default. a row that already named no finish gives up
-  -- both ends and keeps only its duration and curve, which is what such a row
-  -- did when the effect ran the other half itself. only the old format reads
-  -- this way: a framed queue was authored to mean exactly what it says
-  if
-    opts
-    and opts.ownStart
-    and #queue == 1
-    and queue[1].kind == "tween"
-    and (queue[1].partial == nil or queue[1].partial == "finish")
-    and not framed
-  then
-    local m = table.clone(queue[1])
+  local set = setOf(lanes, true)
 
-    m.partial = if queue[1].partial == "finish" then "both" else "start"
-    queue = { m }
-  end
-
-  -- a half quad is completed from the default, which is the effect's own and is
-  -- exactly what the legacy branch would have read for the missing half
-  if #queue == 1 and queue[1].partial then
-    -- a curve alone can only ease a ramp. a constant default has no ramp and a
-    -- drawn default is not a tween, so the curve is dropped as the old arms
-    -- dropped it for those knobs
-    if queue[1].partial == "both" and (fallback == nil or leadTween(fallback).kind ~= "tween") then
-      return resting()
-    end
-
-    queue = legacy_mods.complete(queue, fillStart, fillFinish)
-  end
-
-  local sample, reach = sampleQueue(ref, source, name, queue, span, env)
-
-  if sample == nil then
+  if #set == 0 then
     return resting()
   end
 
   if want ~= nil then
-    local got = mods.kindOf(sample(0))
+    local got = mods.kindOf(set[1].sample(0, rest))
 
     if got ~= want then
       mods.warnOnce(ref, name, `{name} samples a {got} where the effect wants a {want}`)
@@ -454,7 +697,7 @@ function mods.build(
     end
   end
 
-  return { at = sample, span = reach, animated = true }
+  return trackFrom(set, piece, span, rest)
 end
 
 -- the read half: what an effect that still names its own knobs calls
@@ -465,11 +708,12 @@ function mods.track(
   default: any,
   span: number,
   env: { [string]: any }?,
-  opts: { ownStart: boolean? }?
+  opts: { ownStart: boolean? }?,
+  piece: Piece?
 ): Track
-  local queue, framed = mods.read(ref, source, name)
+  local lanes, framed = mods.read(ref, source, name)
 
-  return mods.build(ref, source, name, default, span, env, queue, framed, opts)
+  return mods.build(ref, source, name, default, span, env, lanes, framed, opts, piece)
 end
 
 local function scaleValue(v: any, factor: number): any

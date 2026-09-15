@@ -322,7 +322,10 @@ function emitters.applyMods(
       continue
     end
 
-    local queue = mods.read(obj, source :: string, name :: string)
+    local lanes = mods.read(obj, source :: string, name :: string)
+    -- the applier has no clock to fire an event from and no drawn lifetime to
+    -- place an end against, so it drives the one lane that starts at the emit
+    local queue = if lanes ~= nil then lanes.start else nil
 
     if queue == nil or #queue == 0 or mods.inert(queue) then
       continue

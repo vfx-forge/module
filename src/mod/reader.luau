@@ -41,10 +41,11 @@ export type Ctx = {
 }
 
 export type Track = {
-  at: (elapsed: number) -> any,
+  at: (elapsed: number, own: any?, since: number?) -> any,
   duration: number,
   animated: boolean,
   value: any,
+  has: (lane: string) -> boolean,
   apply: (self: Track, write: (v: any) -> ()) -> (),
 }
 
@@ -72,12 +73,12 @@ local function propertyOf(obj: Instance, name: string)
   return if ok then v else nil
 end
 
-type Lookup = (ref: Instance, source: string, name: string, map: { [string]: any }, children: { Instance }?) -> { any }?
+type Lookup = (ref: Instance, source: string, name: string, map: { [string]: any }, children: { Instance }?) -> any?
 
--- a row's queue, its framed flag and the spelling it was found under, kept
+-- a row's lanes, its framed flag and the spelling it was found under, kept
 -- together so a piece calling the row a second time is handed the one lookup
 -- rather than paying for it again
-type Found = { queue: { any }?, framed: boolean, under: string? }
+type Found = { lanes: { [string]: { any } }?, framed: boolean, under: string? }
 
 -- everything one read carries, built once and handed down to the steps below.
 -- the steps are written at load rather than rebuilt per read, so a module's
@@ -128,7 +129,7 @@ local function aliasOf(
   row: knob.Knob,
   map: { [string]: any },
   children: { Instance }?
-): ({ any }?, string?)
+): (any?, string?)
   for _, alias in row.names do
     local queue = look(ref, source, alias, map, children)
 
@@ -140,38 +141,42 @@ local function aliasOf(
   return nil, nil
 end
 
--- the queue a row carries, looked for under its name and then each alias: any
--- framed queue first, on the row's own side and then, for a property row, on
--- the attribute side old content authored on; then the old shapes, looked for
--- on the row's own side and then, for a property row, on the attribute side
--- old content authored on. the third return is the alias it was found under,
--- which is the name the base behind it is stored under too
-local function queueOf(state: State, source: string, name: string, row: knob.Knob): ({ any }?, boolean, string?)
+-- the lanes a row carries, looked for under its name and then each alias: any
+-- framed map first, on the row's own side and then, for a property row, on the
+-- attribute side old content authored on; then the old shapes, in the same
+-- order. the third return is the alias it was found under, which is the name
+-- the base behind it is stored under too
+local function queueOf(
+  state: State,
+  source: string,
+  name: string,
+  row: knob.Knob
+): ({ [string]: { any } }?, boolean, string?)
   local ref = state.ctx.ref
   local map = state.map
   local aliased = row.names[1] ~= nil
-  local queue = mods.framed(ref, source, name, map)
+  local lanes = mods.framed(ref, source, name, map)
   local under: string? = nil
 
-  if queue == nil and aliased then
-    queue, under = aliasOf(mods.framed, ref, source, row, map)
+  if lanes == nil and aliased then
+    lanes, under = aliasOf(mods.framed, ref, source, row, map)
   end
 
-  if queue == nil and source == "property" then
-    queue = mods.framed(ref, "attribute", name, map)
+  if lanes == nil and source == "property" then
+    lanes = mods.framed(ref, "attribute", name, map)
 
-    if queue == nil and aliased then
-      queue, under = aliasOf(mods.framed, ref, "attribute", row, map)
+    if lanes == nil and aliased then
+      lanes, under = aliasOf(mods.framed, ref, "attribute", row, map)
     end
   end
 
-  if queue ~= nil then
-    return queue, true, under
+  if lanes ~= nil then
+    return lanes, true, under
   end
 
   local children = childrenOf(state)
 
-  queue = legacy_mods.read(ref, source, name, map, children)
+  local queue = legacy_mods.read(ref, source, name, map, children)
 
   if queue == nil and aliased then
     queue, under = aliasOf(legacy_mods.read, ref, source, row, map, children)
@@ -185,7 +190,12 @@ local function queueOf(state: State, source: string, name: string, row: knob.Kno
     end
   end
 
-  return queue, false, under
+  if queue == nil then
+    return nil, false, under
+  end
+
+  -- the old format had one trigger, which is the lane every queue was
+  return { start = queue }, false, under
 end
 
 local function usableDuration(d: any)
@@ -223,9 +233,9 @@ local function queueFor(state: State, source: string, name: string, row: knob.Kn
   local found = memo[name]
 
   if found == nil then
-    local queue, framed, under = queueOf(state, source, name, row)
+    local lanes, framed, under = queueOf(state, source, name, row)
 
-    found = { queue = queue, framed = framed, under = under }
+    found = { lanes = lanes, framed = framed, under = under }
     memo[name] = found
   end
 
@@ -345,6 +355,18 @@ local function plainOf(state: State, source: string, name: string, row: knob.Kno
   return knob.clamp(v, row.lower, row.upper)
 end
 
+-- a stored map that moves nothing: no lane at all, or every lane empty or
+-- holding only values the target already carries
+local function silent(lanes: { [string]: { any } }): boolean
+  for _, queue in lanes do
+    if #queue > 0 and not mods.inert(queue) then
+      return false
+    end
+  end
+
+  return true
+end
+
 local function trackOf(
   state: State,
   source: string,
@@ -361,7 +383,7 @@ local function trackOf(
   -- author owns the row: it is a tombstone, deliberately silencing even the
   -- row's own default modifier rather than falling back to it, which is
   -- what mods.build would otherwise read such a queue as
-  local tombstone = found.framed and found.queue ~= nil and (#found.queue == 0 or mods.inert(found.queue))
+  local tombstone = found.framed and found.lanes ~= nil and silent(found.lanes)
 
   local default: any = rest
 
@@ -372,7 +394,9 @@ local function trackOf(
   if typeof(rest) == "NumberRange" then
     default = mods.draw(rest.Min, rest.Max)
   elseif not tombstone and row.modDefault ~= nil then
-    default = mod.queue(row.modDefault, ctx, state.attrs, state.props, rest, row.preset) or rest
+    local queue = mod.queue(row.modDefault, ctx, state.attrs, state.props, rest, row.preset)
+
+    default = if queue ~= nil then { start = queue } else rest
   end
 
   local opts = if seeded then SEEDED else nil
@@ -380,13 +404,14 @@ local function trackOf(
   -- that is where the value it chains from and the range it draws inside are
   -- stored too; a property row's base is the property, whatever the spelling
   local built = if source == "property" then name else found.under or name
-  local inner = mods.build(ctx.ref, source, built, default, span, nil, found.queue, found.framed, opts)
+  local inner = mods.build(ctx.ref, source, built, default, span, nil, found.lanes, found.framed, opts)
 
   local track = {
     at = inner.at,
     duration = inner.span,
     animated = inner.animated,
     value = rest,
+    has = inner.has,
   }
 
   function track.apply(_, write: (v: any) -> ())

@@ -117,9 +117,9 @@ harness.suite(function()
     expect(#warnings).toBe(0)
   end)
 
-  test("a default given as a queue runs when nothing is authored", function()
+  test("a default given as a lane runs when nothing is authored", function()
     local obj = Instance.new("Attachment")
-    local track = mods.track(obj, "attribute", "SpinSpeed", { tween(0, 1) }, 0.5)
+    local track = mods.track(obj, "attribute", "SpinSpeed", { start = { tween(0, 1) } }, 0.5)
 
     expect(track.animated).toBe(true)
     expect(track.span).toBe(0.5)
@@ -127,9 +127,9 @@ harness.suite(function()
     expect(near(track.at(0.5), 1)).toBe(true)
   end)
 
-  test("an authored queue wins over a default queue", function()
+  test("an authored queue wins over a default lane", function()
     local obj = authored("SpinSpeed", { tween(2, 4, 1) })
-    local track = mods.track(obj, "attribute", "SpinSpeed", { tween(0, 1) }, 0.5)
+    local track = mods.track(obj, "attribute", "SpinSpeed", { start = { tween(0, 1) } }, 0.5)
 
     expect(track.span).toBe(1)
     expect(near(track.at(0), 2)).toBe(true)
@@ -266,7 +266,7 @@ harness.suite(function()
 
   test("build takes the queue it is handed instead of reading one", function()
     local obj = Instance.new("Attachment")
-    local track = mods.build(obj, "attribute", "Width", 3, 2, nil, { tween(0, 10, 4) }, true)
+    local track = mods.build(obj, "attribute", "Width", 3, 2, nil, { start = { tween(0, 10, 4) } }, true)
 
     expect(track.animated).toBe(true)
     expect(track.span).toBe(4)
@@ -281,11 +281,11 @@ harness.suite(function()
     expect(track.at(0)).toBe(3)
   end)
 
-  test("a default queue whose entry carries an offset still lends its ends to a half quad", function()
+  test("a default lane whose entry carries an offset still lends its ends to a half quad", function()
     local obj = Instance.new("Attachment")
     local queue = { { kind = "tween", chain = false, finish = value.lit(9), partial = "start" } }
-    local default = { tween(0, 5, nil, 1) }
-    local track = mods.build(obj, "attribute", "Width", default, 2, nil, queue, false)
+    local default = { start = { tween(0, 5, nil, 1) } }
+    local track = mods.build(obj, "attribute", "Width", default, 2, nil, { start = queue }, false)
 
     expect(near(track.at(0), 0)).toBe(true)
     expect(near(track.at(2), 9)).toBe(true)
