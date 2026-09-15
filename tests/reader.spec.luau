@@ -826,5 +826,26 @@ harness.suite(function()
 
       expect(near(track.at(2.5), 0.25)).toBe(true)
     end)
+
+    -- a default made of lanes may have nothing on the row's own lane, and the
+    -- row still rests where its value says it does until an event fires
+    test("a default modifier waiting on an event rests at the row's value", function()
+      local m = module({ A = knob(0):mod(mod.to(1):lane("dissipate")) })
+      m.events = { "dissipate" }
+
+      local attrs = reader.resolve(m, ctxFor(Instance.new("Part")))
+      local piece = mods.piece(m.events)
+      local track = attrs.A(nil, 4, piece)
+
+      expect(track.has("dissipate")).toBe(true)
+      expect(near(track.at(0), 0)).toBe(true)
+      expect(near(track.at(3), 0)).toBe(true)
+
+      piece:fire("dissipate", 1)
+
+      expect(near(track.at(1), 0)).toBe(true)
+      expect(track.at(3) > 0).toBe(true)
+      expect(near(track.at(5), 1)).toBe(true)
+    end)
   end)
 end)

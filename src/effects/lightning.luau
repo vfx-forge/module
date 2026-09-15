@@ -891,6 +891,11 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             end
           end
 
+          -- the clock is the same for every segment in one call, so a row no
+          -- segment holds a value of its own on is folded once here rather than
+          -- once each
+          local sharedTransparency = if attrs.IndependentSegments then nil else transparency.at(scaledElapsedTime)
+
           -- update each segment
           for j = 1, attrs.Segments do
             local state = segmentState[j]
@@ -926,10 +931,10 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
               segment.Color = bezier_common.getColorWithEasingOklab(attrs.Color, currentColorAlpha, colorEasingBezier)
 
               -- a segment holding what it was born with composes only the lanes
-              -- that fired after its birth over that value
-              segment.Transparency = if attrs.IndependentSegments and state.birthElapsed ~= nil
+              -- that started at or after its birth over that value
+              segment.Transparency = if attrs.IndependentSegments
                 then transparency.at(scaledElapsedTime, state.birth, state.birthElapsed)
-                else transparency.at(scaledElapsedTime)
+                else sharedTransparency
 
               -- width
               local useWidth

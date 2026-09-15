@@ -581,8 +581,9 @@ end
 -- whose resting state is a ramp or a draw rather than a value.
 --
 -- `ownStart` is for a knob whose start belongs to the effect rather than to the
--- row. `piece` is the clock the row's event lanes fire on, and the row carries
--- none without one
+-- row, and `value` is where the caller says the row rests, for a default made of
+-- lanes that names no start of its own. `piece` is the clock the row's event
+-- lanes fire on, and the row carries none without one
 function mods.build(
   ref: Instance,
   source: string,
@@ -592,7 +593,7 @@ function mods.build(
   env: { [string]: any }?,
   lanes: { [string]: { any } }?,
   framed: boolean,
-  opts: { ownStart: boolean? }?,
+  opts: { ownStart: boolean?, value: any? }?,
   piece: Piece?
 ): Track
   local fallback: { [string]: { any } }? = if type(default) == "table" then default else nil
@@ -620,10 +621,14 @@ function mods.build(
     end
   end
 
+  -- a default made of lanes may put nothing on the row's own lane, so there is
+  -- no lead to read a resting value off and the caller says where it rests
+  local stated: any = if opts ~= nil then opts.value else nil
+
   -- where a blank start begins, which is where the row rests: the probe a lane
   -- whose first entry chains is judged against, since nothing under such a lane
   -- has run at the moment it is built
-  local seed: any = if fillStart ~= nil then value.resolve(fillStart, nil, env) else rest
+  local seed: any = if fillStart ~= nil then value.resolve(fillStart, nil, env) elseif rest ~= nil then rest else stated
 
   -- what a lane that chains composes over when nothing under it has run: where
   -- the row rests, which for a default made of lanes is where its lead begins
@@ -717,7 +722,7 @@ function mods.track(
   default: any,
   span: number,
   env: { [string]: any }?,
-  opts: { ownStart: boolean? }?,
+  opts: { ownStart: boolean?, value: any? }?,
   piece: Piece?
 ): Track
   local lanes, framed = mods.read(ref, source, name)

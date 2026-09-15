@@ -238,19 +238,17 @@ harness.suite(function()
       expect(table.isfrozen(registry.get("ok").attributes.A.modDefault[2].opts)).toBe(true)
     end)
 
-    test("every default modifier of a row waiting on an event is rejected", function()
+    -- a row may put every default modifier on an event lane, and where it rests
+    -- until one fires is its own value rather than a lane's
+    test("a row whose only default modifier waits on an event registers", function()
       registry.clear()
 
-      local ok, err = pcall(function()
-        registry.register(stub("a", { attributes = { Fade = knob(0):mod(mod.to(1):lane("dissipate")) } }))
-      end)
+      registry.register(stub("ok", { attributes = { Fade = knob(0):mod(mod.to(1):lane("dissipate")) } }))
 
-      expect(ok).toBe(false)
-      expect(string.find(tostring(err), "Fade", 1, true) ~= nil).toBe(true)
+      local row = registry.get("ok").attributes.Fade
 
-      registry.register(stub("ok", { attributes = { Fade = knob(0):mod(mod.to(1), mod.to(0):lane("dissipate")) } }))
-
-      expect(#registry.get("ok").attributes.Fade.modDefault).toBe(2)
+      expect(#row.modDefault).toBe(1)
+      expect(row.modDefault[1].opts.lane).toBe("dissipate")
     end)
 
     test("a compound layout entry names rows the module has", function()

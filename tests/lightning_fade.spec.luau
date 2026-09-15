@@ -244,6 +244,40 @@ harness.suite(function()
       expect(near(track.at(9, birth, 0), 0)).toBe(true)
     end)
 
+    -- a bolt that authors only the exit fade puts nothing on the row's own
+    -- lane, and the row still rests where its own value says it does
+    test("a fade out with no fade in rests at the row's value until it fires", function()
+      bolt()
+      harness.reset()
+
+      local ref = harness.make("Attachment")
+      ref:AddTag("LightningBolt")
+      harness.make("Part", ref)
+      ref:SetAttribute("FadeOutEnd", FADE_OUT_END)
+      ref:SetAttribute("FadeOutDuration", FADE_OUT_DURATION)
+
+      local module = registry.get("lightning")
+      local attrs = registry.read(ref, module)
+      local piece = mods.piece(module.events)
+      local track = attrs.Transparency(nil, 1, piece)
+
+      expect(attrs.FadeInDuration).toBe(0)
+      expect(track.has("start")).toBe(false)
+      expect(track.has("dissipate")).toBe(true)
+      expect(near(track.at(0), 0)).toBe(true)
+      expect(near(track.at(0.65), 0)).toBe(true)
+
+      local fired = 0.5
+
+      piece:fire("dissipate", fired)
+
+      for _, at in { 0.075, 0.15, 0.225 } do
+        expect(near(track.at(fired + at), oldFadeOut(attrs, 0, at))).toBe(true)
+      end
+
+      expect(near(track.at(fired + FADE_OUT_DURATION), FADE_OUT_END)).toBe(true)
+    end)
+
     -- a fade nobody authored is not a lane, which is what keeps an unauthored
     -- bolt free of a sampler it would only ever sample at rest
     test("a fade of no length is no lane", function()
