@@ -156,25 +156,79 @@ local function entryOf(m: any): Modifier
   return out :: any
 end
 
+-- an old delay shifted everything after it, not just the one entry
+-- immediately following, so its wait rides every later entry until a further
+-- delay changes what is riding. a literal wait combines with a literal
+-- pending by summing; where either side is drawn, the literal shifts the
+-- drawn endpoints and two drawn waits sum their endpoints into one draw,
+-- keeping the pending side's weight
+local function combined(pending: any, wait: any): any
+  local p = drawn(pending)
+  local w = drawn(wait)
+
+  if type(p) ~= "table" then
+    p = if p == nil then nil else { t = "lit", v = p }
+  end
+
+  if type(w) ~= "table" then
+    w = if w == nil then nil else { t = "lit", v = w }
+  end
+
+  if p == nil then
+    return w
+  end
+
+  if w == nil then
+    return p
+  end
+
+  if p.t == "lit" and w.t == "lit" then
+    return { t = "lit", v = p.v + w.v }
+  end
+
+  if p.t == "lit" then
+    return { t = "draw", a = w.a + p.v, b = w.b + p.v, weight = w.weight }
+  end
+
+  if w.t == "lit" then
+    return { t = "draw", a = p.a + w.v, b = p.b + w.v, weight = p.weight }
+  end
+
+  return { t = "draw", a = p.a + w.a, b = p.b + w.b, weight = p.weight }
+end
+
+-- every entry the pending wait rides gets its own copy, so a later entry
+-- changing its offset in place never reaches back into an earlier one
+local function freshOffset(pending: any): value.Value?
+  if pending == nil then
+    return nil
+  end
+
+  if pending.t == "lit" then
+    return { t = "lit", v = pending.v }
+  end
+
+  return { t = "draw", a = pending.a, b = pending.b, weight = pending.weight }
+end
+
 -- a delay is not an entry of its own: it moved what came after it, which is
--- what the offset on that entry says now. one with nothing after it moved
+-- what the offset on those entries says now. one with nothing after it moved
 -- nothing
 local function folded(queue: { any }): { Modifier }
   local out = {}
-  local offset: any = nil
+  local pending: any = nil
 
   for _, m in queue do
     if m.kind == "delay" then
-      offset = if m.wait ~= nil then m.wait else m.duration
+      pending = combined(pending, if m.wait ~= nil then m.wait else m.duration)
       continue
     end
 
     m.start = drawn(m.start)
     m.finish = drawn(m.finish)
 
-    if offset ~= nil then
-      m.offset = offsetOf(drawn(offset))
-      offset = nil
+    if pending ~= nil then
+      m.offset = freshOffset(pending)
     end
 
     table.insert(out, m)
