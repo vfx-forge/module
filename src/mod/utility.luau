@@ -694,9 +694,9 @@ function utility.scaleAttribute(obj: Instance, factor: number, name: string)
   end
 end
 
--- the framed queue on one knob, rewritten through the attribute cache so a
+-- the framed lanes on one knob, rewritten through the attribute cache so a
 -- cached instance is edited where its attributes actually live
-function utility.rescaleQueue(obj: Instance, source: string, name: string, edit: (queue: { any }) -> ())
+function utility.rescaleQueue(obj: Instance, source: string, name: string, edit: (lanes: { [string]: { any } }) -> ())
   local key = mods.attrName(source, name)
   local raw = attr.get(obj, key, nil, true)
 
@@ -711,8 +711,9 @@ function utility.rescaleQueue(obj: Instance, source: string, name: string, edit:
   end
 end
 
--- every queue on an instance, for a rewrite that applies to all of them alike
-function utility.rescaleQueues(obj: Instance, edit: (queue: { any }) -> ())
+-- every framed row on an instance, for a rewrite that applies to all of them
+-- alike
+function utility.rescaleQueues(obj: Instance, edit: (lanes: { [string]: { any } }) -> ())
   for _, key in attr.keys(obj) do
     for source, prefix in mods.PREFIX do
       if string.sub(key, 1, #prefix) == prefix then

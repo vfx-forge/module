@@ -749,39 +749,43 @@ local function scaleEndpoint(x: any, factor: number)
   end
 end
 
--- everything in a queue that is a time: durations, waits and the duration of
--- a carried speed ramp. in place, on a decoded queue
-function mods.scaleTime(queue: { any }, factor: number)
-  for _, m in queue do
-    if typeof(m.duration) == "number" then
-      m.duration *= factor
-    end
+-- everything in a lane map that is a time: durations, offsets and the duration
+-- of a carried speed ramp. in place, on a decoded map
+function mods.scaleTime(lanes: { [string]: { any } }, factor: number)
+  for _, queue in lanes do
+    for _, m in queue do
+      if typeof(m.duration) == "number" then
+        m.duration *= factor
+      end
 
-    if type(m.wait) == "table" then
-      scaleEndpoint(m.wait, factor)
-    elseif typeof(m.wait) == "number" then
-      m.wait *= factor
-    end
+      if type(m.offset) == "table" then
+        scaleEndpoint(m.offset, factor)
+      elseif typeof(m.offset) == "number" then
+        m.offset *= factor
+      end
 
-    if type(m.speed) == "table" and typeof(m.speed.duration) == "number" then
-      m.speed.duration *= factor
+      if type(m.speed) == "table" and typeof(m.speed.duration) == "number" then
+        m.speed.duration *= factor
+      end
     end
   end
 end
 
--- every numeric endpoint in a queue. a var names a value that is not the
--- queue's to scale
-function mods.scaleValues(queue: { any }, factor: number)
-  for _, m in queue do
-    scaleEndpoint(m.start, factor)
-    scaleEndpoint(m.finish, factor)
+-- every numeric endpoint in a lane map. a var names a value that is not the
+-- row's to scale
+function mods.scaleValues(lanes: { [string]: { any } }, factor: number)
+  for _, queue in lanes do
+    for _, m in queue do
+      scaleEndpoint(m.start, factor)
+      scaleEndpoint(m.finish, factor)
+    end
   end
 end
 
 -- a framed attribute value decoded, edited in place and framed again, so a
--- caller that scales a queue never touches the codec. nil when the value is
--- not a framed queue it can read, and the caller leaves the attribute alone
-function mods.recode(raw: any, edit: (queue: { any }) -> ()): string?
+-- caller that scales a row never touches the codec. nil when the value is not a
+-- framed map it can read, and the caller leaves the attribute alone
+function mods.recode(raw: any, edit: (lanes: { [string]: { any } }) -> ()): string?
   if not frame.isFramed(raw) then
     return nil
   end
@@ -798,11 +802,7 @@ function mods.recode(raw: any, edit: (queue: { any }) -> ()): string?
     return nil
   end
 
-  local lane = decoded.lanes.start
-
-  if lane ~= nil then
-    edit(lane)
-  end
+  edit(decoded.lanes)
 
   return frame.frame(codec.encode(decoded))
 end

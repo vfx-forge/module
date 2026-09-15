@@ -159,9 +159,9 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
     end
   end
 
-  -- a queue is time whatever it targets, so every one on the instance scales
-  utility.rescaleQueues(obj, function(queue)
-    mods.scaleTime(queue, invFactor)
+  -- a lane is time whatever it targets, so every one on the instance scales
+  utility.rescaleQueues(obj, function(lanes)
+    mods.scaleTime(lanes, invFactor)
   end)
 
   -- the legacy child the dispatcher still emits belongs to no module, so the

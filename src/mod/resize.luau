@@ -50,8 +50,8 @@ local function scaleProperty(obj: any, name: string, f: number)
 end
 
 local function scaleQueue(obj: Instance, source: string, key: string, f: number)
-  utility.rescaleQueue(obj, source, key, function(queue)
-    mods.scaleValues(queue, f)
+  utility.rescaleQueue(obj, source, key, function(lanes)
+    mods.scaleValues(lanes, f)
   end)
 end
 

@@ -191,6 +191,30 @@ harness.suite(function()
 
       expect(obj:GetAttribute("Delay")).toBe(2)
     end)
+
+    test("every lane of a row scales, not only the one that starts at the emit", function()
+      stub()
+
+      local obj = Instance.new("Part")
+
+      obj:SetAttribute(
+        mods.attrName("attribute", "Plain"),
+        frame.frame(codec.encode({
+          v = 2,
+          lanes = {
+            start = { { kind = "tween", chain = false, duration = 2 } },
+            ["end"] = { { kind = "tween", chain = false, duration = 4 } },
+          },
+        }))
+      )
+
+      retime.apply(obj, 2, 0.5)
+
+      local lanes = mods.framed(obj, "attribute", "Plain") :: any
+
+      expect(lanes.start[1].duration).toBe(1)
+      expect(lanes["end"][1].duration).toBe(2)
+    end)
   end)
 
   harness.describe("resize", function()
