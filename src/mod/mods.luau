@@ -688,8 +688,10 @@ function mods.build(
     return resting()
   end
 
+  -- judged from where the row rests, which is the probe the lanes were kept
+  -- under: a lane that begins where the row stands says nothing on its own
   if want ~= nil then
-    local got = mods.kindOf(set[1].sample(0, rest))
+    local got = mods.kindOf(set[1].sample(0, seed))
 
     if got ~= want then
       mods.warnOnce(ref, name, `{name} samples a {got} where the effect wants a {want}`)

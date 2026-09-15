@@ -156,6 +156,20 @@ harness.suite(function()
       expect(track.animated).toBe(true)
     end)
 
+    -- a row whose default is a lane map rests at what that map's start says
+    -- rather than at nothing, so an authored lane that begins where the row
+    -- stands is judged from there rather than read as a kind nothing wanted
+    test("an authored lane that chains is judged from where the row rests", function()
+      local warnings = harness.captureWarnings(function()
+        local track = built({ start = { onward(4, 1) } }, { start = { tween(0, 2, 1) } }, 1, nil)
+
+        expect(near(track.at(0, 3), 3)).toBe(true)
+        expect(near(track.at(1, 3), 4)).toBe(true)
+      end)
+
+      expect(#warnings).toBe(0)
+    end)
+
     test("an empty map rests at the row's own value", function()
       local track = built({}, 3, 5, nil)
 
