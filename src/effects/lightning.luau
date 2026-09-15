@@ -2,6 +2,7 @@
 local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
@@ -20,6 +21,36 @@ local function eased()
   return utility.default_bezier
 end
 
+local function always()
+  return true
+end
+
+-- a fade of no length is no phase at all, which is where an unauthored bolt
+-- rests: the row holds its own value and nothing samples it
+local function fadeInStart(_, attrs: any)
+  return if attrs.FadeInDuration > 0 then attrs.FadeInStart else nil
+end
+
+local function fadeInDuration(_, attrs: any)
+  return attrs.FadeInDuration
+end
+
+local function fadeInCurve(_, attrs: any)
+  return attrs.FadeInCurve
+end
+
+local function fadeOutEnd(_, attrs: any)
+  return if attrs.FadeOutDuration > 0 then attrs.FadeOutEnd else nil
+end
+
+local function fadeOutDuration(_, attrs: any)
+  return attrs.FadeOutDuration
+end
+
+local function fadeOutCurve(_, attrs: any)
+  return attrs.FadeOutCurve
+end
+
 local lightning = {}
 
 lightning.id = "lightning"
@@ -27,6 +58,7 @@ lightning.display = { name = "Lightning", icon = "lightning", order = 120 }
 lightning.classifier = "Attachment.LightningBolt"
 lightning.components = "Instance"
 lightning.constant = true
+lightning.events = { "dissipate" }
 
 lightning.attributes = bezier_common.rows({
   Segments = knob(8):min(2):label("Amount"):hint("Number of straight segments that make up the bolt."),
@@ -82,23 +114,15 @@ lightning.attributes = bezier_common.rows({
     :label("Transparency")
     :hint("Fill transparency over the fill colour's duration."),
 
-  FadeInStart = knob(1):aliases("Fade_In_Start"):label("Start"):hint("Transparency the bolt fades in from."),
-  FadeInDuration = knob(0)
-    :min(0)
-    :aliases("Fade_In_Duration")
-    :unit("seconds")
-    :label("Duration")
-    :hint("Seconds the fade in takes."),
-  FadeInCurve = knob(eased):aliases("Fade_In_Curve"):label("Curve"):hint("Easing of the fade in."),
+  -- the six old fade keys stay rows so the panel reaches them through the
+  -- Transparency drawer and retime still scales the two spans
+  FadeInStart = knob(1):aliases("Fade_In_Start"):hidden(always),
+  FadeInDuration = knob(0):min(0):aliases("Fade_In_Duration"):unit("seconds"):hidden(always),
+  FadeInCurve = knob(eased):aliases("Fade_In_Curve"):hidden(always),
 
-  FadeOutEnd = knob(1):aliases("Fade_Out_End"):label("End"):hint("Transparency the bolt fades out to."),
-  FadeOutDuration = knob(0)
-    :min(0)
-    :aliases("Fade_Out_Duration")
-    :unit("seconds")
-    :label("Duration")
-    :hint("Seconds the fade out takes."),
-  FadeOutCurve = knob(eased):aliases("Fade_Out_Curve"):label("Curve"):hint("Easing of the fade out."),
+  FadeOutEnd = knob(1):aliases("Fade_Out_End"):hidden(always),
+  FadeOutDuration = knob(0):min(0):aliases("Fade_Out_Duration"):unit("seconds"):hidden(always),
+  FadeOutCurve = knob(eased):aliases("Fade_Out_Curve"):hidden(always),
 
   DissipateMode = knob("None")
     :options({ "None", "Retract", "Scale" })
@@ -121,7 +145,15 @@ lightning.attributes = bezier_common.rows({
     :label("Width")
     :hint("Segment width in studs over the bolt's duration."),
   Length = knob(1):min(0):mod():label("Length"):hint("Visible fraction of the bolt over its duration."),
-  Transparency = knob(0):mod():label("Transparency"):hint("Segment transparency over the bolt's duration."),
+  -- the two fades are modifiers on the row they change: the entry one runs from
+  -- the emit, the exit one from the moment the module fires its dissipation
+  Transparency = knob(0)
+    :mod(
+      mod.from(fadeInStart):duration(fadeInDuration):curve(fadeInCurve),
+      mod.to(fadeOutEnd):duration(fadeOutDuration):curve(fadeOutCurve):lane("dissipate")
+    )
+    :label("Transparency")
+    :hint("Segment transparency over the bolt's duration."),
 
   EasingCurve = knob(linear):aliases("Easing_Curve"):label("Easing"):hint("Easing of travel along the path."),
 })
@@ -135,8 +167,7 @@ lightning.layout = bezier_common.layout({}, {
     entries = {
       "Segments",
       "Color",
-      "ColorCurve",
-      "ColorDuration",
+      { curve = "ColorCurve", duration = "ColorDuration" },
       "IndependentSegments",
       { title = "Refresh", entries = { "RefreshRate", "RefreshDuringDissipate" } },
       "Transparency",
@@ -148,16 +179,17 @@ lightning.layout = bezier_common.layout({}, {
   { title = "Nested Effects", entries = { "NestedEffectMode" } },
   {
     title = "Fill",
-    entries = { "FillColor", "FillDepthMode", "FillColorCurve", "FillColorDuration", "FillTransparency" },
-  },
-  {
-    title = "Fade",
     entries = {
-      { title = "In", entries = { "FadeInStart", "FadeInDuration", "FadeInCurve" } },
-      { title = "Out", entries = { "FadeOutEnd", "FadeOutDuration", "FadeOutCurve" } },
+      "FillColor",
+      "FillDepthMode",
+      { curve = "FillColorCurve", duration = "FillColorDuration" },
+      "FillTransparency",
     },
   },
-  { title = "Dissipation", entries = { "DissipateMode", "DissipateDuration", "DissipateCurve" } },
+  {
+    title = "Dissipation",
+    entries = { "DissipateMode", { curve = "DissipateCurve", duration = "DissipateDuration" } },
+  },
   {
     title = "Behavior",
     entries = {
@@ -189,7 +221,8 @@ local function createSegmentStates(count: number)
     states[j] = {
       birthTime = nil,
       initialWidth = nil,
-      initialTransparency = nil,
+      birth = nil,
+      birthElapsed = nil,
       wasVisible = false,
     }
   end
@@ -487,9 +520,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
   local colorEasingBezier = Bezier.new(utility.deserializePath(attrs.ColorCurve), 0)
   local fillColorEasingBezier = Bezier.new(utility.deserializePath(attrs.FillColorCurve), 0)
 
-  local fadeInEasingBezier = Bezier.new(utility.deserializePath(attrs.FadeInCurve), 0)
-  local fadeOutEasingBezier = Bezier.new(utility.deserializePath(attrs.FadeOutCurve), 0)
-
   local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
   local promises = {}
@@ -502,10 +532,12 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
     -- one track set per emitted bolt, the same granularity the legacy tweens
     -- ran at. FillTransparency spans FillColorDuration rather than the bolt's,
-    -- which is what its tween always did
+    -- which is what its tween always did. the piece is the clock this bolt's
+    -- own lanes fire on, so one bolt dissipating never moves another
+    local piece = mods.piece(lightning.events)
     local width = attrs.Width(nil, duration)
     local length = attrs.Length(nil, duration)
-    local transparency = attrs.Transparency(nil, duration)
+    local transparency = attrs.Transparency(nil, duration, piece)
     local fillTp = attrs.FillTransparency(nil, attrs.FillColorDuration)
     local speed = attrs.Speed(nil, duration)
 
@@ -668,7 +700,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         local currentSpeed = speed.at(0)
         local currentWidth = width.at(0)
         local currentLength = length.at(0)
-        local currentTransparency = transparency.at(0)
         local currentFillTransparency = fillTp.at(0)
 
         local currentColorAlpha = 0
@@ -700,7 +731,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
         local currentHeadAlpha = 0
 
-        local dissipateProgress = 0
         local dissipateStartTail = 0
 
         local dissipateStartWidth = initWidth
@@ -880,44 +910,26 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                 state.wasVisible = false
                 state.birthTime = nil
                 state.initialWidth = nil
-                state.initialTransparency = nil
+                state.birth = nil
+                state.birthElapsed = nil
               end
             else
               if not state.wasVisible then
                 state.wasVisible = true
                 state.birthTime = currentTime
                 state.initialWidth = currentWidth
-                state.initialTransparency = currentTransparency
+                state.birth = transparency.at(scaledElapsedTime)
+                state.birthElapsed = scaledElapsedTime
               end
 
               -- color
               segment.Color = bezier_common.getColorWithEasingOklab(attrs.Color, currentColorAlpha, colorEasingBezier)
 
-              -- transparency with fade in/out
-              local baseTransparency = if attrs.IndependentSegments and state.initialTransparency
-                then state.initialTransparency
-                else currentTransparency
-
-              local fadeInAlpha = if attrs.FadeInDuration > 0
-                then math.clamp(scaledElapsedTime / attrs.FadeInDuration, 0, 1)
-                else 1
-
-              local fadeInEased = 1 - fadeInEasingBezier:getEase(fadeInAlpha).y
-              local fadeInTransparency = utility.lerp(attrs.FadeInStart, baseTransparency, fadeInEased)
-
-              local fadeOutTransparency = baseTransparency
-
-              if isDissipating and attrs.FadeOutDuration > 0 then
-                local fadeOutAlpha = math.clamp(dissipateProgress / attrs.FadeOutDuration, 0, 1)
-                local fadeOutEased = 1 - fadeOutEasingBezier:getEase(fadeOutAlpha).y
-
-                fadeOutTransparency = utility.lerp(baseTransparency, attrs.FadeOutEnd, fadeOutEased)
-              end
-
-              segment.Transparency = if fadeInAlpha < 1
-                then fadeInTransparency
-                elseif isDissipating then fadeOutTransparency
-                else baseTransparency
+              -- a segment holding what it was born with composes only the lanes
+              -- that fired after its birth over that value
+              segment.Transparency = if attrs.IndependentSegments and state.birthElapsed ~= nil
+                then transparency.at(scaledElapsedTime, state.birth, state.birthElapsed)
+                else transparency.at(scaledElapsedTime)
 
               -- width
               local useWidth
@@ -995,10 +1007,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           currentWidth = v
         end, getEffectiveSpeed, speedTween)
 
-        bezier_common.drivePropertyTrack(scope, transparency, function(v)
-          currentTransparency = v
-        end, getEffectiveSpeed, speedTween)
-
         bezier_common.drivePropertyTrack(scope, length, function(v)
           currentLength = v
         end, getEffectiveSpeed, speedTween)
@@ -1023,9 +1031,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           dissipateStartTail = startTail
           dissipateStartWidth = startWidth
 
-          tween.fromParams(curveData, dissipationDuration, function(alpha, deltaTime, elapsed)
-            dissipateProgress = elapsed
-
+          tween.fromParams(curveData, dissipationDuration, function(alpha, deltaTime)
             local scaledDelta = deltaTime * getEffectiveSpeed()
             scaledElapsedTime += scaledDelta
 
@@ -1047,6 +1053,9 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           if isDissipating or finished then
             return
           end
+
+          -- the lane runs on the clock every other track on this bolt reads
+          piece:fire("dissipate", scaledElapsedTime)
 
           local headAlpha = currentHeadAlpha
 
@@ -1080,7 +1089,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
               attrs.DissipateMode,
               onDissipationComplete
             )
-          elseif attrs.FadeOutDuration > 0 then
+          elseif transparency.has("dissipate") then
             handleDissipation(
               headAlpha,
               math.max(0, headAlpha - currentLength),

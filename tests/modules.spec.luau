@@ -189,6 +189,17 @@ harness.suite(function()
             if type(entry) == "string" then
               expect(placed[entry]).toBe(nil)
               placed[entry] = true
+            elseif type(entry) == "table" and entry.curve ~= nil then
+              -- a compound entry draws a set of rows as one, and places each
+              -- row it names exactly as a bare name does
+              for _, key in { "curve", "duration" } do
+                local named = entry[key]
+
+                if named ~= nil then
+                  expect(placed[named]).toBe(nil)
+                  placed[named] = true
+                end
+              end
             elseif type(entry) == "table" and type(entry.entries) == "table" then
               walk(entry.entries)
             end

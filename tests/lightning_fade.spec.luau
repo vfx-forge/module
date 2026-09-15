@@ -1,3 +1,4 @@
+local mods = require("@mod/mods")
 local path = require("@mod/common/path")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
@@ -139,6 +140,106 @@ harness.suite(function()
 
       expect(near(oldFadeOut(attrs, born, 0), born)).toBe(true)
       expect(near(oldFadeOut(attrs, born, FADE_OUT_DURATION), FADE_OUT_END)).toBe(true)
+    end)
+  end)
+
+  harness.describe("the lightning fade as a modifier on its row", function()
+    test("an unauthored bolt costs no lane at all", function()
+      bolt()
+      harness.reset()
+
+      local ref = harness.make("Attachment")
+      ref:AddTag("LightningBolt")
+      harness.make("Part", ref)
+
+      local module = registry.get("lightning")
+      local attrs = registry.read(ref, module)
+      local track = attrs.Transparency(nil, 1, mods.piece(module.events))
+
+      expect(track.animated).toBe(false)
+      expect(track.at(0)).toBe(0)
+      expect(track.has("start")).toBe(false)
+      expect(track.has("dissipate")).toBe(false)
+    end)
+
+    test("the fade in samples what the hand loop sampled", function()
+      local _, attrs = bolt()
+      local module = registry.get("lightning")
+      local track = attrs.Transparency(nil, 1, mods.piece(module.events))
+
+      expect(track.has("start")).toBe(true)
+
+      for _, at in { 0.1, 0.2, 0.3 } do
+        expect(near(track.at(at), oldFadeIn(attrs, 0, at))).toBe(true)
+      end
+
+      expect(near(track.at(0), FADE_IN_START)).toBe(true)
+      expect(near(track.at(FADE_IN_DURATION), 0)).toBe(true)
+    end)
+
+    -- the module fires the lane on the same clock it hands the track, so the
+    -- dissipation's own progress is the elapsed past the fire
+    test("the dissipation fade samples what the hand loop sampled", function()
+      local _, attrs = bolt()
+      local module = registry.get("lightning")
+      local piece = mods.piece(module.events)
+      local track = attrs.Transparency(nil, 1, piece)
+
+      expect(track.has("dissipate")).toBe(true)
+
+      local fired = 0.5
+
+      piece:fire("dissipate", fired)
+
+      for _, at in { 0.075, 0.15, 0.225 } do
+        expect(near(track.at(fired + at), oldFadeOut(attrs, 0, at))).toBe(true)
+      end
+
+      expect(near(track.at(fired + FADE_OUT_DURATION), FADE_OUT_END)).toBe(true)
+      expect(near(track.at(9), FADE_OUT_END)).toBe(true)
+    end)
+
+    -- a segment that froze the row at its birth composes only the lanes fired
+    -- after it, over the value it is holding
+    test("a segment holding its birth value fades out from there", function()
+      local _, attrs = bolt()
+      local module = registry.get("lightning")
+      local piece = mods.piece(module.events)
+      local track = attrs.Transparency(nil, 1, piece)
+
+      local birthElapsed = 0.2
+      local born = track.at(birthElapsed)
+
+      expect(near(born, oldFadeIn(attrs, 0, birthElapsed))).toBe(true)
+
+      piece:fire("dissipate", 0.5)
+
+      expect(near(track.at(0.4, born, birthElapsed), born)).toBe(true)
+
+      for _, at in { 0.075, 0.15, 0.225 } do
+        expect(near(track.at(0.5 + at, born, birthElapsed), oldFadeOut(attrs, born, at))).toBe(true)
+      end
+
+      expect(near(track.at(0.5 + FADE_OUT_DURATION, born, birthElapsed), FADE_OUT_END)).toBe(true)
+    end)
+
+    -- a fade nobody authored is not a lane, which is what keeps an unauthored
+    -- bolt free of a sampler it would only ever sample at rest
+    test("a fade of no length is no lane", function()
+      bolt()
+      harness.reset()
+
+      local ref = harness.make("Attachment")
+      ref:AddTag("LightningBolt")
+      harness.make("Part", ref)
+      ref:SetAttribute("FadeOutEnd", 1)
+
+      local module = registry.get("lightning")
+      local attrs = registry.read(ref, module)
+      local track = attrs.Transparency(nil, 1, mods.piece(module.events))
+
+      expect(attrs.FadeOutDuration).toBe(0)
+      expect(track.has("dissipate")).toBe(false)
     end)
   end)
 end)
