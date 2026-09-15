@@ -101,7 +101,7 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
   local ok, decoded = pcall(codec.decode, body)
 
   if ok and decoded then
-    return decoded.queue
+    return decoded.lanes.start or {}
   end
 
   logger.warn(`failed to decode the modifier queue on {name}`)
@@ -548,7 +548,11 @@ function mods.recode(raw: any, edit: (queue: { any }) -> ()): string?
     return nil
   end
 
-  edit(decoded.queue)
+  local lane = decoded.lanes.start
+
+  if lane ~= nil then
+    edit(lane)
+  end
 
   return frame.frame(codec.encode(decoded))
 end

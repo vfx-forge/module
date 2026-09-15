@@ -35,8 +35,10 @@ local function fixture(): Instance
   obj:SetAttribute(
     mods.attrName("attribute", "Y"),
     frame.frame(codec.encode({
-      v = 1,
-      queue = { { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(1) } },
+      v = 2,
+      lanes = {
+        start = { { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(1) } },
+      },
     }))
   )
 

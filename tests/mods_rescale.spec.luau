@@ -84,8 +84,8 @@ harness.suite(function()
 
     local decoded = codec.decode(frame.unframe(out) :: buffer)
 
-    expect(decoded.v).toBe(1)
-    expect(decoded.queue[1].duration).toBe(1)
+    expect(decoded.v).toBe(2)
+    expect(decoded.lanes.start[1].duration).toBe(1)
   end)
 
   test("recode refuses anything that is not a framed queue", function()
