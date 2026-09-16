@@ -1012,6 +1012,18 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           currentWidth = v
         end, getEffectiveSpeed, speedTween)
 
+        -- the segment loop reads the transparency itself, so nothing here has to
+        -- write it. the hold stays because an authored lane longer than the bolt
+        -- kept the emit open on old content, and a driven row always did
+        if transparency.animated then
+          lifetime.hold(
+            scope,
+            tween.fromParams(utility.linear_bezier, transparency.duration, function(_, deltaTime)
+              return deltaTime * getEffectiveSpeed()
+            end, speedTween)
+          )
+        end
+
         bezier_common.drivePropertyTrack(scope, length, function(v)
           currentLength = v
         end, getEffectiveSpeed, speedTween)
