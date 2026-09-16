@@ -610,29 +610,34 @@ function mods.build(
 
   local lead = if fallback then leadTween(fallback.start) else nil
 
+  -- a default made of lanes may put nothing on the row's own lane, so there is
+  -- no lead to read a resting value off and the caller says where it rests
+  local stated: any = if opts ~= nil then opts.value else nil
+
   local fillStart: value.Value? = nil
   local fillFinish: value.Value? = nil
   local want: string? = nil
 
-  if fallback then
-    fillStart = lead and lead.start
-    fillFinish = lead and lead.finish
+  if lead ~= nil then
+    fillStart = lead.start
+    fillFinish = lead.finish
 
     if fillStart and value.isLit(fillStart) then
       want = mods.kindOf(value.resolve(fillStart))
     end
   else
-    fillStart = legacy_mods.endpoint(source, name, default)
+    -- the half an old quad did not name is where the row rests, and a default
+    -- made of lanes that leads nowhere leaves the row resting exactly where one
+    -- with no default at all does, so both fill that half the same way
+    local held: any = if fallback then stated else default
+
+    fillStart = legacy_mods.endpoint(source, name, held)
     fillFinish = fillStart
 
-    if default ~= nil then
-      want = mods.kindOf(default)
+    if held ~= nil then
+      want = mods.kindOf(held)
     end
   end
-
-  -- a default made of lanes may put nothing on the row's own lane, so there is
-  -- no lead to read a resting value off and the caller says where it rests
-  local stated: any = if opts ~= nil then opts.value else nil
 
   -- where a blank start begins, which is where the row rests: the probe a lane
   -- whose first entry chains is judged against, since nothing under such a lane

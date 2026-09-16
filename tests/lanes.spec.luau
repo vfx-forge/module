@@ -39,6 +39,14 @@ local function stating(lanes: { [string]: { any } }, rest: any, span: number, pi
   return mods.build(Instance.new("Attachment"), "attribute", "Width", rest, span, nil, lanes, true, opts, piece)
 end
 
+-- an old half queue over a default of lanes: never framed, and the caller still
+-- says where the row rests
+local function filling(lanes: { [string]: { any } }, rest: any, span: number, piece: any, stands: any)
+  local opts = { value = stands }
+
+  return mods.build(Instance.new("Attachment"), "attribute", "Width", rest, span, nil, lanes, false, opts, piece)
+end
+
 harness.suite(function()
   harness.describe("mods.piece", function()
     test("a piece refuses a name its module never declared", function()
@@ -277,6 +285,21 @@ harness.suite(function()
 
       expect(near(track.at(2.5), 0.75)).toBe(true)
       expect(near(track.at(3), 1)).toBe(true)
+    end)
+
+    -- a default made of lanes that puts nothing on the row's own lane leaves an
+    -- old half quad nothing to complete from but where the row rests, which is
+    -- the half a row with no default of its own has always been filled from
+    test("a half queue over a default that leads nowhere completes from the stated value", function()
+      local piece = mods.piece({ "dissipate" })
+      local half = { { kind = "tween", chain = false, duration = 2, finish = value.lit(0.5), partial = "start" } }
+      local track = filling({ start = half }, { dissipate = { onward(1, 1) } }, 4, piece, 0)
+
+      expect(track.has("start")).toBe(true)
+      expect(track.has("dissipate")).toBe(true)
+      expect(near(track.at(0), 0)).toBe(true)
+      expect(near(track.at(1), 0.25)).toBe(true)
+      expect(near(track.at(2), 0.5)).toBe(true)
     end)
 
     test("a framed map of the same lane replaces every default lane", function()

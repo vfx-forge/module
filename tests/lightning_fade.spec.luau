@@ -315,6 +315,54 @@ harness.suite(function()
       expect(near(track.at(fired + FADE_OUT_DURATION), FADE_OUT_END)).toBe(true)
     end)
 
+    -- a bolt with no fade in puts nothing on the row's own lane, which leaves an
+    -- old quad there nothing to complete from but where the row rests. the ramp
+    -- it authors ran on released content and still has to run
+    test("a legacy quad with no fade in still runs from the row's value", function()
+      bolt()
+      harness.reset()
+
+      local ref = harness.make("Attachment")
+      ref:AddTag("LightningBolt")
+      harness.make("Part", ref)
+
+      ref:SetAttribute("Fade_Out_End", FADE_OUT_END)
+      ref:SetAttribute("Fade_Out_Duration", FADE_OUT_DURATION)
+      ref:SetAttribute("Transparency_End", 0.5)
+
+      local module = registry.get("lightning")
+      local attrs = registry.read(ref, module)
+      local piece = mods.piece(module.events)
+      local track = attrs.Transparency(nil, 1, piece)
+
+      expect(attrs.FadeInDuration).toBe(0)
+      expect(track.has("start")).toBe(true)
+      expect(track.has("dissipate")).toBe(true)
+
+      -- the span the old format read for this row when the quad named none
+      local span = 0.5
+
+      expect(near(track.at(0), 0)).toBe(true)
+      expect(near(track.at(span), 0.5)).toBe(true)
+
+      local midway = track.at(span / 2)
+
+      expect(midway > 0 and midway < 0.5).toBe(true)
+
+      local fired = 0.6
+      local held = track.at(fired)
+
+      expect(near(held, 0.5)).toBe(true)
+
+      piece:fire("dissipate", fired)
+
+      for _, at in { 0.075, 0.15, 0.225 } do
+        expect(near(track.at(fired + at), oldFadeOut(attrs, held, at))).toBe(true)
+      end
+
+      expect(near(track.at(fired + FADE_OUT_DURATION), FADE_OUT_END)).toBe(true)
+    end)
+
     -- a fade nobody authored is not a lane, which is what keeps an unauthored
     -- bolt free of a sampler it would only ever sample at rest
     test("a fade of no length is no lane", function()
