@@ -232,7 +232,10 @@ harness.suite(function()
         registry.register(stub("a", { attributes = { A = knob(1):mod(mod.to(2), {}) } }))
       end).toThrow()
 
-      registry.register(stub("ok", { attributes = { A = knob(1):mod(mod.to(2), mod.from(0):lane("dissipate")) } }))
+      registry.register(stub("ok", {
+        events = { "dissipate" },
+        attributes = { A = knob(1):mod(mod.to(2), mod.from(0):lane("dissipate")) },
+      }))
 
       expect(#registry.get("ok").attributes.A.modDefault).toBe(2)
       expect(table.isfrozen(registry.get("ok").attributes.A.modDefault[2].opts)).toBe(true)
@@ -243,12 +246,47 @@ harness.suite(function()
     test("a row whose only default modifier waits on an event registers", function()
       registry.clear()
 
-      registry.register(stub("ok", { attributes = { Fade = knob(0):mod(mod.to(1):lane("dissipate")) } }))
+      registry.register(stub("ok", {
+        events = { "dissipate" },
+        attributes = { Fade = knob(0):mod(mod.to(1):lane("dissipate")) },
+      }))
 
       local row = registry.get("ok").attributes.Fade
 
       expect(#row.modDefault).toBe(1)
       expect(row.modDefault[1].opts.lane).toBe("dissipate")
+    end)
+
+    -- a lane no module declares can never fire, so a modifier waiting on one
+    -- would sit on the row for the whole emit
+    test("a default modifier on a lane the module never declares errors", function()
+      registry.clear()
+
+      expect(function()
+        registry.register(stub("a", {
+          events = { "dissipate" },
+          attributes = { Fade = knob(0):mod(mod.to(1):lane("dissipat")) },
+        }))
+      end).toThrow()
+
+      expect(function()
+        registry.register(stub("b", { attributes = { Fade = knob(0):mod(mod.to(1):lane("dissipate")) } }))
+      end).toThrow()
+
+      registry.register(stub("c", {
+        events = { "dissipate" },
+        attributes = { Fade = knob(0):mod(mod.to(1):lane("dissipate")) },
+      }))
+
+      expect(registry.get("c").attributes.Fade.modDefault[1].opts.lane).toBe("dissipate")
+    end)
+
+    -- the two built in lanes are always there, whatever a module declares
+    test("a default modifier on a built in lane needs no event", function()
+      registry.clear()
+      registry.register(stub("ok", { attributes = { Fade = knob(0):mod(mod.to(1):lane("end")) } }))
+
+      expect(registry.get("ok").attributes.Fade.modDefault[1].opts.lane).toBe("end")
     end)
 
     test("a compound layout entry names rows the module has", function()

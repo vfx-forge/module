@@ -126,7 +126,14 @@ local function fail(id: string, message: string)
   logger.error(`effect module {id}: {message}`)
 end
 
-local function checkRow(id: string, source: string, name: string, row: any, taken: { [string]: string })
+local function checkRow(
+  id: string,
+  source: string,
+  name: string,
+  row: any,
+  taken: { [string]: string },
+  events: { string }?
+)
   if not knob.is(row) then
     fail(id, `{source} row {name} is not a knob`)
   end
@@ -181,6 +188,16 @@ local function checkRow(id: string, source: string, name: string, row: any, take
     for _, spec in row.modDefault do
       if not mod.is(spec) then
         fail(id, `a default modifier of {name} is not a mod spec`)
+      end
+
+      local lane = spec.opts.lane
+
+      -- nothing can ever fire a lane the module does not declare, so a modifier
+      -- behind one would sit on the row for the whole emit and never run
+      if lane ~= nil and lane ~= "start" and lane ~= "end" then
+        if events == nil or table.find(events, lane) == nil then
+          fail(id, `a default modifier of {name} waits on {lane}, which this module never declares`)
+        end
       end
     end
   end
@@ -374,12 +391,12 @@ function registry.register(module: Module)
   local rows = {}
 
   for name, row in module.attributes do
-    checkRow(id, "attribute", name, row, taken)
+    checkRow(id, "attribute", name, row, taken, module.events)
     rows[name] = true
   end
 
   for name, row in module.properties do
-    checkRow(id, "property", name, row, taken)
+    checkRow(id, "property", name, row, taken, module.events)
     rows[name] = true
   end
 
