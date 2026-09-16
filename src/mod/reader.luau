@@ -405,6 +405,7 @@ local function trackOf(
   local tombstone = found.framed and found.lanes ~= nil and silent(found.lanes)
 
   local default: any = rest
+  local declared: { [string]: { any } }? = nil
 
   -- a range is the row's state and a draw from it is what a piece takes,
   -- tombstone or not: this is not a default, it is what a range row's own
@@ -413,14 +414,16 @@ local function trackOf(
   if typeof(rest) == "NumberRange" then
     default = mods.draw(rest.Min, rest.Max)
   elseif not tombstone and row.modDefault ~= nil then
-    default = mod.lanes(row.modDefault, ctx, state.attrs, state.props, rest, row.preset) or rest
+    declared = mod.lanes(row.modDefault, ctx, state.attrs, state.props, rest, row.preset)
+    default = declared or rest
   end
 
   local own = if piece ~= nil then piece else pieceOf(state)
   -- a default made of lanes may name no start at all, and the row still rests
   -- somewhere, so the build is told where rather than left to read it off a
-  -- lead that is not there. every other row takes the shared option table
-  local opts: { ownStart: boolean?, value: any? }? = if type(default) == "table"
+  -- lead that is not there. a drawn range names both its corners and every
+  -- other row takes the shared option table
+  local opts: { ownStart: boolean?, value: any? }? = if declared ~= nil
     then { ownStart = seeded, value = rest }
     elseif seeded then SEEDED
     else nil

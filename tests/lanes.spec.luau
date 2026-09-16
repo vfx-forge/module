@@ -26,6 +26,19 @@ local function built(lanes: { [string]: { any } }, rest: any, span: number, piec
   return mods.build(Instance.new("Attachment"), "attribute", "Width", rest, span, nil, lanes, true, nil, piece)
 end
 
+-- a map read out of the old format, which is never framed
+local function legacy(lanes: { [string]: { any } }, rest: any, span: number, piece: any)
+  return mods.build(Instance.new("Attachment"), "attribute", "Width", rest, span, nil, lanes, false, nil, piece)
+end
+
+-- the build a reader makes for a default of lanes: it says where the row rests,
+-- because such a default may put nothing on the row's own lane
+local function stating(lanes: { [string]: { any } }, rest: any, span: number, piece: any, stands: any)
+  local opts = { value = stands }
+
+  return mods.build(Instance.new("Attachment"), "attribute", "Width", rest, span, nil, lanes, true, opts, piece)
+end
+
 harness.suite(function()
   harness.describe("mods.piece", function()
     test("a piece refuses a name its module never declared", function()
@@ -211,6 +224,68 @@ harness.suite(function()
       expect(near(track.at(0), 1)).toBe(true)
       expect(near(track.at(0.5), 2.5)).toBe(true)
       expect(near(track.at(1), 4)).toBe(true)
+    end)
+
+    -- an end lane triggers against the row's own span, so a start lane shorter
+    -- than that span must not shorten what a driver steps
+    test("an end lane keeps the span the row runs over", function()
+      local track = built({ start = { tween(0, 1, 2) }, ["end"] = { tween(1, 0, 1) } }, 0, 5, nil)
+
+      expect(track.span).toBe(5)
+      expect(near(track.at(2), 1)).toBe(true)
+      expect(near(track.at(4.5), 0.5)).toBe(true)
+      expect(near(track.at(5), 0)).toBe(true)
+    end)
+
+    -- a default made of lanes leads from somewhere the row does not rest, so a
+    -- row whose authored lanes all wait stands where the caller says it does
+    test("a lane that waits leaves the row at the value the caller stated", function()
+      local track = stating({ ["end"] = { onward(1, 2) } }, { start = { tween(0.9, 0, 1) } }, 5, nil, 0)
+
+      expect(near(track.at(0), 0)).toBe(true)
+      expect(near(track.at(3), 0)).toBe(true)
+      expect(near(track.at(4), 0.5)).toBe(true)
+      expect(near(track.at(5), 1)).toBe(true)
+    end)
+
+    test("an event lane that has not fired leaves the row at the stated value", function()
+      local piece = mods.piece({ "dissipate" })
+      local track = stating({ dissipate = { onward(1, 2) } }, { start = { tween(0.9, 0, 1) } }, 5, piece, 0)
+
+      expect(near(track.at(0), 0)).toBe(true)
+      expect(near(track.at(9), 0)).toBe(true)
+
+      piece:fire("dissipate", 1)
+
+      expect(near(track.at(1), 0)).toBe(true)
+      expect(near(track.at(2), 0.5)).toBe(true)
+      expect(near(track.at(3), 1)).toBe(true)
+    end)
+
+    -- the old format carried one trigger and no way to say anything about
+    -- another lane, so a queue read out of it cannot have meant to silence one
+    test("a legacy queue takes the start lane and leaves the others standing", function()
+      local piece = mods.piece({ "dissipate" })
+      local default = { start = { tween(1, 0, 1) }, dissipate = { onward(1, 1) } }
+      local track = legacy({ start = { tween(0, 0.5, 2) } }, default, 4, piece)
+
+      expect(track.has("start")).toBe(true)
+      expect(track.has("dissipate")).toBe(true)
+      expect(near(track.at(2), 0.5)).toBe(true)
+
+      piece:fire("dissipate", 2)
+
+      expect(near(track.at(2.5), 0.75)).toBe(true)
+      expect(near(track.at(3), 1)).toBe(true)
+    end)
+
+    test("a framed map of the same lane replaces every default lane", function()
+      local piece = mods.piece({ "dissipate" })
+      local default = { start = { tween(1, 0, 1) }, dissipate = { onward(1, 1) } }
+      local track = built({ start = { tween(0, 0.5, 2) } }, default, 4, piece)
+
+      expect(track.has("start")).toBe(true)
+      expect(track.has("dissipate")).toBe(false)
     end)
 
     test("an empty map rests at the row's own value", function()

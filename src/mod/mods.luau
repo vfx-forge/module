@@ -385,11 +385,20 @@ end
 
 local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any): Track
   local reach = span
+  local ends = false
 
   for _, lane in set do
     if lane.name == "start" then
       reach = lane.reach
+    elseif lane.name == "end" then
+      ends = true
     end
+  end
+
+  -- an end lane triggers where the row's own span leaves room for its reach, so
+  -- a driver stepping only the start lane's reach would stop short of it
+  if ends then
+    reach = math.max(reach, span)
   end
 
   return {
@@ -631,8 +640,9 @@ function mods.build(
   local seed: any = if fillStart ~= nil then value.resolve(fillStart, nil, env) elseif rest ~= nil then rest else stated
 
   -- what a lane that chains composes over when nothing under it has run: where
-  -- the row rests, which for a default made of lanes is where its lead begins
-  local footing: any = if rest ~= nil then rest else seed
+  -- the row rests, which the caller states outright when it knows, since a
+  -- default made of lanes leads from somewhere the row does not rest at
+  local footing: any = if rest ~= nil then rest elseif stated ~= nil then stated else seed
 
   local seeded = opts ~= nil and opts.ownStart == true
 
@@ -709,6 +719,26 @@ function mods.build(
       mods.warnOnce(ref, name, `{name} samples a {got} where the effect wants a {want}`)
       return resting()
     end
+  end
+
+  -- the old format had no way to say anything about another lane: it carried one
+  -- trigger, so a queue read out of it means the row's start and cannot have
+  -- meant to silence a default lane it could never name. a framed map was
+  -- authored lane by lane, so that one keeps replacing every default it has
+  if not framed and fallback ~= nil then
+    local others: { [string]: { any } } = {}
+
+    for lane, queue in fallback do
+      if lanes[lane] == nil then
+        others[lane] = queue
+      end
+    end
+
+    for _, lane in setOf(others, false) do
+      table.insert(set, lane)
+    end
+
+    table.sort(set, byOrder)
   end
 
   return trackFrom(set, piece, span, footing)

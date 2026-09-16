@@ -827,6 +827,27 @@ harness.suite(function()
       expect(near(track.at(2.5), 0.25)).toBe(true)
     end)
 
+    -- an authored map replaces the default lead it names, so the row rests at
+    -- its own value rather than where a lead that no longer runs began
+    test("a row whose authored lane waits rests at its own value", function()
+      local obj = Instance.new("Part")
+
+      framedLanes(obj, "attribute", "A", {
+        ["end"] = { { kind = "tween", chain = true, duration = 1, finish = value.lit(1) } },
+      })
+
+      local m = module({ A = knob(0):mod(mod.from(0.9):duration(1)) }, nil, function()
+        return 4
+      end)
+
+      local track = reader.resolve(m, ctxFor(obj)).A
+
+      expect(track.value).toBe(0)
+      expect(track.at(0)).toBe(track.value)
+      expect(near(track.at(3), 0)).toBe(true)
+      expect(near(track.at(4), 1)).toBe(true)
+    end)
+
     -- a default made of lanes may have nothing on the row's own lane, and the
     -- row still rests where its value says it does until an event fires
     test("a default modifier waiting on an event rests at the row's value", function()

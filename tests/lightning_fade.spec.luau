@@ -278,6 +278,43 @@ harness.suite(function()
       expect(near(track.at(fired + FADE_OUT_DURATION), FADE_OUT_END)).toBe(true)
     end)
 
+    -- an old quad on the row carried one trigger and could never have named the
+    -- dissipation, so the ramp it authors takes the entry fade and leaves the
+    -- exit one the bolt authored beside it standing
+    test("a legacy quad on the row leaves the dissipation fade standing", function()
+      bolt()
+      harness.reset()
+
+      local ref = harness.make("Attachment")
+      ref:AddTag("LightningBolt")
+      harness.make("Part", ref)
+
+      ref:SetAttribute("FadeInStart", FADE_IN_START)
+      ref:SetAttribute("FadeInDuration", FADE_IN_DURATION)
+      ref:SetAttribute("Fade_Out_End", FADE_OUT_END)
+      ref:SetAttribute("Fade_Out_Duration", FADE_OUT_DURATION)
+      ref:SetAttribute("Transparency_End", 0.5)
+
+      local module = registry.get("lightning")
+      local attrs = registry.read(ref, module)
+      local piece = mods.piece(module.events)
+      local track = attrs.Transparency(nil, 1, piece)
+
+      expect(track.has("start")).toBe(true)
+      expect(track.has("dissipate")).toBe(true)
+
+      local fired = 0.6
+      local held = track.at(fired)
+
+      piece:fire("dissipate", fired)
+
+      for _, at in { 0.075, 0.15, 0.225 } do
+        expect(near(track.at(fired + at), oldFadeOut(attrs, held, at))).toBe(true)
+      end
+
+      expect(near(track.at(fired + FADE_OUT_DURATION), FADE_OUT_END)).toBe(true)
+    end)
+
     -- a fade nobody authored is not a lane, which is what keeps an unauthored
     -- bolt free of a sampler it would only ever sample at rest
     test("a fade of no length is no lane", function()
