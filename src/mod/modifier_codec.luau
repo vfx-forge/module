@@ -156,6 +156,19 @@ local function entryOf(m: any): Modifier
   return out :: any
 end
 
+-- a wait no clock can count: the old reader took one as zero and the scheduler
+-- reset a sum that came out infinite, so one moves nothing here either rather
+-- than poisoning the offset of every entry behind it
+local function unusable(x: any): boolean
+  if x == nil or x.t ~= "lit" then
+    return false
+  end
+
+  local v = x.v
+
+  return v ~= v or v == math.huge or v == -math.huge
+end
+
 -- an old delay shifted everything after it, not just the one entry
 -- immediately following, so its wait rides every later entry until a further
 -- delay changes what is riding. a literal wait combines with a literal
@@ -172,6 +185,14 @@ local function combined(pending: any, wait: any): any
 
   if type(w) ~= "table" then
     w = if w == nil then nil else { t = "lit", v = w }
+  end
+
+  if unusable(p) then
+    p = nil
+  end
+
+  if unusable(w) then
+    w = nil
   end
 
   if p == nil then

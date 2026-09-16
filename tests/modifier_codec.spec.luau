@@ -434,6 +434,23 @@ harness.suite(function()
       expect(lane[1].offset == lane[2].offset).toBe(false)
     end)
 
+    -- no clock can count an infinite wait, so the old reader took one as zero.
+    -- summing one here would carry it into the offset of every entry behind it
+    test("a version 1 wait that is not finite moves nothing, and a later one still rides", function()
+      local buf = legacyPayload({
+        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = math.huge } } },
+        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
+        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 2 } } },
+        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 1 }, finish = { t = "lit", v = 2 } },
+      })
+
+      local lane = codec.decode(buf).lanes.start
+
+      expect(#lane).toBe(2)
+      expect(lane[1].offset == nil or lane[1].offset.v == 0).toBe(true)
+      expect(lane[2].offset.v).toBe(2)
+    end)
+
     test("a version 1 delay with nothing after it is dropped, and a rand endpoint reads as a draw", function()
       local trailing = legacyPayload({
         { kind = "tween", chain = false, duration = 1, start = { t = "rand", min = 1, max = 3 } },
