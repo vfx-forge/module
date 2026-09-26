@@ -404,6 +404,20 @@ harness.suite(function()
       expect(lane[2].offset).toBe(nil)
     end)
 
+    test("a version 1 queue whose last entry is a delay keeps it as its own entry", function()
+      local back = codec.decode(legacyPayload({
+        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
+        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 2 } } },
+      }))
+      local lane = back.lanes.start
+
+      expect(back.v).toBe(2)
+      expect(#lane).toBe(2)
+      expect(lane[2].kind).toBe("delay")
+      expect(lane[2].wait.t).toBe("lit")
+      expect(lane[2].wait.v).toBe(2)
+    end)
+
     test("a version 1 rand endpoint reads as a draw", function()
       local lane = codec.decode(legacyPayload({
         { kind = "tween", chain = false, duration = 1, start = { t = "rand", min = 1, max = 3 } },

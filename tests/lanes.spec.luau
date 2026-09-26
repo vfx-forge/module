@@ -486,6 +486,20 @@ harness.suite(function()
       expect(near(track.at(4), 0)).toBe(true)
     end)
 
+    -- a non-chained first entry names its own start rather than composing over
+    -- what the lane sits under, so a delay ahead of it does not hand the row to
+    -- the lanes below: it holds that start from the moment the lane begins
+    test("a non-chained first entry after a delay holds its own start rather than the value under it", function()
+      local piece = mods.piece({ "dissipate" })
+      local track = built({ start = { tween(0, 1, 4) }, dissipate = { delay(1), tween(5, 0, 1) } }, 0, 6, piece)
+
+      piece:fire("dissipate", 2)
+
+      expect(near(track.at(2.5), 5)).toBe(true)
+      expect(near(track.at(3.5), 2.5)).toBe(true)
+      expect(near(track.at(4), 0)).toBe(true)
+    end)
+
     test("an end lane of only no-duration entries snaps to its finish as the effect ends", function()
       local plain = built({ ["end"] = { tween(1, 0, nil) } }, 1, 5, nil)
       local waited = built({ ["end"] = { delay(0), tween(1, 0, nil) } }, 1, 5, nil)

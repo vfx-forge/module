@@ -256,6 +256,23 @@ function mods.sampler(
     end
   end
 
+  -- a randomizer draws where it starts and always takes none, so a queue whose
+  -- only no-duration entries are randomizers never has a length that moves
+  -- with `left`. computed once here rather than read off `lengths`, which a
+  -- randomizer-only queue still populates with its own zeros
+  local openEnded = false
+
+  for _, m in queue do
+    if modifiers.BASE_KINDS[m.kind] or m.kind == "delay" then
+      continue
+    end
+
+    if m.kind ~= "randomizer" and typeof(m.duration) ~= "number" then
+      openEnded = true
+      break
+    end
+  end
+
   local ctx: modifiers.Ctx = {
     duration = duration,
     base = base,
@@ -273,11 +290,11 @@ function mods.sampler(
   -- a lane fired over a running row begins from the value under it rather than
   -- from what the instance itself carries, so the base is the caller's per call.
   -- a lane that fires late tells the sampler the time the effect has left, and
-  -- only a queue with a modifier naming no duration has anything to redo then
+  -- only a queue with some other kind naming no duration has anything to redo then
   local function sample(elapsed: number, own: any?, left: number?)
     ctx.base = if own ~= nil then own else base
 
-    if lengths ~= nil and left ~= nil and left == left and left ~= scheduledFor then
+    if openEnded and left ~= nil and left == left and left ~= scheduledFor then
       local placed, _, _, runs = modifiers.schedule(queue, rolled.picks, lent, rolled.env, left)
 
       scheduledFor = left
@@ -404,8 +421,9 @@ end
 
 -- the row's value at `elapsed`: the owning lane's queue run from its own
 -- trigger, over what the lanes under it hold. that base is read where the
--- lane's first modifier starts, and live until then, so a chained first entry
--- follows the lanes under it through a leading wait. a lane producing nothing
+-- lane's first modifier starts, and live until then: a chained first entry
+-- follows the lanes under it through the wait, and a non-chained one holds its
+-- own start from the moment the lane begins instead. a lane producing nothing
 -- passes the base through, and a row nobody owns rests where the caller says
 -- it rests
 local function valueAt(
@@ -734,7 +752,7 @@ function mods.build(
         continue
       end
 
-      local sample, reach, lead = laneOf(ref, source, name, entries, span, env, seed, lane)
+      local sample, reach, first = laneOf(ref, source, name, entries, span, env, seed, lane)
 
       if sample == nil then
         if authored then
@@ -752,7 +770,7 @@ function mods.build(
         -- left, and an event lane has no trigger until the module gives it one
         from = if lane == "start" then 0 elseif lane == "end" then math.max(0, span - reach) else nil,
         reach = reach,
-        lead = lead,
+        lead = first,
         sample = sample,
       })
     end
