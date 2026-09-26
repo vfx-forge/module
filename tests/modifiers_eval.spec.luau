@@ -1261,6 +1261,19 @@ harness.suite(function()
       expect(reach).toBe(3)
     end)
 
+    test("a queue told the time left gives a no-duration modifier what remains of it", function()
+      local queue = {
+        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
+        { kind = "tween", chain = false, start = { t = "lit", v = 1 }, finish = { t = "lit", v = 0 } },
+      }
+
+      local offsets, frontier, _, lengths = modifiers.schedule(queue, nil, 10, nil, 3)
+
+      expect((offsets :: any)[2]).toBe(1)
+      expect((lengths :: any)[2]).toBe(2)
+      expect(frontier).toBe(3)
+    end)
+
     -- a delay moves what follows it and never reaches backwards: the head
     -- runs out the effect whether or not a wait sits after it
     test("a delay does not re-time what runs before it", function()

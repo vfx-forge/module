@@ -306,9 +306,11 @@ end
 -- still means wait this long before what follows. a modifier naming no
 -- duration runs out whatever is left of `fallback`, the effect's duration, so
 -- one after it starts at the effect's end; with no effect duration to lend it
--- runs for `linked`, the longest duration the queue names. a randomizer naming
--- no duration takes none: it draws at its start and the next one starts
--- there. a legacy entry marked `parallel` keeps the old reading: it starts at
+-- runs for `linked`, the longest duration the queue names. a caller whose
+-- queue starts partway through the effect passes `left`, the time the effect
+-- has left from there, and that is what such a modifier runs out instead. a
+-- randomizer naming no duration takes none: it draws at its start and the next
+-- one starts there. a legacy entry marked `parallel` keeps the old reading: it starts at
 -- the plain waits ahead of it plus the wait of a parallel delay right before
 -- it, and moves nothing after it.
 --
@@ -319,7 +321,8 @@ function modifiers.schedule(
   queue: { any },
   picks: { [number]: Picks }?,
   fallback: number?,
-  env: { [string]: any }?
+  env: { [string]: any }?,
+  left: number?
 ): ({ [number]: number }?, number, number, { [number]: number }?)
   -- the longest duration the queue NAMES, which is what a modifier naming none
   -- runs for when nobody lends an effect duration
@@ -335,6 +338,7 @@ function modifiers.schedule(
   end
 
   local lent = if typeof(fallback) == "number" and fallback > 0 then fallback else nil
+  local told = if typeof(left) == "number" and left == left then left else nil
 
   if linked <= 0 then
     linked = if lent then lent else 0
@@ -393,10 +397,13 @@ function modifiers.schedule(
 
     if typeof(d) ~= "number" then
       -- a randomizer draws its value where it starts and takes no time, so the
-      -- next modifier starts right there. anything else runs out the remaining
-      -- time of the effect, or the named fallback without one
+      -- next modifier starts right there. anything else runs out the time the
+      -- caller says is left from where the queue starts, else what remains of
+      -- the effect, or the named fallback without one
       if m.kind == "randomizer" and not m.parallel then
         d = 0
+      elseif told ~= nil and not m.parallel then
+        d = math.max(told - offset, 0)
       else
         d = if lent and not m.parallel then math.max(lent - offset, 0) else linked
       end

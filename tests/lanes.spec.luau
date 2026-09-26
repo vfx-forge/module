@@ -26,6 +26,10 @@ local function onward(finishV: any, duration: number?)
   return { kind = "tween", chain = true, duration = duration, finish = value.lit(finishV) }
 end
 
+local function delay(wait: number)
+  return { kind = "delay", chain = false, wait = value.lit(wait) }
+end
+
 local function built(lanes: { [string]: { any } }, rest: any, span: number, piece: any)
   return mods.build(Instance.new("Attachment"), "attribute", "Width", rest, span, nil, lanes, true, nil, piece)
 end
@@ -344,6 +348,84 @@ harness.suite(function()
       expect(near(track.at(4), 1)).toBe(true)
       expect(near(track.at(4.5), 0.5)).toBe(true)
       expect(near(track.at(5), 0)).toBe(true)
+    end)
+  end)
+
+  harness.describe("sequential lanes", function()
+    test("a lane plays its entries one after another and holds the last finish", function()
+      local track = built({ start = { tween(50, 10, 2), tween(10, 50, 1) } }, 50, 4, nil)
+
+      expect(near(track.at(1), 30)).toBe(true)
+      expect(near(track.at(2), 10)).toBe(true)
+      expect(near(track.at(2.5), 30)).toBe(true)
+      expect(near(track.at(3), 50)).toBe(true)
+      expect(near(track.at(3.5), 50)).toBe(true)
+    end)
+
+    test("a delay holds the finish before it through the gap", function()
+      local track = built({ start = { tween(0, 1, 1), delay(3), tween(1, 0, 1) } }, 0, 6, nil)
+
+      expect(near(track.at(0.5), 0.5)).toBe(true)
+      expect(near(track.at(2), 1)).toBe(true)
+      expect(near(track.at(4.5), 0.5)).toBe(true)
+      expect(near(track.at(5), 0)).toBe(true)
+    end)
+
+    test("an end lane plays its entries in order and ends with the effect", function()
+      local track = built({ ["end"] = { tween(0, 1, 1), tween(1, 0.5, 1) } }, 0, 5, nil)
+
+      expect(near(track.at(2), 0)).toBe(true)
+      expect(near(track.at(3.5), 0.5)).toBe(true)
+      expect(near(track.at(4), 1)).toBe(true)
+      expect(near(track.at(4.5), 0.75)).toBe(true)
+      expect(near(track.at(5), 0.5)).toBe(true)
+    end)
+
+    test("a no-duration entry on the start lane runs out the effect", function()
+      local track = built({ start = { tween(0, 1, 1), tween(1, 0, nil) } }, 0, 5, nil)
+
+      expect(near(track.at(1), 1)).toBe(true)
+      expect(near(track.at(3), 0.5)).toBe(true)
+      expect(near(track.at(5), 0)).toBe(true)
+    end)
+
+    test("a no-duration entry on the end lane takes no time", function()
+      local track = built({ ["end"] = { tween(0, 1, 1), tween(1, 0, nil) } }, 0, 5, nil)
+
+      expect(near(track.at(4.5), 0.5)).toBe(true)
+      expect(near(track.at(5), 0)).toBe(true)
+    end)
+
+    test("a no-duration entry on an event lane runs out the effect from where it fired", function()
+      local piece = mods.piece({ "dissipate" })
+      local track = built({ dissipate = { onward(0, nil) } }, 1, 6, piece)
+
+      piece:fire("dissipate", 2)
+
+      expect(near(track.at(4), 0.5)).toBe(true)
+      expect(near(track.at(6), 0)).toBe(true)
+
+      piece:fire("dissipate", 4)
+
+      expect(near(track.at(5), 0.5)).toBe(true)
+      expect(near(track.at(6), 0)).toBe(true)
+    end)
+
+    test("an event lane that opens with a delay holds the value under it while it waits", function()
+      local piece = mods.piece({ "dissipate" })
+      local track = built({ start = { tween(0, 1, 4) }, dissipate = { delay(1), onward(0, 1) } }, 0, 6, piece)
+
+      piece:fire("dissipate", 2)
+
+      expect(near(track.at(2.5), 0.625)).toBe(true)
+      expect(near(track.at(3), 0.75)).toBe(true)
+      expect(near(track.at(3.5), 0.375)).toBe(true)
+      expect(near(track.at(4), 0)).toBe(true)
+    end)
+
+    test("a lane that only waits is inert", function()
+      expect(mods.inert({ delay(1) })).toBe(true)
+      expect(mods.inert({ delay(1), tween(0, 1, 1) })).toBe(false)
     end)
   end)
 end)
