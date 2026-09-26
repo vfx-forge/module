@@ -169,6 +169,37 @@ harness.suite(function()
     expect(frontier).toBe(2.5)
   end)
 
+  test("each child waits its own delay rather than the sum of the ones before it", function()
+    local obj = Instance.new("Part")
+
+    local fadeIn = tweenChild("Transparency")
+    fadeIn:SetAttribute("EmitDelay", 0.5)
+    fadeIn.Parent = obj
+
+    local fadeOut = tweenChild("Transparency")
+    fadeOut:SetAttribute("EmitDelay", 1)
+    fadeOut.Parent = obj
+
+    tweenChild("Transparency").Parent = obj
+
+    local queue = legacy_mods.readChildren(obj, "property", "Transparency")
+    local offsets, frontier = modifiers.schedule(queue, nil, 9)
+    local tweens = {}
+
+    for i, m in queue do
+      if m.kind == "tween" then
+        table.insert(tweens, (offsets :: any)[i])
+      end
+    end
+
+    table.sort(tweens)
+
+    expect(tweens[1]).toBe(0)
+    expect(tweens[2]).toBe(0.5)
+    expect(tweens[3]).toBe(1)
+    expect(frontier).toBe(3)
+  end)
+
   test("a tween child with no delay has none", function()
     local obj = Instance.new("Part")
     tweenChild("Transparency").Parent = obj

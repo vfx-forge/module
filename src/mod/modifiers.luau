@@ -318,8 +318,9 @@ end
 -- one after it starts at the effect's end; with no effect duration to lend it
 -- runs for `linked`, the longest duration the queue names. a randomizer naming
 -- no duration takes none: it draws at its start and the next one starts there. a legacy entry
--- marked `parallel` keeps the old reading: it starts at the waits ahead of it
--- alone and moves nothing after it.
+-- marked `parallel` keeps the old reading: it starts at the plain waits ahead
+-- of it plus the wait of a parallel delay right before it, and moves nothing
+-- after it.
 --
 -- `lengths` holds the run of every modifier naming no duration, by index, and
 -- is nil when there is none. `offsets` is nil only for a queue with nothing on
@@ -353,6 +354,8 @@ function modifiers.schedule(
   local lengths: { [number]: number }? = nil
   local offset = 0
   local frontier = 0
+  -- the wait of a parallel delay, which moves the one entry after it alone
+  local held: number? = nil
 
   for i, m in queue do
     -- a base entry is not on the clock, but a duration on one still lengthened
@@ -361,6 +364,13 @@ function modifiers.schedule(
       if typeof(m.duration) == "number" and m.duration > frontier then
         frontier = m.duration
       end
+
+      continue
+    end
+
+    if m.kind == "delay" and m.parallel then
+      local w = modifiers.waitOf(m, if picks then picks[i] else nil, env)
+      held = if w ~= math.huge then w else nil
 
       continue
     end
@@ -380,8 +390,14 @@ function modifiers.schedule(
       continue
     end
 
+    -- a parallel entry ran on its own clock from the emit: the waits of plain
+    -- delays ahead of it move it, and a parallel delay moves only the entry
+    -- right after it. everything else starts where the queue has got to
+    local at = if m.parallel then offset + (held or 0) else offset
+    held = nil
+
     offsets = offsets or {}
-    offsets[i] = offset
+    offsets[i] = at
 
     local d = m.duration
 
@@ -405,8 +421,8 @@ function modifiers.schedule(
       d = 0
     end
 
-    if offset + d > frontier then
-      frontier = offset + d
+    if at + d > frontier then
+      frontier = at + d
     end
 
     if not m.parallel then

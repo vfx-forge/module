@@ -268,8 +268,8 @@ end
 
 -- one RayValue child as queue entries: a randomizer is one entry; a tween is
 -- one entry, led by a delay when it authored one. every child of a name ran
--- from the emit on its own clock, so each entry is `parallel`: it starts at
--- the waits ahead of it rather than after the entries before it
+-- from the emit on its own clock, so each entry is `parallel`, its delay too:
+-- a child starts at its own delay alone, never after the children before it
 local function entriesOf(child: Instance): { any }
   local reset = resetOf(attr.get(child, "ResetOnFinish", nil, true))
 
@@ -292,7 +292,7 @@ local function entriesOf(child: Instance): { any }
   local emitDelay = attr.get(child, "EmitDelay", nil, true)
 
   if typeof(emitDelay) == "number" and emitDelay > 0 then
-    table.insert(out, { kind = "delay", chain = false, wait = value.lit(emitDelay) })
+    table.insert(out, { kind = "delay", chain = false, parallel = true, wait = value.lit(emitDelay) })
   end
 
   table.insert(out, {
