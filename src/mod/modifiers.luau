@@ -307,10 +307,10 @@ end
 -- duration runs out whatever is left of `fallback`, the effect's duration, so
 -- one after it starts at the effect's end; with no effect duration to lend it
 -- runs for `linked`, the longest duration the queue names. a randomizer naming
--- no duration takes none: it draws at its start and the next one starts there. a legacy entry
--- marked `parallel` keeps the old reading: it starts at the plain waits ahead
--- of it plus the wait of a parallel delay right before it, and moves nothing
--- after it.
+-- no duration takes none: it draws at its start and the next one starts
+-- there. a legacy entry marked `parallel` keeps the old reading: it starts at
+-- the plain waits ahead of it plus the wait of a parallel delay right before
+-- it, and moves nothing after it.
 --
 -- `lengths` holds the run of every modifier naming no duration, by index, and
 -- is nil when there is none. `offsets` is nil only for a queue with nothing on
@@ -329,7 +329,7 @@ function modifiers.schedule(
     -- an infinite duration is excluded rather than allowed to win: it would
     -- make every modifier that names no duration read a progress of zero and
     -- sit on its start value for the whole run
-    if typeof(m.duration) == "number" and m.duration ~= math.huge and m.duration > linked then
+    if m.kind ~= "delay" and typeof(m.duration) == "number" and m.duration ~= math.huge and m.duration > linked then
       linked = m.duration
     end
   end
@@ -349,7 +349,7 @@ function modifiers.schedule(
 
   for i, m in queue do
     -- a base entry is not on the clock, but a duration on one still lengthened
-    -- the run before offsets existed and has to keep doing so
+    -- the run before delays existed and has to keep doing so
     if modifiers.BASE_KINDS[m.kind] then
       if typeof(m.duration) == "number" and m.duration > frontier then
         frontier = m.duration

@@ -1279,6 +1279,22 @@ harness.suite(function()
       expect(delayedReach).toBe(13)
     end)
 
+    -- a wait spelled as a duration is still a wait, so with no effect duration
+    -- lent it must not stand in as the linked run of what comes before it
+    test("a delay's duration is not the linked run", function()
+      local queue = {
+        { kind = "tween", chain = false },
+        { kind = "delay", chain = false, duration = 3 },
+        { kind = "tween", chain = false, duration = 1 },
+      }
+
+      local _, frontier, linked, lengths = modifiers.schedule(queue, nil, nil)
+
+      expect(linked).toBe(1)
+      expect((lengths :: any)[1]).toBe(1)
+      expect(frontier).toBe(5)
+    end)
+
     -- a legacy entry keeps the reading every RayValue child had: it starts at
     -- the waits ahead of it and runs beside the entries before it
     test("a parallel entry starts at the waits ahead of it alone", function()
