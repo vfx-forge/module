@@ -47,30 +47,41 @@ local still: mods.Rolls = { draws = {}, picks = {}, envelope = 0 }
 
 harness.suite(function()
   harness.describe("mods.sampler over a delayed queue", function()
-    -- the reach is 7 here: a wait of 2 pushes a modifier that runs for 5 out to
-    -- it. seeding the linked run from that reach measured a 5 second phase
-    -- against 7, and the knob stopped 71% of the way along and stayed there for
-    -- the rest of every emit
-    test("a lent run seeds a linked modifier rather than the reach", function()
-      local queue = { delay(2), tween(0, 10) }
+    -- the reach is 6 here: a linked head runs out the effect's 5 and a tail of
+    -- 1 follows it. lending the reach instead would stretch the head to 6
+    test("a lent effect seeds a linked modifier rather than the reach", function()
+      local queue = { tween(0, 10), tween(10, 20, 1) }
       local span, linked = mods.span(queue, 5)
       local sample = mods.sampler(Instance.new("Attachment"), "attribute", "Size", span, queue, still, linked) :: any
 
-      expect(span).toBe(7)
+      expect(span).toBe(6)
       expect(linked).toBe(5)
-      expect(near(sample(2), 0)).ok()
-      expect(near(sample(4.5), 5)).ok()
-      expect(near(sample(7), 10)).ok()
+      expect(near(sample(2.5), 5)).ok()
+      expect(near(sample(5), 10)).ok()
+      expect(near(sample(5.5), 15)).ok()
+      expect(near(sample(6), 20)).ok()
     end)
 
     -- and the argument is load bearing rather than a number that happens to
-    -- agree: a caller that lends nothing has only the reach to measure against,
-    -- which is the 71% reading above
-    test("a sampler told nothing about the run measures against the reach", function()
-      local queue = { delay(2), tween(0, 10) }
-      local sample = mods.sampler(Instance.new("Attachment"), "attribute", "Size", 7, queue, still) :: any
+    -- agree: a caller that lends nothing has only the reach to measure against
+    test("a sampler told nothing about the effect runs a linked modifier out to the reach", function()
+      local queue = { tween(0, 10), tween(10, 20, 1) }
+      local sample = mods.sampler(Instance.new("Attachment"), "attribute", "Size", 6, queue, still) :: any
 
-      expect(near(sample(7), 10 * (5 / 7))).ok()
+      expect(near(sample(3), 5)).ok()
+    end)
+
+    -- a delay between two tweens, through the sampler every effect drives
+    test("a delay between two tweens holds through the gap", function()
+      local queue = { tween(0, 10, 1), delay(1), tween(10, 0, 1) }
+      local span, linked = mods.span(queue, 5)
+      local sample = mods.sampler(Instance.new("Attachment"), "attribute", "Size", span, queue, still, linked) :: any
+
+      expect(span).toBe(3)
+      expect(near(sample(0.5), 5)).ok()
+      expect(near(sample(1.5), 10)).ok()
+      expect(near(sample(2.5), 5)).ok()
+      expect(near(sample(3), 0)).ok()
     end)
   end)
 
@@ -78,11 +89,12 @@ harness.suite(function()
     -- the same threading through the function every effect actually calls: the
     -- span it hands back is the reach, and what it hands the sampler is the run
     test("threads the run it took beside the reach", function()
-      local obj = authored("Size", { delay(2), tween(0, 10) })
+      local obj = authored("Size", { tween(0, 10), tween(10, 20, 1) })
       local track = mods.track(obj, "attribute", "Size", 0, 5)
 
-      expect(track.span).toBe(7)
-      expect(near(track.at(7), 10)).ok()
+      expect(track.span).toBe(6)
+      expect(near(track.at(2.5), 5)).ok()
+      expect(near(track.at(6), 20)).ok()
     end)
 
     -- an effect assigns a sample straight into its own arithmetic, and a stepper

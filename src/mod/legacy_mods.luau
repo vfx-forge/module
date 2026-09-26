@@ -267,7 +267,9 @@ local function speedOf(child: Instance): { start: number, finish: number, durati
 end
 
 -- one RayValue child as queue entries: a randomizer is one entry; a tween is
--- one entry, led by a delay when it authored one
+-- one entry, led by a delay when it authored one. every child of a name ran
+-- from the emit on its own clock, so each entry is `parallel`: it starts at
+-- the waits ahead of it rather than after the entries before it
 local function entriesOf(child: Instance): { any }
   local reset = resetOf(attr.get(child, "ResetOnFinish", nil, true))
 
@@ -276,6 +278,7 @@ local function entriesOf(child: Instance): { any }
       {
         kind = "randomizer",
         chain = false,
+        parallel = true,
         start = litOrNil(attr.get(child, "_START_VALUE", nil, true)),
         finish = litOrNil(attr.get(child, "_END_VALUE", nil, true)),
         weight = curveOf(attr.get(child, "Weight_Curve", nil, true)) or curves.linear(),
@@ -295,6 +298,7 @@ local function entriesOf(child: Instance): { any }
   table.insert(out, {
     kind = "tween",
     chain = false,
+    parallel = true,
     duration = durationOf(attr.get(child, "Duration", nil, true)),
     start = litOrNil(attr.get(child, "_START_VALUE", nil, true)),
     finish = litOrNil(attr.get(child, "_END_VALUE", nil, true)),

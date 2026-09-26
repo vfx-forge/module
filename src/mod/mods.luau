@@ -33,11 +33,12 @@ export type Rolls = {
   envelope: number,
 }
 
--- how long a queue runs on its own terms, for a caller with no effect duration
--- to lend it. a delay pushes what follows it out, so the answer is the far end
--- of the queue rather than its longest single duration, and a caller whose
--- delay is drawn per instance passes the rolls in so the span is the one THIS
--- instance will run
+-- how long a queue runs on its own terms: modifiers run one after another,
+-- so the answer is where the last one ends rather than the longest single
+-- duration, and a caller whose delay is drawn per instance passes the rolls in
+-- so the span is the one THIS instance will run. the second return is the
+-- effect duration a modifier naming none runs out, which the sampler lends
+-- back to schedule so both walks place every modifier alike
 function mods.span(queue: { any }, fallback: number, rolls: Rolls?): (number, number)
   local picks = if rolls then rolls.picks else nil
 
@@ -48,16 +49,16 @@ function mods.span(queue: { any }, fallback: number, rolls: Rolls?): (number, nu
     fallback = 0
   end
 
-  local _, frontier, linked = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil)
+  local _, frontier = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil)
 
   -- an effect turns this straight into a tween's duration, and a tween that
   -- never ends holds the emit open for good. nothing an author can mean by a
   -- span is infinite, so an unusable one falls back the same way an empty one does
   if frontier ~= frontier or frontier <= 0 or frontier == math.huge then
-    return fallback, linked
+    return fallback, fallback
   end
 
-  return frontier, linked
+  return frontier, fallback
 end
 
 -- a queue that waits and does nothing else. its delays still push a clock
@@ -221,11 +222,11 @@ function mods.sampler(
   end
 
   local rolled = rolls or mods.roll(queue)
-  -- `duration` is the reach, which a delay inflates. seeding the linked run
-  -- from it would stretch every modifier that names no duration and leave a
-  -- delayed one short of its finish, so a caller that knows what it lent says so
+  -- `duration` is the reach, which can run past the effect when the named
+  -- durations add up to more than it. a modifier naming none runs out what is
+  -- left of the effect, so a caller that knows the effect duration it lent says so
   local lent = if linked ~= nil then linked else duration
-  local offsets, _, resolved = modifiers.schedule(queue, rolled.picks, lent, rolled.env)
+  local offsets, _, resolved, lengths = modifiers.schedule(queue, rolled.picks, lent, rolled.env)
 
   local ctx: modifiers.Ctx = {
     duration = duration,
@@ -233,6 +234,7 @@ function mods.sampler(
     draws = rolled.draws,
     picks = rolled.picks,
     offsets = offsets,
+    lengths = lengths,
     linked = resolved,
     env = rolled.env,
     envelope = rolled.envelope,

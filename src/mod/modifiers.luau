@@ -20,6 +20,7 @@ export type Ctx = {
   draws: { [number]: Draw }?,
   picks: { [number]: Picks }?,
   offsets: { [number]: number }?,
+  lengths: { [number]: number }?,
   linked: number?,
   env: { [string]: any }?,
   envelope: number?,
@@ -70,23 +71,23 @@ local function envelopeAt(buf: buffer, progress: number): number
   return a + (b - a) * (pos - i)
 end
 
--- how far through its own run a modifier is, given an elapsed already measured
--- from where the delays before it put it, so a negative one means it has not
--- started. a nil duration means it runs for ctx.linked, the delay-free span, so
--- a delay moves a modifier without changing how long it takes once it starts
-local function durationOf(m: any, ctx: Ctx): number?
+-- how long a modifier runs once it starts. a nil duration is the run
+-- schedule worked out for it, which is what is left of the effect after the
+-- modifiers before it; a caller that scheduled nothing falls back to
+-- ctx.linked, then to the effect's whole duration
+local function durationOf(m: any, i: number, ctx: Ctx, lengths: { [number]: number }?): number?
   local d = m.duration
 
   if typeof(d) ~= "number" then
-    d = if typeof(ctx.linked) == "number" then ctx.linked else ctx.duration
+    d = if lengths and lengths[i] then lengths[i] elseif typeof(ctx.linked) == "number" then ctx.linked else ctx.duration
   end
 
   return if typeof(d) == "number" and d > 0 then d else nil
 end
 
-local function progressOf(m: any, elapsed: number, ctx: Ctx): number
-  local d = durationOf(m, ctx)
-
+-- how far through its own run a modifier is, given an elapsed already measured
+-- from where schedule put it, so a negative one means it has not started
+local function progressOf(d: number?, elapsed: number): number
   -- a step function still steps where it was placed rather than at zero
   if d == nil then
     return if elapsed < 0 then 0 else 1
@@ -233,8 +234,8 @@ end
 -- 12fps steps at 0, and 1/12 is past the end, so the knob would sit at 83% of
 -- its travel and stay there. a modifier that never reaches what it was told to
 -- reach is worse than one that arrives a fraction of a step early
-local function steppedProgress(m: any, elapsed: number, ctx: Ctx): number
-  local progress = progressOf(m, elapsed, ctx)
+local function steppedProgress(m: any, d: number?, elapsed: number): number
+  local progress = progressOf(d, elapsed)
   local fps = m.fps
 
   if progress >= 1 then
@@ -251,7 +252,6 @@ local function steppedProgress(m: any, elapsed: number, ctx: Ctx): number
 
   if type(fps) == "table" then
     local ramp = fpsRamp(fps)
-    local d = durationOf(m, ctx)
 
     -- an endless duration divides into nothing: floor(inf * 0) is NaN, and a
     -- NaN step count inverts to a NaN progress, which lerps to a value nothing
@@ -273,7 +273,7 @@ local function steppedProgress(m: any, elapsed: number, ctx: Ctx): number
     return progress
   end
 
-  return progressOf(m, math.floor(elapsed * fps) / fps, ctx)
+  return progressOf(d, math.floor(elapsed * fps) / fps)
 end
 
 -- a delay carries its wait in `wait`, a Value, so a drawn one is the same rand
@@ -307,25 +307,30 @@ function modifiers.waitOf(m: any, picks: Picks?, env: { [string]: any }?): numbe
   return math.max(wait, 0)
 end
 
--- where each modifier begins once the delays before it are counted, and how far
--- the queue reaches in all. one walk, so evaluate and mods.span can never
--- disagree about when a delayed modifier starts.
+-- where each modifier begins, how long one naming no duration runs, and how
+-- far the queue reaches in all. one walk, so evaluate and mods.span can never
+-- disagree about when a modifier starts.
 --
--- `fallback` is the duration a caller is prepared to lend the queue, and it
--- only ever affects the reach. a caller that just wants the offsets leaves it
--- out. the offsets come back nil for a queue that delays nothing, which is
--- every queue authored so far, so the common path carries no table and reads
--- none per frame
+-- modifiers run one after another: each starts where the one before it ends,
+-- so an offset is the sum of the durations and the waits ahead of it. a delay
+-- still means wait this long before what follows. a modifier naming no
+-- duration runs out whatever is left of `fallback`, the effect's duration, so
+-- one after it starts at the effect's end; with no effect duration to lend it
+-- runs for `linked`, the longest duration the queue names. a legacy entry
+-- marked `parallel` keeps the old reading: it starts at the waits ahead of it
+-- alone and moves nothing after it.
+--
+-- `lengths` holds the run of every modifier naming no duration, by index, and
+-- is nil when there is none. `offsets` is nil only for a queue with nothing on
+-- the clock
 function modifiers.schedule(
   queue: { any },
   picks: { [number]: Picks }?,
   fallback: number?,
   env: { [string]: any }?
-): ({ [number]: number }?, number, number)
-  -- the longest duration the queue NAMES, which is what a modifier that names
-  -- none runs for. taken from durations alone, with no offset in it: a delay
-  -- lengthens the run of the queue, but it must not stretch the modifier it
-  -- delays, and it must not reach backwards and stretch one that ran before it
+): ({ [number]: number }?, number, number, { [number]: number }?)
+  -- the longest duration the queue NAMES, which is what a modifier naming none
+  -- runs for when nobody lends an effect duration
   local linked = 0
 
   for _, m in queue do
@@ -337,11 +342,14 @@ function modifiers.schedule(
     end
   end
 
+  local lent = if typeof(fallback) == "number" and fallback > 0 then fallback else nil
+
   if linked <= 0 then
-    linked = if typeof(fallback) == "number" then fallback else 0
+    linked = if lent then lent else 0
   end
 
   local offsets: { [number]: number }? = nil
+  local lengths: { [number]: number }? = nil
   local offset = 0
   local frontier = 0
 
@@ -356,13 +364,6 @@ function modifiers.schedule(
       continue
     end
 
-    -- a delay shifts what follows by its own wait and by nothing else, so a
-    -- modifier's offset is the SUM of the waits before it rather than anything
-    -- to do with how long its neighbours run. that is the only reading under
-    -- which one wait means the same moment to knobs whose own phases differ in
-    -- length, which is what an effect drawing a single lifetime per emitted
-    -- instance needs, and it is also what lets a phase be delayed to a moment
-    -- BEFORE the phase it chains from has finished
     if m.kind == "delay" then
       -- waitOf makes every wait finite on its own, but a sum of finite waits
       -- need not be. an infinite offset would make the span infinite too, and a
@@ -371,31 +372,41 @@ function modifiers.schedule(
       -- the offset where it was rather than poisoning every modifier after it
       local sum = offset + modifiers.waitOf(m, if picks then picks[i] else nil, env)
 
-      if sum == math.huge then
-        sum = offset
+      if sum ~= math.huge then
+        offset = sum
       end
 
-      offset = sum
-      offsets = offsets or {}
       continue
     end
 
-    -- nothing ahead of the first delay is moved, so its absence from the table
-    -- reads as the zero it is
-    if offsets then
-      offsets[i] = offset
+    offsets = offsets or {}
+    offsets[i] = offset
+
+    local d = m.duration
+
+    if typeof(d) ~= "number" then
+      -- the remaining time of the effect, or the named fallback without one
+      d = if lent and not m.parallel then math.max(lent - offset, 0) else linked
+      lengths = lengths or {}
+      lengths[i] = d
     end
 
-    -- a modifier naming no duration of its own runs for the delay-free span,
-    -- wherever a delay placed it, so its reach is that span past its own start
-    local d = if typeof(m.duration) == "number" then m.duration else linked
+    -- a duration that is not a number moves nothing after it rather than
+    -- carrying a nan into every offset that follows
+    if d ~= d or d < 0 then
+      d = 0
+    end
 
     if offset + d > frontier then
       frontier = offset + d
     end
+
+    if not m.parallel then
+      offset += d
+    end
   end
 
-  return offsets, frontier, linked
+  return offsets, frontier, linked, lengths
 end
 
 -- sample a serialized curve (a Path2D control-point buffer or string) at
@@ -426,6 +437,18 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
   local prevOut: any = ctx.base
   local haveOut = ctx.base ~= nil
   local offsets = ctx.offsets
+  local lengths = ctx.lengths
+  local ran = false
+
+  -- the offsets are worked out once per emitted instance in mods.sampler. a
+  -- caller evaluating a queue directly pays for that walk here, lending the
+  -- effect's duration it passed in
+  if offsets == nil and #queue > 1 then
+    local scheduled
+
+    offsets, _, _, scheduled = modifiers.schedule(queue, ctx.picks, ctx.duration, ctx.env)
+    lengths = lengths or scheduled
+  end
 
   for i, m in queue do
     if modifiers.BASE_KINDS[m.kind] then
@@ -433,16 +456,22 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
     end
 
     -- a delay contributes no value at all, so it leaves prevOut alone and a
-    -- chain reaches across it. the offsets it imposes are worked out once per
-    -- emitted instance in mods.sampler; a caller evaluating a queue directly
-    -- pays for that walk here, and only if the queue actually delays something
+    -- chain reaches across it
     if m.kind == "delay" then
-      if offsets == nil then
-        offsets = modifiers.schedule(queue, ctx.picks, nil, ctx.env)
-      end
-
       continue
     end
+
+    local offset = if offsets then offsets[i] or 0 else 0
+
+    -- a modifier that has not started yet leaves the value to the ones before
+    -- it. the first one on the clock has nothing before it, so it holds its
+    -- start while it waits, and a parallel entry holds its start the way every
+    -- legacy entry always did
+    if ran and elapsed < offset and not m.parallel then
+      continue
+    end
+
+    ran = true
 
     -- endpoints go through value.resolve rather than a raw field read, so a
     -- rand endpoint lands on the draw the sampler made for it and a var still
@@ -459,8 +488,7 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
 
     local finishVal = if m.finish then value.resolve(m.finish, picks and picks.finish, ctx.env) else startVal
 
-    local offset = if offsets then offsets[i] or 0 else 0
-    local progress = steppedProgress(m, elapsed - offset, ctx)
+    local progress = steppedProgress(m, durationOf(m, i, ctx, lengths), elapsed - offset)
     local alpha: number
 
     if m.kind == "randomizer" then

@@ -2,6 +2,7 @@ local attr = require("@mod/attributes")
 local value = require("@mod/value")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
+local modifiers = require("@mod/modifiers")
 local legacy_mods = require("@mod/legacy_mods")
 local test, expect = harness.test, harness.expect
 local Vector3 = harness.datatypes.Vector3
@@ -138,6 +139,34 @@ harness.suite(function()
     expect(queue[1].wait.v).toBe(0.5)
     expect(queue[2].kind).toBe("tween")
     expect(queue[2].duration).toBe(2)
+  end)
+
+  -- every RayValue child of a name ran from the emit on its own clock, so two
+  -- of them read as entries that start together rather than one after another
+  test("two tween children start together rather than in sequence", function()
+    local obj = Instance.new("Part")
+    tweenChild("Transparency").Parent = obj
+
+    local late = tweenChild("Transparency")
+    late:SetAttribute("EmitDelay", 0.5)
+    late.Parent = obj
+
+    local queue = legacy_mods.readChildren(obj, "property", "Transparency")
+    local offsets, frontier = modifiers.schedule(queue, nil, 9)
+    local tweens = {}
+
+    for i, m in queue do
+      if m.kind == "tween" then
+        expect(m.parallel).toBe(true)
+        table.insert(tweens, (offsets :: any)[i])
+      end
+    end
+
+    table.sort(tweens)
+
+    expect(tweens[1]).toBe(0)
+    expect(tweens[2]).toBe(0.5)
+    expect(frontier).toBe(2.5)
   end)
 
   test("a tween child with no delay has none", function()

@@ -14,10 +14,10 @@ harness.suite(function()
   end)
 
   harness.describe("mods.span", function()
-    -- with nothing delaying anything the far end of the queue and its longest
-    -- single duration are the same number, which is what this was before
+    -- modifiers run one after another, so the far end of the queue is its
+    -- durations added up rather than the longest of them
     test("reaches the far end of an undelayed queue", function()
-      expect(mods.span({ { duration = 0.5 }, { duration = 2 }, { duration = 1 } }, 9)).toBe(2)
+      expect(mods.span({ { duration = 0.5 }, { duration = 2 }, { duration = 1 } }, 9)).toBe(3.5)
     end)
 
     -- a base entry is pinned at index 1 and holds a value rather than running,
@@ -34,8 +34,7 @@ harness.suite(function()
       expect(mods.span({}, 9)).toBe(9)
     end)
 
-    -- a delay pushes what follows it out, so the span is the far end of the
-    -- queue rather than its longest single duration
+    -- a delay pushes what follows it out past the end of what came before
     test("counts the wait a delay imposes", function()
       local queue = {
         { kind = "tween", duration = 1 },
@@ -43,7 +42,7 @@ harness.suite(function()
         { kind = "tween", duration = 0.5 },
       }
 
-      expect(mods.span(queue, 9)).toBe(2.5)
+      expect(mods.span(queue, 9)).toBe(3.5)
     end)
 
     -- a delay with nothing after it moves nothing, so it must not add a wait
@@ -54,13 +53,19 @@ harness.suite(function()
       expect(mods.span(delayed, 9)).toBe(mods.span({ { kind = "tween", duration = 1 } }, 9))
     end)
 
-    -- the far end has to be far enough for a delayed modifier that names no
-    -- duration to get a full turn, or mods.track pumps for a span the queue
-    -- cannot finish inside and the knob freezes at its start value
-    test("lends a delayed modifier with no duration a full fallback", function()
+    -- a delayed modifier that names no duration runs out what is left of the
+    -- effect, so the queue ends with the effect
+    test("ends a delayed modifier with no duration at the effect's end", function()
       local queue = { { kind = "delay", wait = { t = "lit", v = 2 } }, { kind = "tween" } }
 
-      expect(mods.span(queue, 5)).toBe(7)
+      expect(mods.span(queue, 5)).toBe(5)
+    end)
+
+    -- named durations that add up past the effect carry the queue past it
+    test("runs past the effect when the named durations do", function()
+      local queue = { { kind = "tween", duration = 2 }, { kind = "tween", duration = 3 }, { kind = "tween" } }
+
+      expect(mods.span(queue, 4)).toBe(5)
     end)
 
     -- the span has to be the one THIS instance will run, so a drawn wait is
@@ -112,14 +117,13 @@ harness.suite(function()
       expect(span > 9).toBe(true)
     end)
 
-    -- the sampler seeds a linked modifier's run from this, NOT from the span:
-    -- the span carries the delay, and seeding a linked run from it leaves a
-    -- delayed modifier short of its finish for the whole emit
-    test("hands back the run a linked modifier gets, beside the reach", function()
-      local queue = { { kind = "delay", wait = { t = "lit", v = 2 } }, { kind = "tween" } }
+    -- the sampler lends a linked modifier this, NOT the span: the span can run
+    -- past the effect, and a linked modifier runs out the effect alone
+    test("hands back the effect a linked modifier runs out, beside the reach", function()
+      local queue = { { kind = "tween" }, { kind = "tween", duration = 1 } }
       local span, linked = mods.span(queue, 5)
 
-      expect(span).toBe(7)
+      expect(span).toBe(6)
       expect(linked).toBe(5)
     end)
 
