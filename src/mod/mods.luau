@@ -33,11 +33,12 @@ export type Rolls = {
   envelope: number,
 }
 
--- how long a queue runs on its own terms, for a caller with no effect duration
--- to lend it. a delay pushes what follows it out, so the answer is the far end
--- of the queue rather than its longest single duration, and a caller whose
--- delay is drawn per instance passes the rolls in so the span is the one THIS
--- instance will run
+-- how long a queue runs on its own terms: modifiers run one after another,
+-- so the answer is where the last one ends rather than the longest single
+-- duration, and a caller whose delay is drawn per instance passes the rolls in
+-- so the span is the one THIS instance will run. the second return is the
+-- effect duration a modifier naming none runs out, which the sampler lends
+-- back to schedule so both walks place every modifier alike
 function mods.span(queue: { any }, fallback: number, rolls: Rolls?): (number, number)
   local picks = if rolls then rolls.picks else nil
 
@@ -48,30 +49,30 @@ function mods.span(queue: { any }, fallback: number, rolls: Rolls?): (number, nu
     fallback = 0
   end
 
-  local _, frontier, linked = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil)
+  local _, frontier = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil)
 
   -- an effect turns this straight into a tween's duration, and a tween that
   -- never ends holds the emit open for good. nothing an author can mean by a
   -- span is infinite, so an unusable one falls back the same way an empty one does
   if frontier ~= frontier or frontier <= 0 or frontier == math.huge then
-    return fallback, linked
+    return fallback, fallback
   end
 
-  return frontier, linked
+  return frontier, fallback
 end
 
--- a queue that moves nothing: every entry holds a value the target already
--- carries, so driving it writes that value back every frame for the length of
--- the run and holds the emit open while it does. the sample guard behind
--- mods.build catches the base-only case only where nothing rests at all, since
--- such a queue hands back whatever the row does rest at
+-- a queue that moves nothing: every entry waits or holds a value the target
+-- already carries, so driving it writes that value back every frame for the
+-- length of the run and holds the emit open while it does. the sample guard
+-- behind mods.build catches the base-only case only where nothing rests at
+-- all, since such a queue hands back whatever the row does rest at
 function mods.inert(queue: { any }): boolean
   if #queue == 0 then
     return false
   end
 
   for _, m in queue do
-    if not modifiers.BASE_KINDS[m.kind] then
+    if m.kind ~= "delay" and not modifiers.BASE_KINDS[m.kind] then
       return false
     end
   end
@@ -169,10 +170,10 @@ local function componentEnds(m: any, env: { [string]: any }?): boolean
   return typeof(startVal) == "Vector3" and typeof(finishVal) == "Vector3"
 end
 
--- randomizer alphas, drawn endpoints, drawn offsets and the envelope offset are
+-- randomizer alphas, drawn endpoints, drawn waits and the envelope offset are
 -- all drawn HERE, once, which is once per emitted instance. that makes "one
 -- draw per instance" structural rather than a rule every call site has to
--- remember. it is its own function because a drawn offset moves the far end of
+-- remember. it is its own function because a drawn delay moves the far end of
 -- the queue, so a caller that needs the SPAN first has to draw before it can
 -- ask for one, and then hand the same rolls to the sampler
 function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
@@ -195,13 +196,13 @@ function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
 
     local startDrawn = m.start ~= nil and value.isDraw(m.start)
     local finishDrawn = m.finish ~= nil and value.isDraw(m.finish)
-    local offsetDrawn = type(m.offset) == "table" and value.isDraw(m.offset)
+    local waitDrawn = type(m.wait) == "table" and value.isDraw(m.wait)
 
-    if startDrawn or finishDrawn or offsetDrawn then
+    if startDrawn or finishDrawn or waitDrawn then
       picks[i] = {
         start = if startDrawn then rng:NextNumber() else nil,
         finish = if finishDrawn then rng:NextNumber() else nil,
-        offset = if offsetDrawn then rng:NextNumber() else nil,
+        wait = if waitDrawn then rng:NextNumber() else nil,
       }
     end
   end
@@ -227,11 +228,11 @@ function mods.sampler(
   end
 
   local rolled = rolls or mods.roll(queue)
-  -- `duration` is the reach, which a delay inflates. seeding the linked run
-  -- from it would stretch every modifier that names no duration and leave a
-  -- delayed one short of its finish, so a caller that knows what it lent says so
+  -- `duration` is the reach, which can run past the effect when the named
+  -- durations add up to more than it. a modifier naming none runs out what is
+  -- left of the effect, so a caller that knows the effect duration it lent says so
   local lent = if linked ~= nil then linked else duration
-  local offsets, _, resolved = modifiers.schedule(queue, rolled.picks, lent, rolled.env)
+  local offsets, _, resolved, lengths = modifiers.schedule(queue, rolled.picks, lent, rolled.env)
 
   local base = baseOf(ref, source, name)
 
@@ -241,6 +242,7 @@ function mods.sampler(
     draws = rolled.draws,
     picks = rolled.picks,
     offsets = offsets,
+    lengths = lengths,
     linked = resolved,
     env = rolled.env,
     envelope = rolled.envelope,

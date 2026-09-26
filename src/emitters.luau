@@ -100,36 +100,44 @@ local function fallbackDuration(obj: Instance): number
   end)
 end
 
--- an offset the queue spells out as a literal, for the reach a ramp sits
--- behind. anything drawn per instance is not a fixed lead and counts as none,
--- which is also what a nan offset has to mean, since no clock can wait one out
-local function litOffset(m: any): number
-  local offset = m.offset
-
-  if type(offset) == "table" then
-    if not value.isLit(offset) then
-      return 0
-    end
-
-    offset = value.resolve(offset)
-  end
-
-  if type(offset) ~= "number" or offset ~= offset or offset <= 0 then
+-- a wait the queue spells out as a literal, for the reach a ramp sits behind.
+-- anything drawn per instance is not a fixed lead and counts as none, which is
+-- also what a nan wait has to mean, since no clock can wait one out
+local function litWait(m: any): number
+  if type(m.wait) ~= "table" or not value.isLit(m.wait) then
     return 0
   end
 
-  return offset
+  local waited = value.resolve(m.wait)
+
+  if type(waited) ~= "number" or waited ~= waited or waited <= 0 then
+    return 0
+  end
+
+  return waited
 end
 
 -- the speed ramp a legacy tween child carried, as a multiplier on the clock
 -- the timer counts, how long that ramp runs, and the lead it sits behind: the
--- offset of the entry it rides, which belongs to no ramp. it goes by wall time
--- the way the child's own speed tween did, beside the tween it scales
+-- waits of the plain delays ahead of it plus a parallel delay right before the
+-- entry it rides, which belong to no ramp. it goes by wall time the way the
+-- child's own speed tween did, beside the tween it scales
 local function speedOf(queue: { any }): (((wall: number) -> number)?, number?, number)
+  local lead = 0
+  local held = 0
+
   for _, m in queue do
     local ramp = m.speed
 
     if type(ramp) ~= "table" then
+      if m.kind == "delay" and m.parallel then
+        held = litWait(m)
+      elseif m.kind == "delay" then
+        lead += litWait(m)
+      else
+        held = 0
+      end
+
       continue
     end
 
@@ -138,7 +146,7 @@ local function speedOf(queue: { any }): (((wall: number) -> number)?, number?, n
       return utility.lerp(ramp.start, ramp.finish, modifiers.alphaFromCurve(ramp.curve, progress))
     end
 
-    return speedAt, ramp.duration, litOffset(m)
+    return speedAt, ramp.duration, lead + (if m.parallel then held else 0)
   end
 
   return nil, nil, 0

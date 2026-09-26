@@ -2,6 +2,7 @@ local attr = require("@mod/attributes")
 local value = require("@mod/value")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
+local modifiers = require("@mod/modifiers")
 local legacy_mods = require("@mod/legacy_mods")
 local test, expect = harness.test, harness.expect
 local Vector3 = harness.datatypes.Vector3
@@ -126,7 +127,7 @@ harness.suite(function()
     return child
   end
 
-  test("a tween child with a delay carries it as an offset", function()
+  test("a tween child with a delay leads with one", function()
     local obj = Instance.new("Part")
     local child = tweenChild("Transparency")
     child:SetAttribute("EmitDelay", 0.5)
@@ -134,10 +135,70 @@ harness.suite(function()
 
     local queue = legacy_mods.readChildren(obj, "property", "Transparency")
 
-    expect(#queue).toBe(1)
-    expect(queue[1].kind).toBe("tween")
-    expect(queue[1].offset.v).toBe(0.5)
-    expect(queue[1].duration).toBe(2)
+    expect(#queue).toBe(2)
+    expect(queue[1].kind).toBe("delay")
+    expect(queue[1].wait.v).toBe(0.5)
+    expect(queue[2].kind).toBe("tween")
+    expect(queue[2].duration).toBe(2)
+  end)
+
+  -- every RayValue child of a name ran from the emit on its own clock, so two
+  -- of them read as entries that start together rather than one after another
+  test("two tween children start together rather than in sequence", function()
+    local obj = Instance.new("Part")
+    tweenChild("Transparency").Parent = obj
+
+    local late = tweenChild("Transparency")
+    late:SetAttribute("EmitDelay", 0.5)
+    late.Parent = obj
+
+    local queue = legacy_mods.readChildren(obj, "property", "Transparency")
+    local offsets, frontier = modifiers.schedule(queue, nil, 9)
+    local tweens = {}
+
+    for i, m in queue do
+      if m.kind == "tween" then
+        expect(m.parallel).toBe(true)
+        table.insert(tweens, (offsets :: any)[i])
+      end
+    end
+
+    table.sort(tweens)
+
+    expect(tweens[1]).toBe(0)
+    expect(tweens[2]).toBe(0.5)
+    expect(frontier).toBe(2.5)
+  end)
+
+  test("each child waits its own delay rather than the sum of the ones before it", function()
+    local obj = Instance.new("Part")
+
+    local fadeIn = tweenChild("Transparency")
+    fadeIn:SetAttribute("EmitDelay", 0.5)
+    fadeIn.Parent = obj
+
+    local fadeOut = tweenChild("Transparency")
+    fadeOut:SetAttribute("EmitDelay", 1)
+    fadeOut.Parent = obj
+
+    tweenChild("Transparency").Parent = obj
+
+    local queue = legacy_mods.readChildren(obj, "property", "Transparency")
+    local offsets, frontier = modifiers.schedule(queue, nil, 9)
+    local tweens = {}
+
+    for i, m in queue do
+      if m.kind == "tween" then
+        table.insert(tweens, (offsets :: any)[i])
+      end
+    end
+
+    table.sort(tweens)
+
+    expect(tweens[1]).toBe(0)
+    expect(tweens[2]).toBe(0.5)
+    expect(tweens[3]).toBe(1)
+    expect(frontier).toBe(3)
   end)
 
   test("a tween child with no delay has none", function()

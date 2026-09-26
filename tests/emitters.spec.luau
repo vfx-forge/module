@@ -148,6 +148,37 @@ harness.suite(function()
       expect(near(props.Volume.at(0), 1)).toBe(true)
     end)
 
+    -- a child's EmitDelay is a wall clock wait its speed ramp never touches, so
+    -- the ramp starts once that wait is up. the delay is read from the child's
+    -- own queue alone: a merged row of children never reaches the driver
+    test("a speed ramp starts after its own child's delay", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local part = harness.make("Part", root)
+
+      local child = tweener(part, "Transparency", 0, 1, 1)
+      child:SetAttribute("EmitDelay", 0.5)
+      child:SetAttribute("Speed_Start", 2)
+      child:SetAttribute("Speed_End", 2)
+
+      emit(root)
+
+      -- half a second of plain frames waits the delay out, and the ramp's
+      -- first doubled frame samples where the tween begins
+      for _ = 1, 3 do
+        harness.render(0.25)
+      end
+
+      expect(near(part.Transparency, 0)).toBe(true)
+
+      harness.render(0.25)
+
+      expect(near(part.Transparency, 0.5)).toBe(true)
+    end)
+
     test("a randomizer is drawn once, by the prologue of the dispatch that finds it", function()
       registry.clear()
       registry.configure({ query = harness.query })

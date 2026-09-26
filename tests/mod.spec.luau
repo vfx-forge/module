@@ -87,13 +87,17 @@ harness.suite(function()
       expect(value.resolve(lanes.dissipate[1].finish)).toBe(0)
     end)
 
-    test("an offset rides the entry rather than leading it", function()
+    test("an offset puts a wait in front of its entry", function()
       local lanes = mod.lanes({ mod.to(1):duration(0.5):curve("linear"):offset(0.2) }, ctx, {}, {}, 0, nil)
+      local lane = lanes.start
 
-      expect(#lanes.start).toBe(1)
-      expect(value.resolve(lanes.start[1].offset)).toBe(0.2)
-      expect(lanes.start[1].duration).toBe(0.5)
-      expect(lanes.start[1].curve).toBe(curves.linear())
+      expect(#lane).toBe(2)
+      expect(lane[1].kind).toBe("delay")
+      expect(value.resolve(lane[1].wait)).toBe(0.2)
+      expect(lane[2].kind).toBe("tween")
+      expect(lane[2].offset).toBe(nil)
+      expect(lane[2].duration).toBe(0.5)
+      expect(lane[2].curve).toBe(curves.linear())
     end)
 
     -- a snap TO somewhere is a step the author asked for; a snap FROM somewhere

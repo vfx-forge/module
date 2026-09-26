@@ -14,10 +14,10 @@ harness.suite(function()
   end)
 
   harness.describe("mods.span", function()
-    -- with nothing delaying anything the far end of the queue and its longest
-    -- single duration are the same number, which is what this was before
+    -- modifiers run one after another, so the far end of the queue is its
+    -- durations added up rather than the longest of them
     test("reaches the far end of an undelayed queue", function()
-      expect(mods.span({ { duration = 0.5 }, { duration = 2 }, { duration = 1 } }, 9)).toBe(2)
+      expect(mods.span({ { duration = 0.5 }, { duration = 2 }, { duration = 1 } }, 9)).toBe(3.5)
     end)
 
     -- a base entry is pinned at index 1 and holds a value rather than running,
@@ -30,45 +30,71 @@ harness.suite(function()
       expect(mods.span({ { chain = false }, { chain = true } }, 9)).toBe(9)
     end)
 
+    -- a randomizer naming no duration takes none, so a queue of one spans the
+    -- effect it was lent and one between two tweens adds nothing
+    test("a randomizer with no duration adds no time", function()
+      expect(mods.span({ { kind = "randomizer" } }, 9)).toBe(9)
+      expect(
+        mods.span({ { kind = "tween", duration = 2 }, { kind = "randomizer" }, { kind = "tween", duration = 1 } }, 4)
+      ).toBe(3)
+    end)
+
     test("falls back on an empty queue", function()
       expect(mods.span({}, 9)).toBe(9)
     end)
 
-    -- an offset pushes its entry out, so the span is the far end of the queue
-    -- rather than its longest single duration
-    test("counts the offset an entry carries", function()
+    -- a delay pushes what follows it out past the end of what came before
+    test("counts the wait a delay imposes", function()
       local queue = {
         { kind = "tween", duration = 1 },
-        { kind = "tween", duration = 0.5, offset = { t = "lit", v = 2 } },
+        { kind = "delay", wait = { t = "lit", v = 2 } },
+        { kind = "tween", duration = 0.5 },
       }
 
-      expect(mods.span(queue, 9)).toBe(2.5)
+      expect(mods.span(queue, 9)).toBe(3.5)
     end)
 
-    -- the far end has to be far enough for an offset modifier that names no
-    -- duration to get a full turn, or the track pumps for a span the queue
-    -- cannot finish inside and the knob freezes at its start value
-    test("lends an offset modifier with no duration a full fallback", function()
-      local queue = { { kind = "tween", offset = { t = "lit", v = 2 } } }
+    -- a delay with nothing after it moves nothing, so it must not add a wait
+    -- the effect then pumps through with no value changing
+    test("a delay last in the queue leaves the span alone", function()
+      local delayed = { { kind = "tween", duration = 1 }, { kind = "delay", wait = { t = "lit", v = 5 } } }
 
-      expect(mods.span(queue, 5)).toBe(7)
+      expect(mods.span(delayed, 9)).toBe(mods.span({ { kind = "tween", duration = 1 } }, 9))
     end)
 
-    -- the span has to be the one THIS instance will run, so a drawn offset is
+    -- a delayed modifier that names no duration runs out what is left of the
+    -- effect, so the queue ends with the effect
+    test("ends a delayed modifier with no duration at the effect's end", function()
+      local queue = { { kind = "delay", wait = { t = "lit", v = 2 } }, { kind = "tween" } }
+
+      expect(mods.span(queue, 5)).toBe(5)
+    end)
+
+    -- named durations that add up past the effect carry the queue past it
+    test("runs past the effect when the named durations do", function()
+      local queue = { { kind = "tween", duration = 2 }, { kind = "tween", duration = 3 }, { kind = "tween" } }
+
+      expect(mods.span(queue, 4)).toBe(5)
+    end)
+
+    -- the span has to be the one THIS instance will run, so a drawn wait is
     -- spanned at the value drawn for it rather than at its midpoint
-    test("spans a drawn offset at the value the rolls drew", function()
-      local queue = { { kind = "tween", duration = 1, offset = { t = "draw", a = 0, b = 4 } } }
+    test("spans a drawn wait at the value the rolls drew", function()
+      local queue = {
+        { kind = "delay", wait = { t = "draw", a = 0, b = 4 } },
+        { kind = "tween", duration = 1 },
+      }
 
-      local rolls = { draws = {}, picks = { [1] = { offset = 0.25 } }, envelope = 0 }
+      local rolls = { draws = {}, picks = { [1] = { wait = 0.25 } }, envelope = 0 }
 
       expect(mods.span(queue, 9)).toBe(3)
       expect(mods.span(queue, 9, rolls)).toBe(2)
     end)
 
-    -- a var offset decides the far end exactly as a drawn one does, so the
+    -- a var wait decides the far end exactly as a drawn one does, so the
     -- environment has to reach mods.span and not only the sampler
-    test("spans a var offset at what the environment carries", function()
-      local queue = { { kind = "tween", duration = 1, offset = { t = "var", ref = "Lifetime" } } }
+    test("spans a var wait at what the environment carries", function()
+      local queue = { { kind = "delay", wait = { t = "var", ref = "Lifetime" } }, { kind = "tween", duration = 1 } }
 
       local rolls = { draws = {}, picks = {}, env = { Lifetime = 2 }, envelope = 0 }
 
@@ -76,25 +102,37 @@ harness.suite(function()
       expect(mods.span(queue, 9)).toBe(1)
     end)
 
-    -- offsetOf makes every offset finite, and an effect turns a span straight
-    -- into a tween's duration
-    test("an offset that would overflow stays finite", function()
-      local queue = { { kind = "tween", duration = 1, offset = { t = "lit", v = 1e308 } } }
+    test("a delay alone spans nothing of its own", function()
+      expect(mods.span({ { kind = "delay", wait = { t = "lit", v = 2 } } }, 9)).toBe(9)
+    end)
+
+    -- waitOf makes every wait finite one at a time, but a sum of finite waits
+    -- need not be, and an effect turns a span straight into a tween's duration
+    test("a delay sum that would overflow stays finite", function()
+      local wait = { t = "lit", v = 1e308 }
+
+      local queue = {
+        { kind = "delay", wait = wait },
+        { kind = "delay", wait = wait },
+        { kind = "tween", duration = 1 },
+      }
 
       local span = mods.span(queue, 9)
 
+      -- `< math.huge` alone cannot tell the guard from mods.span's OWN fallback:
+      -- without the guard the sum reaches inf, the frontier with it, and the
+      -- fallback returns 9, which satisfies it just as well as 1e308 does
       expect(span < math.huge).toBe(true)
       expect(span > 9).toBe(true)
     end)
 
-    -- the sampler seeds a linked modifier's run from this, NOT from the span:
-    -- the span carries the offset, and seeding a linked run from it leaves an
-    -- offset modifier short of its finish for the whole emit
-    test("hands back the run a linked modifier gets, beside the reach", function()
-      local queue = { { kind = "tween", offset = { t = "lit", v = 2 } } }
+    -- the sampler lends a linked modifier this, NOT the span: the span can run
+    -- past the effect, and a linked modifier runs out the effect alone
+    test("hands back the effect a linked modifier runs out, beside the reach", function()
+      local queue = { { kind = "tween" }, { kind = "tween", duration = 1 } }
       local span, linked = mods.span(queue, 5)
 
-      expect(span).toBe(7)
+      expect(span).toBe(6)
       expect(linked).toBe(5)
     end)
 
@@ -117,7 +155,7 @@ harness.suite(function()
   -- attribute used to poison the span and the linked run together
   harness.describe("mods.span with unusable input", function()
     test("a nan fallback reaches neither the span nor the linked run", function()
-      local queue = { { kind = "tween", offset = { t = "lit", v = 2 } } }
+      local queue = { { kind = "delay", wait = { t = "lit", v = 2 } }, { kind = "tween" } }
       local span, linked = mods.span(queue, 0 / 0)
 
       expect(span).toBe(2)
@@ -129,19 +167,24 @@ harness.suite(function()
     end)
   end)
 
-  -- a queue that moves nothing drives nothing, but on a property source its
-  -- base is the property's live value rather than nil, so nothing downstream
-  -- notices unless the shape is named here
+  -- a queue that waits or holds and does nothing else drives nothing, but on a
+  -- property source its base is the property's live value rather than nil, so
+  -- nothing downstream notices unless the shape is named here
   harness.describe("mods.inert", function()
+    test("a queue that only waits is inert", function()
+      expect(mods.inert({ { kind = "delay", wait = { t = "lit", v = 1 } } })).toBe(true)
+      expect(mods.inert({ { kind = "sequence" }, { kind = "delay", wait = { t = "lit", v = 1 } } })).toBe(true)
+    end)
+
     test("a queue of base entries alone is inert", function()
       expect(mods.inert({ { kind = "sequence" } })).toBe(true)
       expect(mods.inert({ { kind = "sequence" }, { kind = "gradient" } })).toBe(true)
     end)
 
     test("anything that produces a value is not", function()
-      expect(mods.inert({ { kind = "sequence" }, { kind = "tween", duration = 1 } })).toBe(false)
-      expect(mods.inert({ { kind = "randomizer" } })).toBe(false)
-      expect(mods.inert({ { kind = "future_kind" } })).toBe(false)
+      expect(mods.inert({ { kind = "delay" }, { kind = "tween", duration = 1 } })).toBe(false)
+      expect(mods.inert({ { kind = "delay" }, { kind = "randomizer" } })).toBe(false)
+      expect(mods.inert({ { kind = "delay" }, { kind = "future_kind" } })).toBe(false)
     end)
 
     -- an empty queue is a tombstone its caller tells apart on its own, so inert

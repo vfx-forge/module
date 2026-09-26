@@ -267,7 +267,9 @@ local function speedOf(child: Instance): { start: number, finish: number, durati
 end
 
 -- one RayValue child as queue entries: a randomizer is one entry; a tween is
--- one entry, offset by the emit delay when it authored one
+-- one entry, led by a delay when it authored one. every child of a name ran
+-- from the emit on its own clock, so each entry is `parallel`, its delay too:
+-- a child starts at its own delay alone, never after the children before it
 local function entriesOf(child: Instance): { any }
   local reset = resetOf(attr.get(child, "ResetOnFinish", nil, true))
 
@@ -276,6 +278,7 @@ local function entriesOf(child: Instance): { any }
       {
         kind = "randomizer",
         chain = false,
+        parallel = true,
         start = litOrNil(attr.get(child, "_START_VALUE", nil, true)),
         finish = litOrNil(attr.get(child, "_END_VALUE", nil, true)),
         weight = curveOf(attr.get(child, "Weight_Curve", nil, true)) or curves.linear(),
@@ -284,21 +287,27 @@ local function entriesOf(child: Instance): { any }
     }
   end
 
+  local out = {}
+
   local emitDelay = attr.get(child, "EmitDelay", nil, true)
 
-  return {
-    {
-      kind = "tween",
-      chain = false,
-      duration = durationOf(attr.get(child, "Duration", nil, true)),
-      offset = if typeof(emitDelay) == "number" and emitDelay > 0 then value.lit(emitDelay) else nil,
-      start = litOrNil(attr.get(child, "_START_VALUE", nil, true)),
-      finish = litOrNil(attr.get(child, "_END_VALUE", nil, true)),
-      curve = curveOf(attr.get(child, "Easing_Curve", nil, true)) or curves.linear(),
-      speed = speedOf(child),
-      reset = reset,
-    },
-  }
+  if typeof(emitDelay) == "number" and emitDelay > 0 then
+    table.insert(out, { kind = "delay", chain = false, parallel = true, wait = value.lit(emitDelay) })
+  end
+
+  table.insert(out, {
+    kind = "tween",
+    chain = false,
+    parallel = true,
+    duration = durationOf(attr.get(child, "Duration", nil, true)),
+    start = litOrNil(attr.get(child, "_START_VALUE", nil, true)),
+    finish = litOrNil(attr.get(child, "_END_VALUE", nil, true)),
+    curve = curveOf(attr.get(child, "Easing_Curve", nil, true)) or curves.linear(),
+    speed = speedOf(child),
+    reset = reset,
+  })
+
+  return out
 end
 
 export type Child = {

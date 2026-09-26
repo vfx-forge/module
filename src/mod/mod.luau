@@ -97,14 +97,12 @@ local function entryOf(spec: Spec, ctx: any, attrs: any, props: any, rest: any, 
     return nil
   end
 
-  local offset = pick(spec.opts.offset, ctx, attrs, props)
   local curve = pick(spec.opts.curve, ctx, attrs, props)
 
   return {
     kind = "tween",
     chain = onward,
     duration = duration,
-    offset = if typeof(offset) == "number" and offset > 0 then value.lit(offset) else nil,
     start = if onward then nil else value.lit(if spec.side == "from" then endpoint else rest),
     finish = value.lit(if spec.side == "from" then rest else endpoint),
     curve = curves.preset(if curve ~= nil then curve else rowCurve),
@@ -138,6 +136,12 @@ function mod.lanes(
     if queue == nil then
       queue = {}
       out[lane] = queue
+    end
+
+    local wait = pick(spec.opts.offset, ctx, attrs, props)
+
+    if typeof(wait) == "number" and wait > 0 then
+      table.insert(queue, { kind = "delay", chain = false, wait = value.lit(wait) })
     end
 
     table.insert(queue, entry)
