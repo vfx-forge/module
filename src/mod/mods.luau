@@ -707,8 +707,9 @@ function mods.build(
   local seeded = opts ~= nil and opts.ownStart == true
 
   -- the authored lanes that could not be read at all, which say nothing and so
-  -- leave the default lane of the same name running
-  local unread: { [string]: boolean } = {}
+  -- leave the default lane of the same name running. nil until one of them
+  -- fails, so a row with nothing stored never pays for this table
+  local unread: { [string]: boolean }? = nil
 
   -- a default lane is taken as it stands: the two old-format rewrites answer for
   -- what an author stored, and a row's own defaults were never read that way
@@ -725,14 +726,22 @@ function mods.build(
       local entries = if authored then completed(queue, framed, seeded, lead, fillStart, fillFinish) else queue
 
       if entries == nil then
-        unread[lane] = authored
+        if authored then
+          unread = unread or {}
+          unread[lane] = true
+        end
+
         continue
       end
 
       local sample, reach, lead = laneOf(ref, source, name, entries, span, env, seed, lane)
 
       if sample == nil then
-        unread[lane] = authored
+        if authored then
+          unread = unread or {}
+          unread[lane] = true
+        end
+
         continue
       end
 
@@ -800,7 +809,7 @@ function mods.build(
   local others: { [string]: { any } } = {}
 
   for lane, queue in fallback do
-    if lanes[lane] == nil or unread[lane] then
+    if lanes[lane] == nil or (unread ~= nil and unread[lane]) then
       others[lane] = queue
     end
   end

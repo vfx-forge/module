@@ -204,9 +204,9 @@ function lerp.ColorSequence(a: ColorSequence, b: ColorSequence, t: number)
 end
 
 function lerp.Other(a: any, b: any, t: number)
-  -- NOT `t < 0.5 and a or b`: that's the classic Lua ternary pitfall -- when
-  -- `a` is falsy (`false`/`nil`, both valid discrete values here), `X and a`
-  -- is itself falsy, so the `or b` branch wins regardless of `t`.
+  -- NOT `t < 0.5 and a or b`: that's the classic Lua ternary pitfall, since
+  -- when `a` is falsy (`false`/`nil`, both valid discrete values here), `X and
+  -- a` is itself falsy, so the `or b` branch wins regardless of `t`.
   if t < 0.5 then
     return a
   end

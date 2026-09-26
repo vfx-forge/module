@@ -1,13 +1,13 @@
 -- Pure Path2D control-point (de)serialization + curve sampling. No engine
 -- access (no `game`/`script`) so this is requirable under lune as well as in
--- Studio -- unlike `@mod/utility`, which does top-level `game:GetService`.
+-- Studio, unlike `@mod/utility`, which does top-level `game:GetService`.
 --
 -- `serializePath`/`deserializePath` are moved verbatim from `mod/utility.luau`
 -- (which now delegates to this module; see its comment). `alphaAt` mirrors
 -- the ease-sampling semantics `mod/tween.luau` uses at runtime exactly:
 -- deserialize -> `Bezier.new(points, 0)` -> `1 - bezier:getEase(t).y`. The
 -- `1 - y` inversion is an established semantic (the curves are authored in
--- UI space, where Y increases downward) -- match it exactly so editor- and
+-- UI space, where Y increases downward); match it exactly so editor- and
 -- runtime-sampled curves agree.
 local Bezier = require("@obj/Bezier")
 

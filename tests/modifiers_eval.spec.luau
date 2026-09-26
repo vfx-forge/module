@@ -20,7 +20,7 @@ local linear = path.serializePath({ cp(0, 1), cp(1, 0) })
 
 -- Empirically verified (scratch script, not committed): sampling this curve
 -- via `path.alphaAt` gives alpha == progress to within ~1e-7 (float32
--- round-trip error) at t = 0, 0.1, 0.25, 0.5, 0.75, 0.9, 1 -- i.e. the `1 - y`
+-- round-trip error) at t = 0, 0.1, 0.25, 0.5, 0.75, 0.9, 1, i.e. the `1 - y`
 -- orientation established in mod/tween.luau *does* give identity for the
 -- endpoints-only "linear" control points, so the brief's test expectations
 -- (progress 0.5 -> value 5 on a 0..10 tween) hold. Assertions below use a
@@ -998,7 +998,7 @@ harness.suite(function()
     --
     -- Checked against ground truth rather than against the other code path.
     -- Consecutive held values are consecutive STEPS, so the integral of the rate
-    -- between them is exactly one step -- and that integral is computed here on
+    -- between them is exactly one step, and that integral is computed here on
     -- a grid 128 times finer than the one under test, from the same curve.
     test("a rate that leaps inside one cell still lands its steps", function()
       local steep = path.serializePath({

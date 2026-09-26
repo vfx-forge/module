@@ -140,7 +140,8 @@ function Knob.readonly(self: Knob, rule: Rule): Knob
 end
 
 -- a row may declare more than one default modifier, since its phases can run
--- from different triggers. an authored lane map replaces every one of them
+-- from different triggers. an authored lane map replaces only the default
+-- lanes it names
 function Knob.mod(self: Knob, ...: any): Knob
   self.isMod = true
 

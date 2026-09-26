@@ -327,6 +327,20 @@ harness.suite(function()
       expect(near(track.at(1.3), 1)).toBe(true)
     end)
 
+    -- an authored lane that cannot be read at all counts as unnamed, so the
+    -- default lane of the same name keeps running beside a lane the authored
+    -- map did manage to read
+    test("an unreadable old-format lane leaves the default of the same name running", function()
+      local defaults = mods.draw(1, 5)
+      local half = { kind = "tween", chain = false, duration = 1, partial = "both" }
+      local track = legacy({ start = { half }, ["end"] = { tween(0, 1, 1) } }, defaults, 5, nil)
+
+      expect(track.has("start")).toBe(true)
+      expect(track.has("end")).toBe(true)
+      expect(near(track.at(4), 0)).toBe(true)
+      expect(near(track.at(5), 1)).toBe(true)
+    end)
+
     test("a named empty lane silences that default lane alone", function()
       local piece = mods.piece({ "dissipate" })
       local defaults = { start = { tween(0.9, 0, 0.4) }, dissipate = { onward(1, 0.3) } }
