@@ -254,9 +254,10 @@ harness.suite(function()
     end)
 
     -- a default made of lanes leads from somewhere the row does not rest, so a
-    -- row whose authored lanes all wait stands where the caller says it does
+    -- row that silences that lead and whose other lanes all wait stands where
+    -- the caller says it does
     test("a lane that waits leaves the row at the value the caller stated", function()
-      local track = stating({ ["end"] = { onward(1, 2) } }, { start = { tween(0.9, 0, 1) } }, 5, nil, 0)
+      local track = stating({ start = {}, ["end"] = { onward(1, 2) } }, { start = { tween(0.9, 0, 1) } }, 5, nil, 0)
 
       expect(near(track.at(0), 0)).toBe(true)
       expect(near(track.at(3), 0)).toBe(true)
@@ -266,7 +267,7 @@ harness.suite(function()
 
     test("an event lane that has not fired leaves the row at the stated value", function()
       local piece = mods.piece({ "dissipate" })
-      local track = stating({ dissipate = { onward(1, 2) } }, { start = { tween(0.9, 0, 1) } }, 5, piece, 0)
+      local track = stating({ start = {}, dissipate = { onward(1, 2) } }, { start = { tween(0.9, 0, 1) } }, 5, piece, 0)
 
       expect(near(track.at(0), 0)).toBe(true)
       expect(near(track.at(9), 0)).toBe(true)
@@ -310,12 +311,60 @@ harness.suite(function()
       expect(near(track.at(2), 0.5)).toBe(true)
     end)
 
-    test("a framed map of the same lane replaces every default lane", function()
+    -- a stored map owns the lanes it names and nothing else, framed or not, so
+    -- a row edited on its start still runs the default exit beside it
+    test("a framed map keeps the default lanes it does not name", function()
       local piece = mods.piece({ "dissipate" })
-      local default = { start = { tween(1, 0, 1) }, dissipate = { onward(1, 1) } }
-      local track = built({ start = { tween(0, 0.5, 2) } }, default, 4, piece)
+      local defaults = { start = { tween(0.9, 0, 0.4) }, dissipate = { onward(1, 0.3) } }
+      local track = stating({ start = { tween(0, 0.5, 1) } }, defaults, 2, piece, 0)
 
       expect(track.has("start")).toBe(true)
+      expect(track.has("dissipate")).toBe(true)
+      expect(near(track.at(0.5), 0.25)).toBe(true)
+
+      piece:fire("dissipate", 1)
+
+      expect(near(track.at(1.3), 1)).toBe(true)
+    end)
+
+    test("a named empty lane silences that default lane alone", function()
+      local piece = mods.piece({ "dissipate" })
+      local defaults = { start = { tween(0.9, 0, 0.4) }, dissipate = { onward(1, 0.3) } }
+      local track = stating({ dissipate = {} }, defaults, 2, piece, 0)
+
+      expect(track.has("start")).toBe(true)
+      expect(track.has("dissipate")).toBe(false)
+      expect(near(track.at(0), 0.9)).toBe(true)
+    end)
+
+    test("a named lane that only waits silences that default lane alone", function()
+      local piece = mods.piece({ "dissipate" })
+      local defaults = { start = { tween(0.9, 0, 0.4) }, dissipate = { onward(1, 0.3) } }
+      local track = stating({ start = { delay(1) } }, defaults, 2, piece, 0)
+
+      expect(track.has("start")).toBe(false)
+      expect(track.has("dissipate")).toBe(true)
+      expect(near(track.at(0), 0)).toBe(true)
+    end)
+
+    test("a map naming no lane leaves every default running", function()
+      local piece = mods.piece({ "dissipate" })
+      local defaults = { start = { tween(0.9, 0, 0.4) }, dissipate = { onward(1, 0.3) } }
+      local track = stating({}, defaults, 2, piece, 0)
+
+      expect(track.has("start")).toBe(true)
+      expect(track.has("dissipate")).toBe(true)
+      expect(near(track.at(0), 0.9)).toBe(true)
+    end)
+
+    test("a map silencing every default lane rests at the stated value", function()
+      local piece = mods.piece({ "dissipate" })
+      local defaults = { start = { tween(0.9, 0, 0.4) }, dissipate = { onward(1, 0.3) } }
+      local track = stating({ start = {}, dissipate = {} }, defaults, 2, piece, 0)
+
+      expect(track.animated).toBe(false)
+      expect(track.at(0)).toBe(0)
+      expect(track.has("start")).toBe(false)
       expect(track.has("dissipate")).toBe(false)
     end)
 

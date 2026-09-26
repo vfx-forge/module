@@ -1,5 +1,8 @@
 local mods = require("@mod/mods")
 local path = require("@mod/common/path")
+local value = require("@mod/value")
+local codec = require("@mod/modifier_codec")
+local frame = require("@mod/modifier_frame")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local registry = require("@mod/registry")
@@ -7,6 +10,8 @@ local registry = require("@mod/registry")
 local Bezier = require("@obj/Bezier")
 
 local test, expect = harness.test, harness.expect
+
+frame.configure(harness.fakeEncoding, harness.fakeCompression)
 
 -- the bolt's own Bezier is LUT and Newton based rather than exact, so every
 -- comparison here allows the same slack the runtime's own sampling does
@@ -305,6 +310,49 @@ harness.suite(function()
 
       local fired = 0.6
       local held = track.at(fired)
+
+      piece:fire("dissipate", fired)
+
+      for _, at in { 0.075, 0.15, 0.225 } do
+        expect(near(track.at(fired + at), oldFadeOut(attrs, held, at))).toBe(true)
+      end
+
+      expect(near(track.at(fired + FADE_OUT_DURATION), FADE_OUT_END)).toBe(true)
+    end)
+
+    -- a framed map owns the lanes it names and nothing else, so a bolt whose
+    -- entry fade was edited still runs the exit fade it authored beside it
+    test("a framed start map on the row leaves the dissipation fade standing", function()
+      bolt()
+      harness.reset()
+
+      local ref = harness.make("Attachment")
+      ref:AddTag("LightningBolt")
+      harness.make("Part", ref)
+
+      ref:SetAttribute("FadeInStart", FADE_IN_START)
+      ref:SetAttribute("FadeInDuration", FADE_IN_DURATION)
+      ref:SetAttribute("Fade_Out_End", FADE_OUT_END)
+      ref:SetAttribute("Fade_Out_Duration", FADE_OUT_DURATION)
+
+      local start = { kind = "tween", chain = false, duration = 0.5, start = value.lit(0), finish = value.lit(0.5) }
+      local payload = codec.encode({ v = 2, lanes = { start = { start } } })
+
+      ref:SetAttribute(mods.attrName("attribute", "Transparency"), frame.frame(payload))
+
+      local module = registry.get("lightning")
+      local attrs = registry.read(ref, module)
+      local piece = mods.piece(module.events)
+      local track = attrs.Transparency(nil, 1, piece)
+
+      expect(track.has("start")).toBe(true)
+      expect(track.has("dissipate")).toBe(true)
+      expect(near(track.at(0.25), 0.25)).toBe(true)
+
+      local fired = 0.6
+      local held = track.at(fired)
+
+      expect(near(held, 0.5)).toBe(true)
 
       piece:fire("dissipate", fired)
 

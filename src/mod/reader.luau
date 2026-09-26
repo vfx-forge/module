@@ -373,16 +373,18 @@ local function plainOf(state: State, source: string, name: string, row: knob.Kno
   return knob.clamp(v, row.lower, row.upper)
 end
 
--- a stored map that moves nothing: no lane at all, or every lane empty or
--- holding only values the target already carries
-local function silent(lanes: { [string]: { any } }): boolean
-  for _, queue in lanes do
+-- the lanes of a stored map that move something, dropping every lane that is
+-- empty or holds only values the target already carries
+local function moving(lanes: { [string]: { any } }): { [string]: { any } }
+  local out = {}
+
+  for lane, queue in lanes do
     if #queue > 0 and not mods.inert(queue) then
-      return false
+      out[lane] = queue
     end
   end
 
-  return true
+  return out
 end
 
 local function trackOf(
@@ -398,22 +400,22 @@ local function trackOf(
   local ctx = state.ctx
   local found = queueFor(state, source, name, row)
 
-  -- an existing queue, even an empty one or one that only waits, means the
-  -- author owns the row: it is a tombstone, deliberately silencing even the
-  -- row's own default modifier rather than falling back to it, which is
-  -- what mods.build would otherwise read such a queue as
-  local tombstone = found.framed and found.lanes ~= nil and silent(found.lanes)
-
   local default: any = rest
   local declared: { [string]: { any } }? = nil
+  local lanes = found.lanes
 
-  -- a range is the row's state and a draw from it is what a piece takes,
-  -- tombstone or not: this is not a default, it is what a range row's own
-  -- value always means. a default modifier is a queue from the state to
-  -- its endpoint, and a tombstone silences that instead
+  -- a range is the row's state and a draw from it is what a piece takes: this
+  -- is not a default, it is what a range row's own value always means, so a
+  -- stored lane that moves nothing cannot silence it. every other row hands
+  -- its default modifier over whole, and a stored map owns the lanes it names
+  -- and nothing else
   if typeof(rest) == "NumberRange" then
     default = mods.draw(rest.Min, rest.Max)
-  elseif not tombstone and row.modDefault ~= nil then
+
+    if lanes ~= nil then
+      lanes = moving(lanes)
+    end
+  elseif row.modDefault ~= nil then
     declared = mod.lanes(row.modDefault, ctx, state.attrs, state.props, rest, row.preset)
     default = declared or rest
   end
@@ -431,7 +433,7 @@ local function trackOf(
   -- that is where the value it chains from and the range it draws inside are
   -- stored too; a property row's base is the property, whatever the spelling
   local built = if source == "property" then name else found.under or name
-  local inner = mods.build(ctx.ref, source, built, default, span, nil, found.lanes, found.framed, opts, own)
+  local inner = mods.build(ctx.ref, source, built, default, span, nil, lanes, found.framed, opts, own)
 
   local track = {
     at = inner.at,

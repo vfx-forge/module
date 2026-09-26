@@ -475,7 +475,7 @@ harness.suite(function()
       expect(props.Transparency.duration).toBe(2)
     end)
 
-    test("a default modifier runs when no queue exists, and an empty queue silences it", function()
+    test("a default modifier runs when no queue exists, and an empty queue on its lane silences it", function()
       local obj = Instance.new("Part")
       local m = module({ A = knob(0):mod(mod.to(1)) }, nil, function()
         return 2
@@ -496,7 +496,7 @@ harness.suite(function()
       expect(silenced.A.at(0)).toBe(0)
     end)
 
-    test("an inert framed queue silences the default modifier", function()
+    test("an inert framed queue on the default's lane silences the default modifier", function()
       local obj = Instance.new("Part")
       framed(obj, "attribute", "A", { { kind = "sequence", chain = false } })
 
@@ -504,6 +504,73 @@ harness.suite(function()
 
       expect(attrs.A.animated).toBe(false)
       expect(attrs.A.at(0)).toBe(0)
+    end)
+
+    -- the empty payload the plugin writes when a row's modifiers are cleared
+    -- names no lane, so it leaves the row as if nothing were stored
+    test("a framed map naming no lane plays the default modifier", function()
+      local obj = Instance.new("Part")
+      framedLanes(obj, "attribute", "A", {})
+
+      local m = module({ A = knob(0):mod(mod.to(1)) }, nil, function()
+        return 2
+      end)
+
+      local attrs = reader.resolve(m, ctxFor(obj))
+
+      expect(attrs.A.animated).toBe(true)
+      expect(near(attrs.A.at(0), 0)).toBe(true)
+      expect(near(attrs.A.at(2), 1)).toBe(true)
+    end)
+
+    test("a framed map on another lane leaves the default modifier running", function()
+      local obj = Instance.new("Part")
+      framedLanes(obj, "attribute", "A", { ["end"] = { tween(5, 6, 1) } })
+
+      local m = module({ A = knob(0):mod(mod.to(1):duration(1)) }, nil, function()
+        return 4
+      end)
+
+      local attrs = reader.resolve(m, ctxFor(obj))
+      local midway = attrs.A.at(0.5)
+
+      expect(attrs.A.has("start")).toBe(true)
+      expect(attrs.A.has("end")).toBe(true)
+      expect(near(attrs.A.at(0), 0)).toBe(true)
+      expect(midway > 0 and midway < 1).toBe(true)
+      expect(near(attrs.A.at(2), 1)).toBe(true)
+      expect(near(attrs.A.at(3.5), 5.5)).toBe(true)
+    end)
+
+    test("a framed map silencing one lane of a two-lane default keeps the other", function()
+      local obj = Instance.new("Part")
+      framedLanes(obj, "attribute", "A", { start = {} })
+
+      local m = module(
+        { A = knob(0):mod(mod.from(0.9):duration(1), mod.to(1):duration(1):lane("end")) },
+        nil,
+        function()
+          return 4
+        end
+      )
+
+      local attrs = reader.resolve(m, ctxFor(obj))
+
+      expect(attrs.A.has("start")).toBe(false)
+      expect(attrs.A.has("end")).toBe(true)
+      expect(near(attrs.A.at(0), 0)).toBe(true)
+      expect(near(attrs.A.at(4), 1)).toBe(true)
+    end)
+
+    test("a framed empty lane on a range row still draws", function()
+      local obj = Instance.new("Part")
+      framedLanes(obj, "attribute", "Life", { start = {} })
+
+      local attrs = reader.resolve(module({ Life = knob(NumberRange.new(2, 3)):mod() }), ctxFor(obj))
+      local drawn = attrs.Life.at(0)
+
+      expect(typeof(drawn)).toBe("number")
+      expect(drawn >= 2 and drawn <= 3).toBe(true)
     end)
 
     test("a default modifier whose endpoint equals the state rests", function()
@@ -559,7 +626,7 @@ harness.suite(function()
       expect(attrs.Life.value.Min).toBe(2)
     end)
 
-    test("a tombstone on a range row still draws", function()
+    test("an empty lane on a range row still draws", function()
       local obj = Instance.new("Part")
       framed(obj, "attribute", "Life", {})
 
@@ -827,12 +894,13 @@ harness.suite(function()
       expect(near(track.at(2.5), 0.25)).toBe(true)
     end)
 
-    -- an authored map replaces the default lead it names, so the row rests at
-    -- its own value rather than where a lead that no longer runs began
+    -- an authored map that silences the default lead rests the row at its own
+    -- value rather than where a lead that no longer runs began
     test("a row whose authored lane waits rests at its own value", function()
       local obj = Instance.new("Part")
 
       framedLanes(obj, "attribute", "A", {
+        start = {},
         ["end"] = { { kind = "tween", chain = true, duration = 1, finish = value.lit(1) } },
       })
 

@@ -706,6 +706,10 @@ function mods.build(
 
   local seeded = opts ~= nil and opts.ownStart == true
 
+  -- the authored lanes that could not be read at all, which say nothing and so
+  -- leave the default lane of the same name running
+  local unread: { [string]: boolean } = {}
+
   -- a default lane is taken as it stands: the two old-format rewrites answer for
   -- what an author stored, and a row's own defaults were never read that way
   local function setOf(map: { [string]: { any } }, authored: boolean): { Lane }
@@ -721,12 +725,14 @@ function mods.build(
       local entries = if authored then completed(queue, framed, seeded, lead, fillStart, fillFinish) else queue
 
       if entries == nil then
+        unread[lane] = authored
         continue
       end
 
       local sample, reach, lead = laneOf(ref, source, name, entries, span, env, seed, lane)
 
       if sample == nil then
+        unread[lane] = authored
         continue
       end
 
@@ -761,19 +767,21 @@ function mods.build(
     return trackFrom(set, piece, span, footing)
   end
 
-  if lanes == nil then
+  -- a map naming no lane is the payload a row whose modifiers were cleared
+  -- carries, and it leaves the row exactly as if nothing were stored
+  if lanes == nil or next(lanes) == nil then
     return resting()
   end
 
   local set = setOf(lanes, true)
 
-  if #set == 0 then
+  if #set == 0 and fallback == nil then
     return resting()
   end
 
   -- judged from where the row rests, which is the probe the lanes were kept
   -- under: a lane that begins where the row stands says nothing on its own
-  if want ~= nil then
+  if want ~= nil and #set > 0 then
     local got = mods.kindOf(set[1].sample(0, seed))
 
     if got ~= want then
@@ -782,25 +790,30 @@ function mods.build(
     end
   end
 
-  -- the old format had no way to say anything about another lane: it carried one
-  -- trigger, so a queue read out of it means the row's start and cannot have
-  -- meant to silence a default lane it could never name. a framed map was
-  -- authored lane by lane, so that one keeps replacing every default it has
-  if not framed and fallback ~= nil then
-    local others: { [string]: { any } } = {}
-
-    for lane, queue in fallback do
-      if lanes[lane] == nil then
-        others[lane] = queue
-      end
-    end
-
-    for _, lane in setOf(others, false) do
-      table.insert(set, lane)
-    end
-
-    table.sort(set, byOrder)
+  if fallback == nil then
+    return trackFrom(set, piece, span, footing)
   end
+
+  -- a stored map owns the lanes it names and nothing else, framed or read out
+  -- of the old format: a default lane it does not name keeps running, and one
+  -- it names with nothing that moves stays silent
+  local others: { [string]: { any } } = {}
+
+  for lane, queue in fallback do
+    if lanes[lane] == nil or unread[lane] then
+      others[lane] = queue
+    end
+  end
+
+  for _, lane in setOf(others, false) do
+    table.insert(set, lane)
+  end
+
+  if #set == 0 then
+    return constant(footing, span)
+  end
+
+  table.sort(set, byOrder)
 
   return trackFrom(set, piece, span, footing)
 end
