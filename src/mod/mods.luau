@@ -794,7 +794,7 @@ local function scaleEndpoint(x: any, factor: number)
   end
 end
 
--- everything in a lane map that is a time: durations, offsets and the duration
+-- everything in a lane map that is a time: durations, waits and the duration
 -- of a carried speed ramp. in place, on a decoded map
 function mods.scaleTime(lanes: { [string]: { any } }, factor: number)
   for _, queue in lanes do
@@ -803,10 +803,10 @@ function mods.scaleTime(lanes: { [string]: { any } }, factor: number)
         m.duration *= factor
       end
 
-      if type(m.offset) == "table" then
-        scaleEndpoint(m.offset, factor)
-      elseif typeof(m.offset) == "number" then
-        m.offset *= factor
+      if type(m.wait) == "table" then
+        scaleEndpoint(m.wait, factor)
+      elseif typeof(m.wait) == "number" then
+        m.wait *= factor
       end
 
       if type(m.speed) == "table" and typeof(m.speed.duration) == "number" then

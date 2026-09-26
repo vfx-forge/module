@@ -1,4 +1,5 @@
 local Z = require("@z")
+local value = require("@mod/value")
 local codec = require("@mod/modifier_codec")
 local harness = require("@tests/harness")
 local test, expect = harness.test, harness.expect
@@ -11,8 +12,7 @@ local function curve(): buffer
 end
 
 -- the version 1 layout, rebuilt here because the codec only writes version 2
--- now. this is the payload a store that predates lanes wrote, and the fold on
--- the way in is the whole reason it still reads
+-- now. this is the payload a store that predates lanes wrote
 local function legacyPayload(queue: { any }): buffer
   local modifier = Z.schema({
     kind = Z.str8,
@@ -307,13 +307,14 @@ harness.suite(function()
       expect(m.finish.b).toEqual(Vector3.new(4, 5, 6))
     end)
 
-    test("round-trips a lane map, offsets and all", function()
+    test("round-trips a lane map, waits and all", function()
       local q = {
         v = 2,
         lanes = {
           start = { { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 } } },
           dissipate = {
-            { kind = "tween", chain = false, offset = { t = "lit", v = 0.25 }, finish = { t = "lit", v = 1 } },
+            { kind = "delay", chain = false, wait = { t = "lit", v = 0.25 } },
+            { kind = "tween", chain = false, finish = { t = "lit", v = 1 } },
           },
         },
       }
@@ -323,16 +324,18 @@ harness.suite(function()
       expect(d.v).toBe(2)
       expect(#d.lanes.start).toBe(1)
       expect(d.lanes.start[1].duration).toBe(1)
-      expect(d.lanes.dissipate[1].offset.v).toBe(0.25)
-      expect(d.lanes.dissipate[1].finish.v).toBe(1)
+      expect(d.lanes.dissipate[1].wait.v).toBe(0.25)
+      expect(d.lanes.dissipate[2].finish.v).toBe(1)
     end)
 
-    -- an offset stores as a Value the way an endpoint does, so a drawn one
-    -- needs no schema entry; one written by hand as a number stores as a literal
-    test("an offset written as a plain number stores as a literal", function()
-      local q = { v = 2, lanes = { start = { { kind = "tween", chain = false, offset = 2 } } } }
+    -- a wait stores as a Value the way an endpoint does, so a drawn one needs
+    -- no schema entry; one written by hand as a number stores as a literal
+    test("a wait written as a plain number stores as a literal", function()
+      local q = { v = 2, lanes = { start = { { kind = "delay", chain = false, wait = 2 } } } }
+      local wait = codec.decode(codec.encode(q)).lanes.start[1].wait
 
-      expect(codec.decode(codec.encode(q)).lanes.start[1].offset.v).toBe(2)
+      expect(wait.t).toBe("lit")
+      expect(wait.v).toBe(2)
     end)
 
     test("empty is a payload with no lanes at all", function()
@@ -357,110 +360,55 @@ harness.suite(function()
       expect(d.lanes.start[1].finish.v).toBe(10)
     end)
 
-    test("a version 1 delay folds into the offset of the entry after it", function()
-      local buf = legacyPayload({
-        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 1 } } },
-        { kind = "tween", chain = false, duration = 2, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 10 } },
-      })
+    test("a delay round trips as an entry with its wait", function()
+      local payload = {
+        lanes = {
+          start = {
+            { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(1) },
+            { kind = "delay", chain = false, wait = value.lit(3) },
+            { kind = "tween", chain = false, duration = 1, start = value.lit(1), finish = value.lit(0) },
+          },
+        },
+      }
 
-      local lane = codec.decode(buf).lanes.start
+      local back = codec.decode(codec.encode(payload))
+      local lane = back.lanes.start
 
-      expect(#lane).toBe(1)
-      expect(lane[1].kind).toBe("tween")
-      expect(lane[1].offset.v).toBe(1)
+      expect(#lane).toBe(3)
+      expect(lane[2].kind).toBe("delay")
+      expect(lane[2].wait.t).toBe("lit")
+      expect(lane[2].wait.v).toBe(3)
+      expect(lane[2].offset).toBe(nil)
     end)
 
-    -- a delay shifted everything after it under version 1, not just the one
-    -- entry right after it, so its wait has to ride every entry the fold
-    -- passes before the next delay
-    test("a version 1 delay rides every entry after it, not just the first", function()
-      local buf = legacyPayload({
-        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 1 } } },
+    test("a drawn wait round trips as a draw", function()
+      local payload = { lanes = { start = { { kind = "delay", chain = false, wait = value.draw(1, 2) } } } }
+      local wait = codec.decode(codec.encode(payload)).lanes.start[1].wait
+
+      expect(wait.t).toBe("draw")
+      expect(wait.a).toBe(1)
+      expect(wait.b).toBe(2)
+    end)
+
+    test("a version 1 queue reads as the start lane with its delays kept", function()
+      local back = codec.decode(legacyPayload({
+        { kind = "delay", chain = false, extra = { wait = { t = "rand", min = 1, max = 2 } } },
         { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
-        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 1 }, finish = { t = "lit", v = 2 } },
-      })
+      }))
+      local lane = back.lanes.start
 
-      local lane = codec.decode(buf).lanes.start
-
+      expect(back.v).toBe(2)
       expect(#lane).toBe(2)
-      expect(lane[1].offset.v).toBe(1)
-      expect(lane[2].offset.v).toBe(1)
+      expect(lane[1].kind).toBe("delay")
+      expect(lane[1].wait.t).toBe("draw")
+      expect(lane[2].offset).toBe(nil)
     end)
 
-    test("two version 1 delays in a row sum into the offset of the entry after them", function()
-      local buf = legacyPayload({
-        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 1 } } },
-        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 2 } } },
-        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
-      })
-
-      local lane = codec.decode(buf).lanes.start
-
-      expect(#lane).toBe(1)
-      expect(lane[1].offset.v).toBe(3)
-    end)
-
-    test("a second version 1 delay adds to what is already riding, for the entries after it", function()
-      local buf = legacyPayload({
-        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 1 } } },
-        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
-        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 2 } } },
-        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 1 }, finish = { t = "lit", v = 2 } },
-      })
-
-      local lane = codec.decode(buf).lanes.start
-
-      expect(#lane).toBe(2)
-      expect(lane[1].offset.v).toBe(1)
-      expect(lane[2].offset.v).toBe(3)
-    end)
-
-    test("a drawn version 1 wait rides every entry after it as its own draw", function()
-      local buf = legacyPayload({
-        { kind = "delay", chain = false, extra = { wait = { t = "rand", min = 2, max = 5 } } },
-        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
-        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 1 }, finish = { t = "lit", v = 2 } },
-      })
-
-      local lane = codec.decode(buf).lanes.start
-
-      expect(#lane).toBe(2)
-      expect(lane[1].offset.t).toBe("draw")
-      expect(lane[1].offset.a).toBe(2)
-      expect(lane[1].offset.b).toBe(5)
-      expect(lane[2].offset.t).toBe("draw")
-      expect(lane[2].offset.a).toBe(2)
-      expect(lane[2].offset.b).toBe(5)
-      expect(lane[1].offset == lane[2].offset).toBe(false)
-    end)
-
-    -- no clock can count an infinite wait, so the old reader took one as zero.
-    -- summing one here would carry it into the offset of every entry behind it
-    test("a version 1 wait that is not finite moves nothing, and a later one still rides", function()
-      local buf = legacyPayload({
-        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = math.huge } } },
-        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
-        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 2 } } },
-        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 1 }, finish = { t = "lit", v = 2 } },
-      })
-
-      local lane = codec.decode(buf).lanes.start
-
-      expect(#lane).toBe(2)
-      expect(lane[1].offset == nil or lane[1].offset.v == 0).toBe(true)
-      expect(lane[2].offset.v).toBe(2)
-    end)
-
-    test("a version 1 delay with nothing after it is dropped, and a rand endpoint reads as a draw", function()
-      local trailing = legacyPayload({
+    test("a version 1 rand endpoint reads as a draw", function()
+      local lane = codec.decode(legacyPayload({
         { kind = "tween", chain = false, duration = 1, start = { t = "rand", min = 1, max = 3 } },
-        { kind = "delay", chain = false, extra = { wait = { t = "lit", v = 5 } } },
-      })
+      })).lanes.start
 
-      local lane = codec.decode(trailing).lanes.start
-
-      expect(#lane).toBe(1)
-      expect(lane[1].offset).toBe(nil)
       expect(lane[1].start.t).toBe("draw")
       expect(lane[1].start.a).toBe(1)
       expect(lane[1].start.b).toBe(3)

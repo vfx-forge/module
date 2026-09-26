@@ -10,7 +10,7 @@ local KNOWN = {
   kind = true,
   chain = true,
   duration = true,
-  offset = true,
+  wait = true,
   start = true,
   finish = true,
   curve = true,
@@ -22,7 +22,7 @@ export type Modifier = {
   kind: string,
   chain: boolean,
   duration: number?,
-  offset: value.Value?,
+  wait: value.Value?,
   start: value.Value?,
   finish: value.Value?,
   curve: buffer?,
@@ -33,7 +33,7 @@ export type Modifier = {
 
 -- the outer payload a buffer decodes to; kept as a private alias rather than
 -- an exported type, since the codec's only new public surface this version is
--- the `lanes` field and `offset` on a Modifier
+-- the `lanes` field
 type Payload = { v: number, lanes: { [string]: { Modifier } } }
 
 local _z: any = nil
@@ -52,14 +52,14 @@ end
 
 -- the fixed part of a modifier is a schema, so it writes no field names at all,
 -- which is where most of the payload used to go. the layout before lanes is
--- built beside it, read only: it carries a flat queue and no offset field, so
+-- built beside it, read only: it carries a flat queue and no wait field, so
 -- it is a different byte layout rather than a subset of this one
 local function schema(): (any, any, any)
   if _schema == nil then
     local Z = _z or require("@z") :: any
     _z = Z
 
-    -- start, finish, offset and extra ride Z.table's self-describing mode
+    -- start, finish, wait and extra ride Z.table's self-describing mode
     -- because their type genuinely varies: an endpoint holds a tagged
     -- value.Value whose payload is whatever the row's property type is
     -- (number, Color3, UDim2, NumberRange, ...), and extra carries any field
@@ -69,7 +69,7 @@ local function schema(): (any, any, any)
       kind = Z.str8,
       chain = Z.bool,
       duration = Z.some(Z.f64),
-      offset = Z.some(Z.table),
+      wait = Z.some(Z.table),
       start = Z.some(Z.table),
       finish = Z.some(Z.table),
       -- buffer16 tops curve out at 65535 bytes rather than an accidental
@@ -109,16 +109,16 @@ local function schema(): (any, any, any)
   return _z, _schema, _legacy
 end
 
--- an offset stores as a Value, the way an endpoint does, so a drawn one needs
--- no schema entry of its own. one written by hand as a plain number stores as
--- the literal it is
-local function offsetOf(offset: any): value.Value?
-  if type(offset) == "table" then
-    return offset
+-- a wait stores as a Value, the way an endpoint does, so a drawn one needs no
+-- schema entry of its own. one written by hand as a plain number stores as the
+-- literal it is
+local function waitOf(wait: any): value.Value?
+  if type(wait) == "table" then
+    return wait
   end
 
-  if typeof(offset) == "number" then
-    return value.lit(offset)
+  if typeof(wait) == "number" then
+    return value.lit(wait)
   end
 
   return nil
@@ -139,7 +139,7 @@ local function entryOf(m: any): Modifier
     kind = m.kind,
     chain = m.chain,
     duration = m.duration,
-    offset = m.offset,
+    wait = m.wait,
     start = m.start,
     finish = m.finish,
     curve = m.curve,
@@ -153,109 +153,11 @@ local function entryOf(m: any): Modifier
     end
   end
 
+  out.wait = drawn(out.wait)
+  out.start = drawn(out.start)
+  out.finish = drawn(out.finish)
+
   return out :: any
-end
-
--- a wait no clock can count: the old reader took one as zero and the scheduler
--- reset a sum that came out infinite, so one moves nothing here either rather
--- than poisoning the offset of every entry behind it
-local function unusable(x: any): boolean
-  if x == nil or x.t ~= "lit" then
-    return false
-  end
-
-  local v = x.v
-
-  return v ~= v or v == math.huge or v == -math.huge
-end
-
--- an old delay shifted everything after it, not just the one entry
--- immediately following, so its wait rides every later entry until a further
--- delay changes what is riding. a literal wait combines with a literal
--- pending by summing; where either side is drawn, the literal shifts the
--- drawn endpoints and two drawn waits sum their endpoints into one draw,
--- keeping the pending side's weight
-local function combined(pending: any, wait: any): any
-  local p = drawn(pending)
-  local w = drawn(wait)
-
-  if type(p) ~= "table" then
-    p = if p == nil then nil else { t = "lit", v = p }
-  end
-
-  if type(w) ~= "table" then
-    w = if w == nil then nil else { t = "lit", v = w }
-  end
-
-  if unusable(p) then
-    p = nil
-  end
-
-  if unusable(w) then
-    w = nil
-  end
-
-  if p == nil then
-    return w
-  end
-
-  if w == nil then
-    return p
-  end
-
-  if p.t == "lit" and w.t == "lit" then
-    return { t = "lit", v = p.v + w.v }
-  end
-
-  if p.t == "lit" then
-    return { t = "draw", a = w.a + p.v, b = w.b + p.v, weight = w.weight }
-  end
-
-  if w.t == "lit" then
-    return { t = "draw", a = p.a + w.v, b = p.b + w.v, weight = p.weight }
-  end
-
-  return { t = "draw", a = p.a + w.a, b = p.b + w.b, weight = p.weight }
-end
-
--- every entry the pending wait rides gets its own copy, so a later entry
--- changing its offset in place never reaches back into an earlier one
-local function freshOffset(pending: any): value.Value?
-  if pending == nil then
-    return nil
-  end
-
-  if pending.t == "lit" then
-    return { t = "lit", v = pending.v }
-  end
-
-  return { t = "draw", a = pending.a, b = pending.b, weight = pending.weight }
-end
-
--- a delay is not an entry of its own: it moved what came after it, which is
--- what the offset on those entries says now. one with nothing after it moved
--- nothing
-local function folded(queue: { any }): { Modifier }
-  local out = {}
-  local pending: any = nil
-
-  for _, m in queue do
-    if m.kind == "delay" then
-      pending = combined(pending, if m.wait ~= nil then m.wait else m.duration)
-      continue
-    end
-
-    m.start = drawn(m.start)
-    m.finish = drawn(m.finish)
-
-    if pending ~= nil then
-      m.offset = freshOffset(pending)
-    end
-
-    table.insert(out, m)
-  end
-
-  return out
 end
 
 function codec.empty(): Payload
@@ -314,7 +216,7 @@ function codec.encode(payload: any): buffer
         kind = m.kind or "",
         chain = m.chain == true,
         duration = m.duration,
-        offset = offsetOf(m.offset),
+        wait = waitOf(m.wait),
         start = m.start,
         finish = m.finish,
         curve = m.curve,
@@ -382,7 +284,7 @@ function codec.decode(buf: buffer): Payload
       queue[i] = entryOf(m)
     end
 
-    return { v = VERSION, lanes = { start = folded(queue) } }
+    return { v = VERSION, lanes = { start = queue } }
   end
 
   if type(data.lanes) ~= "table" then

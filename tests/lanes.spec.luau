@@ -1,10 +1,14 @@
 local mods = require("@mod/mods")
 local value = require("@mod/value")
+local codec = require("@mod/modifier_codec")
+local frame = require("@mod/modifier_frame")
 local harness = require("@tests/harness")
 local test, expect = harness.test, harness.expect
 local Instance = harness.datatypes.Instance
 
 local EPSILON = 1e-9
+
+frame.configure(harness.fakeEncoding, harness.fakeCompression)
 
 local function near(a: number, b: number): boolean
   return math.abs(a - b) < EPSILON
@@ -317,6 +321,29 @@ harness.suite(function()
       expect(track.animated).toBe(false)
       expect(track.at(0)).toBe(3)
       expect(track.has("start")).toBe(false)
+    end)
+
+    -- the stored format carries a delay as an entry of its own lane, so the
+    -- whole trip from the attribute to the track has to keep the gap it makes
+    test("a framed delay holds the value it follows and starts the next entry after its gap", function()
+      local ref = Instance.new("Attachment")
+      local payload =
+        { lanes = { start = { tween(0, 1, 1), { kind = "delay", chain = false, wait = 3 }, tween(1, 0, 1) } } }
+
+      ref:SetAttribute(mods.attrName("attribute", "Width"), frame.frame(codec.encode(payload)))
+
+      local lanes = mods.framed(ref, "attribute", "Width")
+
+      expect(lanes ~= nil).toBe(true)
+
+      local track = mods.build(ref, "attribute", "Width", 0, 5, nil, lanes, true, nil, nil)
+
+      expect(near(track.at(0.5), 0.5)).toBe(true)
+      expect(near(track.at(1), 1)).toBe(true)
+      expect(near(track.at(2.5), 1)).toBe(true)
+      expect(near(track.at(4), 1)).toBe(true)
+      expect(near(track.at(4.5), 0.5)).toBe(true)
+      expect(near(track.at(5), 0)).toBe(true)
     end)
   end)
 end)

@@ -512,9 +512,9 @@ harness.suite(function()
       expect(attrs.A.animated).toBe(false)
     end)
 
-    test("a default modifier's own duration and offset are honoured", function()
+    test("a default modifier's own duration and delay are honoured", function()
       local attrs =
-        reader.resolve(module({ A = knob(0):mod(mod.from(5):duration(1):offset(1)) }), ctxFor(Instance.new("Part")))
+        reader.resolve(module({ A = knob(0):mod(mod.from(5):duration(1):delay(1)) }), ctxFor(Instance.new("Part")))
 
       expect(attrs.A.duration).toBe(2)
       expect(near(attrs.A.at(0), 5)).toBe(true)

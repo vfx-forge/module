@@ -14,28 +14,28 @@ local function tween(startV: any, finishV: any, duration: number?)
 end
 
 harness.suite(function()
-  test("scaleTime scales durations and offsets in every lane", function()
+  test("scaleTime scales durations and waits in every lane", function()
     local lanes = {
       start = { tween(0, 1, 2) },
-      ["end"] = { { kind = "tween", chain = false, duration = 4, offset = value.lit(1) } },
-      dissipate = { { kind = "tween", chain = false, offset = value.draw(1, 3) } },
+      ["end"] = { { kind = "delay", chain = false, wait = value.lit(1) }, tween(0, 1, 4) },
+      dissipate = { { kind = "delay", chain = false, wait = value.draw(1, 3) } },
     }
 
     mods.scaleTime(lanes, 0.5)
 
     expect(lanes.start[1].duration).toBe(1)
-    expect(lanes["end"][1].duration).toBe(2)
-    expect(lanes["end"][1].offset.v).toBe(0.5)
-    expect(lanes.dissipate[1].offset.a).toBe(0.5)
-    expect(lanes.dissipate[1].offset.b).toBe(1.5)
+    expect(lanes["end"][2].duration).toBe(2)
+    expect(lanes["end"][1].wait.v).toBe(0.5)
+    expect(lanes.dissipate[1].wait.a).toBe(0.5)
+    expect(lanes.dissipate[1].wait.b).toBe(1.5)
   end)
 
-  test("scaleTime scales an offset written as a plain number", function()
-    local lanes = { start = { { kind = "tween", chain = false, offset = 2 } } }
+  test("scaleTime scales a wait written as a plain number", function()
+    local lanes = { start = { { kind = "delay", chain = false, wait = 2 } } }
 
     mods.scaleTime(lanes, 0.5)
 
-    expect(lanes.start[1].offset).toBe(1)
+    expect(lanes.start[1].wait).toBe(1)
   end)
 
   test("scaleTime scales a carried speed ramp's duration", function()

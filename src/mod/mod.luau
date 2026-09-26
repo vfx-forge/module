@@ -10,7 +10,7 @@ export type Spec = typeof(setmetatable(
   {} :: {
     side: "from" | "to",
     endpoint: any,
-    opts: { duration: any, curve: any, offset: any, lane: string? },
+    opts: { duration: any, curve: any, delay: any, lane: string? },
   },
   Spec
 ))
@@ -19,7 +19,7 @@ local function make(side: "from" | "to", endpoint: any): Spec
   return setmetatable({
     side = side,
     endpoint = endpoint,
-    opts = { duration = nil, curve = nil, offset = nil, lane = nil },
+    opts = { duration = nil, curve = nil, delay = nil, lane = nil },
   }, Spec)
 end
 
@@ -45,8 +45,8 @@ function Spec.curve(self: Spec, preset: any): Spec
   return self
 end
 
-function Spec.offset(self: Spec, s: any): Spec
-  self.opts.offset = s
+function Spec.delay(self: Spec, s: any): Spec
+  self.opts.delay = s
   return self
 end
 
@@ -138,7 +138,7 @@ function mod.lanes(
       out[lane] = queue
     end
 
-    local wait = pick(spec.opts.offset, ctx, attrs, props)
+    local wait = pick(spec.opts.delay, ctx, attrs, props)
 
     if typeof(wait) == "number" and wait > 0 then
       table.insert(queue, { kind = "delay", chain = false, wait = value.lit(wait) })

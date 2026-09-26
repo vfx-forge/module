@@ -18,12 +18,12 @@ harness.suite(function()
 
     test("the chain returns the same spec", function()
       local spec = mod.to(1)
-      local same = spec:duration(0.5):curve("linear"):offset(0.2):lane("dissipate")
+      local same = spec:duration(0.5):curve("linear"):delay(0.2):lane("dissipate")
 
       expect(same).toBe(spec)
       expect(spec.opts.duration).toBe(0.5)
       expect(spec.opts.curve).toBe("linear")
-      expect(spec.opts.offset).toBe(0.2)
+      expect(spec.opts.delay).toBe(0.2)
       expect(spec.opts.lane).toBe("dissipate")
     end)
   end)
@@ -87,8 +87,8 @@ harness.suite(function()
       expect(value.resolve(lanes.dissipate[1].finish)).toBe(0)
     end)
 
-    test("an offset puts a wait in front of its entry", function()
-      local lanes = mod.lanes({ mod.to(1):duration(0.5):curve("linear"):offset(0.2) }, ctx, {}, {}, 0, nil)
+    test("a delay puts a wait in front of its entry", function()
+      local lanes = mod.lanes({ mod.to(1):duration(0.5):curve("linear"):delay(0.2) }, ctx, {}, {}, 0, nil)
       local lane = lanes.start
 
       expect(#lane).toBe(2)
