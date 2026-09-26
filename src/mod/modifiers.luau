@@ -316,7 +316,8 @@ end
 -- still means wait this long before what follows. a modifier naming no
 -- duration runs out whatever is left of `fallback`, the effect's duration, so
 -- one after it starts at the effect's end; with no effect duration to lend it
--- runs for `linked`, the longest duration the queue names. a legacy entry
+-- runs for `linked`, the longest duration the queue names. a randomizer naming
+-- no duration takes none: it draws at its start and the next one starts there. a legacy entry
 -- marked `parallel` keeps the old reading: it starts at the waits ahead of it
 -- alone and moves nothing after it.
 --
@@ -385,8 +386,15 @@ function modifiers.schedule(
     local d = m.duration
 
     if typeof(d) ~= "number" then
-      -- the remaining time of the effect, or the named fallback without one
-      d = if lent and not m.parallel then math.max(lent - offset, 0) else linked
+      -- a randomizer draws its value where it starts and takes no time, so the
+      -- next modifier starts right there. anything else runs out the remaining
+      -- time of the effect, or the named fallback without one
+      if m.kind == "randomizer" and not m.parallel then
+        d = 0
+      else
+        d = if lent and not m.parallel then math.max(lent - offset, 0) else linked
+      end
+
       lengths = lengths or {}
       lengths[i] = d
     end

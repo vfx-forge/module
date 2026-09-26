@@ -380,6 +380,38 @@ harness.suite(function()
       expect(near(modifiers.evaluate(queue, 4, ctx) :: number, 40)).ok()
     end)
 
+    -- a randomizer naming no duration draws at its start and takes no time, so
+    -- the tween after it runs right where the one before it ended: 2 to 3 s in
+    -- a 4 s effect, here leaving from the draw it chains from
+    test("a randomizer with no duration takes no time", function()
+      local queue = {
+        tween(0, 10, 2),
+        { kind = "randomizer", chain = false, start = lit(100), finish = lit(200) },
+        tween(nil, 0, 1, true),
+      }
+
+      local offsets, reach, _, lengths = modifiers.schedule(queue, nil, 4)
+
+      expect((offsets :: any)[2]).toBe(2)
+      expect((lengths :: any)[2]).toBe(0)
+      expect((offsets :: any)[3]).toBe(2)
+      expect(reach).toBe(3)
+
+      local ctx = { duration = 4, draws = { [2] = 0.5 } }
+
+      expect(near(modifiers.evaluate(queue, 1, ctx) :: number, 5)).ok()
+      expect(near(modifiers.evaluate(queue, 2, ctx) :: number, 150)).ok()
+      expect(near(modifiers.evaluate(queue, 2.5, ctx) :: number, 75)).ok()
+      expect(near(modifiers.evaluate(queue, 3, ctx) :: number, 0)).ok()
+      expect(near(modifiers.evaluate(queue, 4, ctx) :: number, 0)).ok()
+
+      -- one that names a duration keeps it, and a lone one still spans the effect
+      local timed = { kind = "randomizer", chain = false, duration = 1, start = lit(100), finish = lit(200) }
+      local later = modifiers.schedule({ tween(0, 10, 2), timed, tween(0, 1, 1) }, nil, 4)
+
+      expect((later :: any)[3]).toBe(3)
+    end)
+
     -- a chain now reads as "carry on from where the last one left off", across
     -- every modifier in the run
     test("a chain continues from where the one before it ended", function()

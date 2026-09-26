@@ -30,6 +30,15 @@ harness.suite(function()
       expect(mods.span({ { chain = false }, { chain = true } }, 9)).toBe(9)
     end)
 
+    -- a randomizer naming no duration takes none, so a queue of one spans the
+    -- effect it was lent and one between two tweens adds nothing
+    test("a randomizer with no duration adds no time", function()
+      expect(mods.span({ { kind = "randomizer" } }, 9)).toBe(9)
+      expect(
+        mods.span({ { kind = "tween", duration = 2 }, { kind = "randomizer" }, { kind = "tween", duration = 1 } }, 4)
+      ).toBe(3)
+    end)
+
     test("falls back on an empty queue", function()
       expect(mods.span({}, 9)).toBe(9)
     end)
