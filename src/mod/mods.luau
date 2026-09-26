@@ -52,6 +52,12 @@ function mods.span(queue: { any }, fallback: number, rolls: Rolls?, left: number
 
   local _, frontier = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil, left)
 
+  -- a lane told nothing is left may take no time at all, and that zero is its
+  -- reach: falling back would start it at the emit rather than at the end
+  if frontier == 0 and left ~= nil and left == left then
+    return 0, fallback
+  end
+
   -- an effect turns this straight into a tween's duration, and a tween that
   -- never ends holds the emit open for good. nothing an author can mean by a
   -- span is infinite, so an unusable one falls back the same way an empty one does
@@ -240,12 +246,13 @@ function mods.sampler(
   local base = baseOf(ref, source, name)
   local lead = 0
 
+  -- a parallel legacy entry keeps its own wait, so the offsets need not rise
+  -- through the queue and the lead is the smallest of them
   if offsets ~= nil then
-    for i in queue do
-      if offsets[i] ~= nil then
-        lead = offsets[i]
-        break
-      end
+    lead = math.huge
+
+    for _, at in offsets do
+      lead = math.min(lead, at)
     end
   end
 
@@ -270,7 +277,7 @@ function mods.sampler(
   local function sample(elapsed: number, own: any?, left: number?)
     ctx.base = if own ~= nil then own else base
 
-    if lengths ~= nil and left ~= nil and left ~= scheduledFor then
+    if lengths ~= nil and left ~= nil and left == left and left ~= scheduledFor then
       local placed, _, _, runs = modifiers.schedule(queue, rolled.picks, lent, rolled.env, left)
 
       scheduledFor = left
@@ -360,12 +367,12 @@ local function firedAt(lane: Lane, piece: Piece?): number?
 end
 
 -- which lane owns the row at `elapsed`: the one that started last at or before
--- it, and the later of two that started together. `under` is the lane a base is
--- being folded for: neither it nor a lane that started after it, or with it and
--- later in the same frame, is under it, so the fold always descends. `since` is where a
--- caller froze the row, and only a lane that had already started is inside the
--- value it froze: one starting exactly there is part of what the caller was
--- born into, so it still composes
+-- it, and the later of two that started together. `under` is the lane a base
+-- is being folded for: neither it nor a lane that started after it, or with it
+-- and later in the same frame, is under it, so the fold always descends.
+-- `since` is where a caller froze the row, and only a lane that had already
+-- started is inside the value it froze: one starting exactly there is part of
+-- what the caller was born into, so it still composes
 local function ownerAt(lanes: { Lane }, piece: Piece?, elapsed: number, since: number?, under: number?): number?
   local floor = if under ~= nil then firedAt(lanes[under], piece) else nil
   local best: number? = nil
@@ -396,10 +403,11 @@ local function ownerAt(lanes: { Lane }, piece: Piece?, elapsed: number, since: n
 end
 
 -- the row's value at `elapsed`: the owning lane's queue run from its own
--- trigger, over what the lanes under it hold where its first modifier starts. a
--- lane that opens with a wait leaves the row to the lanes under it until then, a
--- lane producing nothing passes that value through, and a row nobody owns rests
--- where the caller says it rests
+-- trigger, over what the lanes under it hold. that base is read where the
+-- lane's first modifier starts, and live until then, so a chained first entry
+-- follows the lanes under it through a leading wait. a lane producing nothing
+-- passes the base through, and a row nobody owns rests where the caller says
+-- it rests
 local function valueAt(
   lanes: { Lane },
   piece: Piece?,

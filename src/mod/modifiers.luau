@@ -310,9 +310,9 @@ end
 -- queue starts partway through the effect passes `left`, the time the effect
 -- has left from there, and that is what such a modifier runs out instead. a
 -- randomizer naming no duration takes none: it draws at its start and the next
--- one starts there. a legacy entry marked `parallel` keeps the old reading: it starts at
--- the plain waits ahead of it plus the wait of a parallel delay right before
--- it, and moves nothing after it.
+-- one starts there. a legacy entry marked `parallel` keeps the old reading: it
+-- starts at the plain waits ahead of it plus the wait of a parallel delay right
+-- before it, and moves nothing after it.
 --
 -- `lengths` holds the run of every modifier naming no duration, by index, and
 -- is nil when there is none. `offsets` is nil only for a queue with nothing on

@@ -423,6 +423,27 @@ harness.suite(function()
       expect(near(track.at(4), 0)).toBe(true)
     end)
 
+    test("an end lane of only no-duration entries snaps to its finish as the effect ends", function()
+      local plain = built({ ["end"] = { tween(1, 0, nil) } }, 1, 5, nil)
+      local waited = built({ ["end"] = { delay(0), tween(1, 0, nil) } }, 1, 5, nil)
+
+      for _, track in { plain, waited } do
+        expect(near(track.at(0), 1)).toBe(true)
+        expect(near(track.at(2.5), 1)).toBe(true)
+        expect(near(track.at(4.9), 1)).toBe(true)
+        expect(near(track.at(5), 0)).toBe(true)
+      end
+    end)
+
+    test("an end lane that opens with a delay leaves the start lane playing through the wait", function()
+      local track = built({ start = { tween(0, 1, 4) }, ["end"] = { delay(1), onward(0, 1) } }, 0, 4, nil)
+
+      expect(near(track.at(2.5), 0.625)).toBe(true)
+      expect(near(track.at(3), 0.75)).toBe(true)
+      expect(near(track.at(3.5), 0.375)).toBe(true)
+      expect(near(track.at(4), 0)).toBe(true)
+    end)
+
     test("a lane that only waits is inert", function()
       expect(mods.inert({ delay(1) })).toBe(true)
       expect(mods.inert({ delay(1), tween(0, 1, 1) })).toBe(false)
