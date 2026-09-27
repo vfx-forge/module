@@ -832,20 +832,8 @@ local function eventLaneOf(
   return out
 end
 
--- the one way a knob becomes a track. it always answers: what rests when nothing
--- usable is authored, else one sampler per lane over that lane's own reach. a
--- default given as a lane map is what runs when nothing is authored, for a knob
--- whose resting state is a ramp or a draw rather than a value.
---
--- `ownStart` is for a knob whose start belongs to the effect rather than to the
--- row, and `value` is where the caller says the row rests, for a default made of
--- lanes that names no start of its own. `piece` is the clock the row's event
--- lanes fire on, and the row carries none without one.
---
--- the second return hands the same lanes to another piece of the same events,
--- so a caller building one track per piece pays for the lanes once. nil when
--- some lane draws or schedules per piece, which only a build of its own gets
-function mods.build(
+-- every build but the one the deferral below leaves for later
+local function buildNow(
   ref: Instance,
   source: string,
   name: string,
@@ -977,7 +965,7 @@ function mods.build(
         order = order,
         -- the end lane fires once the piece's own clock has only its reach
         -- left, and an event lane has no trigger until the module gives it one
-        from = if lane == "start" then 0 else math.max(0, span - reach),
+        from = if lane == "start" then 0 elseif lane == "end" then math.max(0, span - reach) else nil,
         reach = reach,
         length = length,
         lead = first,
@@ -1130,6 +1118,147 @@ function mods.build(
   return shared(set, nil)
 end
 
+-- the one way a knob becomes a track. it always answers: what rests when nothing
+-- usable is authored, else one sampler per lane over that lane's own reach. a
+-- default given as a lane map is what runs when nothing is authored, for a knob
+-- whose resting state is a ramp or a draw rather than a value.
+--
+-- `ownStart` is for a knob whose start belongs to the effect rather than to the
+-- row, and `value` is where the caller says the row rests, for a default made of
+-- lanes that names no start of its own. `piece` is the clock the row's event
+-- lanes fire on, and the row carries none without one.
+--
+-- the second return hands the same lanes to another piece of the same events,
+-- so a caller building one track per piece pays for the lanes once. nil when
+-- some lane draws or schedules per piece, which only a build of its own gets
+function mods.build(
+  ref: Instance,
+  source: string,
+  name: string,
+  default: any,
+  span: number,
+  env: { [string]: any }?,
+  lanes: { [string]: { any } }?,
+  framed: boolean,
+  opts: { ownStart: boolean?, value: any? }?,
+  piece: Piece?
+): (Track, ((other: Piece) -> Track?)?)
+  local stated: any = if opts ~= nil then opts.value else nil
+
+  -- a default made only of event lanes, with nothing stored over it, rests
+  -- where the caller says until a piece fires one of them, and says which it
+  -- holds without building any: the build waits for the first fire, or for a
+  -- caller asking how far a lane reaches
+  if
+    type(default) ~= "table"
+    or stated == nil
+    or (lanes ~= nil and next(lanes) ~= nil)
+    or default.start ~= nil
+    or default["end"] ~= nil
+  then
+    return buildNow(ref, source, name, default, span, env, lanes, framed, opts, piece)
+  end
+
+  local names: { string } = {}
+  local varies = false
+
+  for lane, queue in default do
+    if orderOf(piece, lane) == nil or #queue == 0 or mods.inert(queue) then
+      continue
+    end
+
+    table.insert(names, lane)
+    varies = varies or perPiece(queue, true)
+  end
+
+  if #names == 0 then
+    return buildNow(ref, source, name, default, span, env, lanes, framed, opts, piece)
+  end
+
+  local function holds(lane: string): boolean
+    return table.find(names, lane) ~= nil
+  end
+
+  -- the first full build, whose lanes every later piece is handed when they
+  -- come out alike for every piece
+  local share: ((other: Piece) -> Track?)? = nil
+  local built = false
+
+  local function deferred(own: Piece?): Track
+    local inner: Track? = nil
+
+    local function real(): Track
+      if inner ~= nil then
+        return inner
+      end
+
+      if built and share ~= nil and own ~= nil then
+        inner = share(own)
+      end
+
+      if inner == nil then
+        local track, again = buildNow(ref, source, name, default, span, env, lanes, framed, opts, own)
+
+        if not built and not varies then
+          built = true
+          share = again
+        end
+
+        inner = track
+      end
+
+      return inner :: Track
+    end
+
+    return {
+      at = function(elapsed: number, current: any?, since: number?)
+        if inner == nil then
+          local fired = if own ~= nil then own.fired else nil
+          local any = false
+
+          for _, lane in names do
+            if fired ~= nil and fired[lane] ~= nil then
+              any = true
+              break
+            end
+          end
+
+          if not any then
+            return if current ~= nil then current else stated
+          end
+        end
+
+        return real().at(elapsed, current, since)
+      end,
+      span = span,
+      animated = true,
+      has = holds,
+      reach = function(lane: string): number
+        if not holds(lane) then
+          return 0
+        end
+
+        return real().reach(lane)
+      end,
+    }
+  end
+
+  local events = if piece then piece.events else nil
+
+  if varies then
+    return deferred(piece), nil
+  end
+
+  return deferred(piece),
+    function(other: Piece)
+      if other.events ~= events then
+        return nil
+      end
+
+      return deferred(other)
+    end
+end
+
 -- the read half: what an effect that still names its own knobs calls
 function mods.track(
   ref: Instance,
@@ -1142,9 +1271,7 @@ function mods.track(
   piece: Piece?
 ): Track
   local lanes, framed = mods.read(ref, source, name)
-  local track = mods.build(ref, source, name, default, span, env, lanes, framed, opts, piece)
-
-  return track
+  return (mods.build(ref, source, name, default, span, env, lanes, framed, opts, piece))
 end
 
 local function scaleValue(v: any, factor: number): any

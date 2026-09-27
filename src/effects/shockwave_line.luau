@@ -613,103 +613,111 @@ function line.emit(ctx: reader.Ctx, attrs: any)
           return step(deltaTime, elapsed)
         end, function()
           task.spawn(function()
-            if sizeTween then
-              sizeTween:Disconnect()
-            end
-
-            if offsetTween then
-              offsetTween:Disconnect()
-            end
-
-            piece:fire("despawn", fired)
-
-            local sizeReach = sizeIn.reach("despawn")
-            local offsetReach = offsetIn.reach("despawn")
-
-            -- each row is sampled until its own exit lands and never after, so
-            -- a row that snaps is written once and the shorter exit stops first
-            local sizeMoving = true
-            local offsetMoving = true
-
-            local function exitAt(since: number)
-              if sizeMoving then
-                sizeMoving = since < sizeReach
-
-                local factor = sizeIn.at(fired + math.min(since, sizeReach))
-
-                if typeof(factor) == "Vector3" and factor ~= currentFactor then
-                  currentFactor = factor
-                  part.Size = size * factor
-                end
+            -- a despawn that throws still lands its piece, or the emit would wait
+            -- on it until the effect is torn down
+            local ok, err = xpcall(function()
+              if sizeTween then
+                sizeTween:Disconnect()
               end
 
-              if offsetMoving then
-                offsetMoving = since < offsetReach
-
-                local offset = offsetIn.at(fired + math.min(since, offsetReach))
-
-                if typeof(offset) == "Vector3" and offset ~= currentOffset then
-                  currentOffset = offset
-                  part.CFrame = CFrame.new(offset) * rotCF
-                end
+              if offsetTween then
+                offsetTween:Disconnect()
               end
-            end
 
-            -- one stepper runs both exits over the longer of them, on the
-            -- piece's clock from the fire
-            local exitLength = math.max(sizeReach, offsetReach)
+              piece:fire("despawn", fired)
 
-            -- a despawn lane is never cut: the emit awaits every exit, however
-            -- far past the line's run it reaches. a teardown cancels the
-            -- stepper without finishing it, so the teardown settles the wait too
-            if exitLength > 0 then
-              table.insert(
-                promises,
-                Promise.new(function(resolve)
-                  lifetime.hold(scope, function()
-                    resolve()
-                  end)
+              local sizeReach = sizeIn.reach("despawn")
+              local offsetReach = offsetIn.reach("despawn")
 
-                  lifetime.hold(
-                    scope,
-                    tween.fromParams(
-                      utility.linear_bezier,
-                      exitLength,
-                      function(_, deltaTime, elapsed)
-                        exitAt(elapsed)
-                        return step(deltaTime, elapsed)
-                      end,
-                      nil,
-                      function()
-                        resolve()
-                      end
-                    )
-                  )
-                end)
-              )
-            else
-              exitAt(0)
-            end
+              -- each row is sampled until its own exit lands and never after, so
+              -- a row that snaps is written once and the shorter exit stops first
+              local sizeMoving = true
+              local offsetMoving = true
 
-            if fade.animated then
-              lifetime.hold(
-                scope,
-                tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
-                  local v = fade.at(elapsed)
+              local function exitAt(since: number)
+                if sizeMoving then
+                  sizeMoving = since < sizeReach
 
-                  if typeof(v) == "number" then
-                    part.Transparency = v
+                  local factor = sizeIn.at(fired + math.min(since, sizeReach))
+
+                  if typeof(factor) == "Vector3" and factor ~= currentFactor then
+                    currentFactor = factor
+                    part.Size = size * factor
                   end
+                end
 
-                  return step(deltaTime, elapsed)
-                end)
-              )
-            end
+                if offsetMoving then
+                  offsetMoving = since < offsetReach
 
-            local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
-            table.insert(promises, env.Finished)
+                  local offset = offsetIn.at(fired + math.min(since, offsetReach))
+
+                  if typeof(offset) == "Vector3" and offset ~= currentOffset then
+                    currentOffset = offset
+                    part.CFrame = CFrame.new(offset) * rotCF
+                  end
+                end
+              end
+
+              -- one stepper runs both exits over the longer of them, on the
+              -- piece's clock from the fire
+              local exitLength = math.max(sizeReach, offsetReach)
+
+              -- a despawn lane is never cut: the emit awaits every exit, however
+              -- far past the line's run it reaches. a teardown cancels the
+              -- stepper without finishing it, so the teardown settles the wait too
+              if exitLength > 0 then
+                table.insert(
+                  promises,
+                  Promise.new(function(resolve)
+                    lifetime.hold(scope, function()
+                      resolve()
+                    end)
+
+                    lifetime.hold(
+                      scope,
+                      tween.fromParams(
+                        utility.linear_bezier,
+                        exitLength,
+                        function(_, deltaTime, elapsed)
+                          exitAt(elapsed)
+                          return step(deltaTime, elapsed)
+                        end,
+                        nil,
+                        function()
+                          resolve()
+                        end
+                      )
+                    )
+                  end)
+                )
+              else
+                exitAt(0)
+              end
+
+              if fade.animated then
+                lifetime.hold(
+                  scope,
+                  tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
+                    local v = fade.at(elapsed)
+
+                    if typeof(v) == "number" then
+                      part.Transparency = v
+                    end
+
+                    return step(deltaTime, elapsed)
+                  end)
+                )
+              end
+
+              local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
+              table.insert(promises, env.Finished)
+            end, debug.traceback)
 
             landed()
+
+            if not ok then
+              logger.warn(`a piece failed to despawn: {err}`)
+            end
           end)
         end, scope)
       end
