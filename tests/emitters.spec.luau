@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
+local curves = require("@mod/curves")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
@@ -177,6 +178,54 @@ harness.suite(function()
       harness.render(0.25)
 
       expect(near(part.Transparency, 0.5)).toBe(true)
+    end)
+
+    -- in a queue that plays in turn, an entry carrying a speed ramp starts where
+    -- the entry before it ends, and its ramp waits that long at plain frame time
+    test("a speed ramp on a later entry waits out the entries before it", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(module("piece", "Part"))
+      harness.reset()
+
+      local part = harness.make("Part")
+      local queue = {
+        { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(0.5) },
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = value.lit(0.5),
+          finish = value.lit(1),
+          speed = { start = 2, finish = 2, duration = 1, curve = curves.linear() },
+        },
+      }
+
+      expect(codec.decode(codec.encode({ lanes = { start = queue } })).lanes.start[2].speed.start).toBe(2)
+
+      framed(part, "property", "Transparency", queue)
+
+      local em = lifetime.emit(nil)
+
+      lifetime.run(lifetime.effect(em, 0, nil), function(scope)
+        emitters.dispatch(part, scope, { unc = {}, ref = {} }, 1, registry.get("piece"))
+      end)
+
+      lifetime.seal(em)
+
+      -- the first second passes at plain frames: the first entry is half done
+      for _ = 1, 3 do
+        harness.render(0.25)
+      end
+
+      expect(near(part.Transparency, 0.25)).toBe(true)
+
+      -- then the ramp doubles the clock over the second entry
+      for _ = 1, 3 do
+        harness.render(0.25)
+      end
+
+      expect(near(part.Transparency, 0.75)).toBe(true)
     end)
 
     test("a randomizer is drawn once, by the prologue of the dispatch that finds it", function()

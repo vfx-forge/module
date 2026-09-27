@@ -100,44 +100,21 @@ local function fallbackDuration(obj: Instance): number
   end)
 end
 
--- a wait the queue spells out as a literal, for the reach a ramp sits behind.
--- anything drawn per instance is not a fixed lead and counts as none, which is
--- also what a nan wait has to mean, since no clock can wait one out
-local function litWait(m: any): number
-  if type(m.wait) ~= "table" or not value.isLit(m.wait) then
-    return 0
-  end
-
-  local waited = value.resolve(m.wait)
-
-  if type(waited) ~= "number" or waited ~= waited or waited <= 0 then
-    return 0
-  end
-
-  return waited
-end
-
 -- the speed ramp a legacy tween child carried, as a multiplier on the clock
--- the timer counts, how long that ramp runs, and the lead it sits behind: the
--- waits of the plain delays ahead of it plus a parallel delay right before the
--- entry it rides, which belong to no ramp. it goes by wall time the way the
--- child's own speed tween did, beside the tween it scales
-local function speedOf(queue: { any }): (((wall: number) -> number)?, number?, number)
-  local lead = 0
-  local held = 0
-
-  for _, m in queue do
+-- the timer counts, how long that ramp runs, and the lead it sits behind: where
+-- its entry starts, placed by the same walk the sampler places it with, so the
+-- waits and the entries ahead of it count and a parallel entry keeps only its
+-- own delay. it goes by wall time the way the child's own speed tween did,
+-- beside the tween it scales
+local function speedOf(
+  queue: { any },
+  rolls: mods.Rolls,
+  linked: number
+): (((wall: number) -> number)?, number?, number)
+  for i, m in queue do
     local ramp = m.speed
 
     if type(ramp) ~= "table" then
-      if m.kind == "delay" and m.parallel then
-        held = litWait(m)
-      elseif m.kind == "delay" then
-        lead += litWait(m)
-      else
-        held = 0
-      end
-
       continue
     end
 
@@ -146,7 +123,9 @@ local function speedOf(queue: { any }): (((wall: number) -> number)?, number?, n
       return utility.lerp(ramp.start, ramp.finish, modifiers.alphaFromCurve(ramp.curve, progress))
     end
 
-    return speedAt, ramp.duration, lead + (if m.parallel then held else 0)
+    local offsets = modifiers.schedule(queue, rolls.picks, linked, rolls.env)
+
+    return speedAt, ramp.duration, if offsets ~= nil then offsets[i] or 0 else 0
   end
 
   return nil, nil, 0
@@ -179,7 +158,7 @@ local function drive(
   end
 
   local wants, restore = resetTo(queue, currentOf(target, source, name))
-  local speedAt, speedUntil, lead = speedOf(queue)
+  local speedAt, speedUntil, lead = speedOf(queue, rolls, linked)
 
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
 

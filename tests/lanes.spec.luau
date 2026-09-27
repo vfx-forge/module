@@ -635,5 +635,20 @@ harness.suite(function()
 
       expect(piece.runs.dissipate).toBe(nil)
     end)
+
+    -- parallel entries only come from the old format, each on its own delay,
+    -- so the lane waits for whichever of them starts first
+    test("a queue of parallel entries leads by the smallest wait", function()
+      local queue = {
+        { kind = "delay", chain = false, parallel = true, wait = value.lit(1) },
+        { kind = "tween", chain = false, parallel = true, duration = 1, start = value.lit(0), finish = value.lit(1) },
+        { kind = "delay", chain = false, parallel = true, wait = value.lit(0.5) },
+        { kind = "tween", chain = false, parallel = true, duration = 1, start = value.lit(1), finish = value.lit(0) },
+      }
+
+      local _, lead = mods.sampler(Instance.new("Attachment"), "attribute", "X", 1, queue, mods.roll(queue), 1)
+
+      expect(lead).toBe(0.5)
+    end)
   end)
 end)
