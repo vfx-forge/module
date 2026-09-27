@@ -49,6 +49,7 @@ export type Track = {
   value: any,
   has: (lane: string) -> boolean,
   reach: (lane: string) -> number,
+  still: (lane: string, at: number) -> boolean,
   apply: (self: Track, write: (v: any) -> ()) -> (),
 }
 
@@ -500,6 +501,7 @@ wrap = function(state: State, source: string, name: string, row: knob.Knob, rest
     value = rest,
     has = inner.has,
     reach = inner.reach,
+    still = inner.still,
   }
 
   function track.apply(_, write: (v: any) -> ())

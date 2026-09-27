@@ -453,7 +453,8 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
     inFlight += 1
 
     -- the dwell's own elapsed when it ended, the moment the piece fires its
-    -- despawn lane
+    -- despawn lane. kept every frame, since a speed that stops for good ends
+    -- the dwell wherever it stood
     local fired = 0
 
     -- the dwell is part of the effect, not of the scheduler: its cleanup lives
@@ -464,12 +465,13 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
     tween.after(math.huge, function(deltaTime, elapsed)
       local target = life.at(elapsed)
 
+      fired = elapsed
+
       if typeof(target) ~= "number" or target ~= target then
         target = drawn
       end
 
       if elapsed >= target then
-        fired = elapsed
         return nil :: any
       end
 
@@ -478,7 +480,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
       task.spawn(function()
         -- a despawn that throws still lands its piece, or the emit would wait
         -- on it until the effect is torn down
-        local ok, err = xpcall(function()
+        local ok, err = pcall(function()
           if sizeTween then
             sizeTween:Disconnect()
           end
@@ -492,6 +494,11 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
           local sizeReach = sizeIn.reach("despawn")
           local offsetReach = offsetIn.reach("despawn")
 
+          -- a row whose despawn lane leaves it where it stands is written once,
+          -- where it stands, and the exit still runs as long as its reach says
+          local sizeUntil = if sizeIn.still("despawn", fired) then 0 else sizeReach
+          local offsetUntil = if offsetIn.still("despawn", fired) then 0 else offsetReach
+
           -- each row is sampled until its own exit lands and never after, so a row
           -- that snaps is written once and the shorter exit stops first
           local sizeMoving = true
@@ -499,9 +506,9 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
 
           local function exitAt(since: number)
             if sizeMoving then
-              sizeMoving = since < sizeReach
+              sizeMoving = since < sizeUntil
 
-              local factor = sizeIn.at(fired + math.min(since, sizeReach))
+              local factor = sizeIn.at(fired + math.min(since, sizeUntil))
 
               if typeof(factor) == "Vector3" and factor ~= currentFactor then
                 currentFactor = factor
@@ -510,9 +517,9 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
             end
 
             if offsetMoving then
-              offsetMoving = since < offsetReach
+              offsetMoving = since < offsetUntil
 
-              local offset = offsetIn.at(fired + math.min(since, offsetReach))
+              local offset = offsetIn.at(fired + math.min(since, offsetUntil))
 
               if typeof(offset) == "Vector3" and offset ~= currentOffset then
                 currentOffset = offset
@@ -542,7 +549,15 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
                     utility.linear_bezier,
                     exitLength,
                     function(_, deltaTime, elapsed)
-                      exitAt(elapsed)
+                      -- a sample that throws would throw every frame and hold
+                      -- the emit until teardown, so it ends the exit instead
+                      local sampled, problem = pcall(exitAt, elapsed)
+
+                      if not sampled then
+                        logger.warn(`a piece's exit stopped: {problem}`)
+                        return nil
+                      end
+
                       return step(deltaTime, elapsed)
                     end,
                     nil,
@@ -574,7 +589,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
 
           local env = scope.effects.emitOnFinish(emitOnFinish, part, scope.depth + 1, scope)
           table.insert(promises, env.Finished)
-        end, debug.traceback)
+        end)
 
         landed()
 

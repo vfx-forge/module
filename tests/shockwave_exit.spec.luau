@@ -252,6 +252,116 @@ harness.suite(function()
       end
     end)
 
+    -- the exit stepper samples only a row whose despawn lane can move it, and
+    -- a lane that cannot still answers its reach
+    test("a despawn lane that leaves the row where it stands is still", function()
+      for _, id in PIECES do
+        local attrs, module = pieceOf(id, {})
+        local piece = mods.piece(module.events)
+        local offsetIn = attrs.OffsetIn(nil, nil, piece)
+        local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
+
+        expect(offsetIn.still("despawn", 2)).toBe(true)
+        expect(sizeIn.still("despawn", 2)).toBe(false)
+        expect(offsetIn.still("dissipate", 2)).toBe(true)
+        expect(near(offsetIn.reach("despawn"), attrs.OffsetOutDuration)).toBe(true)
+
+        piece:fire("despawn", 2)
+
+        expect(offsetIn.still("despawn", 2)).toBe(true)
+        expect(sizeIn.still("despawn", 2)).toBe(false)
+      end
+    end)
+
+    test("a despawn lane is still only over the value it ends at", function()
+      for _, id in PIECES do
+        local stands = Vector3.new(0, 2, 0)
+        local attrs, module = pieceOf(id, { OffsetIn = stands, OffsetOut = stands })
+        local kept = attrs.OffsetIn(nil, nil, mods.piece(module.events))
+
+        expect(kept.still("despawn", 2)).toBe(true)
+
+        local moved = pieceOf(id, { OffsetIn = stands })
+        local leaving = moved.OffsetIn(nil, nil, mods.piece(module.events))
+
+        expect(leaving.still("despawn", 2)).toBe(false)
+      end
+    end)
+
+    -- the lane chains from wherever the lanes under it hold the row when it
+    -- fires, so an entry still moving there moves the exit too
+    test("a despawn lane fired over a moving entry is still only where the entry stands", function()
+      for _, id in PIECES do
+        load()
+        harness.reset()
+
+        local rise = {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = value.lit(Vector3.new(0, 0, 0)),
+          finish = value.lit(Vector3.new(0, 2, 0)),
+        }
+        local ref = harness.make("Part")
+
+        -- this host's Vector3 is not the native vector a default rests at
+        ref:SetAttribute("OffsetOut", Vector3.new(0, 0, 0))
+        ref:SetAttribute(
+          mods.attrName("attribute", "OffsetIn"),
+          frame.frame(codec.encode({ v = 2, lanes = { start = { rise } } }))
+        )
+
+        local module = registry.get(id) :: any
+        local attrs = registry.read(ref, module) :: any
+        local early = mods.piece(module.events)
+        local late = mods.piece(module.events)
+        local atStart = attrs.OffsetIn(nil, nil, early)
+        local midway = attrs.OffsetIn(nil, nil, late)
+
+        early:fire("despawn", 0)
+        late:fire("despawn", 0.5)
+
+        expect(atStart.still("despawn", 0)).toBe(true)
+        expect(midway.still("despawn", 0.5)).toBe(false)
+      end
+    end)
+
+    test("a despawn lane that passes through somewhere else is not still", function()
+      for _, id in PIECES do
+        load()
+        harness.reset()
+
+        local away = { kind = "tween", chain = true, duration = 0.2, finish = value.lit(Vector3.new(0, 1, 0)) }
+        local back = { kind = "tween", chain = true, duration = 0.2, finish = value.lit(Vector3.new(0, 0, 0)) }
+        local drawn = {
+          kind = "tween",
+          chain = true,
+          duration = 0.2,
+          finish = value.draw(Vector3.new(1, 1, 1), Vector3.new(1, 1, 1)),
+        }
+        local ref = harness.make("Part")
+
+        ref:SetAttribute(
+          mods.attrName("attribute", "OffsetIn"),
+          frame.frame(codec.encode({ v = 2, lanes = { despawn = { away, back } } }))
+        )
+
+        ref:SetAttribute(
+          mods.attrName("attribute", "SizeScaleIn"),
+          frame.frame(codec.encode({ v = 2, lanes = { despawn = { drawn } } }))
+        )
+
+        local module = registry.get(id) :: any
+        local attrs = registry.read(ref, module) :: any
+        local piece = mods.piece(module.events)
+        local offsetIn = attrs.OffsetIn(nil, nil, piece)
+        local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
+
+        expect(offsetIn.still("despawn", 2)).toBe(false)
+        expect(sizeIn.still("despawn", 2)).toBe(false)
+      end
+    end)
+
     test("the old shrink spellings still reach the despawn lane", function()
       for _, id in PIECES do
         local attrs, module = pieceOf(id, {
@@ -492,6 +602,20 @@ harness.suite(function()
       end
 
       expect(nearVector(sizeScale.at(2.4), Vector3.new(0.25, 0.25, 0.25))).toBe(true)
+    end)
+
+    test("a debris shrink to where the piece stands is still", function()
+      local from = Vector3.new(1, 1, 1)
+      local kept, module = pieceOf("shockwave_debris", { SizeScale = from, ShrinkScale = from })
+      local held = kept.SizeScale(nil, nil, mods.piece(module.events))
+
+      expect(held.still("despawn", 2)).toBe(true)
+      expect(near(held.reach("despawn"), kept.ShrinkDuration)).toBe(true)
+
+      local shrunk = pieceOf("shockwave_debris", {})
+      local shrinking = shrunk.SizeScale(nil, nil, mods.piece(module.events))
+
+      expect(shrinking.still("despawn", 2)).toBe(false)
     end)
 
     test("the emit waits out as long an exit as the hand shrink did", function()

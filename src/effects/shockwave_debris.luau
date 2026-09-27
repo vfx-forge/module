@@ -90,7 +90,7 @@ debris.attributes = {
   SizeScale = knob(vector.one)
     :mod(mod.to(shrinkEnd):duration(shrinkDuration):curve(shrinkCurve):lane("despawn"))
     :label("Scale")
-    :hint("Size factor over the piece's life."),
+    :hint("Size factor on each piece; its despawn lane runs the shrink."),
   ShrinkScale = knob(vector.zero)
     :aliases("SizeScaleOut_End", "SizeScaleEnd")
     :label("End")
@@ -467,7 +467,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
       task.spawn(function()
         -- a despawn that throws still lands its piece, or the emit would wait
         -- on it until the effect is torn down
-        local ok, err = xpcall(function()
+        local ok, err = pcall(function()
           if scaleTween then
             scaleTween:Disconnect()
           end
@@ -480,8 +480,19 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
           -- sampled
           local length = math.max(exitLength, sizeScale.reach("despawn"))
 
+          -- a lane that leaves the size where it stands is written once, where
+          -- it stands, and sampled until it lands and never after
+          local sizeUntil = if sizeScale.still("despawn", fired) then 0 else length
+          local sizeMoving = true
+
           local function exitAt(since: number)
-            local factor = sizeScale.at(fired + math.min(since, length))
+            if not sizeMoving then
+              return
+            end
+
+            sizeMoving = since < sizeUntil
+
+            local factor = sizeScale.at(fired + math.min(since, sizeUntil))
 
             if typeof(factor) == "Vector3" and factor ~= currentFactor then
               currentFactor = factor
@@ -506,7 +517,15 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
                     utility.linear_bezier,
                     length,
                     function(_, deltaTime, elapsed)
-                      exitAt(elapsed)
+                      -- a sample that throws would throw every frame and hold
+                      -- the emit until teardown, so it ends the exit instead
+                      local sampled, problem = pcall(exitAt, elapsed)
+
+                      if not sampled then
+                        logger.warn(`a piece's exit stopped: {problem}`)
+                        return nil
+                      end
+
                       return deltaTime
                     end,
                     nil,
@@ -538,7 +557,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
           local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
           table.insert(promises, env.Finished)
-        end, debug.traceback)
+        end)
 
         landed()
 

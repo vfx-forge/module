@@ -316,6 +316,10 @@ export type Track = {
   animated: boolean,
   has: (lane: string) -> boolean,
   reach: (lane: string) -> number,
+  -- whether the lane, fired at `at`, leaves the row where it stood then the
+  -- whole way, which a driver can skip sampling. false whenever that cannot
+  -- be told from the lane's entries, and true for a lane the row does not hold
+  still: (lane: string, at: number) -> boolean,
 }
 
 local Piece = {}
@@ -347,6 +351,9 @@ type Lane = {
   build: (() -> ())?,
   silent: boolean,
   fallback: Lane?,
+  -- the one value an event lane made only of chained tweens to it ends every
+  -- entry at, and nil for any other lane
+  rests: any,
 }
 
 -- the lane that answers for `lane` once it has fired: itself, built on the
@@ -518,6 +525,30 @@ local function valueAt(
   return if v ~= nil then v else base
 end
 
+-- the one value a queue of chained tweens leaves the row at when every entry
+-- names it outright: fired over that value, no entry moves the row at all.
+-- nil for a queue that waits, draws, starts anywhere of its own or goes
+-- somewhere else on the way
+local function restsOf(queue: { any }): any
+  local rests: any = nil
+
+  for _, m in queue do
+    if m.kind ~= "tween" or not m.chain or m.finish == nil or not value.isLit(m.finish) then
+      return nil
+    end
+
+    local v = value.resolve(m.finish)
+
+    if rests ~= nil and v ~= rests then
+      return nil
+    end
+
+    rests = v
+  end
+
+  return rests
+end
+
 local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any): Track
   local reach = span
   local ends = false
@@ -559,6 +590,26 @@ local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any):
       end
 
       return 0
+    end,
+    still = function(lane: string, at: number): boolean
+      for i, held in set do
+        if held.name ~= lane then
+          continue
+        end
+
+        local rests = held.rests
+        local fallback = held.fallback
+
+        if rests == nil or (fallback ~= nil and fallback.rests ~= rests) then
+          return false
+        end
+
+        -- where the lanes under this one hold the row when it fires, which is
+        -- what its first entry chains from
+        return valueAt(set, piece, span, at, rest, nil, i) == rests
+      end
+
+      return true
     end,
   }
 end
@@ -629,6 +680,10 @@ local function noReach(): number
   return 0
 end
 
+local function noMove(): boolean
+  return true
+end
+
 local function constant(default: any, span: number): Track
   return {
     at = function(_, own: any?)
@@ -638,6 +693,7 @@ local function constant(default: any, span: number): Track
     animated = false,
     has = noLane,
     reach = noReach,
+    still = noMove,
   }
 end
 
@@ -815,6 +871,7 @@ local function eventLaneOf(
     build = nil,
     silent = false,
     fallback = nil,
+    rests = restsOf(queue),
   }
 
   out.build = function()
@@ -973,6 +1030,7 @@ local function buildNow(
         build = nil,
         silent = false,
         fallback = nil,
+        rests = nil,
       })
     end
 
@@ -1239,6 +1297,13 @@ function mods.build(
         end
 
         return real().reach(lane)
+      end,
+      still = function(lane: string, at: number): boolean
+        if not holds(lane) then
+          return true
+        end
+
+        return real().still(lane, at)
       end,
     }
   end
