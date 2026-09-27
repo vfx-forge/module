@@ -329,6 +329,28 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
   local promises = {}
 
+  -- pieces whose dwell has begun and whose exit is not among the promises yet,
+  -- and what wakes the emit once none is left. a teardown cancels every dwell
+  -- without ending it, so it wakes the emit too
+  local inFlight = 0
+  local drained: (() -> ())? = nil
+
+  local function landed()
+    inFlight -= 1
+
+    if inFlight == 0 and drained ~= nil then
+      drained()
+    end
+  end
+
+  lifetime.hold(scope, function()
+    inFlight = 0
+
+    if drained ~= nil then
+      drained()
+    end
+  end)
+
   local start = utility.getTransformedOriginExtents(origin)
 
   local last = 0
@@ -511,10 +533,10 @@ function line.emit(ctx: reader.Ctx, attrs: any)
         local offsetTween
 
         -- every piece carries the despawn lane, so a track is animated whether
-        -- or not anything runs from the emit: only a row with a start lane gets
-        -- an entry stepper, or an unauthored offset would write CFrame every
-        -- frame
-        if offsetIn.has("start") then
+        -- or not anything runs from the emit: only a row with a lane of the
+        -- emit's own gets an in-phase stepper, or an unauthored offset would
+        -- write CFrame every frame
+        if offsetIn.has("start") or offsetIn.has("end") then
           offsetTween = tween.fromParams(utility.linear_bezier, offsetIn.duration, function(_, deltaTime, elapsed)
             local at = offsetIn.at(elapsed)
 
@@ -535,7 +557,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
         part.Size = size * currentFactor
 
-        if sizeIn.has("start") then
+        if sizeIn.has("start") or sizeIn.has("end") then
           sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.duration, function(_, deltaTime, elapsed)
             local factor = sizeIn.at(elapsed)
 
@@ -564,6 +586,8 @@ function line.emit(ctx: reader.Ctx, attrs: any)
         if typeof(drawn) ~= "number" or drawn ~= drawn then
           drawn = rng:NextNumber(lifeMin, lifeMax)
         end
+
+        inFlight += 1
 
         -- the dwell's own elapsed when it ended, the moment the piece fires its
         -- despawn lane
@@ -599,25 +623,41 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
             piece:fire("despawn", fired)
 
-            local function exitAt(at: number)
-              local factor = sizeIn.at(at)
+            local sizeReach = sizeIn.reach("despawn")
+            local offsetReach = offsetIn.reach("despawn")
 
-              if typeof(factor) == "Vector3" and factor ~= currentFactor then
-                currentFactor = factor
-                part.Size = size * factor
+            -- each row is sampled until its own exit lands and never after, so
+            -- a row that snaps is written once and the shorter exit stops first
+            local sizeMoving = true
+            local offsetMoving = true
+
+            local function exitAt(since: number)
+              if sizeMoving then
+                sizeMoving = since < sizeReach
+
+                local factor = sizeIn.at(fired + math.min(since, sizeReach))
+
+                if typeof(factor) == "Vector3" and factor ~= currentFactor then
+                  currentFactor = factor
+                  part.Size = size * factor
+                end
               end
 
-              local offset = offsetIn.at(at)
+              if offsetMoving then
+                offsetMoving = since < offsetReach
 
-              if typeof(offset) == "Vector3" and offset ~= currentOffset then
-                currentOffset = offset
-                part.CFrame = CFrame.new(offset) * rotCF
+                local offset = offsetIn.at(fired + math.min(since, offsetReach))
+
+                if typeof(offset) == "Vector3" and offset ~= currentOffset then
+                  currentOffset = offset
+                  part.CFrame = CFrame.new(offset) * rotCF
+                end
               end
             end
 
             -- one stepper runs both exits over the longer of them, on the
             -- piece's clock from the fire
-            local exitLength = math.max(sizeIn.reach("despawn"), offsetIn.reach("despawn"))
+            local exitLength = math.max(sizeReach, offsetReach)
 
             -- a despawn lane is never cut: the emit awaits every exit, however
             -- far past the line's run it reaches. a teardown cancels the
@@ -636,7 +676,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
                       utility.linear_bezier,
                       exitLength,
                       function(_, deltaTime, elapsed)
-                        exitAt(fired + elapsed)
+                        exitAt(elapsed)
                         return step(deltaTime, elapsed)
                       end,
                       nil,
@@ -648,7 +688,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
                 end)
               )
             else
-              exitAt(fired)
+              exitAt(0)
             end
 
             if fade.animated then
@@ -668,6 +708,8 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
             local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
             table.insert(promises, env.Finished)
+
+            landed()
           end)
         end, scope)
       end
@@ -684,6 +726,14 @@ function line.emit(ctx: reader.Ctx, attrs: any)
   tween.timer(runLength, function(deltaTime, elapsed)
     return step(deltaTime, elapsed)
   end, nil, scope)
+
+  -- a dwell ending on the timer's own frame files its exit after the timer
+  -- returns, and the wait below would never see it
+  if inFlight > 0 then
+    Promise.new(function(resolve)
+      drained = resolve
+    end):await()
+  end
 
   Promise.all(promises):await()
 end

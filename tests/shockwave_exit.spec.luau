@@ -360,5 +360,73 @@ harness.suite(function()
         expect(ctx.duration + EPSILON >= sweep + attrs.Lifetime.value.Max + exit).toBe(true)
       end
     end)
+
+    test("the old exit offset spellings still reach the despawn lane", function()
+      for _, id in PIECES do
+        for _, spelling in { "PartOffset", "Offset_End", "OffsetOut_End" } do
+          local attrs, module = pieceOf(id, {
+            [spelling] = Vector3.new(0, 4, 0),
+            Offset_End_Duration = 0.25,
+          })
+
+          local piece = mods.piece(module.events)
+          local offsetIn = attrs.OffsetIn(nil, nil, piece)
+
+          expect(near(offsetIn.reach("despawn"), 0.25)).toBe(true)
+
+          piece:fire("despawn", 2)
+
+          expect(nearVector(offsetIn.at(2.25), Vector3.new(0, 4, 0))).toBe(true)
+        end
+      end
+    end)
+
+    -- the pieces of one read are handed the lanes it built rather than
+    -- building their own, and still fire on clocks of their own
+    test("one piece despawning never moves another", function()
+      for _, id in PIECES do
+        local attrs, module = pieceOf(id, {
+          SizeScaleIn = Vector3.new(1, 1, 1),
+          ShrinkScale = Vector3.new(0.2, 0.2, 0.2),
+          ShrinkDuration = 0.4,
+        })
+
+        local leaving = mods.piece(module.events)
+        local staying = mods.piece(module.events)
+        local gone = attrs.SizeScaleIn(nil, nil, leaving)
+        local kept = attrs.SizeScaleIn(nil, nil, staying)
+
+        leaving:fire("despawn", 1)
+
+        expect(nearVector(gone.at(1.4), Vector3.new(0.2, 0.2, 0.2))).toBe(true)
+        expect(kept.at(1.4) == Vector3.new(1, 1, 1)).toBe(true)
+        expect(near(kept.reach("despawn"), 0.4)).toBe(true)
+      end
+    end)
+
+    -- the emit steps an entry for a row holding an end lane as well as a start
+    -- one, since such a row runs during the dwell with no start lane at all
+    test("an authored end lane on the entry rows holds no start lane", function()
+      for _, id in PIECES do
+        load()
+        harness.reset()
+
+        local ends = { kind = "tween", chain = true, duration = 0.2, finish = value.lit(Vector3.new(0, 1, 0)) }
+        local ref = harness.make("Part")
+
+        ref:SetAttribute(
+          mods.attrName("attribute", "OffsetIn"),
+          frame.frame(codec.encode({ v = 2, lanes = { ["end"] = { ends } } }))
+        )
+
+        local module = registry.get(id) :: any
+        local attrs = registry.read(ref, module) :: any
+        local offsetIn = attrs.OffsetIn(nil, nil, mods.piece(module.events))
+
+        expect(offsetIn.has("start")).toBe(false)
+        expect(offsetIn.has("end")).toBe(true)
+        expect(offsetIn.has("despawn")).toBe(true)
+      end
+    end)
   end)
 end)

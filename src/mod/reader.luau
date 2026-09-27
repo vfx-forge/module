@@ -81,8 +81,18 @@ type Lookup = (ref: Instance, source: string, name: string, map: { [string]: any
 -- a row's lanes, its framed flag and the spelling it was found under, kept
 -- together so a piece calling the row a second time is handed the one lookup
 -- rather than paying for it again. live is the range row's lanes filtered of
--- what moves nothing, built once on the first piece call that needs it
-type Found = { lanes: { [string]: { any } }?, framed: boolean, under: string?, live: { [string]: { any } }? }
+-- what moves nothing, built once on the first piece call that needs it. share
+-- hands the lanes the read built to a piece calling the row with nothing of its
+-- own, over the span it was built for and resting where rest says
+type Found = {
+  lanes: { [string]: { any } }?,
+  framed: boolean,
+  under: string?,
+  live: { [string]: { any } }?,
+  share: ((other: mods.Piece) -> mods.Track?)?,
+  shareSpan: number?,
+  rest: any,
+}
 
 -- everything one read carries, built once and handed down to the steps below.
 -- the steps are written at load rather than rebuilt per read, so a module's
@@ -244,7 +254,7 @@ local function queueFor(state: State, source: string, name: string, row: knob.Kn
   if found == nil then
     local lanes, framed, under = queueOf(state, source, name, row)
 
-    found = { lanes = lanes, framed = framed, under = under, live = nil }
+    found = { lanes = lanes, framed = framed, under = under, live = nil, share = nil, shareSpan = nil, rest = nil }
     memo[name] = found
   end
 
@@ -410,6 +420,8 @@ local function moving(lanes: { [string]: { any } }): { [string]: { any } }
   return out
 end
 
+local wrap
+
 local function trackOf(
   state: State,
   source: string,
@@ -465,7 +477,21 @@ local function trackOf(
   -- that is where the value it chains from and the range it draws inside are
   -- stored too; a property row's base is the property, whatever the spelling
   local built = if source == "property" then name else found.under or name
-  local inner = mods.build(ctx.ref, source, built, default, span, nil, lanes, found.framed, opts, own)
+  local inner, share = mods.build(ctx.ref, source, built, default, span, nil, lanes, found.framed, opts, own)
+
+  -- only a build from where the row rests, with the duration decided, is the
+  -- one every piece calling the row with nothing of its own would make again
+  if not seeded and not state.deciding then
+    found.share = share
+    found.shareSpan = span
+    found.rest = rest
+  end
+
+  return wrap(state, source, name, row, rest, inner)
+end
+
+wrap = function(state: State, source: string, name: string, row: knob.Knob, rest: any, inner: mods.Track): Track
+  local ctx = state.ctx
 
   local track = {
     at = inner.at,
@@ -492,9 +518,24 @@ local function trackOf(
   -- event lanes fire on
   setmetatable(track, {
     __call = function(_, current: any, span: number?, own: mods.Piece?)
+      local over = span or durationOf(state)
+
+      if current == nil then
+        local found = queueFor(state, source, name, row)
+        local share = found.share
+
+        if share ~= nil and found.shareSpan == over then
+          local shared = share(if own ~= nil then own else pieceOf(state))
+
+          if shared ~= nil then
+            return wrap(state, source, name, row, found.rest, shared)
+          end
+        end
+      end
+
       local held = if current ~= nil then current else plainOf(state, source, name, row)
 
-      return trackOf(state, source, name, row, held, current ~= nil, span or durationOf(state), own)
+      return trackOf(state, source, name, row, held, current ~= nil, over, own)
     end,
   })
 

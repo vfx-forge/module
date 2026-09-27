@@ -725,6 +725,32 @@ local function completed(
   return queue
 end
 
+-- whether a lane's entries come out differently for each piece that builds
+-- them: a draw is rolled per build, an envelope deviates by a roll, and an
+-- event lane whose entry names no duration is scheduled again from whatever
+-- the fire says is left
+local function perPiece(queue: { any }, event: boolean): boolean
+  for _, m in queue do
+    if m.kind == "randomizer" or m.envelope ~= nil then
+      return true
+    end
+
+    if (m.start ~= nil and value.isDraw(m.start)) or (m.finish ~= nil and value.isDraw(m.finish)) then
+      return true
+    end
+
+    if type(m.wait) == "table" and value.isDraw(m.wait) then
+      return true
+    end
+
+    if event and m.kind ~= "delay" and not modifiers.BASE_KINDS[m.kind] and typeof(m.duration) ~= "number" then
+      return true
+    end
+  end
+
+  return false
+end
+
 -- the one way a knob becomes a track. it always answers: what rests when nothing
 -- usable is authored, else one sampler per lane over that lane's own reach. a
 -- default given as a lane map is what runs when nothing is authored, for a knob
@@ -733,7 +759,11 @@ end
 -- `ownStart` is for a knob whose start belongs to the effect rather than to the
 -- row, and `value` is where the caller says the row rests, for a default made of
 -- lanes that names no start of its own. `piece` is the clock the row's event
--- lanes fire on, and the row carries none without one
+-- lanes fire on, and the row carries none without one.
+--
+-- the second return hands the same lanes to another piece of the same events,
+-- so a caller building one track per piece pays for the lanes once. nil when
+-- some lane draws or schedules per piece, which only a build of its own gets
 function mods.build(
   ref: Instance,
   source: string,
@@ -745,7 +775,7 @@ function mods.build(
   framed: boolean,
   opts: { ownStart: boolean?, value: any? }?,
   piece: Piece?
-): Track
+): (Track, ((other: Piece) -> Track?)?)
   local fallback: { [string]: { any } }? = if type(default) == "table" then default else nil
   local rest: any = if fallback then nil else default
 
@@ -797,6 +827,10 @@ function mods.build(
   -- fails, so a row with nothing stored never pays for this table
   local unread: { [string]: boolean }? = nil
 
+  -- set once some lane is built from entries that come out differently per
+  -- piece, so the lanes this build keeps are never handed to another
+  local varies = false
+
   -- a default lane is taken as it stands: the two old-format rewrites answer for
   -- what an author stored, and a row's own defaults were never read that way
   local function setOf(map: { [string]: { any } }, authored: boolean): { Lane }
@@ -815,6 +849,10 @@ function mods.build(
 
       if entries ~= nil then
         sample, reach, first, length = laneOf(ref, source, name, entries, span, env, seed, lane)
+      end
+
+      if sample ~= nil and not varies then
+        varies = perPiece(entries :: { any }, lane ~= "start" and lane ~= "end")
       end
 
       -- an authored lane that says nothing leaves the default of its name
@@ -856,19 +894,48 @@ function mods.build(
     return out
   end
 
+  local events = if piece then piece.events else nil
+
+  -- a track that runs nothing is the same for every piece, and lanes that come
+  -- out alike for every piece are handed on to one of the same events
+  local function shared(set: { Lane }?, resting: any): (Track, ((other: Piece) -> Track?)?)
+    if set == nil then
+      local track = constant(resting, span)
+
+      return track, function()
+        return track
+      end
+    end
+
+    local track = trackFrom(set, piece, span, footing)
+
+    if varies then
+      return track, nil
+    end
+
+    return track,
+      function(other: Piece)
+        if other.events ~= events then
+          return nil
+        end
+
+        return trackFrom(set, other, span, footing)
+      end
+  end
+
   -- nothing that runs rests where a map silencing every default lane rests
-  local function resting(): Track
+  local function resting(): (Track, ((other: Piece) -> Track?)?)
     if fallback == nil then
-      return constant(rest, span)
+      return shared(nil, rest)
     end
 
     local set = setOf(fallback, false)
 
     if #set == 0 then
-      return constant(footing, span)
+      return shared(nil, footing)
     end
 
-    return trackFrom(set, piece, span, footing)
+    return shared(set, nil)
   end
 
   -- a map naming no lane is the payload a row whose modifiers were cleared
@@ -895,7 +962,7 @@ function mods.build(
   end
 
   if fallback == nil then
-    return trackFrom(set, piece, span, footing)
+    return shared(set, nil)
   end
 
   -- a stored map owns the lanes it names and nothing else, framed or read out
@@ -914,12 +981,12 @@ function mods.build(
   end
 
   if #set == 0 then
-    return constant(footing, span)
+    return shared(nil, footing)
   end
 
   table.sort(set, byOrder)
 
-  return trackFrom(set, piece, span, footing)
+  return shared(set, nil)
 end
 
 -- the read half: what an effect that still names its own knobs calls
@@ -934,8 +1001,9 @@ function mods.track(
   piece: Piece?
 ): Track
   local lanes, framed = mods.read(ref, source, name)
+  local track = mods.build(ref, source, name, default, span, env, lanes, framed, opts, piece)
 
-  return mods.build(ref, source, name, default, span, env, lanes, framed, opts, piece)
+  return track
 end
 
 local function scaleValue(v: any, factor: number): any
