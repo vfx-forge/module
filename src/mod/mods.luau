@@ -666,6 +666,20 @@ local function leadTween(queue: { any }?): any
   return queue[1]
 end
 
+-- whether a lane opens on a tween that neither chains nor names a start, which
+-- samples nothing and so can never run
+local function blankLead(queue: { any }): boolean
+  for _, m in queue do
+    if m.kind == "delay" or modifiers.BASE_KINDS[m.kind] then
+      continue
+    end
+
+    return m.kind == "tween" and not m.chain and m.start == nil
+  end
+
+  return false
+end
+
 -- a lane's entries with the two old-format rewrites applied: an effect-owned
 -- start becomes a half quad, and a half quad is completed from the default. nil
 -- when the lane cannot be completed at all, which is a lane that says nothing
@@ -796,20 +810,27 @@ function mods.build(
       end
 
       local entries = if authored then completed(queue, framed, seeded, lead, fillStart, fillFinish) else queue
+      local sample: ((elapsed: number, own: any?, left: number?) -> any)? = nil
+      local reach, first, length = span, 0, 0
 
-      if entries == nil then
-        if authored then
-          unread = unread or {}
-          unread[lane] = true
-        end
-
-        continue
+      if entries ~= nil then
+        sample, reach, first, length = laneOf(ref, source, name, entries, span, env, seed, lane)
       end
 
-      local sample, reach, first, length = laneOf(ref, source, name, entries, span, env, seed, lane)
-
+      -- an authored lane that says nothing leaves the default of its name
+      -- running. only one opening on a tween with no start and no chain is
+      -- worth a word: an old lane the format could not complete is dropped on
+      -- purpose
       if sample == nil then
         if authored then
+          if entries ~= nil and blankLead(entries) then
+            mods.warnOnce(
+              ref,
+              `{name}.{lane}`,
+              `{name} has a {lane} modifier with no start that does not chain, and it was skipped`
+            )
+          end
+
           unread = unread or {}
           unread[lane] = true
         end
@@ -835,6 +856,7 @@ function mods.build(
     return out
   end
 
+  -- nothing that runs rests where a map silencing every default lane rests
   local function resting(): Track
     if fallback == nil then
       return constant(rest, span)
@@ -843,7 +865,7 @@ function mods.build(
     local set = setOf(fallback, false)
 
     if #set == 0 then
-      return constant(nil, span)
+      return constant(footing, span)
     end
 
     return trackFrom(set, piece, span, footing)

@@ -382,6 +382,40 @@ harness.suite(function()
       expect(track.has("dissipate")).toBe(false)
     end)
 
+    -- a tween that neither chains nor names a start samples nothing, so a
+    -- default made only of such lanes builds nothing, and it rests where a map
+    -- silencing every default lane does
+    test("a default whose every lane builds nothing rests at the stated value", function()
+      local blank = { kind = "tween", chain = false, duration = 1, finish = value.lit(1) }
+      local track = stating(nil, { start = { blank } }, 5, nil, 0)
+
+      expect(track.animated).toBe(false)
+      expect(track.at(0)).toBe(0)
+    end)
+
+    test("an authored lane opening on a tween with no start and no chain warns once and is skipped", function()
+      local blank = { kind = "tween", chain = false, duration = 1, finish = value.lit(1) }
+      local track
+
+      local warnings = harness.captureWarnings(function()
+        track = built({ start = { blank } }, 0, 5, nil)
+      end)
+
+      expect(#warnings).toBe(1)
+      expect(track.has("start")).toBe(false)
+      expect(track.at(0)).toBe(0)
+    end)
+
+    test("an old-format lane that cannot be completed is dropped without a word", function()
+      local curveOnly = { kind = "tween", chain = false, partial = "both", curve = "" }
+
+      local warnings = harness.captureWarnings(function()
+        legacy({ start = { curveOnly } }, 3, 5, nil)
+      end)
+
+      expect(#warnings).toBe(0)
+    end)
+
     test("an empty map rests at the row's own value", function()
       local track = built({}, 3, 5, nil)
 
