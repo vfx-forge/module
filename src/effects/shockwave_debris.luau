@@ -3,7 +3,9 @@ local CollectionService = game:GetService("CollectionService")
 
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
+local mods = require("@mod/mods")
 local tween = require("@mod/tween")
+local logger = require("@mod/logger")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
@@ -16,12 +18,35 @@ local ObjectCache = require("@obj/ObjectCache")
 
 local rng = Random.new()
 
+local function always()
+  return true
+end
+
+-- the exit is the despawn lane's default on SizeScale, and the shrink rows say
+-- where it goes, for how long and how
+local function shrinkEnd(_, attrs: any)
+  return attrs.ShrinkScale
+end
+
+local function shrinkDuration(_, attrs: any)
+  return attrs.ShrinkDuration
+end
+
+local function shrinkCurve(_, attrs: any)
+  return attrs.ShrinkCurve
+end
+
+local function transparencyDuration(_, attrs: any)
+  return attrs.TransparencyDuration
+end
+
 local debris = {}
 
 debris.id = "shockwave_debris"
 debris.display = { name = "Shockwave Debris", icon = "shockwave_debris", order = 53 }
 debris.classifier = ".Shockwave > #Debris > BasePart"
 debris.components = "Instance"
+debris.events = { "despawn" }
 
 -- no Speed row. debris flies under physics impulses, so a speed multiplier
 -- would scale the dwell and the shrink and leave the flight alone, which reads
@@ -62,6 +87,10 @@ debris.attributes = {
     :mod()
     :label("Size")
     :hint("Size drawn for each piece, in studs."),
+  SizeScale = knob(vector.one)
+    :mod(mod.to(shrinkEnd):duration(shrinkDuration):curve(shrinkCurve):lane("despawn"))
+    :label("Scale")
+    :hint("Size factor over the piece's life."),
   ShrinkScale = knob(vector.zero)
     :aliases("SizeScaleOut_End", "SizeScaleEnd")
     :label("End")
@@ -80,9 +109,12 @@ debris.attributes = {
     :hint("Easing of the shrink."),
   Transparency = knob(0)
     :aliases("Transparency_Start")
-    :mod(mod.to(1):duration(0.5))
+    :mod(mod.to(1):duration(transparencyDuration))
     :label("Transparency")
     :hint("Transparency applied to spawned debris without an inherited surface."),
+  -- the span the old fade ran over, read under its old name when nothing else
+  -- was authored, and kept as a row so retime reaches it
+  TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"):unit("seconds"):hidden(always),
 }
 
 debris.properties = {}
@@ -103,7 +135,10 @@ debris.layout = {
     },
   },
   { title = "Magnitude", entries = { "LinearMagnitude", "AngularMagnitude" } },
-  { title = "Size", entries = { "Size", "ShrinkScale", "ShrinkDuration", "ShrinkCurve" } },
+  {
+    title = "Size",
+    entries = { "Size", "SizeScale", "ShrinkScale", { curve = "ShrinkCurve", duration = "ShrinkDuration" } },
+  },
   { title = "Direction", entries = { "MinDirection", "MaxDirection" } },
 }
 
@@ -197,17 +232,43 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
   local minDir = attrs.MinDirection
   local maxDir = attrs.MaxDirection
 
-  local shrinkTo = attrs.ShrinkScale
-  local shrinkCurve = attrs.ShrinkCurve
-  local shrinkDuration = attrs.ShrinkDuration
-
   local lifeMax = attrs.Lifetime.value.Max
   local fadeSeed = attrs.Transparency.value
+
+  -- the exit every piece runs after its dwell, which the emit waits out too:
+  -- the fade or the despawn lane, whichever is longer. a resting fade holds
+  -- nothing open. the fire lends the lane this length, so an entry on it
+  -- naming no duration runs out the exit rather than what is left of the
+  -- dwell ceiling
+  local fadeDuration = if attrs.Transparency.animated then attrs.Transparency.duration else 0
+  local exitLength = math.max(fadeDuration, attrs.SizeScale.reach("despawn"))
 
   local count = rng:NextInteger(amount.Min, amount.Max)
 
   local partData = {}
   local promises = {}
+
+  -- pieces whose dwell has begun and whose exit is not among the promises yet,
+  -- and what wakes the emit once none is left. a teardown cancels every dwell
+  -- without ending it, so it wakes the emit too
+  local inFlight = 0
+  local drained: (() -> ())? = nil
+
+  local function landed()
+    inFlight -= 1
+
+    if inFlight == 0 and drained ~= nil then
+      drained()
+    end
+  end
+
+  lifetime.hold(scope, function()
+    inFlight = 0
+
+    if drained ~= nil then
+      drained()
+    end
+  end)
 
   ref.CanCollide = false
 
@@ -290,7 +351,35 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     -- per PIECE: the row is called again so a drawn size is this piece's own
     local size = attrs.Size().at(0)
 
-    part.Size = size
+    -- per PIECE: the exit is the SizeScale row's despawn lane on this piece's
+    -- own clock, so one piece despawning never moves another
+    local piece = mods.piece(debris.events)
+    local sizeScale = attrs.SizeScale(nil, nil, piece)
+
+    -- where the row last put the piece, so the exit writes only what moved
+    local currentFactor = sizeScale.at(0)
+
+    part.Size = size * currentFactor
+
+    local scaleTween
+
+    -- every piece carries the despawn lane, so the track is animated whether
+    -- or not anything runs during the dwell: only a lane of the emit's own
+    -- gets a stepper, or an unauthored factor would write Size every frame
+    if sizeScale.has("start") or sizeScale.has("end") then
+      scaleTween = tween.fromParams(utility.linear_bezier, sizeScale.duration, function(_, deltaTime, elapsed)
+        local factor = sizeScale.at(elapsed)
+
+        if typeof(factor) == "Vector3" then
+          currentFactor = factor
+          part.Size = size * factor
+        end
+
+        return deltaTime
+      end)
+
+      lifetime.hold(scope, scaleTween)
+    end
 
     if iref then
       part.Material = iref.Material
@@ -351,9 +440,15 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
       drawn = rng:NextNumber(attrs.Lifetime.value.Min, lifeMax)
     end
 
+    inFlight += 1
+
+    -- the dwell's own elapsed when it ended, the moment the piece fires its
+    -- despawn lane
+    local fired = 0
+
     -- the dwell belongs to the effect rather than to the scheduler: its cleanup
     -- lives in the scope, so tearing the field down cancels it rather than
-    -- firing a shrink at a pooled part the cache has already handed on, and its
+    -- firing an exit at a pooled part the cache has already handed on, and its
     -- length is the counter's to decide
     tween.after(math.huge, function(deltaTime, elapsed)
       local target = life.at(elapsed)
@@ -363,50 +458,106 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
       end
 
       if elapsed >= target then
+        fired = elapsed
         return nil :: any
       end
 
       return deltaTime
     end, function()
       task.spawn(function()
-        local startSize = part.Size
+        -- a despawn that throws still lands its piece, or the emit would wait
+        -- on it until the effect is torn down
+        local ok, err = xpcall(function()
+          if scaleTween then
+            scaleTween:Disconnect()
+          end
 
-        if startSize ~= size * shrinkTo then
-          lifetime.hold(
-            scope,
-            tween.fromParams(shrinkCurve, shrinkDuration, function(alpha, deltaTime)
-              part.Size = startSize:Lerp(size * shrinkTo, alpha)
-              return deltaTime
-            end)
-          )
+          piece:fire("despawn", fired, exitLength)
+
+          -- the emit's exit, or longer for a piece whose lane drew its own
+          -- length. a no-duration entry runs out the exit the fire lent it,
+          -- which can outlast the lane's own reach, so the whole of it is
+          -- sampled
+          local length = math.max(exitLength, sizeScale.reach("despawn"))
+
+          local function exitAt(since: number)
+            local factor = sizeScale.at(fired + math.min(since, length))
+
+            if typeof(factor) == "Vector3" and factor ~= currentFactor then
+              currentFactor = factor
+              part.Size = size * factor
+            end
+          end
+
+          -- a despawn lane is never cut: the emit awaits every exit as well as
+          -- the wait below, which a piece's own draws could outlast. a teardown
+          -- cancels the stepper without finishing it, so it settles the wait too
+          if length > 0 then
+            table.insert(
+              promises,
+              Promise.new(function(resolve)
+                lifetime.hold(scope, function()
+                  resolve()
+                end)
+
+                lifetime.hold(
+                  scope,
+                  tween.fromParams(
+                    utility.linear_bezier,
+                    length,
+                    function(_, deltaTime, elapsed)
+                      exitAt(elapsed)
+                      return deltaTime
+                    end,
+                    nil,
+                    function()
+                      resolve()
+                    end
+                  )
+                )
+              end)
+            )
+          else
+            exitAt(0)
+          end
+
+          if fade.animated then
+            lifetime.hold(
+              scope,
+              tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
+                local v = fade.at(elapsed)
+
+                if typeof(v) == "number" then
+                  part.Transparency = v
+                end
+
+                return deltaTime
+              end)
+            )
+          end
+
+          local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
+          table.insert(promises, env.Finished)
+        end, debug.traceback)
+
+        landed()
+
+        if not ok then
+          logger.warn(`a piece failed to despawn: {err}`)
         end
-
-        if fade.animated then
-          lifetime.hold(
-            scope,
-            tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
-              local v = fade.at(elapsed)
-
-              if typeof(v) == "number" then
-                part.Transparency = v
-              end
-
-              return deltaTime
-            end)
-          )
-        end
-
-        local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
-        table.insert(promises, env.Finished)
       end)
     end, scope)
   end
 
-  -- a resting fade holds the emit open for nothing: it only reaches past the
-  -- last piece's life when it moves
-  local fadeDuration = if attrs.Transparency.animated then attrs.Transparency.duration else 0
+  task.wait(lifeMax + exitLength)
 
-  task.wait(lifeMax + math.max(fadeDuration, shrinkDuration))
+  -- a dwell ending on the wait's own frame files its exit after the wait
+  -- returns, and the promises below would never see it
+  if inFlight > 0 then
+    Promise.new(function(resolve)
+      drained = resolve
+    end):await()
+  end
 
   Promise.all(promises):await()
 end

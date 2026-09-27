@@ -13,6 +13,7 @@ local Bezier = require("@obj/Bezier")
 
 local test, expect = harness.test, harness.expect
 local Vector3 = harness.datatypes.Vector3
+local NumberRange = harness.datatypes.NumberRange
 
 frame.configure(harness.fakeEncoding, harness.fakeCompression)
 
@@ -459,6 +460,91 @@ harness.suite(function()
         expect(offsetIn.has("end")).toBe(true)
         expect(offsetIn.has("despawn")).toBe(true)
       end
+    end)
+  end)
+
+  harness.describe("the debris exit", function()
+    -- the old emit waited out ShrinkDuration after the longest dwell; the
+    -- despawn lane's reach is what it waits now
+    local function oldExitWait(attrs: any): number
+      return attrs.ShrinkDuration
+    end
+
+    test("a debris piece shrinks through SizeScale's despawn lane as the hand shrink did", function()
+      local from = Vector3.new(1, 1, 1)
+      local attrs, module = pieceOf("shockwave_debris", {
+        SizeScale = from,
+        ShrinkScale = Vector3.new(0.25, 0.25, 0.25),
+        ShrinkDuration = 0.4,
+      })
+
+      local piece = mods.piece(module.events)
+      local sizeScale = attrs.SizeScale(nil, nil, piece)
+
+      expect(sizeScale.has("start")).toBe(false)
+      expect(near(sizeScale.reach("despawn"), 0.4)).toBe(true)
+      expect(sizeScale.at(1) == from).toBe(true)
+
+      piece:fire("despawn", 2)
+
+      for _, e in { 0.1, 0.2, 0.3 } do
+        expect(nearVector(sizeScale.at(2 + e), oldShrink(attrs, from, e))).toBe(true)
+      end
+
+      expect(nearVector(sizeScale.at(2.4), Vector3.new(0.25, 0.25, 0.25))).toBe(true)
+    end)
+
+    test("the emit waits out as long an exit as the hand shrink did", function()
+      for _, shrink in { 0.5, 1.2, 0 } do
+        local attrs = pieceOf("shockwave_debris", { ShrinkDuration = shrink })
+
+        expect(near(attrs.SizeScale.reach("despawn"), oldExitWait(attrs))).toBe(true)
+      end
+    end)
+
+    -- the fire lends the lane the exit the emit waits out, so an entry naming
+    -- no duration runs that exit rather than what is left of the dwell ceiling.
+    -- the exit is computed here the way the emit computes it
+    test("a no-duration entry on a debris despawn lane runs out the exit", function()
+      local ends = Vector3.new(0.25, 0.25, 0.25)
+      local open = { kind = "tween", chain = true, finish = value.lit(ends) }
+      local attrs, module = pieceOf("shockwave_debris", {
+        SizeScale = Vector3.new(1, 1, 1),
+        Lifetime = NumberRange.new(2, 2),
+        [mods.attrName("attribute", "SizeScale")] = frame.frame(
+          codec.encode({ v = 2, lanes = { despawn = { open } } })
+        ),
+      })
+
+      local fadeDuration = if attrs.Transparency.animated then attrs.Transparency.duration else 0
+      local exit = math.max(fadeDuration, attrs.SizeScale.reach("despawn"))
+      local piece = mods.piece(module.events)
+      local sizeScale = attrs.SizeScale(nil, nil, piece)
+
+      expect(near(exit, 2)).toBe(true)
+
+      -- the old reading: fired at the dwell ceiling, the entry had no time left
+      piece:fire("despawn", 2)
+
+      expect(nearVector(sizeScale.at(2.05), ends)).toBe(true)
+
+      piece:fire("despawn", 2, exit)
+
+      expect(nearVector(sizeScale.at(2 + exit / 2), Vector3.new(0.625, 0.625, 0.625))).toBe(true)
+      expect(nearVector(sizeScale.at(2 + exit), ends)).toBe(true)
+    end)
+
+    -- the pre-module debris read Transparency_Duration as the span of its
+    -- default fade, and the module hard-coded half a second instead
+    test("a lone Transparency_Duration is the span of a debris piece's fade", function()
+      local attrs = pieceOf("shockwave_debris", { Transparency_Duration = 2 })
+
+      expect(attrs.TransparencyDuration).toBe(2)
+      expect(attrs.Transparency(0).duration).toBe(2)
+
+      local plain = pieceOf("shockwave_debris", {})
+
+      expect(plain.Transparency(0).duration).toBe(0.5)
     end)
   end)
 end)
