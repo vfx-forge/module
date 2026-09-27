@@ -872,6 +872,52 @@ harness.suite(function()
       expect(attrs.B.has("dissipate")).toBe(false)
     end)
 
+    -- a piece of a module that declares no event can never fire, so one serves
+    -- every read and a read allocates none
+    test("reads of a module that fires no event share one still piece", function()
+      local m = module({ A = knob(0):mod() })
+      local first = ctxFor(Instance.new("Part"))
+      local second = ctxFor(Instance.new("Part"))
+
+      reader.resolve(m, first)
+      reader.resolve(m, second)
+
+      expect(first.piece ~= nil).toBe(true)
+      expect(rawequal(first.piece, second.piece)).toBe(true)
+
+      expect(function()
+        first.piece:fire("dissipate", 0)
+      end).toThrow()
+
+      expect(next(first.piece.fired)).toBe(nil)
+    end)
+
+    test(
+      "every piece call of a range row draws inside it, past a lane that moves nothing and beside one that does",
+      function()
+        local dropping = Instance.new("Part")
+        local whole = Instance.new("Part")
+
+        framedLanes(dropping, "attribute", "Life", { start = {} })
+        framedLanes(whole, "attribute", "Life", { ["end"] = { tween(1, 4, 1) } })
+
+        local m = module({ Life = knob(NumberRange.new(2, 3)):mod() })
+
+        for _, obj in { dropping, whole } do
+          local attrs = reader.resolve(m, ctxFor(obj))
+
+          for _ = 1, 3 do
+            local drawn = attrs.Life(nil, 3).at(0)
+
+            expect(typeof(drawn)).toBe("number")
+            expect(drawn >= 2 and drawn <= 3).toBe(true)
+          end
+        end
+
+        expect(reader.resolve(m, ctxFor(whole)).Life(nil, 3).has("end")).toBe(true)
+      end
+    )
+
     test("an event lane runs on the piece the call form was handed", function()
       local obj = Instance.new("Part")
 

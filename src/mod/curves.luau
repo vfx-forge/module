@@ -6,6 +6,10 @@ local curves = {}
 local default_curve: string? = nil
 local linear_curve: string? = nil
 
+-- whether a string naming no preset is a serialized path, decided once per
+-- string: a rule handing back a curve row's value asks again for every piece
+local PATHS: { [string]: boolean } = {}
+
 -- built on first call rather than at module scope, so a module that requires
 -- this one still LOADS outside the engine: Path2DControlPoint and UDim2 are
 -- Roblox datatypes and lune has neither. legacy_mods needs the same out cubic
@@ -52,8 +56,17 @@ function curves.preset(name: (string | buffer)?)
     return build()
   end
 
-  if typeof(name) == "string" and #path.deserializePath(name) > 0 then
-    return name
+  if typeof(name) == "string" then
+    local known = PATHS[name]
+
+    if known == nil then
+      known = #path.deserializePath(name) > 0
+      PATHS[name] = known
+    end
+
+    if known then
+      return name
+    end
   end
 
   logger.error(`unknown curve preset {tostring(name)}`)

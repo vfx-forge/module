@@ -80,8 +80,9 @@ type Lookup = (ref: Instance, source: string, name: string, map: { [string]: any
 
 -- a row's lanes, its framed flag and the spelling it was found under, kept
 -- together so a piece calling the row a second time is handed the one lookup
--- rather than paying for it again
-type Found = { lanes: { [string]: { any } }?, framed: boolean, under: string? }
+-- rather than paying for it again. live is the range row's lanes filtered of
+-- what moves nothing, built once on the first piece call that needs it
+type Found = { lanes: { [string]: { any } }?, framed: boolean, under: string?, live: { [string]: { any } }? }
 
 -- everything one read carries, built once and handed down to the steps below.
 -- the steps are written at load rather than rebuilt per read, so a module's
@@ -107,6 +108,10 @@ type State = {
 -- the one option a piece's own track is built with. shared because mods.build
 -- only ever reads it
 local SEEDED = table.freeze({ ownStart = true })
+
+-- the piece every read of a module that fires no event hands its rows: such a
+-- piece can never fire, so one serves them all and a read allocates none
+local STILL = mods.piece(nil)
 
 -- the instance's children, taken once for the whole read and handed to every
 -- old shape that walks them, rather than once per row per side. taken on the
@@ -239,7 +244,7 @@ local function queueFor(state: State, source: string, name: string, row: knob.Kn
   if found == nil then
     local lanes, framed, under = queueOf(state, source, name, row)
 
-    found = { lanes = lanes, framed = framed, under = under }
+    found = { lanes = lanes, framed = framed, under = under, live = nil }
     memo[name] = found
   end
 
@@ -290,13 +295,16 @@ local function fallbackOf(state: State, row: knob.Knob, base: any)
 end
 
 -- the piece a row's lanes fire on when the caller named none: one per read,
--- which is what a module emitting a single piece per emit wants. built on the
--- first mod row that asks for one, so a module with none allocates nothing
+-- which is what a module emitting a single piece per emit wants, and the one
+-- still piece for a module that declares no event. built on the first mod row
+-- that asks for one, so a module with none allocates nothing
 local function pieceOf(state: State): mods.Piece
   local piece = state.piece
 
   if piece == nil then
-    piece = mods.piece(state.module.events)
+    local events = state.module.events
+
+    piece = if events == nil then STILL else mods.piece(events)
     state.piece = piece
     state.ctx.piece = piece
   end
@@ -375,8 +383,22 @@ local function plainOf(state: State, source: string, name: string, row: knob.Kno
 end
 
 -- the lanes of a stored map that move something, dropping every lane that is
--- empty or holds only values the target already carries
+-- empty or holds only values the target already carries. the map itself when
+-- nothing drops, so a range row whose lanes all move allocates nothing
 local function moving(lanes: { [string]: { any } }): { [string]: { any } }
+  local drops = false
+
+  for _, queue in lanes do
+    if #queue == 0 or mods.inert(queue) then
+      drops = true
+      break
+    end
+  end
+
+  if not drops then
+    return lanes
+  end
+
   local out = {}
 
   for lane, queue in lanes do
@@ -413,8 +435,17 @@ local function trackOf(
   if typeof(rest) == "NumberRange" then
     default = mods.draw(rest.Min, rest.Max)
 
+    -- filtered once per read, so a piece calling the row again is handed the
+    -- lanes the read already kept
     if lanes ~= nil then
-      lanes = moving(lanes)
+      local live = found.live
+
+      if live == nil then
+        live = moving(lanes)
+        found.live = live
+      end
+
+      lanes = live
     end
   elseif row.modDefault ~= nil then
     declared = mod.lanes(row.modDefault, ctx, state.attrs, state.props, rest, row.preset)

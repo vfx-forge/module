@@ -1,4 +1,5 @@
 local mod = require("@mod/mod")
+local path = require("@mod/common/path")
 local value = require("@mod/value")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
@@ -135,6 +136,38 @@ harness.suite(function()
       expect(value.resolve(lanes.start[1].finish)).toBe(2)
       expect(lanes.start[1].duration).toBe(3)
       expect(lanes.start[1].curve).toBe(curves.linear())
+    end)
+
+    -- a rule reading a curve row hands back the same string for every piece,
+    -- so whether it names a path is decided once rather than per piece
+    test("a serialized curve is judged a path once per string", function()
+      local serialized = buffer.tostring(path.serializePath({
+        Path2DControlPoint.new(UDim2.fromScale(0, 1)),
+        Path2DControlPoint.new(UDim2.fromScale(0.25, 0.4)),
+        Path2DControlPoint.new(UDim2.fromScale(1, 0)),
+      }))
+
+      local original = path.deserializePath
+      local calls = 0
+
+      local ok, err = pcall(function()
+        path.deserializePath = function(data: string | buffer)
+          calls += 1
+          return original(data)
+        end
+
+        for _ = 1, 3 do
+          expect(curves.preset(serialized)).toBe(serialized)
+        end
+      end)
+
+      path.deserializePath = original
+
+      if not ok then
+        error(err, 0)
+      end
+
+      expect(calls).toBe(1)
     end)
   end)
 
