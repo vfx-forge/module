@@ -31,12 +31,39 @@ local function sizeFromCorners(_, attrs: any)
   return mods.draw(attrs.MinSize, attrs.MaxSize)
 end
 
+-- the exits are the despawn lane's defaults on the offset and size rows, and
+-- these rows say where each goes, for how long and how
+local function shrinkEnd(_, attrs: any)
+  return attrs.ShrinkScale
+end
+
+local function shrinkDuration(_, attrs: any)
+  return attrs.ShrinkDuration
+end
+
+local function shrinkCurve(_, attrs: any)
+  return attrs.ShrinkCurve
+end
+
+local function offsetOutEnd(_, attrs: any)
+  return attrs.OffsetOut
+end
+
+local function offsetOutDuration(_, attrs: any)
+  return attrs.OffsetOutDuration
+end
+
+local function offsetOutCurve(_, attrs: any)
+  return attrs.OffsetOutCurve
+end
+
 local ring = {}
 
 ring.id = "shockwave_ring"
 ring.display = { name = "Shockwave Ring", icon = "shockwave_ring", order = 51 }
 ring.classifier = ".Shockwave > #Rings > BasePart"
 ring.components = "Instance"
+ring.events = { "despawn" }
 
 ring.attributes = {
   EmitDelay = knob(0):min(0):unit("seconds"):label("EmitDelay"):hint("Seconds before the effect starts emitting."),
@@ -71,16 +98,23 @@ ring.attributes = {
   -- it stands, the size on a rise from nothing to the drawn size, the fade
   -- from where a piece rests to the end. the spans the old quads ran over
   -- are rows of their own, so the defaults keep them and retime reaches them
-  OffsetIn = knob(vector.zero):unit("studs"):mod():label("Offset"):hint("Local offset each piece settles at."),
+  OffsetIn = knob(vector.zero)
+    :unit("studs")
+    :mod(mod.to(offsetOutEnd):duration(offsetOutDuration):curve(offsetOutCurve):lane("despawn"))
+    :label("Offset")
+    :hint("Local offset each piece settles at."),
   OffsetInDuration = knob(0.5)
     :min(0)
     :aliases("OffsetIn_Duration", "Offset_Start_Duration")
     :unit("seconds")
     :hidden(always),
   SizeScaleIn = knob(vector.one)
-    :mod(mod.from(vector.zero):duration(function(_, attrs)
-      return attrs.SizeScaleInDuration
-    end))
+    :mod(
+      mod.from(vector.zero):duration(function(_, attrs)
+        return attrs.SizeScaleInDuration
+      end),
+      mod.to(shrinkEnd):duration(shrinkDuration):curve(shrinkCurve):lane("despawn")
+    )
     :label("Scale")
     :hint("Fraction of the drawn size each piece settles at."),
   SizeScaleInDuration = knob(0.5)
@@ -96,8 +130,9 @@ ring.attributes = {
     :label("Transparency")
     :hint("Transparency each piece rests at before its fade."),
   TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"):unit("seconds"):hidden(always),
-  -- the exit phases start at each piece's own drawn lifetime, which a default
-  -- modifier cannot express yet, so they stay triplets
+  -- the exit phases run on the despawn lane the module fires when a piece's
+  -- dwell ends; these rows feed its defaults on OffsetIn and SizeScaleIn and
+  -- stay shown, since the panel edits only the start lane
   ShrinkScale = knob(vector.zero)
     :aliases("SizeScaleOut_End", "SizeScaleEnd")
     :label("End")
@@ -136,12 +171,18 @@ ring.layout = {
   "Radius",
   "Segments",
   "Lifetime",
-  { title = "Offset", entries = { "OffsetIn", "OffsetOut", "OffsetOutDuration", "OffsetOutCurve" } },
+  {
+    title = "Offset",
+    entries = { "OffsetIn", "OffsetOut", { curve = "OffsetOutCurve", duration = "OffsetOutDuration" } },
+  },
   { title = "Transparency", entries = { "Transparency" } },
   {
     title = "Size",
     entries = {
-      { title = "Scale", entries = { "SizeScaleIn", "ShrinkScale", "ShrinkDuration", "ShrinkCurve" } },
+      {
+        title = "Scale",
+        entries = { "SizeScaleIn", "ShrinkScale", { curve = "ShrinkCurve", duration = "ShrinkDuration" } },
+      },
       "MinSize",
       "MaxSize",
     },
@@ -202,26 +243,6 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
 
   local lifeMin = attrs.Lifetime.value.Min
   local lifeMax = attrs.Lifetime.value.Max
-
-  local shrinkTo = attrs.ShrinkScale
-  local shrinkCurve = attrs.ShrinkCurve
-  local shrinkDuration = attrs.ShrinkDuration
-
-  local offsetOut = attrs.OffsetOut
-  local offsetOutCurve = attrs.OffsetOutCurve
-  local offsetOutDuration = attrs.OffsetOutDuration
-
-  local offsetIn = attrs.OffsetIn
-  local sizeIn = attrs.SizeScaleIn
-
-  local offsetInStart = offsetIn.at(0)
-  local sizeInStart = sizeIn.at(0)
-
-  -- a queue-backed phase is taken at its word and gets its stepper, the rule
-  -- the fade already follows: one that ends where it began still moves in
-  -- between, and one behind a leading delay has not started at all yet
-  local offsetInMoves = offsetIn.animated
-  local sizeInMoves = sizeIn.animated
 
   local runLength = ctx.duration :: number
 
@@ -336,14 +357,26 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
     local rotCF = CFrame.fromMatrix(result.Position, right, result.Normal)
       * CFrame.fromOrientation(-math.atan(size.Y / size.Z), 0, 0)
 
-    part.CFrame = CFrame.new(offsetInStart) * rotCF
+    -- per SEGMENT: the entry and exit phases are the offset and size rows'
+    -- lanes on this piece's own clock, so one piece despawning never moves
+    -- another
+    local piece = mods.piece(ring.events)
+    local offsetIn = attrs.OffsetIn(nil, nil, piece)
+    local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
+
+    -- where each row last put the piece, so an exit writes only what moved
+    local currentOffset = offsetIn.at(0)
+    local currentFactor = sizeIn.at(0)
+
+    part.CFrame = CFrame.new(currentOffset) * rotCF
 
     local sizeTween
     local offsetTween
 
-    local currentOffset = Vector3.zero
-
-    if offsetInMoves then
+    -- every piece carries the despawn lane, so a track is animated whether or
+    -- not anything runs from the emit: only a row with a start lane gets an
+    -- entry stepper, or an unauthored offset would write CFrame every frame
+    if offsetIn.has("start") then
       offsetTween = tween.fromParams(utility.linear_bezier, offsetIn.duration, function(_, deltaTime, elapsed)
         local at = offsetIn.at(elapsed)
 
@@ -360,13 +393,14 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
       lifetime.hold(scope, offsetTween)
     end
 
-    part.Size = size * sizeInStart
+    part.Size = size * currentFactor
 
-    if sizeInMoves then
+    if sizeIn.has("start") then
       sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.duration, function(_, deltaTime, elapsed)
         local factor = sizeIn.at(elapsed)
 
         if typeof(factor) == "Vector3" then
+          currentFactor = factor
           part.Size = size * factor
         end
 
@@ -391,6 +425,10 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
       drawn = rng:NextNumber(lifeMin, lifeMax)
     end
 
+    -- the dwell's own elapsed when it ended, the moment the piece fires its
+    -- despawn lane
+    local fired = 0
+
     -- the dwell is part of the effect, not of the scheduler: its cleanup lives
     -- in the scope, so tearing the effect down cancels it rather than letting it
     -- fire into a part the cache has already handed to someone else, and it runs
@@ -404,6 +442,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
       end
 
       if elapsed >= target then
+        fired = elapsed
         return nil :: any
       end
 
@@ -418,26 +457,58 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
           offsetTween:Disconnect()
         end
 
-        local startSize = part.Size
+        piece:fire("despawn", fired)
 
-        if startSize ~= size * shrinkTo then
-          lifetime.hold(
-            scope,
-            tween.fromParams(shrinkCurve, shrinkDuration, function(alpha, deltaTime, elapsed)
-              part.Size = startSize:Lerp(size * shrinkTo, alpha)
-              return step(deltaTime, elapsed)
-            end)
-          )
+        local function exitAt(at: number)
+          local factor = sizeIn.at(at)
+
+          if typeof(factor) == "Vector3" and factor ~= currentFactor then
+            currentFactor = factor
+            part.Size = size * factor
+          end
+
+          local offset = offsetIn.at(at)
+
+          if typeof(offset) == "Vector3" and offset ~= currentOffset then
+            currentOffset = offset
+            part.CFrame = CFrame.new(offset) * rotCF
+          end
         end
 
-        if currentOffset ~= offsetOut then
-          lifetime.hold(
-            scope,
-            tween.fromParams(offsetOutCurve, offsetOutDuration, function(alpha, deltaTime, elapsed)
-              part.CFrame = CFrame.new(currentOffset:Lerp(offsetOut, alpha)) * rotCF
-              return step(deltaTime, elapsed)
+        -- one stepper runs both exits over the longer of them, on the piece's
+        -- clock from the fire
+        local exitLength = math.max(sizeIn.reach("despawn"), offsetIn.reach("despawn"))
+
+        -- a despawn lane is never cut: the emit awaits every exit, however far
+        -- past the ring's run it reaches. a teardown cancels the stepper without
+        -- finishing it, so the teardown settles the wait too
+        if exitLength > 0 then
+          table.insert(
+            promises,
+            Promise.new(function(resolve)
+              lifetime.hold(scope, function()
+                resolve()
+              end)
+
+              lifetime.hold(
+                scope,
+                tween.fromParams(
+                  utility.linear_bezier,
+                  exitLength,
+                  function(_, deltaTime, elapsed)
+                    exitAt(fired + elapsed)
+                    return step(deltaTime, elapsed)
+                  end,
+                  nil,
+                  function()
+                    resolve()
+                  end
+                )
+              )
             end)
           )
+        else
+          exitAt(fired)
         end
 
         if fade.animated then
