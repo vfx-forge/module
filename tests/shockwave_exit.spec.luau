@@ -404,6 +404,38 @@ harness.suite(function()
       end
     end)
 
+    -- an event lane answers its reach before it fires, and builds its sampler
+    -- only once a piece has fired it: a curve nothing else eases through is
+    -- first decoded when that sampler first runs, and not a moment before
+    test("a despawn lane never fired builds nothing it would sample through", function()
+      for i, id in PIECES do
+        local curve = buffer.tostring(path.serializePath({
+          Path2DControlPoint.new(UDim2.fromScale(0, 1), UDim2.new(), UDim2.fromScale(0.1 * i, -0.37)),
+          Path2DControlPoint.new(UDim2.fromScale(1, 0), UDim2.fromScale(-0.53, 0), UDim2.new()),
+        }))
+
+        local attrs, module = pieceOf(id, {
+          SizeScaleIn = Vector3.new(1, 1, 1),
+          ShrinkScale = Vector3.new(0.2, 0.2, 0.2),
+          ShrinkDuration = 0.4,
+          ShrinkCurve = curve,
+        })
+
+        local piece = mods.piece(module.events)
+        local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
+
+        expect(sizeIn.has("despawn")).toBe(true)
+        expect(near(sizeIn.reach("despawn"), 0.4)).toBe(true)
+        expect(sizeIn.at(1) == Vector3.new(1, 1, 1)).toBe(true)
+        expect(path.bezier_cache[curve]).toBe(nil)
+
+        piece:fire("despawn", 1)
+
+        expect(nearVector(sizeIn.at(1.4), Vector3.new(0.2, 0.2, 0.2))).toBe(true)
+        expect(path.bezier_cache[curve] ~= nil).toBe(true)
+      end
+    end)
+
     -- the emit steps an entry for a row holding an end lane as well as a start
     -- one, since such a row runs during the dwell with no start lane at all
     test("an authored end lane on the entry rows holds no start lane", function()

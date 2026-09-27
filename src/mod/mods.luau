@@ -339,8 +339,34 @@ type Lane = {
   -- that a lane taking no time reaches nothing rather than the row's span
   length: number,
   lead: number,
-  sample: (elapsed: number, own: any?, left: number?) -> any,
+  -- an event lane's sampler is built the first time a piece has fired it, by
+  -- `build`, which leaves `silent` set instead when the lane says nothing. a
+  -- stored lane that turns out silent hands the row to `fallback`, the
+  -- default lane of its name, as one found silent at the read always did
+  sample: ((elapsed: number, own: any?, left: number?) -> any)?,
+  build: (() -> ())?,
+  silent: boolean,
+  fallback: Lane?,
 }
+
+-- the lane that answers for `lane` once it has fired: itself, built on the
+-- first call that needs it, or its fallback when it says nothing
+local function live(lane: Lane): Lane?
+  local build = lane.build
+
+  if build ~= nil then
+    lane.build = nil
+    build()
+  end
+
+  if not lane.silent then
+    return lane
+  end
+
+  local fallback = lane.fallback
+
+  return if fallback ~= nil then live(fallback) else nil
+end
 
 -- `runFor` is how long the phase the lane opens runs, when the firer knows:
 -- an entry on the lane naming no duration runs that out rather than what the
@@ -441,7 +467,7 @@ local function ownerAt(lanes: { Lane }, piece: Piece?, elapsed: number, since: n
       continue
     end
 
-    if from >= at then
+    if from >= at and live(lane) ~= nil then
       at = from
       best = i
     end
@@ -472,7 +498,7 @@ local function valueAt(
     return own
   end
 
-  local lane = lanes[i]
+  local lane = live(lanes[i]) :: Lane
   local from = firedAt(lane, piece) :: number
   local base = valueAt(lanes, piece, span, math.min(elapsed, from + lane.lead), own, since, i)
   -- an event lane runs out the phase its firer said it opens, else what the
@@ -487,7 +513,7 @@ local function valueAt(
     left = if told ~= nil then told else span - from
   end
 
-  local v = lane.sample(elapsed - from, base, left)
+  local v = (lane.sample :: any)(elapsed - from, base, left)
 
   return if v ~= nil then v else base
 end
@@ -751,6 +777,61 @@ local function perPiece(queue: { any }, event: boolean): boolean
   return false
 end
 
+-- the rolls of a queue that draws nothing, which is what mods.roll would hand
+-- it without the generator: no draw, no pick, and an envelope nothing reads
+local function unrolled(env: { [string]: any }?): Rolls
+  return { draws = {}, picks = {}, env = env, envelope = 0 }
+end
+
+-- an event lane as its reach and length alone, which is all a row answers
+-- before the lane fires: its sampler, and the probe that says whether it
+-- samples anything at all, wait for the first time a piece has fired it. a
+-- lane that draws is rolled now all the same, so the length is the one it will
+-- run, and one that draws nothing is spanned exactly as its empty rolls would
+-- span it
+local function eventLaneOf(
+  ref: Instance,
+  source: string,
+  name: string,
+  queue: { any },
+  span: number,
+  env: { [string]: any }?,
+  probe: any,
+  lane: string,
+  order: number,
+  draws: boolean
+): Lane
+  local rolls: Rolls? = if draws then mods.roll(queue, env) elseif env ~= nil then unrolled(env) else nil
+  local reach, linked, length = mods.span(queue, span, rolls, nil)
+
+  local out: Lane = {
+    name = lane,
+    order = order,
+    from = nil,
+    reach = reach,
+    length = length,
+    lead = 0,
+    sample = nil,
+    build = nil,
+    silent = false,
+    fallback = nil,
+  }
+
+  out.build = function()
+    local sample, lead = mods.sampler(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil)
+
+    if sample == nil or (sample(0) == nil and (probe == nil or sample(0, probe) == nil)) then
+      out.silent = true
+      return
+    end
+
+    out.sample = sample
+    out.lead = lead
+  end
+
+  return out
+end
+
 -- the one way a knob becomes a track. it always answers: what rests when nothing
 -- usable is authored, else one sampler per lane over that lane's own reach. a
 -- default given as a lane map is what runs when nothing is authored, for a knob
@@ -844,6 +925,21 @@ function mods.build(
       end
 
       local entries = if authored then completed(queue, framed, seeded, lead, fillStart, fillFinish) else queue
+      local event = lane ~= "start" and lane ~= "end"
+
+      -- a lane the format could complete and that does not open on a blank
+      -- tween is kept as it stands until it fires
+      if event and entries ~= nil and not (authored and blankLead(entries)) then
+        local draws = perPiece(entries, false)
+
+        if not varies then
+          varies = draws or perPiece(entries, true)
+        end
+
+        table.insert(out, eventLaneOf(ref, source, name, entries, span, env, seed, lane, order, draws))
+        continue
+      end
+
       local sample: ((elapsed: number, own: any?, left: number?) -> any)? = nil
       local reach, first, length = span, 0, 0
 
@@ -852,7 +948,7 @@ function mods.build(
       end
 
       if sample ~= nil and not varies then
-        varies = perPiece(entries :: { any }, lane ~= "start" and lane ~= "end")
+        varies = perPiece(entries :: { any }, event)
       end
 
       -- an authored lane that says nothing leaves the default of its name
@@ -881,11 +977,14 @@ function mods.build(
         order = order,
         -- the end lane fires once the piece's own clock has only its reach
         -- left, and an event lane has no trigger until the module gives it one
-        from = if lane == "start" then 0 elseif lane == "end" then math.max(0, span - reach) else nil,
+        from = if lane == "start" then 0 else math.max(0, span - reach),
         reach = reach,
         length = length,
         lead = first,
         sample = sample,
+        build = nil,
+        silent = false,
+        fallback = nil,
       })
     end
 
@@ -946,14 +1045,46 @@ function mods.build(
 
   local set = setOf(lanes, true)
 
+  -- the kind is judged on the first stored lane that samples anything, so an
+  -- event lane ahead of every other is built for it now, and one found silent
+  -- on the way leaves its default running as it would have at the read
+  local first: Lane? = nil
+
+  if want ~= nil then
+    local kept: { Lane } = {}
+
+    for _, held in set do
+      if first == nil then
+        local build = held.build
+
+        if build ~= nil then
+          held.build = nil
+          build()
+        end
+
+        if held.silent then
+          unread = unread or {}
+          unread[held.name] = true
+          continue
+        end
+
+        first = held
+      end
+
+      table.insert(kept, held)
+    end
+
+    set = kept
+  end
+
   if #set == 0 and fallback == nil then
     return resting()
   end
 
   -- judged from where the row rests, which is the probe the lanes were kept
   -- under: a lane that begins where the row stands says nothing on its own
-  if want ~= nil and #set > 0 then
-    local got = mods.kindOf(set[1].sample(0, seed))
+  if first ~= nil then
+    local got = mods.kindOf((first.sample :: any)(0, seed))
 
     if got ~= want then
       mods.warnOnce(ref, name, `{name} samples a {got} where the effect wants a {want}`)
@@ -973,6 +1104,16 @@ function mods.build(
   for lane, queue in fallback do
     if lanes[lane] == nil or (unread ~= nil and unread[lane]) then
       others[lane] = queue
+    end
+  end
+
+  -- a stored event lane not yet built may still turn out silent, and then the
+  -- default of its name runs in its place
+  for _, held in set do
+    local stand = fallback[held.name]
+
+    if held.from == nil and not held.silent and stand ~= nil and others[held.name] == nil then
+      held.fallback = setOf({ [held.name] = stand }, false)[1]
     end
   end
 
