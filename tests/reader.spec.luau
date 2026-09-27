@@ -894,6 +894,27 @@ harness.suite(function()
       expect(near(track.at(2.5), 0.25)).toBe(true)
     end)
 
+    test("a row's track answers each lane's reach", function()
+      local obj = Instance.new("Part")
+
+      framedLanes(obj, "attribute", "A", {
+        start = { tween(0, 1, 2) },
+        dissipate = { { kind = "tween", chain = true, duration = 0.4, finish = value.lit(1) } },
+      })
+
+      local m = module({ A = knob(0):mod() })
+      m.events = { "dissipate" }
+
+      local attrs = reader.resolve(m, ctxFor(obj))
+      local track = attrs.A(nil, 4, mods.piece(m.events))
+      local resting = reader.resolve(module({ B = knob(3):mod() }), ctxFor(Instance.new("Part"))).B
+
+      expect(track.reach("start")).toBe(2)
+      expect(near(track.reach("dissipate"), 0.4)).toBe(true)
+      expect(track.reach("end")).toBe(0)
+      expect(resting.reach("start")).toBe(0)
+    end)
+
     -- an authored map that silences the default lead rests the row at its own
     -- value rather than where a lead that no longer runs began
     test("a row whose authored lane waits rests at its own value", function()

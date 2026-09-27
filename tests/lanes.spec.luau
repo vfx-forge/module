@@ -526,4 +526,80 @@ harness.suite(function()
       expect(mods.inert({ delay(1), tween(0, 1, 1) })).toBe(false)
     end)
   end)
+
+  harness.describe("what a lane reaches and how long a fire says it runs", function()
+    test("a track answers each lane's reach and nothing for a lane it does not hold", function()
+      local piece = mods.piece({ "dissipate" })
+      local track = built({ start = { tween(0, 1, 2) }, dissipate = { onward(0, 0.4), onward(1, 0.3) } }, 0, 5, piece)
+
+      expect(track.reach("start")).toBe(2)
+      expect(near(track.reach("dissipate"), 0.7)).toBe(true)
+      expect(track.reach("end")).toBe(0)
+    end)
+
+    test("a row at rest reaches nothing on any lane", function()
+      local track = built({}, 3, 5, nil)
+
+      expect(track.reach("start")).toBe(0)
+      expect(track.reach("dissipate")).toBe(0)
+    end)
+
+    -- a lane whose entries snap takes no time, and its reach says so rather
+    -- than the row's span the sampler falls back to
+    test("an event lane naming no duration reaches the row's span, and one that snaps reaches nothing", function()
+      local piece = mods.piece({ "dissipate", "despawn" })
+      local track = built({ dissipate = { onward(0, nil) }, despawn = { onward(0, 0) } }, 1, 6, piece)
+
+      expect(track.reach("dissipate")).toBe(6)
+      expect(track.reach("despawn")).toBe(0)
+    end)
+
+    -- the old reading, kept as a golden: fired past the row's span, a lane's
+    -- entry naming no duration has no time left and lands at once
+    test("a fire past the row's span that says nothing leaves such an entry no time", function()
+      local piece = mods.piece({ "dissipate" })
+      local track = built({ dissipate = { onward(0, nil) } }, 1, 1, piece)
+
+      piece:fire("dissipate", 2)
+
+      expect(near(track.at(2.5), 0)).toBe(true)
+    end)
+
+    test("a fire that says how long its phase runs gives such an entry that time", function()
+      local piece = mods.piece({ "dissipate" })
+      local track = built({ dissipate = { onward(0, nil) } }, 1, 1, piece)
+
+      piece:fire("dissipate", 2, 2)
+
+      expect(near(track.at(3), 0.5)).toBe(true)
+      expect(near(track.at(4), 0)).toBe(true)
+    end)
+
+    test("firing again without a time goes back to what the effect has left", function()
+      local piece = mods.piece({ "dissipate" })
+      local track = built({ dissipate = { onward(0, nil) } }, 1, 1, piece)
+
+      piece:fire("dissipate", 2, 2)
+      piece:fire("dissipate", 0.5)
+
+      expect(near(track.at(0.75), 0.5)).toBe(true)
+      expect(near(track.at(1), 0)).toBe(true)
+    end)
+
+    test("a piece keeps a told time only once some fire names one", function()
+      local piece = mods.piece({ "dissipate" })
+
+      piece:fire("dissipate", 1)
+
+      expect(piece.runs).toBe(nil)
+
+      piece:fire("dissipate", 1, 0.5)
+
+      expect(piece.runs.dissipate).toBe(0.5)
+
+      piece:fire("dissipate", 1, 0 / 0)
+
+      expect(piece.runs.dissipate).toBe(nil)
+    end)
+  end)
 end)

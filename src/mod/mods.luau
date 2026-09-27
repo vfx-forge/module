@@ -39,8 +39,10 @@ export type Rolls = {
 -- so the span is the one THIS instance will run. the second return is the
 -- effect duration a modifier naming none runs out, which the sampler lends
 -- back to schedule so both walks place every modifier alike. `left` is the
--- time the effect has left where the queue starts, for a lane that starts late
-function mods.span(queue: { any }, fallback: number, rolls: Rolls?, left: number?): (number, number)
+-- time the effect has left where the queue starts, for a lane that starts late.
+-- the third return is how far the queue reaches on its own, zero for one that
+-- takes no time where the first falls back to the effect's duration
+function mods.span(queue: { any }, fallback: number, rolls: Rolls?, left: number?): (number, number, number)
   local picks = if rolls then rolls.picks else nil
 
   -- schedule seeds a linked modifier's run from the fallback, so a nan one
@@ -55,17 +57,17 @@ function mods.span(queue: { any }, fallback: number, rolls: Rolls?, left: number
   -- a lane told nothing is left may take no time at all, and that zero is its
   -- reach: falling back would start it at the emit rather than at the end
   if frontier == 0 and left ~= nil and left == left then
-    return 0, fallback
+    return 0, fallback, 0
   end
 
   -- an effect turns this straight into a tween's duration, and a tween that
   -- never ends holds the emit open for good. nothing an author can mean by a
   -- span is infinite, so an unusable one falls back the same way an empty one does
   if frontier ~= frontier or frontier <= 0 or frontier == math.huge then
-    return fallback, fallback
+    return fallback, fallback, if frontier == 0 then 0 else fallback
   end
 
-  return frontier, fallback
+  return frontier, fallback, frontier
 end
 
 -- a queue that moves nothing: one that only waits, or only holds values the
@@ -313,6 +315,7 @@ export type Track = {
   span: number,
   animated: boolean,
   has: (lane: string) -> boolean,
+  reach: (lane: string) -> number,
 }
 
 local Piece = {}
@@ -322,18 +325,27 @@ Piece.__index = Piece
 -- read: one ctx serves every piece of an emit and each piece has tracks of its
 -- own. a module declares the names it may fire and the piece refuses any other,
 -- since a name nothing declares can only be a module bug
-export type Piece = typeof(setmetatable({} :: { fired: { [string]: number }, events: { string }? }, Piece))
+export type Piece = typeof(setmetatable(
+  {} :: { fired: { [string]: number }, runs: { [string]: number }?, events: { string }? },
+  Piece
+))
 
 type Lane = {
   name: string,
   order: number,
   from: number?,
   reach: number,
+  -- how long the lane's own entries run from its trigger: its reach, except
+  -- that a lane taking no time reaches nothing rather than the row's span
+  length: number,
   lead: number,
   sample: (elapsed: number, own: any?, left: number?) -> any,
 }
 
-function Piece.fire(self: Piece, name: string, elapsed: number)
+-- `runFor` is how long the phase the lane opens runs, when the firer knows:
+-- an entry on the lane naming no duration runs that out rather than what the
+-- effect has left, and a fire naming none leaves the lane to the effect
+function Piece.fire(self: Piece, name: string, elapsed: number, runFor: number?)
   local events = self.events
 
   if events == nil or table.find(events, name) == nil then
@@ -343,10 +355,29 @@ function Piece.fire(self: Piece, name: string, elapsed: number)
   -- firing again restarts the lane, and a clock nobody can read starts it where
   -- the piece already is rather than nowhere at all
   self.fired[name] = if typeof(elapsed) == "number" and elapsed == elapsed then math.max(elapsed, 0) else 0
+
+  local told = if typeof(runFor) == "number"
+      and runFor == runFor
+      and runFor >= 0
+      and runFor ~= math.huge
+    then runFor
+    else nil
+  local runs = self.runs
+
+  -- kept only once some fire names one, so a piece nobody tells anything
+  -- carries no table for it
+  if runs == nil and told ~= nil then
+    runs = {}
+    self.runs = runs
+  end
+
+  if runs ~= nil then
+    runs[name] = told
+  end
 end
 
 function mods.piece(events: { string }?): Piece
-  return setmetatable({ fired = {}, events = events }, Piece)
+  return setmetatable({ fired = {}, runs = nil, events = events }, Piece)
 end
 
 -- where a lane sits when two of them fired in the same frame: the built ins
@@ -444,9 +475,18 @@ local function valueAt(
   local lane = lanes[i]
   local from = firedAt(lane, piece) :: number
   local base = valueAt(lanes, piece, span, math.min(elapsed, from + lane.lead), own, since, i)
-  -- an event lane runs out what the effect has left from where it fired, and
-  -- the start and end lanes were told theirs when they were built
-  local left = if lane.from == nil then span - from else nil
+  -- an event lane runs out the phase its firer said it opens, else what the
+  -- effect has left from where it fired; the start and end lanes were told
+  -- theirs when they were built
+  local left: number? = nil
+
+  if lane.from == nil then
+    local runs = (piece :: Piece).runs
+    local told = if runs ~= nil then runs[lane.name] else nil
+
+    left = if told ~= nil then told else span - from
+  end
+
   local v = lane.sample(elapsed - from, base, left)
 
   return if v ~= nil then v else base
@@ -484,6 +524,15 @@ local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any):
       end
 
       return false
+    end,
+    reach = function(lane: string): number
+      for _, held in set do
+        if held.name == lane then
+          return held.length
+        end
+      end
+
+      return 0
     end,
   }
 end
@@ -550,6 +599,10 @@ local function noLane(): boolean
   return false
 end
 
+local function noReach(): number
+  return 0
+end
+
 local function constant(default: any, span: number): Track
   return {
     at = function(_, own: any?)
@@ -558,6 +611,7 @@ local function constant(default: any, span: number): Track
     span = span,
     animated = false,
     has = noLane,
+    reach = noReach,
   }
 end
 
@@ -577,23 +631,23 @@ local function laneOf(
   env: { [string]: any }?,
   probe: any,
   lane: string
-): (((elapsed: number, own: any?, left: number?) -> any)?, number, number)
+): (((elapsed: number, own: any?, left: number?) -> any)?, number, number, number)
   -- the end lane plays out as the effect ends, so a modifier on it naming no
   -- duration has nothing left to run for and snaps to its finish
   local left = if lane == "end" then 0 else nil
   local rolls = mods.roll(queue, env)
-  local reach, linked = mods.span(queue, span, rolls, left)
+  local reach, linked, length = mods.span(queue, span, rolls, left)
   local sample, lead = mods.sampler(ref, source, name, reach, queue, rolls, linked, left)
 
   if sample == nil then
-    return nil, span, 0
+    return nil, span, 0, 0
   end
 
   if sample(0) == nil and (probe == nil or sample(0, probe) == nil) then
-    return nil, span, 0
+    return nil, span, 0, 0
   end
 
-  return sample, reach, lead
+  return sample, reach, lead, length
 end
 
 -- the entry of a default lane whose ends complete a half quad: the first tween,
@@ -752,7 +806,7 @@ function mods.build(
         continue
       end
 
-      local sample, reach, first = laneOf(ref, source, name, entries, span, env, seed, lane)
+      local sample, reach, first, length = laneOf(ref, source, name, entries, span, env, seed, lane)
 
       if sample == nil then
         if authored then
@@ -770,6 +824,7 @@ function mods.build(
         -- left, and an event lane has no trigger until the module gives it one
         from = if lane == "start" then 0 elseif lane == "end" then math.max(0, span - reach) else nil,
         reach = reach,
+        length = length,
         lead = first,
         sample = sample,
       })

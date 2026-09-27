@@ -48,6 +48,7 @@ export type Track = {
   animated: boolean,
   value: any,
   has: (lane: string) -> boolean,
+  reach: (lane: string) -> number,
   apply: (self: Track, write: (v: any) -> ()) -> (),
 }
 
@@ -441,6 +442,7 @@ local function trackOf(
     animated = inner.animated,
     value = rest,
     has = inner.has,
+    reach = inner.reach,
   }
 
   function track.apply(_, write: (v: any) -> ())
