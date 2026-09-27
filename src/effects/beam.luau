@@ -1,5 +1,4 @@
 --!nolint LocalShadow
-local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
@@ -13,6 +12,10 @@ local rng = Random.new()
 
 local function always()
   return true
+end
+
+local function linear()
+  return utility.linear_bezier
 end
 
 local beam = {}
@@ -56,6 +59,10 @@ beam.attributes = {
     :unit("seconds")
     :label("Duration")
     :hint("Seconds for one full flipbook cycle."),
+  FlipbookChangeCurve = knob(linear)
+    :aliases("Flipbook_Change_Curve")
+    :label("Curve")
+    :hint("Easing of one flipbook cycle."),
   SyncDuration = knob(false):label("SyncDuration"):hint("Match the flipbook cycle to the effect duration."),
 }
 
@@ -78,7 +85,10 @@ beam.properties = {
 beam.layout = {
   { title = "Emit", entries = { "EmitDelay" } },
   { title = "Effect", entries = { "EffectDuration", "Speed" } },
-  { title = "Flipbook", entries = { "FlipbookChangeDuration", "SyncDuration" } },
+  {
+    title = "Flipbook",
+    entries = { { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" }, "SyncDuration" },
+  },
   {
     title = "Shape",
     entries = {
@@ -334,7 +344,7 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
       effectDuration = duration,
       syncDuration = attrs.SyncDuration,
 
-      curve = attr.get(ref, "Flipbook_Change_Curve", utility.linear_bezier),
+      curve = attrs.FlipbookChangeCurve,
       duration = attrs.FlipbookChangeDuration,
 
       getSpeed = function()

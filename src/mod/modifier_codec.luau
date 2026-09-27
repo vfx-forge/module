@@ -4,6 +4,10 @@ local codec = {}
 
 local VERSION = 2
 
+-- the newest layout this codec reads, for a writer deciding whether a stored
+-- payload is newer than itself
+codec.VERSION = VERSION
+
 -- fields the schema names explicitly; anything else on a modifier goes to
 -- `extra`, so a field written by a newer plugin survives a round trip here
 local KNOWN = {

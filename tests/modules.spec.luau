@@ -1,3 +1,5 @@
+local attr = require("@mod/attributes")
+local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local registry = require("@mod/registry")
 local test, expect = harness.test, harness.expect
@@ -28,6 +30,12 @@ local MAX_SIZE = Vector3.new(3, 2, 3)
 
 local function inside(v: any, lo: Vector3, hi: Vector3): boolean
   return v.X >= lo.X and v.X <= hi.X and v.Y >= lo.Y and v.Y <= hi.Y and v.Z >= lo.Z and v.Z <= hi.Z
+end
+
+-- what the beam read for its flipbook curve before the curve was a row,
+-- written out here before the read is deleted
+local function oldFlipbookCurve(beam: Instance)
+  return attr.get(beam, "Flipbook_Change_Curve", curves.linear(), true)
 end
 
 -- the built-ins are the require cache's own tables and registering freezes
@@ -324,6 +332,23 @@ harness.suite(function()
           expect(rawget(props, name) ~= nil or module.properties[name].hasDefault == false).toBe(true)
         end
       end
+    end)
+
+    test("a beam's flipbook curve reads what the old attribute read", function()
+      loadAll()
+
+      local _, made = scene()
+
+      expect(registry.read(made.beam).FlipbookChangeCurve).toBe(oldFlipbookCurve(made.beam))
+
+      -- this host's attributes hold only valid utf-8, so a serialized curve is
+      -- written through the cache the way every other spec writes one
+      made.beam:SetAttribute("Flipbook_Change_Curve", "")
+      attr.cache(made.beam)
+      attr.set(made.beam, "Flipbook_Change_Curve", curves.default())
+
+      expect(registry.read(made.beam).FlipbookChangeCurve).toBe(oldFlipbookCurve(made.beam))
+      expect(registry.read(made.beam).FlipbookChangeCurve).toBe(curves.default())
     end)
   end)
 

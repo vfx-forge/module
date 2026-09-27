@@ -57,6 +57,22 @@ harness.suite(function()
       end).toThrow()
     end)
 
+    -- a writer compares a stored payload's last byte with this to tell a
+    -- newer payload from a broken one
+    test("the codec names the newest version it reads and refuses one past it", function()
+      expect(codec.VERSION).toBe(2)
+
+      local buf = codec.encode({ lanes = { start = {} } })
+
+      expect(buffer.readu8(buf, buffer.len(buf) - 1)).toBe(codec.VERSION)
+
+      buffer.writeu8(buf, buffer.len(buf) - 1, codec.VERSION + 1)
+
+      expect(function()
+        codec.decode(buf)
+      end).toThrow()
+    end)
+
     -- decode picks its schema off the last byte before it reads anything, so
     -- the layout ending in the version is load bearing rather than incidental
     test("the version is the last byte of the payload", function()
