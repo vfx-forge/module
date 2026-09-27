@@ -317,8 +317,9 @@ export type Track = {
   has: (lane: string) -> boolean,
   reach: (lane: string) -> number,
   -- whether the lane, fired at `at`, leaves the row where it stood then the
-  -- whole way, which a driver can skip sampling. false whenever that cannot
-  -- be told from the lane's entries, and true for a lane the row does not hold
+  -- whole way and no lane starting after it takes the row, which a driver can
+  -- skip sampling. false whenever that cannot be told from the lanes, and true
+  -- for a lane the row does not hold
   still: (lane: string, at: number) -> boolean,
 }
 
@@ -602,6 +603,20 @@ local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any):
 
         if rests == nil or (fallback ~= nil and fallback.rests ~= rests) then
           return false
+        end
+
+        -- the row belongs to the lane that started last, so one that has not
+        -- started yet, or starts later in the same frame, can still take it
+        for j, other in set do
+          if j == i then
+            continue
+          end
+
+          local from = firedAt(other, piece)
+
+          if from == nil or from > at or (from == at and j > i) then
+            return false
+          end
         end
 
         -- where the lanes under this one hold the row when it fires, which is

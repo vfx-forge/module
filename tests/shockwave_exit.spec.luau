@@ -326,6 +326,33 @@ harness.suite(function()
       end
     end)
 
+    -- the row belongs to the lane that started last, so an end lane starting
+    -- inside the exit moves the row whatever the despawn lane says
+    test("a despawn lane is not still while a lane starting after it can take the row", function()
+      for _, id in PIECES do
+        load()
+        harness.reset()
+
+        local ends = { kind = "tween", chain = true, duration = 0.3, finish = value.lit(Vector3.new(0, 1, 0)) }
+        local ref = harness.make("Part")
+
+        ref:SetAttribute("Lifetime", NumberRange.new(1, 1))
+        ref:SetAttribute(
+          mods.attrName("attribute", "OffsetIn"),
+          frame.frame(codec.encode({ v = 2, lanes = { ["end"] = { ends } } }))
+        )
+
+        local module = registry.get(id) :: any
+        local attrs = registry.read(ref, module) :: any
+        local piece = mods.piece(module.events)
+        local offsetIn = attrs.OffsetIn(nil, nil, piece)
+
+        piece:fire("despawn", 0.1)
+
+        expect(offsetIn.still("despawn", 0.1)).toBe(false)
+      end
+    end)
+
     test("a despawn lane that passes through somewhere else is not still", function()
       for _, id in PIECES do
         load()
@@ -602,6 +629,32 @@ harness.suite(function()
       end
 
       expect(nearVector(sizeScale.at(2.4), Vector3.new(0.25, 0.25, 0.25))).toBe(true)
+    end)
+
+    test("a debris shrink is not still while an end lane can still take the size", function()
+      load()
+      harness.reset()
+
+      local from = Vector3.new(1, 1, 1)
+      local ends = { kind = "tween", chain = true, duration = 0.3, finish = value.lit(Vector3.new(0.5, 0.5, 0.5)) }
+      local ref = harness.make("Part")
+
+      ref:SetAttribute("Lifetime", NumberRange.new(2, 3))
+      ref:SetAttribute("SizeScale", from)
+      ref:SetAttribute("ShrinkScale", from)
+      ref:SetAttribute(
+        mods.attrName("attribute", "SizeScale"),
+        frame.frame(codec.encode({ v = 2, lanes = { ["end"] = { ends } } }))
+      )
+
+      local module = registry.get("shockwave_debris") :: any
+      local attrs = registry.read(ref, module) :: any
+      local piece = mods.piece(module.events)
+      local sizeScale = attrs.SizeScale(nil, nil, piece)
+
+      piece:fire("despawn", 2, 0.5)
+
+      expect(sizeScale.still("despawn", 2)).toBe(false)
     end)
 
     test("a debris shrink to where the piece stands is still", function()
