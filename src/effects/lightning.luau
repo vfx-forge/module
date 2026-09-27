@@ -51,6 +51,20 @@ local function fadeOutCurve(_, attrs: any)
   return attrs.FadeOutCurve
 end
 
+-- how long a dissipation with no mode of its own runs: the longest dissipate
+-- lane on the rows the bolt samples, nil when none of them holds one
+local function dissipateLength(tracks: { any }): number?
+  local longest: number? = nil
+
+  for _, track in tracks do
+    if track.has("dissipate") then
+      longest = math.max(longest or 0, track.reach("dissipate"))
+    end
+  end
+
+  return longest
+end
+
 local lightning = {}
 
 lightning.id = "lightning"
@@ -533,12 +547,13 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
     -- one track set per emitted bolt, the same granularity the legacy tweens
     -- ran at. FillTransparency spans FillColorDuration rather than the bolt's,
     -- which is what its tween always did. the piece is the clock this bolt's
-    -- own lanes fire on, so one bolt dissipating never moves another
+    -- own lanes fire on, so one bolt dissipating never moves another, and every
+    -- row the bolt samples takes it, so a dissipate lane on any of them runs
     local piece = mods.piece(lightning.events)
-    local width = attrs.Width(nil, duration)
-    local length = attrs.Length(nil, duration)
+    local width = attrs.Width(nil, duration, piece)
+    local length = attrs.Length(nil, duration, piece)
     local transparency = attrs.Transparency(nil, duration, piece)
-    local fillTp = attrs.FillTransparency(nil, attrs.FillColorDuration)
+    local fillTp = attrs.FillTransparency(nil, attrs.FillColorDuration, piece)
     local speed = attrs.Speed(nil, duration)
 
     table.insert(
@@ -579,8 +594,9 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         end
 
         -- create a highlight container if needed. a highlight is built when the
-        -- fill is less than opaque at either end of its track
-        local useHighlight = fillTp.at(0) < 1 or fillTp.at(fillTp.duration) < 1
+        -- fill is less than opaque at either end of its track, or when its
+        -- dissipate lane may take it there
+        local useHighlight = fillTp.at(0) < 1 or fillTp.at(fillTp.duration) < 1 or fillTp.has("dissipate")
 
         local highlight: Highlight?
         local containerModel: Model?
@@ -1034,6 +1050,12 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           end, getEffectiveSpeed, speedTween)
         end
 
+        -- a driver steps only its row's own span and the dissipation starts
+        -- after it, so the phase samples the rows whose dissipate lane it opens
+        local widthDissipates = width.has("dissipate")
+        local lengthDissipates = length.has("dissipate")
+        local fillDissipates = fillTp.has("dissipate")
+
         -- dissipation handler
         local function handleDissipation(
           headAlpha: number,
@@ -1051,6 +1073,20 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           tween.fromParams(curveData, dissipationDuration, function(alpha, deltaTime)
             local scaledDelta = deltaTime * getEffectiveSpeed()
             scaledElapsedTime += scaledDelta
+
+            -- a Scale dissipation owns the width, as a Retract one owns the
+            -- tail
+            if widthDissipates and mode ~= "Scale" then
+              currentWidth = width.at(scaledElapsedTime)
+            end
+
+            if lengthDissipates then
+              currentLength = length.at(scaledElapsedTime)
+            end
+
+            if fillDissipates then
+              currentFillTransparency = fillTp.at(scaledElapsedTime)
+            end
 
             if attrs.RefreshDuringDissipate then
               currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
@@ -1071,8 +1107,15 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             return
           end
 
+          -- the phase is decided before the lane fires, so the fire can say how
+          -- long the phase it opens runs: a mode runs its own duration, and a
+          -- bolt with none runs its longest dissipate lane
+          local mode = attrs.DissipateMode
+          local fade = if mode == "None" then dissipateLength({ transparency, width, length, fillTp }) else nil
+          local runFor = if mode ~= "None" then attrs.DissipateDuration else fade
+
           -- the lane runs on the clock every other track on this bolt reads
-          piece:fire("dissipate", scaledElapsedTime)
+          piece:fire("dissipate", scaledElapsedTime, runFor)
 
           local headAlpha = currentHeadAlpha
 
@@ -1096,23 +1139,24 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             end
           end
 
-          if attrs.DissipateMode ~= "None" then
+          if mode ~= "None" then
             handleDissipation(
               headAlpha,
               math.max(0, headAlpha - currentLength),
               currentWidth,
               attrs.DissipateCurve,
               attrs.DissipateDuration,
-              attrs.DissipateMode,
+              mode,
               onDissipationComplete
             )
-          elseif transparency.has("dissipate") then
+          elseif fade ~= nil then
+            -- no mode moves the tail or the width, so the curve eases nothing
             handleDissipation(
               headAlpha,
               math.max(0, headAlpha - currentLength),
               currentWidth,
-              attrs.FadeOutCurve,
-              attrs.FadeOutDuration,
+              utility.linear_bezier,
+              fade,
               "None",
               onDissipationComplete
             )

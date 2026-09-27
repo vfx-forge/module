@@ -62,6 +62,13 @@ local function oldFadeOut(attrs: any, base: number, progress: number): number
   return lerp(base, attrs.FadeOutEnd, 1 - easeOf(bez, alpha))
 end
 
+-- how long the fade-only dissipation ran before it read the lanes: the fade
+-- out's own duration, whatever the bolt's rows held. written out here before
+-- the arm is rewritten
+local function oldFadeLength(attrs: any): number
+  return attrs.FadeOutDuration
+end
+
 local loaded = false
 
 -- a bolt with both fades authored, read through the registry the way an emit
@@ -88,6 +95,19 @@ local function bolt()
   local attrs = registry.read(ref, registry.get("lightning"))
 
   return ref, attrs
+end
+
+-- a bare bolt with one row's lanes stored framed, read the way an emit reads it
+local function framedBolt(row: string, lanes: { [string]: { any } }): any
+  bolt()
+  harness.reset()
+
+  local ref = harness.make("Attachment")
+  ref:AddTag("LightningBolt")
+  harness.make("Part", ref)
+  ref:SetAttribute(mods.attrName("attribute", row), frame.frame(codec.encode({ v = 2, lanes = lanes })))
+
+  return registry.read(ref, registry.get("lightning"))
 end
 
 harness.suite(function()
@@ -428,6 +448,72 @@ harness.suite(function()
 
       expect(attrs.FadeOutDuration).toBe(0)
       expect(track.has("dissipate")).toBe(false)
+    end)
+  end)
+
+  harness.describe("the dissipation on every row", function()
+    -- a lane nobody edited has exactly the old fade's length, so a released
+    -- bolt dissipates for as long as it always did
+    test("an unedited dissipate lane reaches as far as the old fade ran", function()
+      local _, attrs = bolt()
+      local module = registry.get("lightning")
+      local track = attrs.Transparency(nil, 1, mods.piece(module.events))
+
+      expect(track.reach("dissipate")).toBe(oldFadeLength(attrs))
+    end)
+
+    test("an authored dissipate lane with no fade out reaches its own length", function()
+      local fade = { kind = "tween", chain = true, duration = 0.4, finish = value.lit(1) }
+      local attrs = framedBolt("Transparency", { dissipate = { fade } })
+      local module = registry.get("lightning")
+      local track = attrs.Transparency(nil, 1, mods.piece(module.events))
+
+      expect(attrs.FadeOutDuration).toBe(0)
+      expect(oldFadeLength(attrs)).toBe(0)
+      expect(track.has("dissipate")).toBe(true)
+      expect(near(track.reach("dissipate"), 0.4)).toBe(true)
+    end)
+
+    -- each of the three rows runs its dissipate lane on the bolt's piece from
+    -- where it stood when the lane fired
+    test("a dissipate lane on Width, Length or FillTransparency runs on the bolt's piece", function()
+      local rests = { Width = 0.2, Length = 1, FillTransparency = 1 }
+
+      for row, rest in rests do
+        local thin = { kind = "tween", chain = true, duration = 0.3, finish = value.lit(0) }
+        local attrs = framedBolt(row, { dissipate = { thin } })
+        local module = registry.get("lightning")
+        local piece = mods.piece(module.events)
+        local track = attrs[row](nil, 1, piece)
+
+        expect(track.has("dissipate")).toBe(true)
+        expect(near(track.reach("dissipate"), 0.3)).toBe(true)
+        expect(near(track.at(1.5), rest)).toBe(true)
+
+        piece:fire("dissipate", 1.5)
+
+        expect(near(track.at(1.65), rest / 2)).toBe(true)
+        expect(near(track.at(1.8), 0)).toBe(true)
+      end
+    end)
+
+    -- the bolt fires the lane with the phase it opens, so an entry naming no
+    -- duration runs that phase; told nothing, it had no time left at all
+    test("a dissipate entry naming no duration runs the phase the bolt says it opens", function()
+      local open = { kind = "tween", chain = true, finish = value.lit(1) }
+      local attrs = framedBolt("Transparency", { dissipate = { open } })
+      local module = registry.get("lightning")
+      local piece = mods.piece(module.events)
+      local track = attrs.Transparency(nil, 1, piece)
+
+      piece:fire("dissipate", 1.2)
+
+      expect(near(track.at(1.25), 1)).toBe(true)
+
+      piece:fire("dissipate", 1.2, 0.5)
+
+      expect(near(track.at(1.45), 0.5)).toBe(true)
+      expect(near(track.at(1.7), 1)).toBe(true)
     end)
   end)
 end)
