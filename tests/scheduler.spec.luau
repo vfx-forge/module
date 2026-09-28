@@ -337,6 +337,33 @@ harness.suite(function()
       expect(#connections).toBe(1)
       expect(log).toEqual({ "computed", "followed" })
     end)
+    test("a start while bound keeps the service it bound to, and stop unbinds from that one", function()
+      local unbinds = {}
+
+      local function service(name: string)
+        return {
+          IsRunning = function()
+            return true
+          end,
+          BindToRenderStep = function() end,
+          UnbindFromRenderStep = function()
+            table.insert(unbinds, name)
+          end,
+        }
+      end
+
+      scheduler.stop()
+      scheduler.start(service("first"))
+
+      local handle = scheduler.add("compute", function() end)
+
+      scheduler.start(service("second"))
+      scheduler.stop()
+      scheduler.start()
+      handle:Disconnect()
+
+      expect(unbinds).toEqual({ "first", "first" })
+    end)
   end)
 
   harness.describe("the scheduler's cost", function()

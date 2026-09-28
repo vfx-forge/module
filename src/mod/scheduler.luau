@@ -257,7 +257,11 @@ end
 -- editor drives its camera with no binding, so one connection runs both
 function scheduler.start(runService: any?)
   stopped = false
-  service = runService or RunService
+
+  -- a bound scheduler is unbound from the service it bound to
+  if not bound then
+    service = runService or RunService
+  end
 
   bind()
 end
