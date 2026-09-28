@@ -131,6 +131,22 @@ harness.suite(function()
       expect(camera.CFrame == BASE).toBe(true)
     end)
 
+    test("a copy started in the editor undoes its shakes once the game runs", function()
+      start(notRunning)
+      RunService.IsRunning = running
+
+      local fx = shake(nil, 30)
+      frames(3)
+
+      expect(near(camera.CFrame, BASE)).toBe(false)
+
+      scheduler.compute(0.1)
+
+      expect(camera.CFrame == BASE).toBe(true)
+
+      finish(fx)
+    end)
+
     test("a running game keeps a camera somebody else wrote after the shake", function()
       start(running)
 

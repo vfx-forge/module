@@ -216,10 +216,7 @@ function camera_shake.init()
     return
   end
 
-  if RunService:IsRunning() then
-    table.insert(steps, scheduler.add("undo", undo, 0, nil, true))
-  end
-
+  table.insert(steps, scheduler.add("undo", undo, 0, nil, true))
   table.insert(steps, scheduler.add("shake", apply, 0, nil, true))
 end
 
