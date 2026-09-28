@@ -22,6 +22,7 @@ export type Handle = {
 type Step = Handle & {
   run: (deltaTime: number) -> (),
   owner: any,
+  warned: boolean,
 }
 
 type Slot = {
@@ -97,7 +98,8 @@ end
 -- every step still connected runs once, in the order it was added. one added
 -- while the pass runs waits for the next pass, and a step that throws is
 -- dropped, reported once and its owner told, while the rest of the pass
--- carries on after it
+-- carries on after it. a step with no owner has nothing to release, so it is
+-- reported once and kept running
 local function runBucket(list: { Step }, deltaTime: number)
   bucket, index, kept, count, delta = list, 0, 0, #list, deltaTime
   passer = coroutine.running()
@@ -111,13 +113,26 @@ local function runBucket(list: { Step }, deltaTime: number)
     end
 
     local step = bucket[index]
-    step.Connected = false
 
-    logger.warn(`a step failed with error: {err}`)
+    if not step.warned then
+      step.warned = true
+      logger.warn(`a step failed with error: {err}`)
+    end
+
+    if step.owner == nil then
+      if step.Connected then
+        kept += 1
+        bucket[kept] = step
+      end
+
+      continue
+    end
+
+    step.Connected = false
 
     local failed = scheduler.failed
 
-    if failed == nil or step.owner == nil then
+    if failed == nil then
       continue
     end
 
@@ -196,6 +211,7 @@ function scheduler.add(phase: Phase, run: (deltaTime: number) -> (), depth: numb
     Disconnect = disconnect,
     run = run,
     owner = owner,
+    warned = false,
   }
 
   table.insert(list, step)

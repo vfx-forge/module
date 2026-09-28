@@ -122,7 +122,7 @@ harness.suite(function()
       expect(camera.CFrame == other).toBe(true)
     end)
 
-    test("init adds its steps again after the scheduler dropped a throwing one", function()
+    test("a shake step that throws keeps shaking once the camera is sound again", function()
       start(notRunning)
 
       local fx = shake(nil, 30)
@@ -130,17 +130,12 @@ harness.suite(function()
       -- a camera with no CFrame to multiply makes the shake step throw
       local warnings = harness.captureWarnings(function()
         camera.CFrame = nil :: any
-        frames(1)
+        frames(2)
       end)
 
-      expect(#warnings > 0).toBe(true)
+      expect(#warnings).toBe(1)
 
       camera.CFrame = BASE
-      frames(1)
-
-      expect(camera.CFrame == BASE).toBe(true)
-
-      camera_shake.init()
       frames(1)
 
       expect(near(camera.CFrame, BASE)).toBe(false)

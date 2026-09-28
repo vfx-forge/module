@@ -136,7 +136,7 @@ harness.suite(function()
       expect(string.find(warnings[1], "function sweep", 1, true) ~= nil).toBe(true)
     end)
 
-    test("a throwing step with no owner tells no one", function()
+    test("a throwing step with no owner tells no one and stays connected", function()
       local told = 0
       local previous = scheduler.failed
 
@@ -152,11 +152,41 @@ harness.suite(function()
         scheduler.frame(0.1)
       end)
 
-      scheduler.failed = previous
+      local connected = thrower.Connected
 
+      scheduler.failed = previous
+      thrower:Disconnect()
+
+      expect(connected).toBe(true)
       expect(#warnings).toBe(1)
       expect(told).toBe(0)
-      expect(thrower.Connected).toBe(false)
+      expect(string.find(warnings[1], "function sweep", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a step with no owner that throws every frame warns once and keeps running", function()
+      local log = {}
+      local runs = 0
+
+      local thrower = scheduler.add("compute", function()
+        runs += 1
+        error("boom")
+      end)
+      local after = scheduler.add("compute", logging(log, "after"))
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+      end)
+
+      local connected = thrower.Connected
+
+      disconnectAll({ thrower, after })
+
+      expect(runs).toBe(3)
+      expect(connected).toBe(true)
+      expect(#warnings).toBe(1)
+      expect(log).toEqual({ "after", "after", "after" })
     end)
 
     test("an owner whose release throws is logged once, and the pass carries on", function()

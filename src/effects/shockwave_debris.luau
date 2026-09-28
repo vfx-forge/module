@@ -166,7 +166,31 @@ function debris.init(cache)
         return
       end
 
-      workspace:StepPhysics(deltaTime, physicsParts)
+      local parts = physicsParts
+
+      -- a part deleted before its release takes it off the list makes
+      -- StepPhysics throw, so it is left out until then
+      for _, part in physicsParts do
+        if part.Parent then
+          continue
+        end
+
+        parts = {}
+
+        for _, kept in physicsParts do
+          if kept.Parent then
+            table.insert(parts, kept)
+          end
+        end
+
+        break
+      end
+
+      if #parts == 0 then
+        return
+      end
+
+      workspace:StepPhysics(deltaTime, parts)
     end)
   end
 end
