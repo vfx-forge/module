@@ -165,11 +165,10 @@ function lifetime.hold<T>(fx: effect, value: T): T
     file(fx, "cleanups", value)
   elseif kind == "Instance" then
     file(fx, "clones", value)
-  elseif
-    kind == "RBXScriptConnection"
-    or kind == "thread"
-    or (kind == "table" and (value :: any).Disconnect ~= nil)
-  then
+  elseif kind == "table" and (value :: any).Disconnect ~= nil then
+    scheduler.adopt(value :: any, fx)
+    file(fx, "threads", value)
+  elseif kind == "RBXScriptConnection" or kind == "thread" then
     file(fx, "threads", value)
   elseif kind == "table" then
     file(fx, "cleanups", function()

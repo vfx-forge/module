@@ -237,6 +237,19 @@ function scheduler.add(
   return step
 end
 
+-- a step added with no owner takes the one that holds it, so a throw ends
+-- the holder rather than the step alone. a step kept for the session is never
+-- adopted
+function scheduler.adopt(handle: Handle, owner: any)
+  local step = handle :: Step
+
+  if step.Disconnect ~= disconnect or step.owner ~= nil or step.survives then
+    return
+  end
+
+  step.owner = owner
+end
+
 -- the first half of a frame: undoing what the last one left on shared
 -- targets, the waits that are due, then every step that computes a value
 function scheduler.compute(deltaTime: number)

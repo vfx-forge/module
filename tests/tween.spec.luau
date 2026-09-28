@@ -168,6 +168,72 @@ harness.suite(function()
       expect(#warnings).toBe(1)
     end)
 
+    test("a held fromParams tween that throws ends its effect, and its emit settles", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.seal(emit)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local body = coroutine.running()
+
+        -- the body waits on the tween's finish, as a bezier piece does
+        lifetime.hold(
+          scope,
+          tween.fromParams(
+            LINE,
+            1,
+            function(): number
+              error("boom")
+            end,
+            nil,
+            function()
+              task.spawn(body)
+            end
+          )
+        )
+
+        coroutine.yield()
+        table.insert(log, "resumed")
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+      end)
+
+      expect(log).toEqual({})
+      expect(#warnings).toBe(1)
+      expect(fx.state).toBe(lifetime.RELEASED)
+      expect(emit.done).toBe(true)
+    end)
+
+    test("an unheld fromParams tween that throws leaves the effect running", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.run(fx, function()
+        tween.fromParams(LINE, 1, function(): number
+          error("boom")
+        end)
+
+        coroutine.yield()
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+      end)
+
+      local running = fx.state == lifetime.RUNNING
+
+      lifetime.release(fx)
+
+      expect(#warnings).toBe(1)
+      expect(running).toBe(true)
+    end)
+
     test("an after whose effect is released first never finishes", function()
       local finished = false
       local emit = lifetime.emit(nil)
