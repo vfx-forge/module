@@ -117,6 +117,10 @@ local function apply()
   if not running then
     camera.CFrame *= totalShakeCF:Inverse()
 
+    -- forgotten as soon as it is off, so a frame that throws past here is
+    -- not taken off the camera a second time by the next
+    totalShakeCF = CFrame.identity
+
     -- I <3 THE STUDIO CAMERA SYSTEM !!!! YAYAY AIHU;S H;GDFAH GSDFL
     local cf = camera.CFrame
     local rx, ry = cf:ToOrientation()

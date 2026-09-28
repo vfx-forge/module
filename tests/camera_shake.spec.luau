@@ -2,6 +2,8 @@ local harness = require("@tests/harness")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
 local camera_shake = require("@vfx/camera_shake")
+
+local Shake = require("@pkg/Shake")
 local test, expect = harness.test, harness.expect
 local CFrame = harness.datatypes.CFrame
 local Vector3 = harness.datatypes.Vector3
@@ -139,6 +141,38 @@ harness.suite(function()
       frames(1)
 
       expect(near(camera.CFrame, BASE)).toBe(false)
+
+      finish(fx)
+    end)
+
+    test("an editor frame whose shake throws leaves the camera on its base once the shake ends", function()
+      start(notRunning)
+
+      local fx = shake(nil, 30)
+      frames(3)
+
+      -- the vendored module hands out no class, so it is patched through an
+      -- instance's metatable
+      local class = getmetatable(Shake.new() :: any)
+      local update = class.Update
+
+      class.Update = function()
+        error("boom")
+      end
+
+      local warnings = harness.captureWarnings(function()
+        frames(1)
+      end)
+
+      class.Update = update
+
+      expect(#warnings).toBe(1)
+      expect(near(camera.CFrame, BASE)).toBe(true)
+
+      -- past the whole envelope, fade in, sustain and fade out
+      frames(40)
+
+      expect(near(camera.CFrame, BASE)).toBe(true)
 
       finish(fx)
     end)
