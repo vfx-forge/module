@@ -507,17 +507,20 @@ harness.suite(function()
       local fx = lifetime.effect(emit, 0, nil)
       lifetime.seal(emit)
 
-      lifetime.run(fx, function(scope)
-        lifetime.hold(scope, function()
-          table.insert(log, "released")
+      local warnings = harness.captureWarnings(function()
+        lifetime.run(fx, function(scope)
+          lifetime.hold(scope, function()
+            table.insert(log, "released")
+          end)
+          lifetime.clear(emit)
+          table.insert(log, "after")
         end)
-        lifetime.clear(emit)
-        table.insert(log, "after")
       end)
 
+      expect(warnings).toEqual({})
       expect(log).toEqual({ "released" })
       expect(fx.state).toBe(lifetime.RELEASED)
-      expect(coroutine.status(fx.thread :: thread)).toBe("suspended")
+      expect(coroutine.status(fx.thread :: thread)).toBe("dead")
     end)
 
     test("marks the whole subtree cleared, where an emit that ends on its own is not", function()
@@ -1000,9 +1003,10 @@ harness.suite(function()
       lifetime.seal(emit)
 
       local worker: thread? = nil
+      local outstanding
 
       lifetime.run(fx, function(scope: lifetime.effect)
-        local outstanding = lifetime.join(scope)
+        outstanding = lifetime.join(scope)
 
         lifetime.spawn(outstanding, function()
           worker = coroutine.running()
@@ -1019,6 +1023,7 @@ harness.suite(function()
 
       expect(log).toEqual({})
       expect(coroutine.status(worker :: thread)).toBe("dead")
+      expect(outstanding.count).toBe(0)
       expect(emit.done).toBe(true)
     end)
 
@@ -1029,25 +1034,30 @@ harness.suite(function()
       lifetime.seal(emit)
 
       local piece: thread? = nil
+      local outstanding
 
-      lifetime.run(fx, function(scope: lifetime.effect)
-        local outstanding = lifetime.join(scope)
+      local warnings = harness.captureWarnings(function()
+        lifetime.run(fx, function(scope: lifetime.effect)
+          outstanding = lifetime.join(scope)
 
-        lifetime.hold(scope, function()
-          table.insert(log, "released")
+          lifetime.hold(scope, function()
+            table.insert(log, "released")
+          end)
+
+          lifetime.spawn(outstanding, function()
+            piece = coroutine.running()
+            lifetime.clear(emit)
+            table.insert(log, "piece after")
+          end)
+
+          table.insert(log, "body after")
+          lifetime.awaitJoin(outstanding)
+          table.insert(log, "joined")
         end)
-
-        lifetime.spawn(outstanding, function()
-          piece = coroutine.running()
-          lifetime.clear(emit)
-          table.insert(log, "piece after")
-        end)
-
-        table.insert(log, "body after")
-        lifetime.awaitJoin(outstanding)
-        table.insert(log, "joined")
       end)
 
+      expect(warnings).toEqual({})
+      expect(outstanding.count).toBe(0)
       expect(log).toEqual({ "released" })
       expect(fx.state).toBe(lifetime.RELEASED)
       expect(emit.done).toBe(true)
@@ -1064,30 +1074,100 @@ harness.suite(function()
       local outer: thread? = nil
       local inner: thread? = nil
 
-      lifetime.run(fx, function(scope: lifetime.effect)
-        local outstanding = lifetime.join(scope)
+      local outstanding
 
-        lifetime.spawn(outstanding, function()
-          outer = coroutine.running()
+      local warnings = harness.captureWarnings(function()
+        lifetime.run(fx, function(scope: lifetime.effect)
+          outstanding = lifetime.join(scope)
 
           lifetime.spawn(outstanding, function()
-            inner = coroutine.running()
-            lifetime.clear(emit)
-            table.insert(log, "inner after")
+            outer = coroutine.running()
+
+            lifetime.spawn(outstanding, function()
+              inner = coroutine.running()
+              lifetime.clear(emit)
+              table.insert(log, "inner after")
+            end)
+
+            table.insert(log, "outer after")
           end)
 
-          table.insert(log, "outer after")
+          table.insert(log, "body after")
+          lifetime.awaitJoin(outstanding)
         end)
-
-        table.insert(log, "body after")
-        lifetime.awaitJoin(outstanding)
       end)
 
+      expect(warnings).toEqual({})
+      expect(outstanding.count).toBe(0)
       expect(log).toEqual({})
       expect(emit.done).toBe(true)
       expect(coroutine.status(fx.thread :: thread)).toBe("dead")
       expect(coroutine.status(outer :: thread)).toBe("dead")
       expect(coroutine.status(inner :: thread)).toBe("dead")
+    end)
+
+    test("a piece that clears its own emit after it has waited ends, and so does the body", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      lifetime.seal(emit)
+
+      local piece: thread? = nil
+      local outstanding
+
+      local warnings = harness.captureWarnings(function()
+        lifetime.run(fx, function(scope: lifetime.effect)
+          outstanding = lifetime.join(scope)
+
+          lifetime.spawn(outstanding, function()
+            piece = coroutine.running()
+            lifetime.wait(scope, 0.5)
+            lifetime.clear(emit)
+            table.insert(log, "piece after")
+          end)
+
+          lifetime.awaitJoin(outstanding)
+          table.insert(log, "joined")
+        end)
+
+        scheduler.frame(0.5)
+      end)
+
+      expect(warnings).toEqual({})
+      expect(log).toEqual({})
+      expect(outstanding.count).toBe(0)
+      expect(fx.state).toBe(lifetime.RELEASED)
+      expect(emit.done).toBe(true)
+      expect(coroutine.status(fx.thread :: thread)).toBe("dead")
+      expect(coroutine.status(piece :: thread)).toBe("dead")
+    end)
+
+    test("a body whose pcall takes the halt finds its join empty and finishes", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      lifetime.seal(emit)
+
+      local outstanding
+
+      local warnings = harness.captureWarnings(function()
+        lifetime.run(fx, function(scope: lifetime.effect)
+          outstanding = lifetime.join(scope)
+
+          pcall(lifetime.spawn, outstanding, function()
+            lifetime.clear(emit)
+          end)
+
+          lifetime.awaitJoin(outstanding)
+          table.insert(log, "joined")
+        end)
+      end)
+
+      expect(warnings).toEqual({})
+      expect(log).toEqual({ "joined" })
+      expect(outstanding.count).toBe(0)
+      expect(emit.done).toBe(true)
+      expect(coroutine.status(fx.thread :: thread)).toBe("dead")
     end)
 
     test("a spawn on an effect that is no longer running starts nothing and counts nothing", function()

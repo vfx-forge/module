@@ -50,7 +50,7 @@ export type effect = {
 
   -- released in this order, each list in reverse
   defers: { (cancelled: boolean) -> () }?,
-  threads: { RBXScriptConnection | thread | scheduler.Handle }?,
+  threads: { RBXScriptConnection | thread | scheduler.Handle | () -> () }?,
   clones: { Instance }?,
   cleanups: { () -> () }?,
 }
@@ -74,12 +74,13 @@ local wakes: { thread } = {}
 local clearing = 0
 
 -- the effect each piece thread runs for, weak keyed so a finished piece is let
--- go, which tells a piece that started another piece it was stopped under it
+-- go, so a piece that started another piece can tell it belongs to the stopped
+-- effect
 local PIECES = setmetatable({} :: { [thread]: effect }, { __mode = "k" })
 
--- thrown through a body or a piece whose effect a piece it started has cleared,
--- and taken by that thread's own wrapper, so the thread ends there instead of
--- running on for an effect that is gone
+-- thrown through a body or a piece whose effect it cleared, or a piece it
+-- started cleared, and taken by that thread's own wrapper, so the thread ends
+-- there instead of running on for an effect that is gone
 local HALT = table.freeze({})
 
 local function trace(err: any)
@@ -525,8 +526,8 @@ function lifetime.include(join: join, emit: emit)
 end
 
 -- a piece on a thread of its own, held by the effect so a clear closes it, and
--- counted into the join until it returns. a piece that throws is logged and
--- counted out, and the pieces beside it keep running
+-- counted into the join until it returns or is closed. a piece that throws is
+-- logged and counted out, and the pieces beside it keep running
 function lifetime.spawn(join: join, body: (...any) -> (), ...: any)
   local fx = join.fx
 
@@ -547,21 +548,20 @@ function lifetime.spawn(join: join, body: (...any) -> (), ...: any)
   end)
 
   PIECES[thread] = fx
-  file(fx, "threads", thread)
+
+  file(fx, "threads", function()
+    disposeOne(thread)
+    done()
+  end)
+
   task.spawn(thread, ...)
 
   if fx.state == RUNNING then
     return
   end
 
-  -- the piece cleared its own effect before it first yielded. the release could
-  -- close neither it, parked in the clear, nor the thread that started it, both
-  -- still on the resume chain, so the piece is closed here and a body or piece
-  -- of this effect that started it ends as well
-  if coroutine.status(thread) == "suspended" then
-    coroutine.close(thread)
-  end
-
+  -- the effect stopped while the piece ran, so a body or piece of this effect
+  -- that started it ends as well
   local caller = coroutine.running()
 
   if caller == fx.thread or PIECES[caller] == fx then
@@ -569,8 +569,9 @@ function lifetime.spawn(join: join, body: (...any) -> (), ...: any)
   end
 end
 
--- parks the calling thread until everything counted into the join is out. a
--- join has one waiter at a time, and may be waited on again once it is empty
+-- parks the calling thread until everything counted into the join is out, and
+-- not at all once the join's effect has stopped. a join has one waiter at a
+-- time, and may be waited on again once it is empty
 function lifetime.awaitJoin(join: join)
   if scheduler.inPass() then
     logger.error(
@@ -578,7 +579,7 @@ function lifetime.awaitJoin(join: join)
     )
   end
 
-  if join.count == 0 then
+  if join.count == 0 or join.fx.state ~= RUNNING then
     return
   end
 
@@ -586,18 +587,14 @@ function lifetime.awaitJoin(join: join)
   coroutine.yield()
 end
 
--- the body or a piece the effect holds, so a piece clearing its own emit parks
--- the way a body does, and neither its `piece after` nor the body's `joined`
--- ever runs
+-- the body or a piece of an effect in the tree, so a piece clearing its own
+-- emit ends the way a body does, and neither its `piece after` nor the body's
+-- `joined` ever runs
 local function ownsThread(emit: emit, thread: thread): boolean
+  local piece = PIECES[thread]
+
   for _, fx in emit.effects do
-    if fx.thread == thread then
-      return true
-    end
-
-    local threads = fx.threads
-
-    if threads and table.find(threads, thread) then
+    if fx.thread == thread or piece == fx then
       return true
     end
   end
@@ -613,7 +610,7 @@ end
 
 -- pass one: every thread in the subtree stops before anything is released, so
 -- no body resumes into a half-released tree. the running thread cannot be
--- closed and is parked at the end of clear instead
+-- closed and ends at the end of clear instead
 local function stopTree(emit: emit, running: thread)
   for _, fx in emit.effects do
     if fx.state ~= RUNNING then
@@ -685,7 +682,7 @@ function lifetime.clear(emit: emit)
   flushWakes()
 
   if self then
-    coroutine.yield()
+    error(HALT)
   end
 end
 
