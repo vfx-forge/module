@@ -425,6 +425,10 @@ function lifetime.seal(emit: emit)
 end
 
 function lifetime.await(emit: emit)
+  if scheduler.inPass() then
+    logger.error("lifetime.await yields, so it cannot run inside a step or a tween's callback; start it in task.spawn")
+  end
+
   if emit.pending == 0 then
     return
   end

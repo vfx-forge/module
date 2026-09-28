@@ -764,6 +764,25 @@ harness.suite(function()
       expect(coroutine.status(fx.thread :: thread)).toBe("dead")
     end)
 
+    test("an await inside a step is refused rather than left to yield the pass", function()
+      local emit = lifetime.emit(nil)
+      local after = false
+
+      local handle = scheduler.add("compute", function()
+        lifetime.await(emit)
+        after = true
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+      end)
+
+      handle:Disconnect()
+
+      expect(after).toBe(false)
+      expect(string.find(warnings[1], "lifetime.await yields", 1, true) ~= nil).toBe(true)
+    end)
+
     test("a clear from inside a step completes and the rest of the frame runs", function()
       local log = {}
       local emit = lifetime.emit(nil)
