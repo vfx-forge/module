@@ -231,6 +231,9 @@ function camera_shake.deinit()
     totalShakeCF = CFrame.identity
   end
 
+  -- a shake left here would be applied again, from where its clock stopped,
+  -- by the next init
+  table.clear(activeShakes)
   disconnectSteps()
 end
 

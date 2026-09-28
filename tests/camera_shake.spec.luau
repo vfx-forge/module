@@ -177,6 +177,21 @@ harness.suite(function()
       finish(fx)
     end)
 
+    test("a deinit then an init does not apply the shake the deinit left", function()
+      start(notRunning)
+
+      local fx = shake(nil, 30)
+      frames(3)
+
+      camera_shake.deinit()
+      camera_shake.init()
+      frames(3)
+
+      expect(near(camera.CFrame, BASE)).toBe(true)
+
+      finish(fx)
+    end)
+
     test("a falloff of zero with the camera on its origin shakes rather than NaN", function()
       start(notRunning)
 
