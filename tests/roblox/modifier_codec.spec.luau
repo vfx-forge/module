@@ -9,23 +9,28 @@ local function roundTrip(v: any): any
   return codec.decode(codec.encode(q :: any)).lanes.start[1].start.v
 end
 
--- pins z's color3 quantization against the real engine color3, a stronger claim
--- than the lune spec's pin against lune's own emulated color3
+-- pins endpoint colour precision against the engine's own Color3 and
+-- ColorSequence, a stronger claim than the lune spec's pin against lune's
+-- emulated ones
 return {
   {
-    name = "quantizes an endpoint colour to the nearest 8-bit-per-channel value",
+    name = "an endpoint colour round trips at full precision",
     run = function()
-      local back = roundTrip(Color3.new(0.25, 0.5, 0.75))
-      assertEqual(back, Color3.fromRGB(64, 128, 191), "quantized color")
+      local colour = Color3.new(0.1234567, 0.5, 0.987654)
+      assertEqual(roundTrip(colour), colour, "round tripped color")
     end,
   },
 
   {
-    name = "re-encoding a quantized colour does not drift further",
+    name = "a colour sequence endpoint keeps stops closer than 1/255 apart",
     run = function()
-      local once = roundTrip(Color3.new(0.25, 0.5, 0.75))
-      local twice = roundTrip(once)
-      assertEqual(twice, once, "twice-encoded color")
+      local stops = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.new(1, 0, 0)),
+        ColorSequenceKeypoint.new(0.29045, Color3.new(0.2, 0.4, 0.6)),
+        ColorSequenceKeypoint.new(0.2905, Color3.new(0.123, 0.456, 0.789)),
+        ColorSequenceKeypoint.new(1, Color3.new(0, 0, 1)),
+      })
+      assertEqual(roundTrip(stops), stops, "round tripped sequence")
     end,
   },
 

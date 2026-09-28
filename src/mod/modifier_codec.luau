@@ -4,6 +4,13 @@ local codec = {}
 
 local VERSION = 2
 
+-- Z writes a Color3 as three bytes and a ColorSequence stop as four, which
+-- snaps a stop's time to 1/255 and merges stops closer than that. an endpoint
+-- colour rides a one key table holding a buffer instead: f32 channels, the
+-- engine's own width, and an f64 stop time
+local COLOUR = 12
+local STOP = 20
+
 -- the newest layout this codec reads, for a writer deciding whether a stored
 -- payload is newer than itself
 codec.VERSION = VERSION
@@ -66,7 +73,8 @@ local function schema(): (any, any, any)
     -- start, finish, wait and extra ride Z.table's self-describing mode
     -- because their type genuinely varies: an endpoint holds a tagged
     -- value.Value whose payload is whatever the row's property type is
-    -- (number, Color3, UDim2, NumberRange, ...), and extra carries any field
+    -- (number, Color3, UDim2, NumberRange, ...), a colour wrapped by packed
+    -- below, and extra carries any field
     -- this version of the plugin does not know about, which is what keeps
     -- modifier_queue.merge's union-of-keys behaviour honest across versions
     local modifier = Z.schema({
@@ -128,6 +136,106 @@ local function waitOf(wait: any): value.Value?
   return nil
 end
 
+local function wrapped(x: any): { [string]: buffer }?
+  local kind = typeof(x)
+
+  if kind == "Color3" then
+    local buf = buffer.create(COLOUR)
+
+    buffer.writef32(buf, 0, x.R)
+    buffer.writef32(buf, 4, x.G)
+    buffer.writef32(buf, 8, x.B)
+
+    return { Color3 = buf }
+  end
+
+  if kind == "ColorSequence" then
+    local points = x.Keypoints
+    local buf = buffer.create(#points * STOP)
+
+    for i, point in points do
+      local at = (i - 1) * STOP
+      local colour = point.Value
+
+      buffer.writef64(buf, at, point.Time)
+      buffer.writef32(buf, at + 8, colour.R)
+      buffer.writef32(buf, at + 12, colour.G)
+      buffer.writef32(buf, at + 16, colour.B)
+    end
+
+    return { ColorSequence = buf }
+  end
+
+  return nil
+end
+
+-- a copy of the endpoint with its colours wrapped, or the endpoint itself when
+-- it holds none, so the caller's value is never touched
+local function packed(v: any): any
+  if type(v) ~= "table" then
+    return v
+  end
+
+  local out = nil
+
+  for k, x in v do
+    local wrap = wrapped(x)
+
+    if wrap ~= nil then
+      out = out or table.clone(v)
+      out[k] = wrap
+    end
+  end
+
+  return out or v
+end
+
+-- no endpoint holds a plain table of its own, and no other table is a single
+-- key naming a colour type over a buffer, so this shape is only ever a wrap
+local function colourOf(x: { [any]: any }): any
+  local kind, buf = next(x)
+
+  if typeof(buf) ~= "buffer" or next(x, kind) ~= nil then
+    return nil
+  end
+
+  if kind == "Color3" then
+    return Color3.new(buffer.readf32(buf, 0), buffer.readf32(buf, 4), buffer.readf32(buf, 8))
+  end
+
+  if kind == "ColorSequence" then
+    local points = {}
+
+    for at = 0, buffer.len(buf) - STOP, STOP do
+      local colour = Color3.new(buffer.readf32(buf, at + 8), buffer.readf32(buf, at + 12), buffer.readf32(buf, at + 16))
+
+      table.insert(points, ColorSequenceKeypoint.new(buffer.readf64(buf, at), colour))
+    end
+
+    return ColorSequence.new(points)
+  end
+
+  return nil
+end
+
+local function unpacked(v: any): any
+  if type(v) ~= "table" then
+    return v
+  end
+
+  for k, x in v do
+    if type(x) == "table" then
+      local colour = colourOf(x)
+
+      if colour ~= nil then
+        v[k] = colour
+      end
+    end
+  end
+
+  return v
+end
+
 -- the numeric range an older endpoint drew between is a draw of the same two
 -- numbers, which is the one shape that tag ever carried
 local function drawn(x: any): any
@@ -157,9 +265,9 @@ local function entryOf(m: any): Modifier
     end
   end
 
-  out.wait = drawn(out.wait)
-  out.start = drawn(out.start)
-  out.finish = drawn(out.finish)
+  out.wait = unpacked(drawn(out.wait))
+  out.start = unpacked(drawn(out.start))
+  out.finish = unpacked(drawn(out.finish))
 
   return out :: any
 end
@@ -220,9 +328,9 @@ function codec.encode(payload: any): buffer
         kind = m.kind or "",
         chain = m.chain == true,
         duration = m.duration,
-        wait = waitOf(m.wait),
-        start = m.start,
-        finish = m.finish,
+        wait = packed(waitOf(m.wait)),
+        start = packed(m.start),
+        finish = packed(m.finish),
         curve = m.curve,
         weight = m.weight,
         envelope = m.envelope,

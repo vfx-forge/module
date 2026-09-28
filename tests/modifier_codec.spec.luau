@@ -6,6 +6,9 @@ local test, expect = harness.test, harness.expect
 local Color3, NumberSequence = harness.datatypes.Color3, harness.datatypes.NumberSequence
 local Instance = harness.datatypes.Instance
 local Vector3 = harness.datatypes.Vector3
+local ColorSequence = harness.datatypes.ColorSequence
+local ColorSequenceKeypoint = harness.datatypes.ColorSequenceKeypoint
+local NumberSequenceKeypoint = harness.datatypes.NumberSequenceKeypoint
 
 local function curve(): buffer
   return buffer.fromstring("CURVEBYTES")
@@ -182,17 +185,85 @@ harness.suite(function()
       end
     end)
 
-    -- Z stores a Color3 as three bytes via Color3.fromRGB, so an endpoint colour
-    -- lands on the nearest 8-bit-per-channel colour. pinned deliberately: it is
-    -- the sRGB output resolution and quantizing is idempotent (a second round
-    -- trip does not drift further), but it IS lossier than the engine's own
-    -- float Color3, so a change here should be a decision and not a surprise
-    test("quantizes an endpoint colour to 8 bits per channel", function()
-      local Color3 = harness.datatypes.Color3
-      local back = roundTrip(Color3.new(0.25, 0.5, 0.75))
+    test("an endpoint colour round trips at full precision", function()
+      local colour = Color3.new(0.1234567, 0.5, 0.987654)
+      local back = roundTrip(colour)
+
       expect(typeof(back)).toBe("Color3")
-      expect(back).toBe(Color3.fromRGB(64, 128, 191))
-      expect(roundTrip(back)).toBe(back)
+      expect(back).toBe(colour)
+    end)
+
+    test("a colour sequence endpoint keeps its stop times exactly", function()
+      local stops = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.new(1, 0, 0)),
+        ColorSequenceKeypoint.new(0.29045, Color3.new(0.2, 0.4, 0.6)),
+        ColorSequenceKeypoint.new(0.2905, Color3.new(0.123, 0.456, 0.789)),
+        ColorSequenceKeypoint.new(1, Color3.new(0, 0, 1)),
+      })
+
+      local back = roundTrip(stops)
+      local points = back.Keypoints
+
+      expect(typeof(back)).toBe("ColorSequence")
+      expect(back).toBe(stops)
+      expect(#points).toBe(4)
+      expect(points[2].Time).toBe(ColorSequenceKeypoint.new(0.29045, Color3.new()).Time)
+      expect(points[3].Time).toBe(ColorSequenceKeypoint.new(0.2905, Color3.new()).Time)
+      expect(points[3].Value).toBe(Color3.new(0.123, 0.456, 0.789))
+    end)
+
+    -- Z already writes a keypoint as three f32, the engine's own width, so a
+    -- number sequence needs no wrapping; pinned so that stays a decision
+    test("a number sequence endpoint keeps its stop times exactly", function()
+      local stops = NumberSequence.new({
+        NumberSequenceKeypoint.new(0, 0.1, 0),
+        NumberSequenceKeypoint.new(0.29045, 0.123456789, 0.05),
+        NumberSequenceKeypoint.new(0.2905, 0.9, 0),
+        NumberSequenceKeypoint.new(1, 1, 0),
+      })
+
+      expect(roundTrip(stops)).toBe(stops)
+    end)
+
+    test("drawn colour endpoints round trip at full precision", function()
+      local a = Color3.new(0.011, 0.5, 0.25)
+      local b = ColorSequence.new(Color3.new(0.3, 0.6, 0.9), Color3.new(0.001, 0.002, 0.003))
+      local q = { lanes = { start = { { kind = "tween", chain = false, finish = value.draw(a, b) } } } }
+      local finish = codec.decode(codec.encode(q)).lanes.start[1].finish
+
+      expect(finish.t).toBe("draw")
+      expect(finish.a).toBe(a)
+      expect(finish.b).toBe(b)
+    end)
+
+    test("encoding a colour endpoint leaves the caller's value alone", function()
+      local colour = Color3.new(0.1234567, 0.5, 0.987654)
+      local start = value.lit(colour)
+
+      codec.encode({ lanes = { start = { { kind = "tween", chain = false, start = start } } } })
+
+      expect(start.v).toBe(colour)
+    end)
+
+    test("a table beside a colour in an unknown tag round trips as the table it is", function()
+      local q = {
+        lanes = {
+          start = {
+            {
+              kind = "tween",
+              chain = false,
+              start = value.lit(Color3.new(0.5, 0.25, 0.125)),
+              finish = { t = "future_tag", custom = { from = 1 }, tint = Color3.new(0.1234567, 0, 0) },
+            },
+          },
+        },
+      }
+
+      local finish = codec.decode(codec.encode(q)).lanes.start[1].finish
+
+      expect(finish.t).toBe("future_tag")
+      expect(finish.custom.from).toBe(1)
+      expect(finish.tint).toBe(Color3.new(0.1234567, 0, 0))
     end)
 
     test("round-trips a raw array of maps, which is how a gradient stores stops", function()
