@@ -8,7 +8,6 @@ local lifetime = require("@mod/lifetime")
 local bezier_common = require("@mod/common/bezier")
 
 local Bezier = require("@obj/Bezier")
-local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
 
 local bezier = {}
@@ -172,7 +171,9 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   -- Hitbox params
   local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
-  local promises = {}
+  -- a piece counts until it finishes and its on-finish emit is counted in, and
+  -- a nested emit until it ends
+  local outstanding = lifetime.join(scope)
   local emission = bezier_common.emissionOf(attrs)
 
   for _ = 1, attrs.EmitCount do
@@ -191,251 +192,251 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
     local rotSpeed = attrs.RotSpeed(nil, duration)
     local rotSpeedStart = rotSpeed.at(0)
 
-    table.insert(
-      promises,
-      Promise.new(function(resolve)
-        -- Calculate emission CFrame
-        local cf = bezier_common.calculateEmissionCFrame(
-          originCFrame,
-          originSize,
-          emission,
-          drawFunc,
-          rng,
-          endPoint,
-          parent:IsA("Attachment")
-        )
+    local landed = lifetime.add(outstanding)
 
-        -- create bezier
-        local pathBezier = baseBezier or bezier_common.createBezierWithEndpoint(points, cf, endPoint, endT1)
-        local getPos = bezier_common.createPosGetter(pathBezier, points, cf, endPoint, attrs.ArcSpace)
+    -- a piece that throws is logged and counted out, and the pieces beside it
+    -- keep running
+    local ok = utility.try(`failed to emit a bezier piece with error: %s`, function()
+      -- Calculate emission CFrame
+      local cf = bezier_common.calculateEmissionCFrame(
+        originCFrame,
+        originSize,
+        emission,
+        drawFunc,
+        rng,
+        endPoint,
+        parent:IsA("Attachment")
+      )
 
-        -- get part from cache
-        local cacheId = utility.getRandomId()
+      -- create bezier
+      local pathBezier = baseBezier or bezier_common.createBezierWithEndpoint(points, cf, endPoint, endT1)
+      local getPos = bezier_common.createPosGetter(pathBezier, points, cf, endPoint, attrs.ArcSpace)
 
-        if not part_cache then
-          resolve()
+      -- get part from cache
+      local cacheId = utility.getRandomId()
+
+      if not part_cache then
+        landed()
+        return
+      end
+
+      local objAbstr = part_cache:get(cacheId)
+      objAbstr.CFrame = CFrame.new(getPos(0))
+
+      local obj = objAbstr._getReal()
+
+      utility.copyProperties(refObj, obj, utility.COPY_PART_PROPERTIES)
+      utility.copyProperties(refObj, obj, utility.COPY_EXTENDED_PART_PROPERTIES)
+
+      -- clone children from reference
+      do
+        local clone = refObj:Clone()
+        for _, child in clone:GetChildren() do
+          child.Parent = obj
+        end
+        clone:Destroy()
+      end
+
+      local emitOnFinish = scope.effects.prepareEmitOnFinish(obj, scope)
+
+      scope.effects.emitNested(obj, scope.depth + 1, scope, outstanding)
+
+      lifetime.hold(scope, function()
+        if part_cache then
+          part_cache:free(cacheId)
+        end
+      end)
+
+      -- animation state
+      local lastPos = Vector3.zero
+      local lastVelocity = Vector3.zero
+
+      local didHit = false
+      local finished = false
+
+      local prevCF = CFrame.identity
+      local currentSpeed = 1
+
+      local currentRot = CFrame.fromOrientation(initRot.x, initRot.y, initRot.z)
+      local currentRotSpeed = rotSpeedStart
+
+      local function onFinish()
+        if finished then
           return
         end
 
-        local objAbstr = part_cache:get(cacheId)
-        objAbstr.CFrame = CFrame.new(getPos(0))
+        if attrs.SyncPosition then
+          local initOrigin = utility.getTransformedOriginExtents(parent)
+          local initPartPos = objAbstr.CFrame
 
-        local obj = objAbstr._getReal()
-
-        utility.copyProperties(refObj, obj, utility.COPY_PART_PROPERTIES)
-        utility.copyProperties(refObj, obj, utility.COPY_EXTENDED_PART_PROPERTIES)
-
-        -- clone children from reference
-        do
-          local clone = refObj:Clone()
-          for _, child in clone:GetChildren() do
-            child.Parent = obj
-          end
-          clone:Destroy()
+          lifetime.step(scope, function()
+            objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * initOrigin:ToObjectSpace(initPartPos)
+          end, "follow")
         end
 
-        local emitOnFinish = scope.effects.prepareEmitOnFinish(obj, scope)
-        local env = scope.effects.emitNested(obj, scope.depth + 1, scope)
+        finished = true
 
-        table.insert(promises, env.Finished)
+        scope.effects.emitOnFinish(emitOnFinish, obj, scope.depth + 1, scope, outstanding)
+        landed()
+      end
 
-        lifetime.hold(scope, function()
-          if part_cache then
-            part_cache:free(cacheId)
-          end
-        end)
+      local function shapecast()
+        if not attrs.HitboxEnabled then
+          return false
+        end
 
-        -- animation state
-        local lastPos = Vector3.zero
-        local lastVelocity = Vector3.zero
+        local result = workspace:GetPartsInPart(obj, hitboxParams)
+        return result[1] ~= nil
+      end
 
-        local didHit = false
-        local finished = false
+      -- Speed tween
+      local speedTween
+      local speed = attrs.Speed(nil, duration)
 
-        local prevCF = CFrame.identity
-        local currentSpeed = 1
+      if not attr.getState(ref, "SpeedOverride", nil) then
+        currentSpeed = speed.at(0)
 
-        local currentRot = CFrame.fromOrientation(initRot.x, initRot.y, initRot.z)
-        local currentRotSpeed = rotSpeedStart
-
-        local function onFinish()
-          if finished then
-            return
-          end
-
-          if attrs.SyncPosition then
-            local initOrigin = utility.getTransformedOriginExtents(parent)
-            local initPartPos = objAbstr.CFrame
-
-            lifetime.step(scope, function()
-              objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * initOrigin:ToObjectSpace(initPartPos)
-            end, "follow")
-          end
-
-          finished = true
-
-          local finishEnv = scope.effects.emitOnFinish(emitOnFinish, obj, scope.depth + 1, scope)
-          finishEnv.Finished:finally(function()
-            resolve()
+        if speed.animated then
+          speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, sampledAt)
+            currentSpeed = speed.at(sampledAt)
+            return deltaTime
           end)
+
+          lifetime.hold(scope, speedTween)
         end
+      end
 
-        local function shapecast()
-          if not attrs.HitboxEnabled then
-            return false
-          end
+      local function getEffectiveSpeed()
+        return attr.getState(ref, "SpeedOverride", currentSpeed)
+      end
 
-          local result = workspace:GetPartsInPart(obj, hitboxParams)
-          return result[1] ~= nil
-        end
+      local function isSpeedTweening()
+        return if speedTween then speedTween.Connected else attr.getState(ref, "SpeedTweening", false)
+      end
 
-        -- Speed tween
-        local speedTween
-        local speed = attrs.Speed(nil, duration)
+      -- Rotation speed tween
+      bezier_common.drivePropertyTrack(scope, rotSpeed, function(v)
+        currentRotSpeed = v
+      end, getEffectiveSpeed, speedTween)
 
-        if not attr.getState(ref, "SpeedOverride", nil) then
-          currentSpeed = speed.at(0)
+      -- main animation
+      lifetime.hold(
+        scope,
+        tween.fromParams(
+          attrs.EasingCurve,
+          duration,
+          function(alpha, deltaTime, elapsed)
+            local pos1 = getPos(alpha)
+            local newCF = CFrame.new(pos1)
 
-          if speed.animated then
-            speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, sampledAt)
-              currentSpeed = speed.at(sampledAt)
-              return deltaTime
-            end)
+            if attrs.FacePath then
+              local pos2 = getPos(math.clamp((elapsed + (1 / 60)) / duration, 0, 1))
 
-            lifetime.hold(scope, speedTween)
-          end
-        end
+              if pos1 ~= pos2 then
+                newCF = CFrame.lookAt(pos1, pos2)
+              else
+                newCF *= prevCF.Rotation
+              end
+            end
 
-        local function getEffectiveSpeed()
-          return attr.getState(ref, "SpeedOverride", currentSpeed)
-        end
+            local add = initRot:Sign() * currentRotSpeed * utility.DEG_TO_RAD * deltaTime
+            currentRot *= CFrame.fromOrientation(add.x, add.y, add.z)
 
-        local function isSpeedTweening()
-          return if speedTween then speedTween.Connected else attr.getState(ref, "SpeedTweening", false)
-        end
+            -- save current cframe before applying rotation
+            prevCF = newCF
+            newCF *= currentRot
 
-        -- Rotation speed tween
-        bezier_common.drivePropertyTrack(scope, rotSpeed, function(v)
-          currentRotSpeed = v
-        end, getEffectiveSpeed, speedTween)
+            if attrs.SyncPosition then
+              objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * originCFrame:ToObjectSpace(newCF)
+            else
+              objAbstr.CFrame = newCF
+            end
 
-        -- main animation
-        lifetime.hold(
-          scope,
-          tween.fromParams(
-            attrs.EasingCurve,
-            duration,
-            function(alpha, deltaTime, elapsed)
-              local pos1 = getPos(alpha)
-              local newCF = CFrame.new(pos1)
+            lastVelocity = (pos1 - lastPos) / deltaTime
+            lastPos = pos1
 
-              if attrs.FacePath then
-                local pos2 = getPos(math.clamp((elapsed + (1 / 60)) / duration, 0, 1))
+            if shapecast() then
+              onFinish()
+              didHit = true
+              return nil
+            end
 
-                if pos1 ~= pos2 then
-                  newCF = CFrame.lookAt(pos1, pos2)
+            local speed = getEffectiveSpeed()
+            currentSpeed = speed
+
+            if speed == 0 and not isSpeedTweening() then
+              return nil
+            end
+
+            if (attrs.ProjectileEnabled and alpha * duration < projectileLifetime) or not attrs.ProjectileEnabled then
+              return deltaTime * speed
+            else
+              onFinish()
+              return nil
+            end
+          end,
+          speedTween,
+          function(organic)
+            if not attrs.ProjectileEnabled or didHit then
+              if organic then
+                onFinish()
+              end
+              return
+            end
+
+            -- Projectile mode
+            local dir = if attrs.MatchEndDirection and endPoint
+              then endPoint.WorldCFrame.LookVector
+              else lastVelocity.Unit
+
+            if dir ~= dir then
+              dir = Vector3.zero
+            end
+
+            lastVelocity = dir * attrs.ProjectileSpeed
+
+            local projectileOrigin = obj.Position
+            local originCFrameAtProjectileInit = utility.getTransformedOriginExtents(parent)
+
+            -- this runs inside the main tween's step, which must not yield
+            task.spawn(function()
+              tween.timer(projectileLifetime, function(deltaTime, elapsed)
+                if attrs.SyncPosition then
+                  objAbstr.CFrame = utility.getTransformedOriginExtents(parent)
+                    * originCFrameAtProjectileInit:ToObjectSpace(CFrame.new(projectileOrigin + lastVelocity * elapsed))
                 else
-                  newCF *= prevCF.Rotation
+                  objAbstr.CFrame = CFrame.new(projectileOrigin + lastVelocity * elapsed) * obj.CFrame.Rotation
                 end
-              end
 
-              local add = initRot:Sign() * currentRotSpeed * utility.DEG_TO_RAD * deltaTime
-              currentRot *= CFrame.fromOrientation(add.x, add.y, add.z)
-
-              -- save current cframe before applying rotation
-              prevCF = newCF
-              newCF *= currentRot
-
-              if attrs.SyncPosition then
-                objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * originCFrame:ToObjectSpace(newCF)
-              else
-                objAbstr.CFrame = newCF
-              end
-
-              lastVelocity = (pos1 - lastPos) / deltaTime
-              lastPos = pos1
-
-              if shapecast() then
-                onFinish()
-                didHit = true
-                return nil
-              end
-
-              local speed = getEffectiveSpeed()
-              currentSpeed = speed
-
-              if speed == 0 and not isSpeedTweening() then
-                return nil
-              end
-
-              if (attrs.ProjectileEnabled and alpha * duration < projectileLifetime) or not attrs.ProjectileEnabled then
-                return deltaTime * speed
-              else
-                onFinish()
-                return nil
-              end
-            end,
-            speedTween,
-            function(organic)
-              if not attrs.ProjectileEnabled or didHit then
-                if organic then
+                if shapecast() then
                   onFinish()
+                  didHit = true
+                  return nil
                 end
-                return
+
+                local speed = getEffectiveSpeed()
+                currentSpeed = speed
+
+                return if speed > 0 or (elapsed > 0 and isSpeedTweening()) then deltaTime * speed else nil
+              end, speedTween, scope, scope.depth)
+
+              if not didHit then
+                onFinish()
               end
-
-              -- Projectile mode
-              local dir = if attrs.MatchEndDirection and endPoint
-                then endPoint.WorldCFrame.LookVector
-                else lastVelocity.Unit
-
-              if dir ~= dir then
-                dir = Vector3.zero
-              end
-
-              lastVelocity = dir * attrs.ProjectileSpeed
-
-              local projectileOrigin = obj.Position
-              local originCFrameAtProjectileInit = utility.getTransformedOriginExtents(parent)
-
-              -- this runs inside the main tween's step, which must not yield
-              task.spawn(function()
-                tween.timer(projectileLifetime, function(deltaTime, elapsed)
-                  if attrs.SyncPosition then
-                    objAbstr.CFrame = utility.getTransformedOriginExtents(parent)
-                      * originCFrameAtProjectileInit:ToObjectSpace(
-                        CFrame.new(projectileOrigin + lastVelocity * elapsed)
-                      )
-                  else
-                    objAbstr.CFrame = CFrame.new(projectileOrigin + lastVelocity * elapsed) * obj.CFrame.Rotation
-                  end
-
-                  if shapecast() then
-                    onFinish()
-                    didHit = true
-                    return nil
-                  end
-
-                  local speed = getEffectiveSpeed()
-                  currentSpeed = speed
-
-                  return if speed > 0 or (elapsed > 0 and isSpeedTweening()) then deltaTime * speed else nil
-                end, speedTween, scope, scope.depth)
-
-                if not didHit then
-                  onFinish()
-                end
-              end)
-            end,
-            true, -- start at zero, important for facepath to work on short durations
-            scope.depth
-          )
+            end)
+          end,
+          true, -- start at zero, important for facepath to work on short durations
+          scope.depth
         )
-      end)
-    )
+      )
+    end)
+
+    if not ok then
+      landed()
+    end
   end
 
-  Promise.all(promises):await()
+  lifetime.awaitJoin(outstanding)
 
   lifetime.wait(scope, attrs.DestroyDelay)
 end

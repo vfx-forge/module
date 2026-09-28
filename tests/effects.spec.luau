@@ -1,6 +1,7 @@
 local tween = require("@mod/tween")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
+local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
@@ -287,6 +288,56 @@ harness.suite(function()
 
       expect(log).toEqual({})
 
+      scheduler.frame(0.5)
+
+      expect(log).toEqual({ "joined" })
+
+      built.restore()
+    end)
+  end)
+
+  -- pattern specs: the join and try shape a bezier piece or a lightning bolt
+  -- runs through, not bezier or lightning themselves, which need a Points
+  -- attachment and a cached part and only run in Studio
+  harness.describe("the shape a bezier or a bolt waits in", function()
+    test("a piece whose setup throws is logged once and counted out, and its sibling still holds the body", function()
+      local built = fresh()
+      local log = {}
+
+      registry.register(module("shape", "Folder", function(ctx: any)
+        local scope = ctx.scope
+        local outstanding = lifetime.join(scope)
+
+        for i = 1, 2 do
+          local landed = lifetime.add(outstanding)
+
+          local ok = utility.try(`failed to emit a piece with error: %s`, function()
+            if i == 1 then
+              error("boom")
+            end
+
+            tween.after(0.5, function(deltaTime: number)
+              return deltaTime
+            end, landed, scope)
+          end)
+
+          if not ok then
+            landed()
+          end
+        end
+
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, "joined")
+      end))
+
+      local warnings = harness.captureWarnings(function()
+        effects.emit(0, harness.make("Folder"))
+      end)
+
+      expect(#warnings).toBe(1)
+      expect(log).toEqual({})
+
+      scheduler.frame(0.5)
       scheduler.frame(0.5)
 
       expect(log).toEqual({ "joined" })
