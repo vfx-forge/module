@@ -495,8 +495,6 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
   lifetime.awaitJoin(children)
 
-  -- the on-finish emit starts once the nested ones have ended, and the piece
-  -- waits for it too
   scope.effects.emitOnFinish(emitOnFinish, realObj, scope.depth + 1, scope, children)
   lifetime.awaitJoin(children)
 end
