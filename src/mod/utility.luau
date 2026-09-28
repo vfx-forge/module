@@ -228,17 +228,13 @@ function utility.getEnabledCancelToken(obj: Instance): lifetime.emit?
 end
 
 -- the promises an effect module still keeps for its own pieces are cancelled
--- with the tree, and so is a Finished promise somebody is holding
+-- with the tree
 local function cancelPromises(emit: lifetime.emit)
   for _, promise in table.clone(emit.promises) do
     promise:cancel()
   end
 
   table.clear(emit.promises)
-
-  if emit.finished then
-    emit.finished:cancel()
-  end
 
   for _, child in table.clone(emit.children) do
     cancelPromises(child)

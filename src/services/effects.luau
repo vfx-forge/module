@@ -19,38 +19,40 @@ local EMPTY_ENV: types.EmitEnv = {
   Clear = NOOP,
 }
 
+-- every emit handed out, weak so one that ended and is let go costs nothing to
+-- keep, and cleared at deinit so its Finished settles instead of hanging. an
+-- enabled (ConstantVFX) tick's token is not handed out here, so it is not in
+-- LIVE and deinit does not clear it
+local LIVE = setmetatable({} :: { [lifetime.emit]: boolean }, { __mode = "k" })
+
 function effects.init(api: types.Api)
   api_ref = api
 end
 
 function effects.deinit()
   api_ref = nil
+
+  for emit in table.clone(LIVE) do
+    if not emit.done then
+      utility.cancelToken(emit)
+    end
+  end
+
+  table.clear(LIVE)
 end
 
--- built the first time somebody reads it: most emits are fire and forget, and
--- a promise costs about 5 KB each
+-- built the first time somebody reads it, since most emits are fire and forget
+-- and a promise costs about 5 KB. it resolves once the emit is done by any
+-- means, a clear included, so a Promise.all over it always settles
 local function finishedOf(emit: lifetime.emit)
-  if emit.finished then
-    return emit.finished
+  if emit.done then
+    return Promise.resolve()
   end
 
-  local promise
-
-  if emit.cleared then
-    promise = Promise.new(function() end)
-    promise:cancel()
-  elseif emit.done then
-    promise = Promise.resolve()
-  else
-    promise = Promise.new(function(resolve)
-      lifetime.await(emit)
-      resolve()
-    end)
-  end
-
-  emit.finished = promise
-
-  return promise
+  return Promise.new(function(resolve)
+    lifetime.await(emit)
+    resolve()
+  end)
 end
 
 local function envOf(emit: lifetime.emit): types.EmitEnv
@@ -172,6 +174,10 @@ function effects.emit(depth: number, ...: Instance): types.EmitEnv
   emitInto(emit, depth, ...)
   lifetime.seal(emit)
 
+  if not emit.done then
+    LIVE[emit] = true
+  end
+
   return envOf(emit)
 end
 
@@ -191,7 +197,14 @@ function effects.prepareEmitOnFinish(obj: Instance, scope: types.scope): Folder?
   return effects.prepareEmitFolder(obj, "EmitOnFinish", scope)
 end
 
-local function emitChildren(children: { Instance }, depth: number, parentScope: types.scope?): types.EmitEnv
+-- a child emit is counted into the join it is given until it is done, so the
+-- effect that started it can keep its parts until the children under them end
+local function emitChildren(
+  children: { Instance },
+  depth: number,
+  parentScope: types.scope?,
+  join: lifetime.join?
+): types.EmitEnv
   if not api_ref or not api_ref.setup then
     return EMPTY_ENV
   end
@@ -205,18 +218,28 @@ local function emitChildren(children: { Instance }, depth: number, parentScope: 
   emitInto(emit, depth, table.unpack(children))
   lifetime.seal(emit)
 
+  if join then
+    lifetime.include(join, emit)
+  end
+
   return envOf(emit)
 end
 
-function effects.emitNested(part: Instance, depth: number, parentScope: types.scope?): types.EmitEnv
-  return emitChildren(part:GetChildren(), depth, parentScope)
+function effects.emitNested(
+  part: Instance,
+  depth: number,
+  parentScope: types.scope?,
+  join: lifetime.join?
+): types.EmitEnv
+  return emitChildren(part:GetChildren(), depth, parentScope, join)
 end
 
 function effects.emitFromFolder(
   folder: Folder?,
   targetParent: Instance,
   depth: number,
-  parentScope: types.scope?
+  parentScope: types.scope?,
+  join: lifetime.join?
 ): types.EmitEnv
   if not folder then
     return EMPTY_ENV
@@ -228,16 +251,17 @@ function effects.emitFromFolder(
     child.Parent = targetParent
   end
 
-  return emitChildren(children, depth, parentScope)
+  return emitChildren(children, depth, parentScope, join)
 end
 
 function effects.emitOnFinish(
   emitOnFinish: Folder?,
   targetParent: Instance,
   depth: number,
-  parentScope: types.scope?
+  parentScope: types.scope?,
+  join: lifetime.join?
 ): types.EmitEnv
-  return effects.emitFromFolder(emitOnFinish, targetParent, depth, parentScope)
+  return effects.emitFromFolder(emitOnFinish, targetParent, depth, parentScope, join)
 end
 
 return effects

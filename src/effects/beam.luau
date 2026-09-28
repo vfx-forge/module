@@ -6,8 +6,6 @@ local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
 
-local Promise = require("@pkg/Promise")
-
 local rng = Random.new()
 
 local function always()
@@ -187,13 +185,12 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   obj.Enabled = true
 
-  local promises = {}
+  local children = lifetime.join(scope)
   local currentSpeed = 1
 
   local speedTween
 
-  local env = scope.effects.emitNested(obj, scope.depth + 1, scope)
-  table.insert(promises, env.Finished)
+  scope.effects.emitNested(obj, scope.depth + 1, scope, children)
 
   local baseTexSpeed = texSpeed.at(0)
 
@@ -371,11 +368,10 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   end, speedTween, scope)
 
   if emitOnFinish then
-    local env = scope.effects.emitOnFinish(emitOnFinish, obj.Parent or workspace.Terrain, scope.depth + 1, scope)
-    table.insert(promises, env.Finished)
+    scope.effects.emitOnFinish(emitOnFinish, obj.Parent or workspace.Terrain, scope.depth + 1, scope, children)
   end
 
-  Promise.all(promises):await()
+  lifetime.awaitJoin(children)
 end
 
 return beam

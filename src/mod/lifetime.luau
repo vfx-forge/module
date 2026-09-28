@@ -33,7 +33,6 @@ export type emit = {
   -- evaera promises an effect module still creates for its own pieces, cancelled
   -- together with the emit until the promise removal lands
   promises: { any },
-  finished: any?,
 }
 
 export type effect = {

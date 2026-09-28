@@ -217,9 +217,11 @@ function api.deinit()
     return
   end
 
-  utility.cleanupScope(api.scope)
-
+  -- the live emits are cleared first, while the caches their parts go back to
+  -- still stand
   effects.deinit()
+
+  utility.cleanupScope(api.scope)
 
   Mesh.deinit()
   Sound.deinit()
