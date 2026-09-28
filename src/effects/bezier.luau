@@ -408,29 +408,34 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
               local projectileOrigin = obj.Position
               local originCFrameAtProjectileInit = utility.getTransformedOriginExtents(parent)
 
-              tween.timer(projectileLifetime, function(deltaTime, elapsed)
-                if attrs.SyncPosition then
-                  objAbstr.CFrame = utility.getTransformedOriginExtents(parent)
-                    * originCFrameAtProjectileInit:ToObjectSpace(CFrame.new(projectileOrigin + lastVelocity * elapsed))
-                else
-                  objAbstr.CFrame = CFrame.new(projectileOrigin + lastVelocity * elapsed) * obj.CFrame.Rotation
-                end
+              -- this runs inside the main tween's step, which must not yield
+              task.spawn(function()
+                tween.timer(projectileLifetime, function(deltaTime, elapsed)
+                  if attrs.SyncPosition then
+                    objAbstr.CFrame = utility.getTransformedOriginExtents(parent)
+                      * originCFrameAtProjectileInit:ToObjectSpace(
+                        CFrame.new(projectileOrigin + lastVelocity * elapsed)
+                      )
+                  else
+                    objAbstr.CFrame = CFrame.new(projectileOrigin + lastVelocity * elapsed) * obj.CFrame.Rotation
+                  end
 
-                if shapecast() then
+                  if shapecast() then
+                    onFinish()
+                    didHit = true
+                    return nil
+                  end
+
+                  local speed = getEffectiveSpeed()
+                  currentSpeed = speed
+
+                  return if speed > 0 or (elapsed > 0 and isSpeedTweening()) then deltaTime * speed else nil
+                end, speedTween, scope, scope.depth)
+
+                if not didHit then
                   onFinish()
-                  didHit = true
-                  return nil
                 end
-
-                local speed = getEffectiveSpeed()
-                currentSpeed = speed
-
-                return if speed > 0 or (elapsed > 0 and isSpeedTweening()) then deltaTime * speed else nil
-              end, speedTween, scope, scope.depth)
-
-              if not didHit then
-                onFinish()
-              end
+              end)
             end,
             true, -- start at zero, important for facepath to work on short durations
             scope.depth

@@ -70,6 +70,7 @@ local stopped = false
 -- open, and every frame until it resumes is skipped rather than let run over
 -- the pass it left
 local bucket: { Step } = {}
+local passer: thread? = nil
 local passing = false
 local index = 0
 local kept = 0
@@ -99,6 +100,7 @@ end
 -- carries on after it
 local function runBucket(list: { Step }, deltaTime: number)
   bucket, index, kept, count, delta = list, 0, 0, #list, deltaTime
+  passer = coroutine.running()
   passing = true
 
   while true do
@@ -127,6 +129,7 @@ local function runBucket(list: { Step }, deltaTime: number)
   end
 
   passing = false
+  passer = nil
 
   local total = #list
 
@@ -212,6 +215,13 @@ end
 -- a parent, shallowest first
 function scheduler.late(deltaTime: number)
   runPhases(LATE, deltaTime)
+end
+
+-- whether the caller is a step, or a callback a step made, on the pass's own
+-- thread, where a yield would leave the pass open. a thread a step resumed is
+-- not the pass, and may yield
+function scheduler.inPass()
+  return passing and coroutine.running() == passer
 end
 
 function scheduler.frame(deltaTime: number)

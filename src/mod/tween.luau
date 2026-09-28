@@ -129,6 +129,10 @@ function tween.timer(
   scope: lifetime.effect?,
   follow: number?
 )
+  if scheduler.inPass() then
+    logger.error("tween.timer yields, so it cannot run inside a step or a tween's callback; start it in task.spawn")
+  end
+
   local main = coroutine.running()
 
   runTimer(duration, counter, awaitTween, scope, follow, function()

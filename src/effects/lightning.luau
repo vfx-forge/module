@@ -1299,53 +1299,56 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
               transitionState = state
 
-              tween.timer(projectileLifetime, function(deltaTime, elapsed)
-                local scaledDelta = deltaTime * getEffectiveSpeed()
-                scaledElapsedTime += scaledDelta
+              -- this runs inside the main animation's step, which must not yield
+              task.spawn(function()
+                tween.timer(projectileLifetime, function(deltaTime, elapsed)
+                  local scaledDelta = deltaTime * getEffectiveSpeed()
+                  scaledElapsedTime += scaledDelta
 
-                currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
-                currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
+                  currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
+                  currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
 
-                local distanceTraveled = elapsed * attrs.ProjectileSpeed
-                state.distanceTraveled = distanceTraveled
+                  local distanceTraveled = elapsed * attrs.ProjectileSpeed
+                  state.distanceTraveled = distanceTraveled
 
-                local currentHeadPos = initialHeadPos + dir * distanceTraveled
-                local currentTailPos = currentHeadPos - dir * boltLength
+                  local currentHeadPos = initialHeadPos + dir * distanceTraveled
+                  local currentTailPos = currentHeadPos - dir * boltLength
 
-                projectileHeadPos = currentHeadPos
-                projectileTailPos = currentTailPos
-                projectileDir = dir
+                  projectileHeadPos = currentHeadPos
+                  projectileTailPos = currentTailPos
+                  projectileDir = dir
 
-                local shouldRefresh = attrs.RefreshRate > 0
+                  local shouldRefresh = attrs.RefreshRate > 0
 
-                if shouldRefresh then
-                  lastRefreshTime += scaledDelta
+                  if shouldRefresh then
+                    lastRefreshTime += scaledDelta
 
-                  if lastRefreshTime >= 1 / attrs.RefreshRate then
-                    refreshPoints()
-                    lastRefreshTime = 0
+                    if lastRefreshTime >= 1 / attrs.RefreshRate then
+                      refreshPoints()
+                      lastRefreshTime = 0
+                    else
+                      updatePointsBetweenRefreshes(deltaTime)
+                    end
                   else
                     updatePointsBetweenRefreshes(deltaTime)
                   end
-                else
-                  updatePointsBetweenRefreshes(deltaTime)
-                end
 
-                updateSegments(1, nil, scaledDelta, false)
+                  updateSegments(1, nil, scaledDelta, false)
 
-                if shapecast() then
-                  startDissipation()
-                  return nil
-                end
+                  if shapecast() then
+                    startDissipation()
+                    return nil
+                  end
 
-                if elapsed >= projectileLifetime then
-                  return nil
-                end
+                  if elapsed >= projectileLifetime then
+                    return nil
+                  end
 
-                return getSpeedDelta(deltaTime, true)
-              end, speedTween, scope, scope.depth)
+                  return getSpeedDelta(deltaTime, true)
+                end, speedTween, scope, scope.depth)
 
-              startDissipation()
+                startDissipation()
+              end)
             end,
             true,
             scope.depth

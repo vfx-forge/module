@@ -154,6 +154,113 @@ harness.suite(function()
       expect(finished).toBe(false)
     end)
 
+    test("a follower's finish that starts a timer on its own thread resumes it and frames go on", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.hold(
+        fx,
+        tween.fromParams(LINE, 0.25, counting, nil, function()
+          task.spawn(function()
+            tween.timer(0.5, ticking, nil, fx, 0)
+            table.insert(log, "resumed")
+          end)
+        end, true, 0)
+      )
+
+      local frames = 0
+      local counted = scheduler.add("compute", function()
+        frames += 1
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        for _ = 1, 5 do
+          scheduler.frame(0.25)
+        end
+      end)
+
+      counted:Disconnect()
+      lifetime.clear(emit)
+
+      expect(log).toEqual({ "resumed" })
+      expect(frames).toBe(5)
+      expect(#warnings).toBe(0)
+    end)
+
+    test("a timer or a wait started on the pass's own thread fails loudly and frames go on", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      tween.fromParams(LINE, 0.25, counting, nil, function()
+        tween.timer(0.5, ticking, nil, fx)
+        table.insert(log, "timer")
+      end, true)
+
+      scheduler.add("compute", function()
+        lifetime.wait(fx, 0.5)
+        table.insert(log, "wait")
+      end)
+
+      local frames = 0
+      local counted = scheduler.add("compute", function()
+        frames += 1
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        for _ = 1, 3 do
+          scheduler.frame(0.25)
+        end
+      end)
+
+      counted:Disconnect()
+      lifetime.clear(emit)
+
+      local told = 0
+
+      for _, warning in warnings do
+        if string.find(warning, "start it in task.spawn", 1, true) then
+          told += 1
+        end
+      end
+
+      expect(log).toEqual({})
+      expect(frames).toBe(3)
+      expect(told).toBe(2)
+    end)
+
+    test("held tweens awaiting a speed tween stop on a clear and never finish", function()
+      local stepped = 0
+      local finished = false
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      local function stepping(_: any, deltaTime: number)
+        stepped += 1
+        return deltaTime
+      end
+
+      local function finish()
+        finished = true
+      end
+
+      local speed = lifetime.hold(fx, tween.fromParams(LINE, 1, counting))
+      local dissipation = lifetime.hold(fx, tween.fromParams(LINE, 0.25, stepping, speed, finish, true, 0))
+      local lingering = lifetime.hold(fx, tween.fromParams(LINE, 0.25, stepping, speed, finish, true, 0))
+
+      scheduler.frame(0.1)
+      lifetime.clear(emit)
+      scheduler.frame(0.1)
+      scheduler.frame(0.1)
+
+      expect(stepped).toBe(2)
+      expect(finished).toBe(false)
+      expect(speed.Connected).toBe(false)
+      expect(dissipation.Connected).toBe(false)
+      expect(lingering.Connected).toBe(false)
+    end)
+
     test("a drive writes its first value at once and lands on its last", function()
       local writes = {}
       local emit = lifetime.emit(nil)

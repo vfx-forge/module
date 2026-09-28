@@ -287,6 +287,10 @@ end
 -- usable length does not yield at all, and a wait on an effect that is no
 -- longer running never resumes
 function lifetime.wait(fx: effect, seconds: number): number
+  if scheduler.inPass() then
+    logger.error("lifetime.wait yields, so it cannot run inside a step or a tween's callback; start it in task.spawn")
+  end
+
   local left = timing_common.duration(seconds)
 
   if left <= 0 and fx.state == RUNNING then
