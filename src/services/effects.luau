@@ -199,18 +199,13 @@ end
 
 -- a child emit is counted into the join it is given until it is done, so the
 -- effect that started it can keep its parts until the children under them end
-local function emitChildren(
-  children: { Instance },
-  depth: number,
-  parentScope: types.scope?,
-  join: lifetime.join?
-): types.EmitEnv
+local function emitChildren(children: { Instance }, depth: number, parentScope: types.scope?, join: lifetime.join?)
   if not api_ref or not api_ref.setup then
-    return EMPTY_ENV
+    return
   end
 
   if #children == 0 then
-    return EMPTY_ENV
+    return
   end
 
   local emit = lifetime.emit(if parentScope then parentScope.emit else nil)
@@ -221,17 +216,10 @@ local function emitChildren(
   if join then
     lifetime.include(join, emit)
   end
-
-  return envOf(emit)
 end
 
-function effects.emitNested(
-  part: Instance,
-  depth: number,
-  parentScope: types.scope?,
-  join: lifetime.join?
-): types.EmitEnv
-  return emitChildren(part:GetChildren(), depth, parentScope, join)
+function effects.emitNested(part: Instance, depth: number, parentScope: types.scope?, join: lifetime.join?)
+  emitChildren(part:GetChildren(), depth, parentScope, join)
 end
 
 function effects.emitFromFolder(
@@ -240,9 +228,9 @@ function effects.emitFromFolder(
   depth: number,
   parentScope: types.scope?,
   join: lifetime.join?
-): types.EmitEnv
+)
   if not folder then
-    return EMPTY_ENV
+    return
   end
 
   local children = folder:GetChildren()
@@ -251,7 +239,7 @@ function effects.emitFromFolder(
     child.Parent = targetParent
   end
 
-  return emitChildren(children, depth, parentScope, join)
+  emitChildren(children, depth, parentScope, join)
 end
 
 function effects.emitOnFinish(
@@ -260,8 +248,8 @@ function effects.emitOnFinish(
   depth: number,
   parentScope: types.scope?,
   join: lifetime.join?
-): types.EmitEnv
-  return effects.emitFromFolder(emitOnFinish, targetParent, depth, parentScope, join)
+)
+  effects.emitFromFolder(emitOnFinish, targetParent, depth, parentScope, join)
 end
 
 return effects
