@@ -12,6 +12,16 @@ local Shake = require("@pkg/Shake")
 -- a falloff of zero with the camera on its origin divides zero by zero
 local MIN_FALLOFF = 1e-3
 
+-- every copy of this module in one place files its writes under this key, so
+-- a copy never leaves another's shake on the camera. a new shape of entry
+-- takes a new key
+local UNDO_KEY = "forge_camera_shake_undo_v1"
+
+type Undo = {
+  before: CFrame,
+  written: CFrame,
+}
+
 type Active = {
   shake: typeof(Shake.new()),
   ref: RayValue,
@@ -82,27 +92,31 @@ local steps: { scheduler.Handle } = {}
 -- next one is applied
 local totalShakeCF = CFrame.identity
 
--- in a running game, the camera before the last shake and the camera as it
--- read back after it. a camera that no longer reads back that way was written
--- by somebody else since, and keeps what they wrote
-local base: CFrame? = nil
-local written: CFrame? = nil
+-- in a running game, the camera before each shake of the last frame and the
+-- camera as it read back after it, the last write on top. the first undo of a
+-- frame, whichever copy's, takes them all off
+local undoStack: { Undo } = shared[UNDO_KEY] or {}
 
+shared[UNDO_KEY] = undoStack
+
+-- a camera that no longer reads back an entry's write was written by somebody
+-- else since, and keeps what they wrote
 local function undo()
-  local was = base
-
-  if was == nil then
+  if #undoStack == 0 then
     return
   end
 
   local camera = workspace.CurrentCamera
 
-  if camera.CFrame == written then
-    camera.CFrame = was
-  end
+  for i = #undoStack, 1, -1 do
+    local entry = undoStack[i]
 
-  base = nil
-  written = nil
+    undoStack[i] = nil
+
+    if camera.CFrame == entry.written then
+      camera.CFrame = entry.before
+    end
+  end
 end
 
 local function apply()
@@ -172,8 +186,7 @@ local function apply()
 
     camera.CFrame = before * total
 
-    base = before
-    written = camera.CFrame
+    table.insert(undoStack, { before = before, written = camera.CFrame })
   else
     totalShakeCF = total
     camera.CFrame *= total

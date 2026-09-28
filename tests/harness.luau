@@ -191,6 +191,9 @@ do
   workspace = {
     CurrentCamera = { CFrame = roblox.CFrame.identity },
   }
+
+  -- the table every script in one place shares, where copies of a module meet
+  shared = {}
 end
 
 -- Random is absent under lune outright: @lune/roblox exposes none and there is

@@ -1,3 +1,5 @@
+local fs = require("@lune/fs")
+local luau = require("@lune/luau")
 local harness = require("@tests/harness")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
@@ -44,17 +46,36 @@ local function rows(falloff: number)
   }
 end
 
-local function shake(parent: Instance?, falloff: number): lifetime.effect
+-- a copy of a module loaded afresh, as a game's copy beside the plugin's,
+-- with the requires named in `own` answered by the copy's own modules
+local function load(path: string, own: { [string]: any }): any
+  local env = setmetatable({
+    require = function(name: string)
+      return own[name] or require(name)
+    end,
+  }, { __index = getfenv(1) })
+
+  return luau.load(fs.readFile(path), { debugName = path, environment = env })()
+end
+
+local otherScheduler = load("src/mod/scheduler.luau", {})
+local otherShake = load("src/effects/camera_shake.luau", { ["@mod/scheduler"] = otherScheduler })
+
+local function shakeWith(module: any, parent: Instance?, falloff: number): lifetime.effect
   local ref = Instance.new("RayValue")
   ref.Parent = parent
 
   local fx = lifetime.effect(lifetime.emit(nil), 0, nil)
 
   lifetime.run(fx, function(effect: lifetime.effect)
-    camera_shake.emit({ ref = ref, scope = effect } :: any, rows(falloff))
+    module.emit({ ref = ref, scope = effect } :: any, rows(falloff))
   end)
 
   return fx
+end
+
+local function shake(parent: Instance?, falloff: number): lifetime.effect
+  return shakeWith(camera_shake, parent, falloff)
 end
 
 local function frames(count: number)
@@ -191,6 +212,63 @@ harness.suite(function()
 
       finish(fx)
     end)
+
+    -- each copy undoes on its own scheduler at First and shakes at Last + 1,
+    -- in either order for either half
+    for _, orders in { { false, false }, { false, true }, { true, false }, { true, true } } do
+      local undoFlipped, shakeFlipped = orders[1], orders[2]
+      local undoing = if undoFlipped then "theirs" else "ours"
+      local shaking = if shakeFlipped then "theirs" else "ours"
+
+      test(`two copies leave one camera on its base, {undoing} undoing first and {shaking} shaking first`, function()
+        start(running)
+        otherShake.init()
+
+        local ours = shake(nil, 30)
+        local theirs = shakeWith(otherShake, nil, 30)
+
+        local first = if undoFlipped then otherScheduler else scheduler
+        local second = if undoFlipped then scheduler else otherScheduler
+        local shaken = 0
+        local unshaken = 0
+
+        -- past the whole envelope, fade in, sustain and fade out
+        for _ = 1, 40 do
+          first.compute(0.1)
+          second.compute(0.1)
+
+          if camera.CFrame ~= BASE then
+            unshaken += 1
+          end
+
+          if shakeFlipped then
+            otherScheduler.late(0.1)
+            scheduler.late(0.1)
+          else
+            scheduler.late(0.1)
+            otherScheduler.late(0.1)
+          end
+
+          if not near(camera.CFrame, BASE) then
+            shaken += 1
+          end
+        end
+
+        first.compute(0.1)
+        second.compute(0.1)
+
+        local settled = camera.CFrame == BASE
+
+        lifetime.release(theirs)
+        otherShake.deinit()
+        otherScheduler.stop()
+        finish(ours)
+
+        expect(shaken > 0).toBe(true)
+        expect(unshaken).toBe(0)
+        expect(settled).toBe(true)
+      end)
+    end
 
     test("a falloff of zero with the camera on its origin shakes rather than NaN", function()
       start(notRunning)
