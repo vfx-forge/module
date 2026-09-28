@@ -290,6 +290,28 @@ harness.suite(function()
       expect(m.blend).toBe("linear")
     end)
 
+    test("a gradient stop colour round trips at full precision", function()
+      local colour = Color3.new(0.1234567, 0.5, 0.987654)
+      local q = {
+        lanes = {
+          start = {
+            {
+              kind = "gradient",
+              chain = false,
+              stops = { { time = 0.29045, color = colour, alpha = 0 }, { time = 1, color = Color3.new(), alpha = 1 } },
+            },
+          },
+        },
+      }
+
+      local stops = codec.decode(codec.encode(q)).lanes.start[1].stops
+
+      expect(stops[1].color).toBe(colour)
+      expect(stops[1].time).toBe(0.29045)
+      expect(stops[2].color).toBe(Color3.new())
+      expect(q.lanes.start[1].stops[1].color).toBe(colour)
+    end)
+
     -- legacy_mods lifts a legacy child's ResetOnFinish onto its modifier as
     -- `reset`, a field the schema does not name, so the applier only sees it if
     -- `extra` carries a boolean faithfully. false is the interesting one,

@@ -5,11 +5,11 @@ local codec = {}
 local VERSION = 2
 
 -- Z writes a Color3 as three bytes and a ColorSequence stop as four, which
--- snaps a stop's time to 1/255 and merges stops closer than that. an endpoint
--- colour rides a one key table holding a buffer instead: f32 channels, the
--- engine's own width, and an f64 stop time
+-- snaps a stop's time to 1/255 and merges stops closer than that. a colour in
+-- an endpoint or an extra field rides a one key table holding a buffer instead,
+-- every number in it an f32, the width the engine holds it at
 local COLOUR = 12
-local STOP = 20
+local STOP = 16
 
 -- the newest layout this codec reads, for a writer deciding whether a stored
 -- payload is newer than itself
@@ -157,10 +157,10 @@ local function wrapped(x: any): { [string]: buffer }?
       local at = (i - 1) * STOP
       local colour = point.Value
 
-      buffer.writef64(buf, at, point.Time)
-      buffer.writef32(buf, at + 8, colour.R)
-      buffer.writef32(buf, at + 12, colour.G)
-      buffer.writef32(buf, at + 16, colour.B)
+      buffer.writef32(buf, at, point.Time)
+      buffer.writef32(buf, at + 4, colour.R)
+      buffer.writef32(buf, at + 8, colour.G)
+      buffer.writef32(buf, at + 12, colour.B)
     end
 
     return { ColorSequence = buf }
@@ -169,8 +169,8 @@ local function wrapped(x: any): { [string]: buffer }?
   return nil
 end
 
--- a copy of the endpoint with its colours wrapped, or the endpoint itself when
--- it holds none, so the caller's value is never touched
+-- a copy of the table with every colour in it wrapped, however deep, or the
+-- table itself when it holds none, so the caller's value is never touched
 local function packed(v: any): any
   if type(v) ~= "table" then
     return v
@@ -179,9 +179,9 @@ local function packed(v: any): any
   local out = nil
 
   for k, x in v do
-    local wrap = wrapped(x)
+    local wrap = wrapped(x) or packed(x)
 
-    if wrap ~= nil then
+    if wrap ~= x then
       out = out or table.clone(v)
       out[k] = wrap
     end
@@ -207,9 +207,9 @@ local function colourOf(x: { [any]: any }): any
     local points = {}
 
     for at = 0, buffer.len(buf) - STOP, STOP do
-      local colour = Color3.new(buffer.readf32(buf, at + 8), buffer.readf32(buf, at + 12), buffer.readf32(buf, at + 16))
+      local colour = Color3.new(buffer.readf32(buf, at + 4), buffer.readf32(buf, at + 8), buffer.readf32(buf, at + 12))
 
-      table.insert(points, ColorSequenceKeypoint.new(buffer.readf64(buf, at), colour))
+      table.insert(points, ColorSequenceKeypoint.new(buffer.readf32(buf, at), colour))
     end
 
     return ColorSequence.new(points)
@@ -225,11 +225,7 @@ local function unpacked(v: any): any
 
   for k, x in v do
     if type(x) == "table" then
-      local colour = colourOf(x)
-
-      if colour ~= nil then
-        v[k] = colour
-      end
+      v[k] = colourOf(x) or unpacked(x)
     end
   end
 
@@ -260,7 +256,7 @@ local function entryOf(m: any): Modifier
   }
 
   if type(m.extra) == "table" then
-    for k, v in m.extra do
+    for k, v in unpacked(m.extra) do
       out[k] = v
     end
   end
@@ -334,7 +330,7 @@ function codec.encode(payload: any): buffer
         curve = m.curve,
         weight = m.weight,
         envelope = m.envelope,
-        extra = extra,
+        extra = packed(extra),
       }
     end
 
