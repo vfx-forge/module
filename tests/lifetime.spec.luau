@@ -1,5 +1,6 @@
 local harness = require("@tests/harness")
 local lifetime = require("@mod/lifetime")
+local scheduler = require("@mod/scheduler")
 local test, expect = harness.test, harness.expect
 local Instance = harness.datatypes.Instance
 
@@ -575,6 +576,214 @@ harness.suite(function()
       expect(log).toEqual({ "first", "second:start", "second:after", "woke" })
       expect(emit.pending).toBe(0)
       expect(emit.done).toBe(false)
+    end)
+  end)
+
+  harness.describe("lifetime.step, lifetime.wait and lifetime.kill", function()
+    test("a step runs every frame until its effect is released", function()
+      local ran = 0
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      local handle = lifetime.step(fx, function()
+        ran += 1
+      end)
+
+      scheduler.frame(0.1)
+      scheduler.frame(0.1)
+      lifetime.release(fx)
+      scheduler.frame(0.1)
+
+      expect(ran).toBe(2)
+      expect(handle.Connected).toBe(false)
+    end)
+
+    test("a follower steps at its effect's depth, after shallower ones", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local deep = lifetime.effect(emit, 3, nil)
+      local shallow = lifetime.effect(emit, 1, nil)
+
+      lifetime.step(deep, function()
+        table.insert(log, "deep")
+      end, "follow")
+
+      lifetime.step(shallow, function()
+        table.insert(log, "shallow")
+      end, "follow")
+
+      scheduler.frame(0.1)
+      lifetime.release(deep)
+      lifetime.release(shallow)
+
+      expect(log).toEqual({ "shallow", "deep" })
+    end)
+
+    test("a step on a released effect never runs", function()
+      local ran = false
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.release(fx)
+
+      local handle = lifetime.step(fx, function()
+        ran = true
+      end)
+
+      scheduler.frame(0.1)
+
+      expect(ran).toBe(false)
+      expect(handle.Connected).toBe(false)
+    end)
+
+    test("holding a handle disconnects it on release", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local handle = scheduler.add("compute", function() end)
+
+      lifetime.hold(fx, handle)
+      lifetime.release(fx)
+
+      expect(handle.Connected).toBe(false)
+    end)
+
+    test("a wait resumes its thread once the frames add up to it and says how long it took", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        table.insert(log, lifetime.wait(scope, 1))
+      end)
+
+      for _ = 1, 3 do
+        scheduler.frame(0.25)
+      end
+
+      expect(#log).toBe(0)
+
+      scheduler.frame(0.25)
+
+      expect(log).toEqual({ 1 })
+      expect(fx.state).toBe(lifetime.RELEASED)
+    end)
+
+    test("a wait resumes before the steps of its frame", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        lifetime.step(scope, function()
+          table.insert(log, "step")
+        end)
+
+        lifetime.wait(scope, 0.1)
+        table.insert(log, "resumed")
+        coroutine.yield()
+      end)
+
+      scheduler.frame(0.1)
+      lifetime.clear(emit)
+
+      expect(log).toEqual({ "resumed", "step" })
+    end)
+
+    test("a wait of no usable length does not yield", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        table.insert(log, lifetime.wait(scope, 0))
+        table.insert(log, lifetime.wait(scope, -1))
+        table.insert(log, lifetime.wait(scope, 0 / 0))
+      end)
+
+      expect(log).toEqual({ 0, 0, 0 })
+      expect(fx.state).toBe(lifetime.RELEASED)
+    end)
+
+    -- a second thread of the same effect, the way a piece's promise waits
+    test("no wait of an effect cleared under it resumes, on any of its threads", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local worker: thread? = nil
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local piece = coroutine.create(function()
+          lifetime.wait(scope, 0.5)
+          table.insert(log, "piece")
+        end)
+
+        worker = piece
+        task.spawn(piece)
+
+        lifetime.wait(scope, 0.5)
+        table.insert(log, "body")
+      end)
+
+      lifetime.clear(emit)
+      scheduler.frame(1)
+      scheduler.frame(1)
+
+      expect(log).toEqual({})
+      expect(coroutine.status(worker :: thread)).toBe("suspended")
+    end)
+
+    test("a step that throws kills its effect: cancelled, its body closed and its emit settled", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        lifetime.defer(scope, function(cancelled: boolean)
+          table.insert(log, `cancelled:{cancelled}`)
+        end)
+
+        lifetime.step(scope, function()
+          error("boom")
+        end)
+
+        coroutine.yield()
+        table.insert(log, "resumed")
+      end)
+
+      lifetime.seal(emit)
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+      end)
+
+      expect(log).toEqual({ "cancelled:true" })
+      expect(#warnings).toBe(1)
+      expect(fx.state).toBe(lifetime.RELEASED)
+      expect(emit.done).toBe(true)
+      expect(coroutine.status(fx.thread :: thread)).toBe("dead")
+    end)
+
+    test("a clear from inside a step completes and the rest of the frame runs", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.step(fx, function()
+        table.insert(log, "clearing")
+        lifetime.clear(emit)
+      end)
+
+      local after = scheduler.add("compute", function()
+        table.insert(log, "after")
+      end)
+
+      scheduler.frame(0.1)
+      scheduler.frame(0.1)
+      after:Disconnect()
+
+      expect(log).toEqual({ "clearing", "after", "after" })
+      expect(fx.state).toBe(lifetime.RELEASED)
     end)
   end)
 end)

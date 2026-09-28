@@ -1,4 +1,6 @@
 local logger = require("@mod/logger")
+local scheduler = require("@mod/scheduler")
+local timing_common = require("@mod/common/timing")
 
 local RUNNING = 1
 local STOPPED = 2
@@ -45,7 +47,7 @@ export type effect = {
 
   -- released in this order, each list in reverse
   defers: { (cancelled: boolean) -> () }?,
-  threads: { RBXScriptConnection | thread }?,
+  threads: { RBXScriptConnection | thread | scheduler.Handle }?,
   clones: { Instance }?,
   cleanups: { () -> () }?,
 }
@@ -121,7 +123,11 @@ local function disposeOne(v: any)
   elseif t == "function" then
     v()
   elseif t == "table" then
-    lifetime.releasePlain(v)
+    if v.Disconnect ~= nil then
+      v:Disconnect()
+    else
+      lifetime.releasePlain(v)
+    end
   end
 end
 
@@ -159,7 +165,11 @@ function lifetime.hold<T>(fx: effect, value: T): T
     file(fx, "cleanups", value)
   elseif kind == "Instance" then
     file(fx, "clones", value)
-  elseif kind == "RBXScriptConnection" or kind == "thread" then
+  elseif
+    kind == "RBXScriptConnection"
+    or kind == "thread"
+    or (kind == "table" and (value :: any).Disconnect ~= nil)
+  then
     file(fx, "threads", value)
   elseif kind == "table" then
     file(fx, "cleanups", function()
@@ -266,6 +276,48 @@ function lifetime.release(fx: effect, cancelled: boolean?)
   finishEffect(fx)
 end
 
+-- a step of this effect in one of the scheduler's phases, stopped when the
+-- effect is released. a follower steps at the effect's own depth
+function lifetime.step(fx: effect, run: (deltaTime: number) -> (), phase: scheduler.Phase?): scheduler.Handle
+  return lifetime.hold(fx, scheduler.add(phase or "compute", run, fx.depth, fx))
+end
+
+-- parks the calling thread, whichever thread of the effect it is, until the
+-- frames add up to `seconds`, and answers how long that took. a wait of no
+-- usable length does not yield at all, and a wait on an effect that is no
+-- longer running never resumes
+function lifetime.wait(fx: effect, seconds: number): number
+  local left = timing_common.duration(seconds)
+
+  if left <= 0 and fx.state == RUNNING then
+    return 0
+  end
+
+  local thread = coroutine.running()
+  local waited = 0
+  local handle: scheduler.Handle
+
+  handle = scheduler.add("wait", function(deltaTime: number)
+    if fx.state ~= RUNNING then
+      handle:Disconnect()
+      return
+    end
+
+    waited += deltaTime
+
+    if waited < left then
+      return
+    end
+
+    handle:Disconnect()
+    task.spawn(thread)
+  end)
+
+  coroutine.yield()
+
+  return waited
+end
+
 function lifetime.run(fx: effect, body: (effect) -> ())
   if fx.state ~= RUNNING then
     return
@@ -285,6 +337,26 @@ function lifetime.run(fx: effect, body: (effect) -> ())
 
   task.spawn(thread)
 end
+
+-- an effect whose step threw: its body stops where it is parked and everything
+-- it holds is released as a clear would release it
+function lifetime.kill(fx: effect)
+  if fx.state ~= RUNNING then
+    return
+  end
+
+  fx.state = STOPPED
+
+  local thread = fx.thread
+
+  if thread and thread ~= coroutine.running() and coroutine.status(thread) == "suspended" then
+    coroutine.close(thread)
+  end
+
+  lifetime.release(fx, true)
+end
+
+scheduler.failed = lifetime.kill
 
 -- a wake resumes at once, the same timing the promises had, except during a
 -- clear: a thread resumed halfway through one would see a tree half released
