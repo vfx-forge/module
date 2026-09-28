@@ -3,7 +3,7 @@
  */
 export interface EmitResult {
   /**
-   * Promise that resolves when the effect has finished playing
+   * Promise that resolves when the effect has finished playing, has been cleared, or its module was deinitialized
    */
   Finished: Promise<void>;
 
