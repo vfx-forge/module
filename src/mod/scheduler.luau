@@ -66,8 +66,11 @@ local bound = false
 local stopped = false
 
 -- the pass in progress, kept out here so a throw can re-enter it one step
--- after the thrower
+-- after the thrower. a step must not yield: one that does leaves the pass
+-- open, and every frame until it resumes is skipped rather than let run over
+-- the pass it left
 local bucket: { Step } = {}
+local passing = false
 local index = 0
 local kept = 0
 local count = 0
@@ -96,9 +99,10 @@ end
 -- carries on after it
 local function runBucket(list: { Step }, deltaTime: number)
   bucket, index, kept, count, delta = list, 0, 0, #list, deltaTime
+  passing = true
 
   while true do
-    local ok, err = pcall(sweep)
+    local ok, err = xpcall(sweep, debug.traceback)
 
     if ok then
       break
@@ -111,10 +115,18 @@ local function runBucket(list: { Step }, deltaTime: number)
 
     local failed = scheduler.failed
 
-    if failed ~= nil and step.owner ~= nil then
-      pcall(failed, step.owner)
+    if failed == nil or step.owner == nil then
+      continue
+    end
+
+    local told, reason = pcall(failed, step.owner)
+
+    if not told then
+      logger.warn(`releasing a failed step's owner failed with error: {reason}`)
     end
   end
+
+  passing = false
 
   local total = #list
 
@@ -129,6 +141,11 @@ local function runBucket(list: { Step }, deltaTime: number)
 end
 
 local function runPhases(phases: { string }, deltaTime: number)
+  if passing then
+    logger.warn("a frame of the scheduler started inside a pass, so it was skipped")
+    return
+  end
+
   for _, phase in phases do
     local slot = slots[phase]
     local depths = slot.depths

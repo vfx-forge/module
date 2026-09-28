@@ -133,6 +133,100 @@ harness.suite(function()
       expect(thrower.Connected).toBe(false)
       expect(#told).toBe(1)
       expect(told[1]).toBe(owner)
+      expect(string.find(warnings[1], "function sweep", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a throwing step with no owner tells no one", function()
+      local told = 0
+      local previous = scheduler.failed
+
+      scheduler.failed = function()
+        told += 1
+      end
+
+      local thrower = scheduler.add("compute", function()
+        error("boom")
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+      end)
+
+      scheduler.failed = previous
+
+      expect(#warnings).toBe(1)
+      expect(told).toBe(0)
+      expect(thrower.Connected).toBe(false)
+    end)
+
+    test("an owner whose release throws is logged once, and the pass carries on", function()
+      local log = {}
+      local previous = scheduler.failed
+
+      scheduler.failed = function()
+        error("release")
+      end
+
+      local thrower = scheduler.add("compute", function()
+        error("boom")
+      end, 0, {})
+      local after = scheduler.add("compute", logging(log, "after"))
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+      end)
+
+      scheduler.failed = previous
+      after:Disconnect()
+
+      expect(log).toEqual({ "after", "after" })
+      expect(#warnings).toBe(2)
+      expect(string.find(warnings[2], "release", 1, true) ~= nil).toBe(true)
+      expect(thrower.Connected).toBe(false)
+    end)
+
+    test("a frame started inside a pass is skipped with a warning, and the pass carries on", function()
+      local log = {}
+      local reentered = 0
+      local reentrant = scheduler.add("compute", function()
+        reentered += 1
+        scheduler.compute(0.1)
+      end)
+      local after = scheduler.add("compute", logging(log, "after"))
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+      end)
+
+      disconnectAll({ reentrant, after })
+
+      expect(reentered).toBe(1)
+      expect(log).toEqual({ "after" })
+      expect(#warnings).toBe(1)
+    end)
+
+    test("a shallower depth added during a deeper one's pass runs from the next frame, in depth order", function()
+      local log = {}
+      local added: scheduler.Handle? = nil
+      local deep = scheduler.add("follow", function()
+        table.insert(log, "deep")
+
+        if added == nil then
+          added = scheduler.add("follow", logging(log, "shallow"), 1)
+        end
+      end, 3)
+
+      scheduler.frame(0.1)
+      table.insert(log, "|")
+      scheduler.frame(0.1)
+      deep:Disconnect()
+
+      if added then
+        added:Disconnect()
+      end
+
+      expect(log).toEqual({ "deep", "|", "shallow", "deep" })
     end)
   end)
 
@@ -274,7 +368,7 @@ harness.suite(function()
         )} ns over a bare call each`
       )
 
-      expect(overhead < 0.5e-6).toBe(true)
+      expect(overhead < 0.15e-6).toBe(true)
     end)
   end)
 end)
