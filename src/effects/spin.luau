@@ -157,7 +157,7 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
     return if currentSpeed > 0 or (speedTween ~= nil and elapsed > 0 and speedTween.Connected)
       then deltaTime * currentSpeed
       else nil
-  end, speedTween, scope, utility.RENDER_PRIORITY + scope.depth)
+  end, speedTween, scope, scope.depth)
 end
 
 return spin

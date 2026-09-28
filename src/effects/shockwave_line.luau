@@ -742,7 +742,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
       last %= threshold
 
       return deltaTime
-    end, nil, nil, true, utility.RENDER_PRIORITY + scope.depth)
+    end, nil, nil, true, scope.depth)
   )
 
   -- the hold runs on the clock the dwells do, or a speed below one stretches

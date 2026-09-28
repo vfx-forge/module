@@ -1070,7 +1070,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           dissipateStartTail = startTail
           dissipateStartWidth = startWidth
 
-          tween.fromParams(curveData, dissipationDuration, function(alpha, deltaTime)
+          local dissipation = tween.fromParams(curveData, dissipationDuration, function(alpha, deltaTime)
             local scaledDelta = deltaTime * getEffectiveSpeed()
             scaledElapsedTime += scaledDelta
 
@@ -1099,7 +1099,9 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             updateSegments(headAlpha, tailOverride, scaledDelta, attrs.RefreshDuringDissipate, widthOverrideVal)
 
             return getSpeedDelta(deltaTime, true)
-          end, speedTween, onComplete, true, utility.RENDER_PRIORITY + scope.depth)
+          end, speedTween, onComplete, true, scope.depth)
+
+          lifetime.hold(scope, dissipation)
         end
 
         local function startDissipation()
@@ -1219,7 +1221,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
               -- non-projectile mode
               if not attrs.ProjectileEnabled then
                 if attrs.DestroyDelay > 0 then
-                  tween.fromParams(
+                  local lingering = tween.fromParams(
                     utility.linear_bezier,
                     attrs.DestroyDelay,
                     function(_, deltaTime)
@@ -1243,8 +1245,10 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                       startDissipation()
                     end,
                     true,
-                    utility.RENDER_PRIORITY + scope.depth
+                    scope.depth
                   )
+
+                  lifetime.hold(scope, lingering)
                 else
                   startDissipation()
                 end
@@ -1339,12 +1343,12 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                 end
 
                 return getSpeedDelta(deltaTime, true)
-              end, speedTween, scope, utility.RENDER_PRIORITY + scope.depth)
+              end, speedTween, scope, scope.depth)
 
               startDissipation()
             end,
             true,
-            utility.RENDER_PRIORITY + scope.depth
+            scope.depth
           )
         )
       end)

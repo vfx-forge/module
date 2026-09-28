@@ -12,8 +12,7 @@ local modifiers = require("@mod/modifiers")
 local legacy_mods = require("@mod/legacy_mods")
 
 -- how many throwing writes a driven target gets before the applier gives up on
--- it. an unguarded write throws from inside a render step binding, which never
--- advances the timer that would otherwise end it
+-- it, where a throw left to the scheduler would end the driver on the first
 local MAX_WRITE_FAILURES = 3
 
 local emitters = {}
@@ -209,7 +208,7 @@ local function drive(
       -- moving is not the end, so the timer only gives up once the ramp has
       -- settled there
       return if scaled > 0 or (speedUntil ~= nil and wall < speedUntil) then scaled else nil
-    end, nil, driver, utility.RENDER_PRIORITY + driver.depth)
+    end, nil, driver)
   end)
 end
 

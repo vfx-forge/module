@@ -1,26 +1,37 @@
-local RunService = game:GetService("RunService")
-
 local mods = require("@mod/mods")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local scheduler = require("@mod/scheduler")
 local timing_common = require("@mod/common/timing")
 
 local Bezier = require("@obj/Bezier")
 
 local tween = {}
 
+export type Handle = scheduler.Handle
+
 tween.bezier_cache = {} :: { [string]: Bezier.Bezier }
+
+-- a step that follows a parent runs late in the frame at the depth it is
+-- given; every other step computes early
+local function register(step: (deltaTime: number) -> (), follow: number?, owner: any?): scheduler.Handle
+  if follow ~= nil then
+    return scheduler.add("follow", step, follow, owner)
+  end
+
+  return scheduler.add("compute", step, 0, owner)
+end
 
 function tween.fromParams(
   params: string,
   duration: number,
   animator: (alpha: number, deltaTime: number, elapsed: number) -> number?,
-  awaitTween: RBXScriptConnection?,
+  awaitTween: scheduler.Handle?,
   onFinish: ((organic: boolean) -> ())?,
   startAtZero: boolean?,
-  stepAtPriority: number?
-)
+  follow: number?
+): scheduler.Handle
   local bezier = tween.bezier_cache[params]
 
   if not bezier then
@@ -40,10 +51,9 @@ function tween.fromParams(
   duration = timing_common.duration(duration)
 
   local elapsed = 0
+  local handle: scheduler.Handle
 
-  local cleanupStepper
-
-  local function step(deltaTime)
+  local function step(deltaTime: number)
     -- roblox tweens apparently don't start from alpha=0
     if not startAtZero and elapsed == 0 then
       elapsed = math.clamp(elapsed + deltaTime, 0, math.max(duration, 0))
@@ -55,7 +65,7 @@ function tween.fromParams(
     local result = animator(alpha, deltaTime, elapsed)
 
     if (result == nil or timing_common.done(elapsed, duration)) and (not awaitTween or not awaitTween.Connected) then
-      cleanupStepper()
+      handle:Disconnect()
 
       if onFinish then
         onFinish(true)
@@ -69,34 +79,9 @@ function tween.fromParams(
     end
   end
 
-  if not stepAtPriority then
-    local connection: RBXScriptConnection
-    connection = RunService.RenderStepped:Connect(step)
+  handle = register(step, follow)
 
-    cleanupStepper = function()
-      connection:Disconnect()
-    end
-
-    return connection
-  else
-    local id = utility.getRandomId()
-
-    RunService:BindToRenderStep(id, stepAtPriority, step)
-
-    local bound = true
-
-    cleanupStepper = function()
-      if not bound then
-        return
-      end
-
-      bound = false
-
-      RunService:UnbindFromRenderStep(id)
-    end
-
-    return cleanupStepper
-  end
+  return handle
 end
 
 -- the stepper half of a timer, with no opinion about what finishing means:
@@ -105,23 +90,22 @@ end
 local function runTimer(
   duration: number,
   counter: (deltaTime: number, elapsed: number) -> number,
-  awaitTween: RBXScriptConnection?,
+  awaitTween: scheduler.Handle?,
   scope: lifetime.effect?,
-  stepAtPriority: number?,
+  follow: number?,
   onDone: () -> (),
   unbounded: boolean?
 )
   duration = if unbounded then math.huge else timing_common.duration(duration)
 
   local elapsed = 0
+  local handle: scheduler.Handle
 
-  local cleanupStepper
-
-  local function step(deltaTime)
+  local function step(deltaTime: number)
     local result = counter(deltaTime, elapsed)
 
     if (result == nil or timing_common.done(elapsed, duration)) and (not awaitTween or not awaitTween.Connected) then
-      cleanupStepper()
+      handle:Disconnect()
       onDone()
       return
     end
@@ -131,45 +115,23 @@ local function runTimer(
     end
   end
 
-  if not stepAtPriority then
-    local connection = RunService.RenderStepped:Connect(step)
-
-    cleanupStepper = function()
-      connection:Disconnect()
-    end
-  else
-    local id = utility.getRandomId()
-
-    RunService:BindToRenderStep(id, stepAtPriority, step)
-
-    local bound = true
-
-    cleanupStepper = function()
-      if not bound then
-        return
-      end
-
-      bound = false
-
-      RunService:UnbindFromRenderStep(id)
-    end
-  end
+  handle = register(step, follow, scope)
 
   if scope then
-    lifetime.hold(scope, cleanupStepper)
+    lifetime.hold(scope, handle)
   end
 end
 
 function tween.timer(
   duration: number,
   counter: (deltaTime: number, elapsed: number) -> number,
-  awaitTween: RBXScriptConnection?,
+  awaitTween: scheduler.Handle?,
   scope: lifetime.effect?,
-  stepAtPriority: number?
+  follow: number?
 )
   local main = coroutine.running()
 
-  runTimer(duration, counter, awaitTween, scope, stepAtPriority, function()
+  runTimer(duration, counter, awaitTween, scope, follow, function()
     task.spawn(main)
   end)
 
@@ -192,16 +154,16 @@ function tween.after(
   counter: (deltaTime: number, elapsed: number) -> number,
   onFinish: () -> (),
   scope: lifetime.effect?,
-  stepAtPriority: number?
+  follow: number?
 )
-  runTimer(duration, counter, nil, scope, stepAtPriority, onFinish, duration == math.huge)
+  runTimer(duration, counter, nil, scope, follow, onFinish, duration == math.huge)
 end
 
 -- one target driven by one track: the first value is written at once, and an
 -- animated track keeps writing on a timer the effect holds until its span is
 -- up, ending on the track's last value so a frame that overshoots cannot leave
 -- the target short of it
-function tween.drive(scope: lifetime.effect, track: mods.Track, write: (v: any) -> (), stepAtPriority: number?)
+function tween.drive(scope: lifetime.effect, track: mods.Track, write: (v: any) -> (), follow: number?)
   write(track.at(0))
 
   if not track.animated then
@@ -213,7 +175,7 @@ function tween.drive(scope: lifetime.effect, track: mods.Track, write: (v: any) 
     return deltaTime
   end, function()
     write(track.at(track.span))
-  end, scope, stepAtPriority)
+  end, scope, follow)
 end
 
 return tween

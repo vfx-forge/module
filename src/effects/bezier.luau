@@ -426,14 +426,14 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
                 currentSpeed = speed
 
                 return if speed > 0 or (elapsed > 0 and isSpeedTweening()) then deltaTime * speed else nil
-              end, speedTween, scope, utility.RENDER_PRIORITY + scope.depth)
+              end, speedTween, scope, scope.depth)
 
               if not didHit then
                 onFinish()
               end
             end,
             true, -- start at zero, important for facepath to work on short durations
-            utility.RENDER_PRIORITY + scope.depth
+            scope.depth
           )
         )
       end)

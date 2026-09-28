@@ -203,13 +203,7 @@ end
 -- one clone played to its end: its three tracks are seeded from its own
 -- properties once it has loaded, over its own asset length, through the rows
 -- of whichever sound the emit reads
-local function play(
-  ctx: reader.Ctx,
-  props: any,
-  clone: Sound,
-  partClone: Part?,
-  emitDuration: number
-): RBXScriptConnection?
+local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?, emitDuration: number): tween.Handle?
   local ref = ctx.ref :: Sound
   local scope = ctx.scope
 
@@ -249,7 +243,7 @@ local function play(
     )
   end
 
-  local speedTween: RBXScriptConnection? = nil
+  local speedTween: tween.Handle? = nil
 
   currentSpeed = speed.at(0)
   clone.PlaybackSpeed = currentSpeed
