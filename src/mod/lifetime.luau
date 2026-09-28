@@ -68,10 +68,10 @@ local LOCKS = setmetatable({} :: { [Instance]: boolean }, { __mode = "k" })
 local wakes: { thread } = {}
 local clearing = 0
 
--- the effect each piece thread runs for, weak keyed so a finished piece is let
--- go, so a piece that started another piece can tell it belongs to the stopped
--- effect
-local PIECES = setmetatable({} :: { [thread]: effect }, { __mode = "k" })
+-- the effect each spawned thread runs for, weak keyed so a finished one is let
+-- go, so a spawned thread that started another can tell it belongs to the
+-- stopped effect
+local SPAWNED = setmetatable({} :: { [thread]: effect }, { __mode = "k" })
 
 -- thrown through a body or a piece whose effect it cleared, or a piece it
 -- started cleared, and taken by that thread's own wrapper, so the thread ends
@@ -541,7 +541,7 @@ function lifetime.spawn(join: join, body: (...any) -> (), ...: any)
     done()
   end)
 
-  PIECES[thread] = fx
+  SPAWNED[thread] = fx
 
   file(fx, "threads", function()
     disposeOne(thread)
@@ -558,7 +558,7 @@ function lifetime.spawn(join: join, body: (...any) -> (), ...: any)
   -- that started it ends as well
   local caller = coroutine.running()
 
-  if caller == fx.thread or PIECES[caller] == fx then
+  if caller == fx.thread or SPAWNED[caller] == fx then
     error(HALT)
   end
 end
@@ -585,10 +585,10 @@ end
 -- emit ends the way a body does, and neither its `piece after` nor the body's
 -- `joined` ever runs
 local function ownsThread(emit: emit, thread: thread): boolean
-  local piece = PIECES[thread]
+  local owner = SPAWNED[thread]
 
   for _, fx in emit.effects do
-    if fx.thread == thread or piece == fx then
+    if fx.thread == thread or owner == fx then
       return true
     end
   end

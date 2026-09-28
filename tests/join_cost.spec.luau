@@ -119,7 +119,7 @@ harness.suite(function()
 
     test("an emit shaped like a ring of 16 or a bezier of 8 costs a fraction of the promises it replaces", function()
       local SEGMENTS = 16
-      local PIECES = 8
+      local SPAWNED = 8
       local CALLS = 100
 
       local finishers: { () -> () } = {}
@@ -203,7 +203,7 @@ harness.suite(function()
       local bezier = emitOf(function(scope: lifetime.effect)
         local outstanding = lifetime.join(scope)
 
-        for i = 1, PIECES do
+        for i = 1, SPAWNED do
           local landed = lifetime.add(outstanding)
 
           local ok = utility.try(`failed to emit a piece with error: %s`, function()
@@ -234,7 +234,7 @@ harness.suite(function()
       local oldBezier = emitOf(function(scope: lifetime.effect)
         local promises = {}
 
-        for i = 1, PIECES do
+        for i = 1, SPAWNED do
           table.insert(
             promises,
             Promise.new(function(resolve)
@@ -275,7 +275,7 @@ harness.suite(function()
       local bezierSays = `{us(bezierCost)} per emit, {us(oldBezierCost)} with the promises it replaces`
 
       print(`ring of {SEGMENTS}: {ringSays} (survey: {us(SURVEY_RING)} of promises alone)`)
-      print(`bezier of {PIECES}: {bezierSays} (survey: {us(SURVEY_BEZIER)} of promises alone)`)
+      print(`bezier of {SPAWNED}: {bezierSays} (survey: {us(SURVEY_BEZIER)} of promises alone)`)
 
       expect(ended).toBe(2 + 4 * ROUNDS * CALLS)
       expect(ringCost < oldRingCost / 5).toBe(true)
