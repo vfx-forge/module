@@ -325,7 +325,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
       clone:Destroy()
     end
 
-    local emitOnFinish = scope.effects.prepareEmitOnFinish(part, scope)
+    local emitOnFinish = scope.effects.prepareEmitOnFinish(realPart, scope)
 
     lifetime.hold(scope, function()
       if part_cache then
@@ -415,7 +415,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
       lifetime.hold(scope, sizeTween)
     end
 
-    scope.effects.emitNested(part, scope.depth + 1, scope, outstanding)
+    scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
 
     -- per SEGMENT, over the dwell's own ceiling rather than the ring's run: a
     -- Lifetime track is sampled on the piece's dwell clock, which never
@@ -551,7 +551,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
             )
           end
 
-          scope.effects.emitOnFinish(emitOnFinish, part, scope.depth + 1, scope, outstanding)
+          scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope, outstanding)
         end)
 
         landed()
