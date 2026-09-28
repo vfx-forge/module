@@ -20,6 +20,9 @@ export type emit = {
   pending: number,
   waiters: { thread },
 
+  -- what counts this emit out of each join it was included in, once it is done
+  joins: { () -> () }?,
+
   sealed: boolean,
   done: boolean,
 
@@ -52,6 +55,14 @@ export type effect = {
   cleanups: { () -> () }?,
 }
 
+-- what a body waits on for its own pieces and child emits. the count is live,
+-- so a piece or a child counted in while the body waits is waited for too
+export type join = {
+  fx: effect,
+  count: number,
+  waiter: thread?,
+}
+
 -- keyed by the locked instance for as long as one effect holds it, and cleared
 -- by that effect's release, so a cancelled effect can no longer leak one. weak
 -- keyed like the registry in utility, so a lock never pins an instance whose
@@ -61,6 +72,23 @@ local LOCKS = setmetatable({} :: { [Instance]: boolean }, { __mode = "k" })
 -- waiters woken but not resumed yet, held back while a clear is in progress
 local wakes: { thread } = {}
 local clearing = 0
+
+-- the effect each piece thread runs for, weak keyed so a finished piece is let
+-- go, which tells a piece that started another piece it was stopped under it
+local PIECES = setmetatable({} :: { [thread]: effect }, { __mode = "k" })
+
+-- thrown through a body or a piece whose effect a piece it started has cleared,
+-- and taken by that thread's own wrapper, so the thread ends there instead of
+-- running on for an effect that is gone
+local HALT = table.freeze({})
+
+local function trace(err: any)
+  if err == HALT then
+    return err
+  end
+
+  return debug.traceback(err, 2)
+end
 
 function lifetime.emit(parent: emit?): emit
   local emit: emit = {
@@ -327,9 +355,9 @@ function lifetime.run(fx: effect, body: (effect) -> ())
   end
 
   local thread = coroutine.create(function()
-    local ok, err = xpcall(body, debug.traceback, fx)
+    local ok, err = xpcall(body, trace, fx)
 
-    if not ok then
+    if not ok and err ~= HALT then
       logger.warn(`effect failed with error: {err}`)
     end
 
@@ -411,6 +439,16 @@ settle = function(emit: emit)
       parent.pending -= 1
       settle(parent)
     end
+
+    local joins = emit.joins
+
+    if joins then
+      emit.joins = nil
+
+      for _, done in joins do
+        done()
+      end
+    end
   end
 
   wake(emit)
@@ -436,9 +474,130 @@ function lifetime.await(emit: emit)
   coroutine.yield()
 end
 
+function lifetime.join(fx: effect): join
+  return { fx = fx, count = 0, waiter = nil }
+end
+
+-- counts one more thing into the join and answers what counts it out. only the
+-- first call counts, so a piece may be counted out by its own end and again by
+-- whatever tears it down
+function lifetime.add(join: join)
+  join.count += 1
+
+  local counted = true
+
+  return function()
+    if not counted then
+      return
+    end
+
+    counted = false
+    join.count -= 1
+
+    local waiter = join.waiter
+
+    if join.count > 0 or waiter == nil then
+      return
+    end
+
+    join.waiter = nil
+
+    table.insert(wakes, waiter)
+    flushWakes()
+  end
+end
+
+-- a child emit counted into the join until it is done, by any means: a clear
+-- finishes it too
+function lifetime.include(join: join, emit: emit)
+  if emit.done then
+    return
+  end
+
+  local done = lifetime.add(join)
+  local joins = emit.joins
+
+  if joins then
+    table.insert(joins, done)
+  else
+    emit.joins = { done }
+  end
+end
+
+-- a piece on a thread of its own, held by the effect so a clear closes it, and
+-- counted into the join until it returns. a piece that throws is logged and
+-- counted out, and the pieces beside it keep running
+function lifetime.spawn(join: join, body: (...any) -> (), ...: any)
+  local fx = join.fx
+
+  if fx.state ~= RUNNING then
+    return
+  end
+
+  local done = lifetime.add(join)
+
+  local thread = coroutine.create(function(...)
+    local ok, err = xpcall(body, trace, ...)
+
+    if not ok and err ~= HALT then
+      logger.warn(`a piece failed with error: {err}`)
+    end
+
+    done()
+  end)
+
+  PIECES[thread] = fx
+  file(fx, "threads", thread)
+  task.spawn(thread, ...)
+
+  if fx.state == RUNNING then
+    return
+  end
+
+  -- the piece cleared its own effect before it first yielded. the release could
+  -- close neither it, parked in the clear, nor the thread that started it, both
+  -- still on the resume chain, so the piece is closed here and a body or piece
+  -- of this effect that started it ends as well
+  if coroutine.status(thread) == "suspended" then
+    coroutine.close(thread)
+  end
+
+  local caller = coroutine.running()
+
+  if caller == fx.thread or PIECES[caller] == fx then
+    error(HALT)
+  end
+end
+
+-- parks the calling thread until everything counted into the join is out. a
+-- join has one waiter at a time, and may be waited on again once it is empty
+function lifetime.awaitJoin(join: join)
+  if scheduler.inPass() then
+    logger.error(
+      "lifetime.awaitJoin yields, so it cannot run inside a step or a tween's callback; start it in task.spawn"
+    )
+  end
+
+  if join.count == 0 then
+    return
+  end
+
+  join.waiter = coroutine.running()
+  coroutine.yield()
+end
+
+-- the body or a piece the effect holds, so a piece clearing its own emit parks
+-- the way a body does, and neither its `piece after` nor the body's `joined`
+-- ever runs
 local function ownsThread(emit: emit, thread: thread): boolean
   for _, fx in emit.effects do
     if fx.thread == thread then
+      return true
+    end
+
+    local threads = fx.threads
+
+    if threads and table.find(threads, thread) then
       return true
     end
   end

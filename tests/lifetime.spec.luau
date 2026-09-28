@@ -805,4 +805,328 @@ harness.suite(function()
       expect(fx.state).toBe(lifetime.RELEASED)
     end)
   end)
+
+  harness.describe("lifetime.join", function()
+    test("the waiter wakes once the last thing counted in is out, and not before", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local first, second
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local outstanding = lifetime.join(scope)
+        first = lifetime.add(outstanding)
+        second = lifetime.add(outstanding)
+
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, "joined")
+      end)
+
+      first()
+      expect(log).toEqual({})
+
+      second()
+      expect(log).toEqual({ "joined" })
+      expect(fx.state).toBe(lifetime.RELEASED)
+    end)
+
+    test("counting a thing out twice counts it once", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local first, second
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local outstanding = lifetime.join(scope)
+        first = lifetime.add(outstanding)
+        second = lifetime.add(outstanding)
+
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, "joined")
+      end)
+
+      first()
+      first()
+      expect(log).toEqual({})
+
+      second()
+      expect(log).toEqual({ "joined" })
+    end)
+
+    test("a thing counted in while the body waits is waited for too", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local outstanding, first
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        outstanding = lifetime.join(scope)
+        first = lifetime.add(outstanding)
+
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, "joined")
+      end)
+
+      local late = lifetime.add(outstanding)
+
+      first()
+      expect(log).toEqual({})
+
+      late()
+      expect(log).toEqual({ "joined" })
+    end)
+
+    test("a join with nothing counted in does not yield", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        lifetime.awaitJoin(lifetime.join(scope))
+        table.insert(log, "joined")
+      end)
+
+      expect(log).toEqual({ "joined" })
+      expect(fx.state).toBe(lifetime.RELEASED)
+    end)
+
+    test("an included child emit counts until it is done, and a done one counts nothing", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local child = lifetime.emit(emit)
+      local cfx = lifetime.effect(child, 1, nil)
+      lifetime.seal(child)
+
+      local finished = lifetime.emit(emit)
+      lifetime.seal(finished)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local children = lifetime.join(scope)
+        lifetime.include(children, child)
+        lifetime.include(children, finished)
+
+        expect(children.count).toBe(1)
+
+        lifetime.awaitJoin(children)
+        table.insert(log, "joined")
+      end)
+
+      expect(log).toEqual({})
+
+      lifetime.release(cfx)
+      expect(log).toEqual({ "joined" })
+      expect(child.joins).toBe(nil)
+    end)
+
+    test("a child emit cleared under the join counts out as well", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local child = lifetime.emit(emit)
+      lifetime.effect(child, 1, nil)
+      lifetime.seal(child)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local children = lifetime.join(scope)
+        lifetime.include(children, child)
+
+        lifetime.awaitJoin(children)
+        table.insert(log, "joined")
+      end)
+
+      lifetime.clear(child)
+      expect(log).toEqual({ "joined" })
+    end)
+
+    test("the waiter is resumed off the pass when a step counts the last thing out", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local outstanding = lifetime.join(scope)
+        local done = lifetime.add(outstanding)
+
+        lifetime.step(scope, function()
+          done()
+        end)
+
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, `in pass:{scheduler.inPass()}`)
+      end)
+
+      scheduler.frame(0.1)
+
+      expect(log).toEqual({ "in pass:false" })
+      expect(fx.state).toBe(lifetime.RELEASED)
+    end)
+
+    test("a spawned piece that throws is logged once and counted out, and its sibling keeps running", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      local warnings = harness.captureWarnings(function()
+        lifetime.run(fx, function(scope: lifetime.effect)
+          local outstanding = lifetime.join(scope)
+
+          lifetime.spawn(outstanding, function()
+            error("boom")
+          end)
+
+          lifetime.spawn(outstanding, function(name: string)
+            lifetime.wait(scope, 0.5)
+            table.insert(log, name)
+          end, "sibling")
+
+          lifetime.awaitJoin(outstanding)
+          table.insert(log, "joined")
+        end)
+
+        scheduler.frame(0.5)
+      end)
+
+      expect(#warnings).toBe(1)
+      expect(string.find(warnings[1], "a piece failed", 1, true) ~= nil).toBe(true)
+      expect(log).toEqual({ "sibling", "joined" })
+      expect(fx.state).toBe(lifetime.RELEASED)
+    end)
+
+    test("a clear closes a spawned piece parked in a wait, which never resumes", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      lifetime.seal(emit)
+
+      local worker: thread? = nil
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local outstanding = lifetime.join(scope)
+
+        lifetime.spawn(outstanding, function()
+          worker = coroutine.running()
+          lifetime.wait(scope, 0.5)
+          table.insert(log, "piece")
+        end)
+
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, "joined")
+      end)
+
+      lifetime.clear(emit)
+      scheduler.frame(1)
+
+      expect(log).toEqual({})
+      expect(coroutine.status(worker :: thread)).toBe("dead")
+      expect(emit.done).toBe(true)
+    end)
+
+    test("a piece that clears its own emit stops there and the clear completes", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      lifetime.seal(emit)
+
+      local piece: thread? = nil
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local outstanding = lifetime.join(scope)
+
+        lifetime.hold(scope, function()
+          table.insert(log, "released")
+        end)
+
+        lifetime.spawn(outstanding, function()
+          piece = coroutine.running()
+          lifetime.clear(emit)
+          table.insert(log, "piece after")
+        end)
+
+        table.insert(log, "body after")
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, "joined")
+      end)
+
+      expect(log).toEqual({ "released" })
+      expect(fx.state).toBe(lifetime.RELEASED)
+      expect(emit.done).toBe(true)
+      expect(coroutine.status(fx.thread :: thread)).toBe("dead")
+      expect(coroutine.status(piece :: thread)).toBe("dead")
+    end)
+
+    test("a piece's own piece that clears the emit stops every thread it was started from", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      lifetime.seal(emit)
+
+      local outer: thread? = nil
+      local inner: thread? = nil
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local outstanding = lifetime.join(scope)
+
+        lifetime.spawn(outstanding, function()
+          outer = coroutine.running()
+
+          lifetime.spawn(outstanding, function()
+            inner = coroutine.running()
+            lifetime.clear(emit)
+            table.insert(log, "inner after")
+          end)
+
+          table.insert(log, "outer after")
+        end)
+
+        table.insert(log, "body after")
+        lifetime.awaitJoin(outstanding)
+      end)
+
+      expect(log).toEqual({})
+      expect(emit.done).toBe(true)
+      expect(coroutine.status(fx.thread :: thread)).toBe("dead")
+      expect(coroutine.status(outer :: thread)).toBe("dead")
+      expect(coroutine.status(inner :: thread)).toBe("dead")
+    end)
+
+    test("a spawn on an effect that is no longer running starts nothing and counts nothing", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local outstanding = lifetime.join(fx)
+
+      lifetime.release(fx)
+
+      lifetime.spawn(outstanding, function()
+        table.insert(log, "ran")
+      end)
+
+      expect(log).toEqual({})
+      expect(outstanding.count).toBe(0)
+    end)
+
+    test("an await on a join inside a step is refused rather than left to yield the pass", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local outstanding = lifetime.join(fx)
+      local after = false
+
+      lifetime.add(outstanding)
+
+      local handle = scheduler.add("compute", function()
+        lifetime.awaitJoin(outstanding)
+        after = true
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+      end)
+
+      handle:Disconnect()
+
+      expect(after).toBe(false)
+      expect(string.find(warnings[1], "lifetime.awaitJoin yields", 1, true) ~= nil).toBe(true)
+    end)
+  end)
 end)
