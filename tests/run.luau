@@ -26,6 +26,7 @@ require("@tests/timing.spec")
 require("@tests/modifier_codec.spec")
 require("@tests/modifier_frame.spec")
 require("@tests/lifetime.spec")
+require("@tests/scheduler.spec")
 require("@tests/read_cost.spec")
 
 process.exit(harness.run())
