@@ -106,20 +106,37 @@ local function oldParticleRead(obj: Instance)
   return out
 end
 
-local function best(fn: () -> ()): number
+local function timed(fn: () -> ())
+  local started = os.clock()
+
+  for _ = 1, ITERATIONS do
+    fn()
+  end
+
+  return os.clock() - started
+end
+
+local function best(fn: () -> ())
   local fastest = math.huge
 
   for _ = 1, ROUNDS do
-    local started = os.clock()
-
-    for _ = 1, ITERATIONS do
-      fn()
-    end
-
-    fastest = math.min(fastest, os.clock() - started)
+    fastest = math.min(fastest, timed(fn))
   end
 
   return fastest
+end
+
+-- the old and the new read in alternate rounds, so wherever the collector is
+-- in its cycle weighs on both alike instead of on whichever ran second
+local function against(old: () -> (), new: () -> ()): (number, number)
+  local fastestOld, fastestNew = math.huge, math.huge
+
+  for _ = 1, ROUNDS do
+    fastestOld = math.min(fastestOld, timed(old))
+    fastestNew = math.min(fastestNew, timed(new))
+  end
+
+  return fastestOld, fastestNew
 end
 
 harness.suite(function()
@@ -127,11 +144,9 @@ harness.suite(function()
     local obj = fixture()
     local m = moduleFor()
 
-    local old = best(function()
+    local old, new = against(function()
       oldRead(obj)
-    end)
-
-    local new = best(function()
+    end, function()
       reader.resolve(m, { ref = obj, obj = obj, scale = 1 })
     end)
 
@@ -174,7 +189,7 @@ harness.suite(function()
     end
 
     local lines = {}
-    local newParticle = 0
+    local particle: any = nil
     local particleInst: Instance? = nil
 
     for _, module in registry.list() do
@@ -190,15 +205,17 @@ harness.suite(function()
       table.insert(lines, `{module.id} {string.format("%.1f", took / ITERATIONS * 1e6)} us`)
 
       if module.id == "particle" then
-        newParticle = took
+        particle = { module = module, ctx = ctx }
         particleInst = inst
       end
     end
 
     print(`one read per built-in: {table.concat(lines, ", ")}`)
 
-    local oldParticle = best(function()
+    local oldParticle, newParticle = against(function()
       oldParticleRead(particleInst :: Instance)
+    end, function()
+      reader.resolve(particle.module, particle.ctx)
     end)
 
     print(

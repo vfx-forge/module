@@ -26,11 +26,12 @@ require("@tests/timing.spec")
 require("@tests/modifier_codec.spec")
 require("@tests/modifier_frame.spec")
 require("@tests/lifetime.spec")
-require("@tests/join_cost.spec")
 require("@tests/effects.spec")
 require("@tests/scheduler.spec")
 require("@tests/tween.spec")
 require("@tests/camera_shake.spec")
 require("@tests/read_cost.spec")
+-- last: its promise churn leaves the collector mid cycle for whatever follows
+require("@tests/join_cost.spec")
 
 process.exit(harness.run())

@@ -13,22 +13,39 @@ local ROUNDS = 7
 local SURVEY_RING = 240e-6
 local SURVEY_BEZIER = 198e-6
 
+local function timed(calls: number, fn: () -> ())
+  local started = os.clock()
+
+  for _ = 1, calls do
+    fn()
+  end
+
+  return (os.clock() - started) / calls
+end
+
 -- the fastest of a few rounds, in seconds per call, so a busy machine can only
 -- make a gate pass later, never fail it early
 local function best(calls: number, fn: () -> ())
   local fastest = math.huge
 
   for _ = 1, ROUNDS do
-    local started = os.clock()
-
-    for _ = 1, calls do
-      fn()
-    end
-
-    fastest = math.min(fastest, (os.clock() - started) / calls)
+    fastest = math.min(fastest, timed(calls, fn))
   end
 
   return fastest
+end
+
+-- the new and the old shape in alternate rounds, so wherever the collector is
+-- in its cycle weighs on both alike instead of on whichever ran second
+local function against(calls: number, new: () -> (), old: () -> ()): (number, number)
+  local fastestNew, fastestOld = math.huge, math.huge
+
+  for _ = 1, ROUNDS do
+    fastestNew = math.min(fastestNew, timed(calls, new))
+    fastestOld = math.min(fastestOld, timed(calls, old))
+  end
+
+  return fastestNew, fastestOld
 end
 
 local function us(seconds: number)
@@ -267,10 +284,8 @@ harness.suite(function()
       ring()
       bezier()
 
-      local ringCost = best(CALLS, ring)
-      local oldRingCost = best(CALLS, oldRing)
-      local bezierCost = best(CALLS, bezier)
-      local oldBezierCost = best(CALLS, oldBezier)
+      local ringCost, oldRingCost = against(CALLS, ring, oldRing)
+      local bezierCost, oldBezierCost = against(CALLS, bezier, oldBezier)
 
       local ringSays = `{us(ringCost)} per emit, {us(oldRingCost)} with the promises it replaces`
       local bezierSays = `{us(bezierCost)} per emit, {us(oldBezierCost)} with the promises it replaces`
