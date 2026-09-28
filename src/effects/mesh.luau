@@ -10,7 +10,6 @@ local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
 
 local Oklab = require("@mod/color/Oklab")
-local Promise = require("@pkg/Promise")
 
 local rng = Random.new()
 
@@ -257,12 +256,11 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
   lifetime.step(scope, updatePos, "follow")
 
-  local promises = {}
+  local children = lifetime.join(scope)
 
   local emitOnFinish = scope.effects.prepareEmitOnFinish(obj, scope)
 
-  local env = scope.effects.emitNested(obj, scope.depth + 1, scope)
-  table.insert(promises, env.Finished)
+  scope.effects.emitNested(obj, scope.depth + 1, scope, children)
 
   local speedTween
 
@@ -495,10 +493,12 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
     scope
   )
 
-  Promise.all(promises):await()
+  lifetime.awaitJoin(children)
 
-  local env = scope.effects.emitOnFinish(emitOnFinish, realObj, scope.depth + 1, scope)
-  env.Finished:await()
+  -- the on-finish emit starts once the nested ones have ended, and the piece
+  -- waits for it too
+  scope.effects.emitOnFinish(emitOnFinish, realObj, scope.depth + 1, scope, children)
+  lifetime.awaitJoin(children)
 end
 
 function mesh.emit(ctx: reader.Ctx, attrs: any)
@@ -533,7 +533,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
       local token = utility.stopEmitDuration(ref)
 
       if token then
-        utility.cancelToken(token)
+        lifetime.clear(token)
       end
     end)
 
@@ -567,41 +567,18 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   local emitCount = if useEmitDuration and not ctx.constant then 1 else attrs.EmitCount
   local range = attrs.EffectDuration
 
-  local tasks = {}
-  local promises = scope.emit.promises
+  -- each piece runs on a thread the effect holds, so a clear closes it
+  local outstanding = lifetime.join(scope)
 
   for _ = 1, emitCount do
     local duration = rng:NextNumber(range.Min, range.Max)
 
-    local promise = Promise.new(function(resolve)
-      utility.try(
-        `failed to emit a mesh piece with error: %s`,
-        piece,
-        ctx,
-        attrs,
-        utility.assembleMeshVFX(start, scope, part_cache),
-        duration
-      )
-
-      resolve()
+    lifetime.spawn(outstanding, function()
+      piece(ctx, attrs, utility.assembleMeshVFX(start, scope, part_cache), duration)
     end)
-
-    table.insert(tasks, promise)
-    table.insert(promises, promise)
   end
 
-  Promise.all(tasks):await()
-
-  -- a settled promise has nothing left to cancel, and a ConstantVFX mesh emits
-  -- for as long as it stays enabled, so leaving these in place grew the list
-  -- by one per emit for the life of the effect
-  for _, promise in tasks do
-    local index = table.find(promises, promise)
-
-    if index then
-      table.remove(promises, index)
-    end
-  end
+  lifetime.awaitJoin(outstanding)
 end
 
 -- a mesh under an attachment pivots on that attachment, so a scale or a spin

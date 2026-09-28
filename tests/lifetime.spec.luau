@@ -368,37 +368,6 @@ harness.suite(function()
     end)
   end)
 
-  harness.describe("lifetime.stop", function()
-    test("closes a parked thread down the tree and releases nothing until the clear", function()
-      local log = {}
-      local parent = lifetime.emit(nil)
-      local child = lifetime.emit(parent)
-      local cfx = lifetime.effect(child, 1, nil)
-      lifetime.seal(parent)
-      lifetime.seal(child)
-
-      lifetime.run(cfx, function(scope)
-        lifetime.hold(scope, function()
-          table.insert(log, "released")
-        end)
-        coroutine.yield()
-      end)
-
-      lifetime.stop(parent)
-
-      expect(coroutine.status(cfx.thread :: thread)).toBe("dead")
-      expect(cfx.state).toBe(lifetime.STOPPED)
-      expect(log).toEqual({})
-      expect(parent.done).toBe(false)
-
-      lifetime.clear(parent)
-
-      expect(log).toEqual({ "released" })
-      expect(cfx.state).toBe(lifetime.RELEASED)
-      expect(parent.done).toBe(true)
-    end)
-  end)
-
   harness.describe("lifetime.clear", function()
     test("closes a parked effect, releases what it acquired, and never runs the code after its yield", function()
       local log = {}

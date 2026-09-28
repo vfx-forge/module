@@ -9,8 +9,6 @@ local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 
-local Promise = require("@pkg/Promise")
-
 local rng = Random.new()
 
 -- an asset that has not loaded reports a TimeLength of 0, which ends the
@@ -391,7 +389,8 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   lifetime.wait(scope, attrs.EmitDelay)
 
-  local promises = {}
+  -- each clone plays on a thread the effect holds, so a clear closes it
+  local clones = lifetime.join(scope)
 
   for i = 1, emitCount do
     local sourceSound = if inherit or isSource then ref else selectRandomSound(ref, attrs.SoundPoolTag)
@@ -401,22 +400,17 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
     end
 
     for r = 1, repeatCount do
-      table.insert(
-        promises,
-        Promise.new(function(resolve)
-          local clone, partClone = createSoundClone(ref, sourceSound, scope)
+      lifetime.spawn(clones, function()
+        local clone, partClone = createSoundClone(ref, sourceSound, scope)
 
-          play(ctx, props, clone, partClone, emitDuration)
+        play(ctx, props, clone, partClone, emitDuration)
 
-          if partClone then
-            partClone:Destroy()
-          else
-            clone:Destroy()
-          end
-
-          resolve()
-        end)
-      )
+        if partClone then
+          partClone:Destroy()
+        else
+          clone:Destroy()
+        end
+      end)
 
       if r < repeatCount and repeatInterval.Max > 0 then
         lifetime.wait(scope, rng:NextNumber(repeatInterval.Min, repeatInterval.Max))
@@ -428,7 +422,7 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
     end
   end
 
-  Promise.all(promises):await()
+  lifetime.awaitJoin(clones)
 end
 
 return sound

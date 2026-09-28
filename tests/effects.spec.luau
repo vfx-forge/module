@@ -345,4 +345,61 @@ harness.suite(function()
       built.restore()
     end)
   end)
+
+  -- pattern specs: the tick shape an EmitDuration mesh waits in, not mesh
+  -- itself, which needs a cached part and only runs in Studio
+  harness.describe("an EmitDuration's ticks", function()
+    test("waiting out the ticks waits for the last piece of every tick", function()
+      local log = {}
+      local token = lifetime.emit(nil)
+
+      for i = 1, 2 do
+        lifetime.run(lifetime.effect(token, 0, nil), function(scope: lifetime.effect)
+          local outstanding = lifetime.join(scope)
+
+          lifetime.spawn(outstanding, function()
+            lifetime.wait(scope, 0.5 * i)
+          end)
+
+          lifetime.awaitJoin(outstanding)
+        end)
+      end
+
+      lifetime.run(lifetime.effect(lifetime.emit(nil), 0, nil), function()
+        utility.awaitEmitDuration(token)
+        table.insert(log, "waited")
+      end)
+
+      scheduler.frame(0.5)
+      expect(log).toEqual({})
+
+      scheduler.frame(0.5)
+      expect(log).toEqual({ "waited" })
+    end)
+
+    test("a clear of the ticks closes every piece they hold", function()
+      local token = lifetime.emit(nil)
+      local workers: { thread } = {}
+
+      for _ = 1, 2 do
+        lifetime.run(lifetime.effect(token, 0, nil), function(scope: lifetime.effect)
+          local outstanding = lifetime.join(scope)
+
+          lifetime.spawn(outstanding, function()
+            table.insert(workers, coroutine.running())
+            lifetime.wait(scope, 10)
+          end)
+
+          lifetime.awaitJoin(outstanding)
+        end)
+      end
+
+      lifetime.clear(token)
+
+      expect(#workers).toBe(2)
+      expect(coroutine.status(workers[1])).toBe("dead")
+      expect(coroutine.status(workers[2])).toBe("dead")
+      expect(#token.effects).toBe(0)
+    end)
+  end)
 end)

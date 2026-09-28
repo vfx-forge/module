@@ -9,8 +9,6 @@ local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local lifetime = require("@mod/lifetime")
 
-local Promise = require("@pkg/Promise")
-
 local path = require("@mod/common/path")
 local context_common = require("@mod/common/context")
 
@@ -227,28 +225,6 @@ function utility.getEnabledCancelToken(obj: Instance): lifetime.emit?
   return ENABLED_CANCEL_TOKENS[obj]
 end
 
--- the promises an effect module still keeps for its own pieces are cancelled
--- with the tree
-local function cancelPromises(emit: lifetime.emit)
-  for _, promise in table.clone(emit.promises) do
-    promise:cancel()
-  end
-
-  table.clear(emit.promises)
-
-  for _, child in table.clone(emit.children) do
-    cancelPromises(child)
-  end
-end
-
--- pass one first: a promise cancel resumes whatever thread is parked on it, and
--- a body resumed into a live record runs its tail as if it had ended on its own
-function utility.cancelToken(token: lifetime.emit)
-  lifetime.stop(token)
-  cancelPromises(token)
-  lifetime.clear(token)
-end
-
 function utility.stopEmitDuration(ref: Instance)
   local token = utility.getEnabledCancelToken(ref)
 
@@ -259,15 +235,11 @@ function utility.stopEmitDuration(ref: Instance)
   return token
 end
 
+-- every tick is an effect of the token's emit and waits on its own pieces, so
+-- the emit is pending until the last piece of the last tick ends
 function utility.awaitEmitDuration(token: lifetime.emit?)
   if not token then
     return
-  end
-
-  local pending = table.clone(token.promises)
-
-  if #pending > 0 then
-    Promise.all(pending):await()
   end
 
   lifetime.await(token)

@@ -34,7 +34,7 @@ function effects.deinit()
 
   for emit in table.clone(LIVE) do
     if not emit.done then
-      utility.cancelToken(emit)
+      lifetime.clear(emit)
     end
   end
 
@@ -59,7 +59,7 @@ local function envOf(emit: lifetime.emit): types.EmitEnv
   local env = {}
 
   env.Clear = function()
-    utility.cancelToken(emit)
+    lifetime.clear(emit)
   end
 
   setmetatable(env, {

@@ -29,18 +29,14 @@ export type emit = {
   -- set by clear over the whole subtree, so a reader that arrives after a
   -- cancel can tell a cleared emit from one that ended on its own
   cleared: boolean,
-
-  -- evaera promises an effect module still creates for its own pieces, cancelled
-  -- together with the emit until the promise removal lands
-  promises: { any },
 }
 
 export type effect = {
   emit: emit,
   depth: number,
 
-  -- the effects service the old scope carried for the scope.effects.emitNested
-  -- call sites, kept until the promise removal
+  -- the effects service, which a module reaches its nested and on-finish emits
+  -- through
   effects: any,
 
   state: number,
@@ -100,7 +96,6 @@ function lifetime.emit(parent: emit?): emit
     sealed = false,
     done = false,
     cleared = false,
-    promises = {},
   }
 
   if parent then
@@ -389,8 +384,8 @@ end
 
 scheduler.failed = lifetime.kill
 
--- a wake resumes at once, the same timing the promises had, except during a
--- clear: a thread resumed halfway through one would see a tree half released
+-- a wake resumes at once, except during a clear: a thread resumed halfway
+-- through one would see a tree half released
 local function flushWakes()
   if clearing > 0 then
     return
@@ -630,13 +625,6 @@ local function stopTree(emit: emit, running: thread)
   end
 end
 
--- pass one on its own, for a caller that has to stop every body before it
--- touches the promises the bodies are parked on. idempotent: a stopped effect
--- is skipped, so clear runs the very same pass again
-function lifetime.stop(emit: emit)
-  stopTree(emit, coroutine.running())
-end
-
 -- pass two: children before parents, over copies because release edits both
 -- lists. a cleared child can never gain an effect again, so it is sealed on the
 -- way out and finishes its parent even if the caller never sealed it. the root
@@ -668,7 +656,7 @@ function lifetime.clear(emit: emit)
   clearing += 1
 
   local ok, err = pcall(function()
-    lifetime.stop(emit)
+    stopTree(emit, running)
     releaseTree(emit, true)
   end)
 

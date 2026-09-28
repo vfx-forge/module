@@ -113,7 +113,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
       local token = utility.stopEmitDuration(ref)
 
       if token then
-        utility.cancelToken(token)
+        lifetime.clear(token)
       end
     end)
 
