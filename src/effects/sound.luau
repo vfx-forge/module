@@ -1,4 +1,3 @@
-local RunService = game:GetService("RunService")
 local PluginGuiService = game:GetService("PluginGuiService")
 local CollectionService = game:GetService("CollectionService")
 
@@ -280,14 +279,11 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     local parent = ref:FindFirstAncestorWhichIsA("BasePart")
 
     if parent then
-      lifetime.hold(
-        scope,
-        RunService.Heartbeat:Connect(function()
-          if partClone.Parent then
-            partClone.CFrame = parent.CFrame
-          end
-        end)
-      )
+      lifetime.step(scope, function()
+        if partClone.Parent then
+          partClone.CFrame = parent.CFrame
+        end
+      end, "follow")
     end
   end
 

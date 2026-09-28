@@ -1,5 +1,3 @@
-local RunService = game:GetService("RunService")
-
 local knob = require("@mod/knob")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
@@ -71,7 +69,6 @@ function screen.emit(ctx: reader.Ctx, attrs: any)
     ref.CollisionGroup = originalColGroup ~= "" and originalColGroup or "Default"
   end)
 
-  -- a render step binding always runs before RenderStepped in the editor
   local function frame()
     local camera = workspace.CurrentCamera
 
@@ -85,17 +82,8 @@ function screen.emit(ctx: reader.Ctx, attrs: any)
     ref.CFrame = cf * CFrame.new(pos) * CFrame.fromOrientation(rot.x, rot.y, rot.z)
   end
 
-  if not RunService:IsRunning() then
-    lifetime.hold(scope, RunService.RenderStepped:Connect(frame))
-  else
-    local id = utility.getRandomId()
-
-    RunService:BindToRenderStep(id, Enum.RenderPriority.Last.Value + 2 + scope.depth, frame)
-
-    lifetime.hold(scope, function()
-      RunService:UnbindFromRenderStep(id)
-    end)
-  end
+  -- placed once the camera has settled, and before anything that follows it
+  lifetime.step(scope, frame, "screen")
 
   -- the part stays placed until the last effect under it finishes
   local env = scope.effects.emitNested(ref, scope.depth + 1, scope)

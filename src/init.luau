@@ -92,6 +92,7 @@ local knob = require("@mod/knob")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
+local scheduler = require("@mod/scheduler")
 local attributes = require("@mod/attributes")
 
 local Beam = require("@vfx/beam")
@@ -179,6 +180,8 @@ function api.init(params: params?)
     return
   end
 
+  scheduler.start()
+
   api.caches = caches.init(api.scope)
 
   shared.vfx = api
@@ -226,6 +229,10 @@ function api.deinit()
   ShockwaveRing.deinit()
   ShockwaveLine.deinit()
   ShockwaveDebris.deinit()
+
+  -- after the shake has put the camera back, and before the plugin unloads, so
+  -- no effect resumes into what is torn down
+  scheduler.stop()
 
   local cleanupObjects = CollectionService:GetTagged(utility.CLEANUP_TAG)
 

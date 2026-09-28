@@ -1,4 +1,3 @@
-local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
 local mod = require("@mod/mod")
@@ -10,6 +9,7 @@ local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
+local scheduler = require("@mod/scheduler")
 
 local Shockwave = require("@vfx/shockwave")
 
@@ -151,7 +151,7 @@ end
 local physicsParts = {}
 
 local part_cache: ObjectCache.ObjectCache?
-local physicsStepper: RBXScriptConnection?
+local physicsStepper: scheduler.Handle?
 
 function debris.init(cache)
   if physicsStepper then
@@ -161,7 +161,7 @@ function debris.init(cache)
   part_cache = cache
 
   if utility.PLUGIN_CONTEXT then
-    physicsStepper = RunService.RenderStepped:Connect(function(deltaTime)
+    physicsStepper = scheduler.add("compute", function(deltaTime: number)
       if #physicsParts == 0 then
         return
       end

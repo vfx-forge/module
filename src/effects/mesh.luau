@@ -1,6 +1,4 @@
 --!nolint LocalShadow
-local RunService = game:GetService("RunService")
-
 local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
@@ -257,15 +255,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
   updatePos(0)
 
-  do
-    local id = utility.getRandomId()
-
-    RunService:BindToRenderStep(id, utility.RENDER_PRIORITY + scope.depth, updatePos)
-
-    lifetime.hold(scope, function()
-      RunService:UnbindFromRenderStep(id)
-    end)
-  end
+  lifetime.step(scope, updatePos, "follow")
 
   local promises = {}
 

@@ -1,6 +1,4 @@
 --!nolint LocalShadow
-local RunService = game:GetService("RunService")
-
 local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
 local tween = require("@mod/tween")
@@ -269,17 +267,9 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
             local initOrigin = utility.getTransformedOriginExtents(parent)
             local initPartPos = objAbstr.CFrame
 
-            local function updatePos()
+            lifetime.step(scope, function()
               objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * initOrigin:ToObjectSpace(initPartPos)
-            end
-
-            local id = utility.getRandomId()
-
-            RunService:BindToRenderStep(id, utility.RENDER_PRIORITY + scope.depth, updatePos)
-
-            lifetime.hold(scope, function()
-              RunService:UnbindFromRenderStep(id)
-            end)
+            end, "follow")
           end
 
           finished = true
