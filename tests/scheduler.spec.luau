@@ -398,7 +398,7 @@ harness.suite(function()
         )} ns over a bare call each`
       )
 
-      expect(overhead < 0.15e-6).toBe(true)
+      expect(overhead < 0.05e-6).toBe(true)
     end)
   end)
 end)

@@ -78,21 +78,29 @@ local kept = 0
 local count = 0
 local delta = 0
 
+-- the pass is read into locals, and written back before each step runs so a
+-- throw re-enters from where it left off
 local function sweep()
-  while index < count do
-    index += 1
+  local b, d, c = bucket, delta, count
+  local i, k = index, kept
 
-    local step = bucket[index]
+  while i < c do
+    i += 1
+
+    local step = b[i]
 
     if step.Connected then
-      step.run(delta)
+      index, kept = i, k
+      step.run(d)
     end
 
     if step.Connected then
-      kept += 1
-      bucket[kept] = step
+      k += 1
+      b[k] = step
     end
   end
+
+  index, kept = i, k
 end
 
 -- every step still connected runs once, in the order it was added. one added
