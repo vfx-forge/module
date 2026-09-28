@@ -199,18 +199,9 @@ local function disconnectSteps()
 end
 
 function camera_shake.init()
-  local connected = #steps > 0
-
-  for _, step in steps do
-    connected = connected and step.Connected
-  end
-
-  if connected then
+  if #steps > 0 then
     return
   end
-
-  -- a step that threw was dropped by the scheduler, so both are added again
-  disconnectSteps()
 
   if RunService:IsRunning() then
     table.insert(steps, scheduler.add("undo", undo))
