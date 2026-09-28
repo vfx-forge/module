@@ -5,56 +5,17 @@ local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local scheduler = require("@mod/scheduler")
 
 local Shake = require("@pkg/Shake")
 
-local activeShakes = {}
-local totalShakeCF = CFrame.identity
-
-local function updateCamera()
-  if #activeShakes == 0 then
-    return
-  end
-
-  local camera = workspace.CurrentCamera
-
-  if not RunService:IsRunning() then
-    camera.CFrame *= totalShakeCF:Inverse()
-
-    -- I <3 THE STUDIO CAMERA SYSTEM !!!! YAYAY AIHU;S H;GDFAH GSDFL
-    local cf = camera.CFrame
-    local rx, ry = cf:ToOrientation()
-
-    -- NO HAX ALLOWED!!!!!!!
-    camera.CFrame = CFrame.new(cf.Position) * CFrame.fromOrientation(rx, ry, 0)
-  end
-
-  local totalPos = vector.zero
-  local totalRot = CFrame.identity
-
-  local stillActive = {}
-
-  for _, v in activeShakes do
-    if v.done then
-      continue
-    end
-
-    totalPos += v.pos
-    totalRot *= CFrame.Angles(v.rot.x, v.rot.y, v.rot.z)
-
-    table.insert(stillActive, v)
-  end
-
-  activeShakes = stillActive
-
-  local total = CFrame.new(totalPos) * totalRot
-
-  if not RunService:IsRunning() then
-    totalShakeCF = total
-  end
-
-  camera.CFrame *= total
-end
+type Active = {
+  shake: typeof(Shake.new()),
+  ref: RayValue,
+  falloff: number,
+  thread: thread,
+  done: boolean,
+}
 
 local function always()
   return true
@@ -111,45 +72,142 @@ function camera_shake.duration(_, attrs: any)
   return attrs.FadeInTime + attrs.SustainTime + attrs.FadeOutTime
 end
 
-local conn
-local lastCameraCf
+local activeShakes: { Active } = {}
+local steps: { scheduler.Handle } = {}
+
+-- in the editor, the shake the last frame applied, taken back off before the
+-- next one is applied
+local totalShakeCF = CFrame.identity
+
+-- in a running game, the camera before the last shake and the camera as it
+-- read back after it. a camera that no longer reads back that way was written
+-- by somebody else since, and keeps what they wrote
+local base: CFrame? = nil
+local written: CFrame? = nil
+
+local function undo()
+  local was = base
+
+  if was == nil then
+    return
+  end
+
+  local camera = workspace.CurrentCamera
+
+  if camera.CFrame == written then
+    camera.CFrame = was
+  end
+
+  base = nil
+  written = nil
+end
+
+local function apply()
+  local running = RunService:IsRunning()
+
+  if #activeShakes == 0 and (running or totalShakeCF == CFrame.identity) then
+    return
+  end
+
+  local camera = workspace.CurrentCamera
+
+  if not running then
+    camera.CFrame *= totalShakeCF:Inverse()
+
+    -- I <3 THE STUDIO CAMERA SYSTEM !!!! YAYAY AIHU;S H;GDFAH GSDFL
+    local cf = camera.CFrame
+    local rx, ry = cf:ToOrientation()
+
+    -- NO HAX ALLOWED!!!!!!!
+    camera.CFrame = CFrame.new(cf.Position) * CFrame.fromOrientation(rx, ry, 0)
+  end
+
+  local totalPos = vector.zero
+  local totalRot = CFrame.identity
+
+  local stillActive = {}
+  local finished: { thread }? = nil
+
+  for _, active in activeShakes do
+    local pos, rot, isDone = active.shake:Update()
+    local origin = active.ref:FindFirstAncestorOfClass("Attachment") or active.ref:FindFirstAncestorWhichIsA("BasePart")
+
+    if origin then
+      local originCFrame = utility.getTransformedOriginExtents(origin)
+      local originPosition = originCFrame and originCFrame.Position or origin.Position
+
+      local alpha = 1 - math.clamp((camera.CFrame.Position - originPosition).Magnitude / active.falloff, 0, 1)
+
+      pos *= alpha
+      rot *= alpha
+    end
+
+    if isDone then
+      active.done = true
+      finished = finished or {}
+      table.insert(finished :: { thread }, active.thread)
+
+      continue
+    end
+
+    totalPos += pos
+    totalRot *= CFrame.Angles(rot.x, rot.y, rot.z)
+
+    table.insert(stillActive, active)
+  end
+
+  activeShakes = stillActive
+
+  local total = CFrame.new(totalPos) * totalRot
+
+  if running then
+    local before = camera.CFrame
+
+    camera.CFrame = before * total
+
+    base = before
+    written = camera.CFrame
+  else
+    totalShakeCF = total
+    camera.CFrame *= total
+  end
+
+  if finished == nil then
+    return
+  end
+
+  -- woken once the list is settled, since a body that ends here takes its
+  -- shake out of it
+  for _, thread in finished do
+    task.spawn(thread)
+  end
+end
 
 function camera_shake.init()
-  if conn then
+  if #steps > 0 then
     return
   end
 
   if RunService:IsRunning() then
-    conn = RunService.Heartbeat:Connect(function()
-      if not lastCameraCf then
-        return
-      end
-
-      workspace.CurrentCamera.CFrame = lastCameraCf
-    end)
+    table.insert(steps, scheduler.add("undo", undo))
   end
 
-  RunService:BindToRenderStep("forge_updateCameraShake", Enum.RenderPriority.Last.Value + 1, updateCamera)
+  table.insert(steps, scheduler.add("shake", apply))
 end
 
 function camera_shake.deinit()
-  if conn then
-    conn:Disconnect()
-    conn = nil
+  for _, step in steps do
+    step:Disconnect()
   end
 
-  RunService:UnbindFromRenderStep("forge_updateCameraShake")
+  table.clear(steps)
 end
 
 function camera_shake.emit(ctx: reader.Ctx, attrs: any)
   local ref = ctx.ref :: RayValue
   local scope = ctx.scope
 
-  local emitDelay = attrs.EmitDelay
   local emitDuration = attrs.EmitDuration
-
-  local falloff = attrs.Falloff
-
   local sustained = emitDuration > 0
 
   local shake = Shake.new()
@@ -162,8 +220,6 @@ function camera_shake.emit(ctx: reader.Ctx, attrs: any)
   shake.PositionInfluence = attrs.PositionInfluence
   shake.RotationInfluence = attrs.RotationInfluence
 
-  local currentSpeed = 1
-
   local elapsed = 0
 
   shake.TimeFunction = function()
@@ -171,8 +227,7 @@ function camera_shake.emit(ctx: reader.Ctx, attrs: any)
   end
 
   local speed = attrs.Speed
-
-  currentSpeed = speed.at(0)
+  local currentSpeed = speed.at(0)
 
   if speed.animated then
     lifetime.hold(
@@ -184,60 +239,39 @@ function camera_shake.emit(ctx: reader.Ctx, attrs: any)
     )
   end
 
-  lifetime.hold(
-    scope,
-    RunService.RenderStepped:Connect(function(deltaTime)
-      elapsed += deltaTime * currentSpeed
-    end)
-  )
+  lifetime.step(scope, function(deltaTime: number)
+    elapsed += deltaTime * currentSpeed
+  end)
 
-  local obj = {
+  lifetime.wait(scope, attrs.EmitDelay)
+
+  local active: Active = {
+    shake = shake,
+    ref = ref,
+    falloff = attrs.Falloff,
+    thread = coroutine.running(),
     done = false,
-    pos = vector.zero,
-    rot = vector.zero,
   }
 
-  task.wait(emitDelay)
+  table.insert(activeShakes, active)
 
-  table.insert(activeShakes, obj)
+  -- a shake cleared before it is done stops with its effect
+  lifetime.hold(scope, function()
+    local index = table.find(activeShakes, active)
 
-  local thread = coroutine.running()
-
-  shake:BindToRenderStep(Shake.NextRenderName(), utility.RENDER_PRIORITY + scope.depth, function(pos, rot, isDone)
-    local camera = workspace.CurrentCamera
-
-    lastCameraCf = camera.CFrame
-
-    local origin = ref:FindFirstAncestorOfClass("Attachment") or ref:FindFirstAncestorWhichIsA("BasePart")
-
-    if origin then
-      local originCFrame = utility.getTransformedOriginExtents(origin)
-      local originPosition = originCFrame and originCFrame.Position or origin.Position
-
-      local alpha = 1 - math.clamp((camera.CFrame.Position - originPosition).Magnitude / falloff, 0, 1)
-
-      pos *= alpha
-      rot *= alpha
-    end
-
-    obj.pos = pos
-    obj.rot = rot
-    obj.done = isDone
-
-    if isDone then
-      lastCameraCf = nil
-      task.spawn(thread)
+    if index then
+      table.remove(activeShakes, index)
     end
   end)
 
   shake:Start()
 
   if sustained then
-    task.wait(emitDuration)
+    lifetime.wait(scope, emitDuration)
     shake:StopSustain()
   end
 
-  if not obj.done then
+  if not active.done then
     coroutine.yield()
   end
 end
