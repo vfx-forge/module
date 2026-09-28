@@ -12,15 +12,11 @@ local Shake = require("@pkg/Shake")
 -- a falloff of zero with the camera on its origin divides zero by zero
 local MIN_FALLOFF = 1e-3
 
--- every copy of this module in one place files its writes under this key, so
--- a copy never leaves another's shake on the camera. a new shape of entry
--- takes a new key
-local UNDO_KEY = "forge_camera_shake_undo_v1"
-
-type Undo = {
-  before: CFrame,
-  written: CFrame,
-}
+-- the camera before the last frame's shakes and the camera as it read back
+-- after them, kept on the camera itself so every copy of this module, in any
+-- context, finds what the others wrote
+local BASE_ATTRIBUTE = "ForgeShakeBase"
+local WRITTEN_ATTRIBUTE = "ForgeShakeWritten"
 
 type Active = {
   shake: typeof(Shake.new()),
@@ -92,31 +88,24 @@ local steps: { scheduler.Handle } = {}
 -- next one is applied
 local totalShakeCF = CFrame.identity
 
--- in a running game, the camera before each shake of the last frame and the
--- camera as it read back after it, the last write on top. the first undo of a
--- frame, whichever copy's, takes them all off
-local undoStack: { Undo } = shared[UNDO_KEY] or {}
-
-shared[UNDO_KEY] = undoStack
-
--- a camera that no longer reads back an entry's write was written by somebody
+-- a camera that no longer reads back the last write was written by somebody
 -- else since, and keeps what they wrote
 local function undo()
-  if #undoStack == 0 then
+  local camera = workspace.CurrentCamera
+  local written = camera:GetAttribute(WRITTEN_ATTRIBUTE)
+
+  if written == nil then
     return
   end
 
-  local camera = workspace.CurrentCamera
+  local base = camera:GetAttribute(BASE_ATTRIBUTE)
 
-  for i = #undoStack, 1, -1 do
-    local entry = undoStack[i]
-
-    undoStack[i] = nil
-
-    if camera.CFrame == entry.written then
-      camera.CFrame = entry.before
-    end
+  if base ~= nil and camera.CFrame == written then
+    camera.CFrame = base
   end
+
+  camera:SetAttribute(BASE_ATTRIBUTE, nil)
+  camera:SetAttribute(WRITTEN_ATTRIBUTE, nil)
 end
 
 local function apply()
@@ -182,11 +171,17 @@ local function apply()
   local total = CFrame.new(totalPos) * totalRot
 
   if running then
-    local before = camera.CFrame
+    local current = camera.CFrame
+    local base = camera:GetAttribute(BASE_ATTRIBUTE)
 
-    camera.CFrame = before * total
+    -- a camera still reading back another copy's shake this frame goes back
+    -- to where that copy found it
+    local before = if base ~= nil and current == camera:GetAttribute(WRITTEN_ATTRIBUTE) then base else current
 
-    table.insert(undoStack, { before = before, written = camera.CFrame })
+    camera.CFrame = current * total
+
+    camera:SetAttribute(BASE_ATTRIBUTE, before)
+    camera:SetAttribute(WRITTEN_ATTRIBUTE, camera.CFrame)
   else
     totalShakeCF = total
     camera.CFrame *= total

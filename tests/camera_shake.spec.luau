@@ -274,6 +274,7 @@ harness.suite(function()
         second.compute(0.1)
 
         local settled = camera.CFrame == BASE
+        local left = next((camera :: any):GetAttributes())
 
         lifetime.release(theirs)
         otherShake.deinit()
@@ -283,8 +284,47 @@ harness.suite(function()
         expect(shaken > 0).toBe(true)
         expect(unshaken).toBe(0)
         expect(settled).toBe(true)
+        expect(left).toBe(nil)
       end)
     end
+
+    test("two copies leave a camera another script wrote between frames where it was written", function()
+      start(running)
+      otherShake.init()
+
+      local ours = shake(nil, 30)
+      local theirs = shakeWith(otherShake, nil, 30)
+      local kept = 0
+
+      for i = 1, 10 do
+        scheduler.compute(0.1)
+        otherScheduler.compute(0.1)
+
+        if camera.CFrame == CFrame.new(i - 1, 0, 0) then
+          kept += 1
+        end
+
+        scheduler.late(0.1)
+        otherScheduler.late(0.1)
+
+        camera.CFrame = CFrame.new(i, 0, 0)
+      end
+
+      scheduler.compute(0.1)
+      otherScheduler.compute(0.1)
+
+      local last = camera.CFrame
+      local left = next((camera :: any):GetAttributes())
+
+      lifetime.release(theirs)
+      otherShake.deinit()
+      otherScheduler.stop()
+      finish(ours)
+
+      expect(kept).toBe(9)
+      expect(last == CFrame.new(10, 0, 0)).toBe(true)
+      expect(left).toBe(nil)
+    end)
 
     test("a falloff of zero with the camera on its origin shakes rather than NaN", function()
       start(notRunning)

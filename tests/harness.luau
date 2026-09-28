@@ -187,13 +187,27 @@ do
     end,
   }
 
-  -- the camera the shake reads and writes, a plain table a spec can move
-  workspace = {
-    CurrentCamera = { CFrame = roblox.CFrame.identity },
-  }
+  -- the camera the shake reads and writes, a plain table a spec can move, with
+  -- the attributes the copies of the shake leave on it
+  local cameraAttributes: { [string]: any } = {}
 
-  -- the table every script in one place shares, where copies of a module meet
-  shared = {}
+  workspace = {
+    CurrentCamera = {
+      CFrame = roblox.CFrame.identity,
+
+      GetAttribute = function(_, name: string)
+        return cameraAttributes[name]
+      end,
+
+      SetAttribute = function(_, name: string, value: any)
+        cameraAttributes[name] = value
+      end,
+
+      GetAttributes = function()
+        return table.clone(cameraAttributes)
+      end,
+    },
+  }
 end
 
 -- Random is absent under lune outright: @lune/roblox exposes none and there is
