@@ -28,6 +28,7 @@ require("@tests/modifier_frame.spec")
 require("@tests/lifetime.spec")
 require("@tests/scheduler.spec")
 require("@tests/tween.spec")
+require("@tests/camera_shake.spec")
 require("@tests/read_cost.spec")
 
 process.exit(harness.run())

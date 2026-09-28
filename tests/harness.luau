@@ -186,6 +186,11 @@ do
       return nil
     end,
   }
+
+  -- the camera the shake reads and writes, a plain table a spec can move
+  workspace = {
+    CurrentCamera = { CFrame = roblox.CFrame.identity },
+  }
 end
 
 -- Random is absent under lune outright: @lune/roblox exposes none and there is

@@ -9,6 +9,9 @@ local scheduler = require("@mod/scheduler")
 
 local Shake = require("@pkg/Shake")
 
+-- a falloff of zero with the camera on its origin divides zero by zero
+local MIN_FALLOFF = 1e-3
+
 type Active = {
   shake: typeof(Shake.new()),
   ref: RayValue,
@@ -122,7 +125,7 @@ local function apply()
     camera.CFrame = CFrame.new(cf.Position) * CFrame.fromOrientation(rx, ry, 0)
   end
 
-  local totalPos = vector.zero
+  local totalPos = Vector3.zero
   local totalRot = CFrame.identity
 
   local stillActive = {}
@@ -151,7 +154,7 @@ local function apply()
     end
 
     totalPos += pos
-    totalRot *= CFrame.Angles(rot.x, rot.y, rot.z)
+    totalRot *= CFrame.Angles(rot.X, rot.Y, rot.Z)
 
     table.insert(stillActive, active)
   end
@@ -183,10 +186,27 @@ local function apply()
   end
 end
 
+local function disconnectSteps()
+  for _, step in steps do
+    step:Disconnect()
+  end
+
+  table.clear(steps)
+end
+
 function camera_shake.init()
-  if #steps > 0 then
+  local connected = #steps > 0
+
+  for _, step in steps do
+    connected = connected and step.Connected
+  end
+
+  if connected then
     return
   end
+
+  -- a step that threw was dropped by the scheduler, so both are added again
+  disconnectSteps()
 
   if RunService:IsRunning() then
     table.insert(steps, scheduler.add("undo", undo))
@@ -195,12 +215,19 @@ function camera_shake.init()
   table.insert(steps, scheduler.add("shake", apply))
 end
 
+-- the steps that would take the last shake off go with it, so it is taken
+-- off here
 function camera_shake.deinit()
-  for _, step in steps do
-    step:Disconnect()
+  undo()
+
+  if totalShakeCF ~= CFrame.identity then
+    local camera = workspace.CurrentCamera
+
+    camera.CFrame *= totalShakeCF:Inverse()
+    totalShakeCF = CFrame.identity
   end
 
-  table.clear(steps)
+  disconnectSteps()
 end
 
 function camera_shake.emit(ctx: reader.Ctx, attrs: any)
@@ -248,7 +275,7 @@ function camera_shake.emit(ctx: reader.Ctx, attrs: any)
   local active: Active = {
     shake = shake,
     ref = ref,
-    falloff = attrs.Falloff,
+    falloff = math.max(attrs.Falloff, MIN_FALLOFF),
     thread = coroutine.running(),
     done = false,
   }
