@@ -136,7 +136,42 @@ harness.suite(function()
       expect(string.find(warnings[1], "function sweep", 1, true) ~= nil).toBe(true)
     end)
 
-    test("a throwing step with no owner tells no one and stays connected", function()
+    test("a throwing step with no owner is dropped, tells no one, and warns once", function()
+      local log = {}
+      local runs = 0
+      local told = 0
+      local previous = scheduler.failed
+
+      scheduler.failed = function()
+        told += 1
+      end
+
+      local before = scheduler.add("compute", logging(log, "before"))
+      local thrower = scheduler.add("compute", function()
+        runs += 1
+        error("boom")
+      end)
+      local after = scheduler.add("compute", logging(log, "after"))
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+      end)
+
+      scheduler.failed = previous
+      disconnectAll({ before, after })
+
+      expect(runs).toBe(1)
+      expect(told).toBe(0)
+      expect(thrower.Connected).toBe(false)
+      expect(#warnings).toBe(1)
+      expect(log).toEqual({ "before", "after", "before", "after" })
+      expect(string.find(warnings[1], "function sweep", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a step added to survive a throw warns once and keeps running", function()
+      local log = {}
+      local runs = 0
       local told = 0
       local previous = scheduler.failed
 
@@ -145,32 +180,9 @@ harness.suite(function()
       end
 
       local thrower = scheduler.add("compute", function()
-        error("boom")
-      end)
-
-      local warnings = harness.captureWarnings(function()
-        scheduler.frame(0.1)
-      end)
-
-      local connected = thrower.Connected
-
-      scheduler.failed = previous
-      thrower:Disconnect()
-
-      expect(connected).toBe(true)
-      expect(#warnings).toBe(1)
-      expect(told).toBe(0)
-      expect(string.find(warnings[1], "function sweep", 1, true) ~= nil).toBe(true)
-    end)
-
-    test("a step with no owner that throws every frame warns once and keeps running", function()
-      local log = {}
-      local runs = 0
-
-      local thrower = scheduler.add("compute", function()
         runs += 1
         error("boom")
-      end)
+      end, 0, nil, true)
       local after = scheduler.add("compute", logging(log, "after"))
 
       local warnings = harness.captureWarnings(function()
@@ -181,9 +193,11 @@ harness.suite(function()
 
       local connected = thrower.Connected
 
+      scheduler.failed = previous
       disconnectAll({ thrower, after })
 
       expect(runs).toBe(3)
+      expect(told).toBe(0)
       expect(connected).toBe(true)
       expect(#warnings).toBe(1)
       expect(log).toEqual({ "after", "after", "after" })

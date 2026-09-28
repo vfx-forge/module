@@ -191,7 +191,7 @@ function debris.init(cache)
       end
 
       workspace:StepPhysics(deltaTime, parts)
-    end)
+    end, 0, nil, true)
   end
 end
 

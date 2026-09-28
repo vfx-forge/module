@@ -137,6 +137,37 @@ harness.suite(function()
       expect(fx.state).toBe(lifetime.RELEASED)
     end)
 
+    test("a fromParams tween that throws ends alone, once, and its neighbours step on", function()
+      local runs = 0
+      local stepped = 0
+
+      local function stepping(_: any, deltaTime: number)
+        stepped += 1
+        return deltaTime
+      end
+
+      local before = tween.fromParams(LINE, 1, stepping)
+      local thrower = tween.fromParams(LINE, 1, function(): number
+        runs += 1
+        error("boom")
+      end)
+      local after = tween.fromParams(LINE, 1, stepping)
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+      end)
+
+      before:Disconnect()
+      after:Disconnect()
+
+      expect(runs).toBe(1)
+      expect(stepped).toBe(6)
+      expect(thrower.Connected).toBe(false)
+      expect(#warnings).toBe(1)
+    end)
+
     test("an after whose effect is released first never finishes", function()
       local finished = false
       local emit = lifetime.emit(nil)

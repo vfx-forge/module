@@ -204,10 +204,10 @@ function camera_shake.init()
   end
 
   if RunService:IsRunning() then
-    table.insert(steps, scheduler.add("undo", undo))
+    table.insert(steps, scheduler.add("undo", undo, 0, nil, true))
   end
 
-  table.insert(steps, scheduler.add("shake", apply))
+  table.insert(steps, scheduler.add("shake", apply, 0, nil, true))
 end
 
 -- the steps that would take the last shake off go with it, so it is taken
