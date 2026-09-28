@@ -311,7 +311,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     end
   end
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   for _ = 1, count do
     local iref = #partData ~= 0 and partData[rng:NextInteger(1, #partData)]
@@ -592,7 +592,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     end, scope)
   end
 
-  task.wait(lifeMax + exitLength)
+  lifetime.wait(scope, lifeMax + exitLength)
 
   -- a dwell ending on the wait's own frame files its exit after the wait
   -- returns, and the promises below would never see it

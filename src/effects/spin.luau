@@ -93,7 +93,7 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
   local sync = attrs.SyncPosition
   local duration = attrs.SpinDuration
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   local speed = attrs.SpinSpeed
   local speedTween

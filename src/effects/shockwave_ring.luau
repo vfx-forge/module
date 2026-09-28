@@ -271,7 +271,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
     return nil
   end
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   -- the speed tween is the clock itself, so it is the one stepper that does not
   -- scale by it

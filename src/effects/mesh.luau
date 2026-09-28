@@ -523,7 +523,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
 
   local speed = attrs.Speed
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   if useEmitDuration and not ctx.constant then
     utility.forceEmit(ref, true)
@@ -557,7 +557,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
       )
     end
 
-    task.wait(emitDuration)
+    lifetime.wait(scope, emitDuration)
 
     utility.awaitEmitDuration(utility.stopEmitDuration(ref))
 

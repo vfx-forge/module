@@ -117,7 +117,7 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   local useDuration = duration > 0
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   if useDuration then
     obj.Enabled = true
@@ -148,7 +148,7 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   obj:Emit(count)
 
   if useDuration then
-    task.wait(duration)
+    lifetime.wait(scope, duration)
     obj.Enabled = false
   end
 

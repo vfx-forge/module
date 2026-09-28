@@ -325,7 +325,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
     direction = -Vector3.zAxis
   end
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   local promises = {}
 

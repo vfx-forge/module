@@ -104,7 +104,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
 
   local useDuration = attrs.EmitDuration > 0
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   if useDuration and not ctx.constant then
     utility.forceEmit(ref, true)
@@ -140,7 +140,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
       )
     end
 
-    task.wait(attrs.EmitDuration)
+    lifetime.wait(scope, attrs.EmitDuration)
 
     utility.awaitEmitDuration(utility.stopEmitDuration(ref))
 
@@ -437,7 +437,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
 
   Promise.all(promises):await()
 
-  task.wait(attrs.DestroyDelay)
+  lifetime.wait(scope, attrs.DestroyDelay)
 end
 
 -- the template part is authored on the bolt, so a preview of a piece starts

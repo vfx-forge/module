@@ -210,7 +210,7 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     local waited = 0
 
     while not clone.IsLoaded and waited < LOAD_TIMEOUT and clone.Parent do
-      waited += task.wait(0.05)
+      waited += lifetime.wait(scope, 0.05)
     end
 
     if not clone.Parent then
@@ -288,7 +288,7 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
   end
 
   if emitDuration > 0 then
-    task.wait(emitDuration)
+    lifetime.wait(scope, emitDuration)
     clone:Stop()
   else
     tween.timer(clone.TimeLength, function(deltaTime, elapsed)
@@ -389,7 +389,7 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
   local repeatCount = attrs.RepeatCount
   local repeatInterval = attrs.RepeatInterval
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   local promises = {}
 
@@ -419,12 +419,12 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
       )
 
       if r < repeatCount and repeatInterval.Max > 0 then
-        task.wait(rng:NextNumber(repeatInterval.Min, repeatInterval.Max))
+        lifetime.wait(scope, rng:NextNumber(repeatInterval.Min, repeatInterval.Max))
       end
     end
 
     if i < emitCount and emitInterval.Max > 0 then
-      task.wait(rng:NextNumber(emitInterval.Min, emitInterval.Max))
+      lifetime.wait(scope, rng:NextNumber(emitInterval.Min, emitInterval.Max))
     end
   end
 

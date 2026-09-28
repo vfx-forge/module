@@ -183,7 +183,7 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   local tScale = attrs.TransparencyScale
   local lengthScale = attrs.LengthScale
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   obj.Enabled = true
 

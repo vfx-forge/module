@@ -233,7 +233,6 @@ local function createSegmentStates(count: number)
 
   for j = 1, count do
     states[j] = {
-      birthTime = nil,
       initialWidth = nil,
       birth = nil,
       birthElapsed = nil,
@@ -466,7 +465,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
   local useDuration = attrs.EmitDuration > 0
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
   if useDuration and not ctx.constant then
     utility.forceEmit(ref, true)
@@ -502,7 +501,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
       )
     end
 
-    task.wait(attrs.EmitDuration)
+    lifetime.wait(scope, attrs.EmitDuration)
 
     utility.awaitEmitDuration(utility.stopEmitDuration(ref))
 
@@ -889,8 +888,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           allowRefresh: boolean?,
           widthOverride: number?
         )
-          local currentTime = os.clock()
-
           currentHeadAlpha = headAlpha
 
           local tailAlpha = tailAlphaOverride or math.max(0, headAlpha - currentLength)
@@ -929,7 +926,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
               if state.wasVisible then
                 state.wasVisible = false
-                state.birthTime = nil
                 state.initialWidth = nil
                 state.birth = nil
                 state.birthElapsed = nil
@@ -937,7 +933,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             else
               if not state.wasVisible then
                 state.wasVisible = true
-                state.birthTime = currentTime
                 state.initialWidth = currentWidth
                 state.birth = transparency.at(scaledElapsedTime)
                 state.birthElapsed = scaledElapsedTime
