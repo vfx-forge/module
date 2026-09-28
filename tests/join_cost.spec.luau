@@ -38,17 +38,18 @@ end
 -- a child emit of the effect's own, its one effect parked on the emit's own
 -- pending count so the child stays outstanding (the shape a nested emit
 -- takes while its own effects are still running) until whoever holds it
--- clears it
-local function nested(scope: lifetime.effect): lifetime.emit
+-- releases that effect, which ends the child the way a real one ends
+local function nested(scope: lifetime.effect): (lifetime.emit, lifetime.effect)
   local child = lifetime.emit(scope.emit)
+  local fx = lifetime.effect(child, scope.depth + 1, nil)
 
-  lifetime.run(lifetime.effect(child, scope.depth + 1, nil), function(fx)
-    lifetime.await(fx.emit)
+  lifetime.run(fx, function()
+    lifetime.await(child)
   end)
 
   lifetime.seal(child)
 
-  return child
+  return child, fx
 end
 
 -- one emit of one effect running body, then every piece finished from outside
@@ -126,14 +127,14 @@ harness.suite(function()
       local ended = 0
 
       -- the ring as it waits now: a nested emit per segment, included while it
-      -- is still pending (the finisher clears it, the common case an already
+      -- is still pending (the finisher ends it, the common case an already
       -- done child never costs), a dwell counted until its exit is counted in,
       -- the exit counted until it lands
       local ring = emitOf(function(scope: lifetime.effect)
         local outstanding = lifetime.join(scope)
 
         for i = 1, SEGMENTS do
-          local child = nested(scope)
+          local child, fx = nested(scope)
 
           lifetime.include(outstanding, child)
 
@@ -141,7 +142,7 @@ harness.suite(function()
 
           finishers[i] = function()
             local exited = lifetime.add(outstanding)
-            lifetime.clear(child)
+            lifetime.release(fx)
             landed()
             exited()
           end
@@ -152,16 +153,16 @@ harness.suite(function()
       end, finishers)
 
       -- the ring as dev 85d68d6 waited: a Finished per nested emit, still
-      -- pending until the finisher clears it, a promise per exit, the drained
+      -- pending until the finisher ends it, a promise per exit, the drained
       -- wait and a Promise.all over the lot
       local oldRing = emitOf(function(scope: lifetime.effect)
         local promises = {}
-        local children = {}
         local exits = {}
+        local childEffects = {}
 
         for i = 1, SEGMENTS do
-          local child = nested(scope)
-          children[i] = child
+          local child, fx = nested(scope)
+          childEffects[i] = fx
 
           table.insert(
             promises,
@@ -183,8 +184,8 @@ harness.suite(function()
           finishers[1] = function()
             resolve()
 
-            for _, child in children do
-              lifetime.clear(child)
+            for _, fx in childEffects do
+              lifetime.release(fx)
             end
 
             for _, exit in exits do
@@ -198,7 +199,7 @@ harness.suite(function()
       end, finishers)
 
       -- the bezier as it waits now: each piece counted until it finishes, its
-      -- nested emit included while still pending and cleared by the finisher,
+      -- nested emit included while still pending and ended by the finisher,
       -- set up under a try so a throw counts it out
       local bezier = emitOf(function(scope: lifetime.effect)
         local outstanding = lifetime.join(scope)
@@ -207,12 +208,12 @@ harness.suite(function()
           local landed = lifetime.add(outstanding)
 
           local ok = utility.try(`failed to emit a piece with error: %s`, function()
-            local child = nested(scope)
+            local child, fx = nested(scope)
 
             lifetime.include(outstanding, child)
 
             finishers[i] = function()
-              lifetime.clear(child)
+              lifetime.release(fx)
               landed()
             end
           end)
@@ -227,7 +228,7 @@ harness.suite(function()
       end, finishers)
 
       -- the bezier as dev 85d68d6 waited: a promise per piece, a Finished per
-      -- nested emit still pending until the finisher clears it, the on-finish
+      -- nested emit still pending until the finisher ends it, the on-finish
       -- Finished's finally, and a Promise.all
       local EMPTY = Promise.resolve()
 
@@ -238,7 +239,7 @@ harness.suite(function()
           table.insert(
             promises,
             Promise.new(function(resolve)
-              local child = nested(scope)
+              local child, fx = nested(scope)
 
               table.insert(
                 promises,
@@ -249,7 +250,7 @@ harness.suite(function()
               )
 
               finishers[i] = function()
-                lifetime.clear(child)
+                lifetime.release(fx)
 
                 EMPTY:finally(function()
                   resolve()
