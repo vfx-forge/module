@@ -13,7 +13,6 @@ local scheduler = require("@mod/scheduler")
 
 local Shockwave = require("@vfx/shockwave")
 
-local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
 
 local rng = Random.new()
@@ -270,29 +269,11 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
   local count = rng:NextInteger(amount.Min, amount.Max)
 
   local partData = {}
-  local promises = {}
 
-  -- pieces whose dwell has begun and whose exit is not among the promises yet,
-  -- and what wakes the emit once none is left. a teardown cancels every dwell
-  -- without ending it, so it wakes the emit too
-  local inFlight = 0
-  local drained: (() -> ())? = nil
-
-  local function landed()
-    inFlight -= 1
-
-    if inFlight == 0 and drained ~= nil then
-      drained()
-    end
-  end
-
-  lifetime.hold(scope, function()
-    inFlight = 0
-
-    if drained ~= nil then
-      drained()
-    end
-  end)
+  -- a piece counts from its dwell until its exit and its on-finish emit are
+  -- counted in, and a nested emit until it ends, so the wait at the end sees
+  -- a dwell that ends on the wait's own frame and an emit started after it
+  local outstanding = lifetime.join(scope)
 
   ref.CanCollide = false
 
@@ -351,8 +332,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
         conn:Disconnect()
 
-        local env = scope.effects.emitFromFolder(emitOnImpact, realPart, scope.depth + 1, scope)
-        table.insert(promises, env.Finished)
+        scope.effects.emitFromFolder(emitOnImpact, realPart, scope.depth + 1, scope, outstanding)
       end)
 
       lifetime.hold(scope, function()
@@ -450,8 +430,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
     part:ApplyAngularImpulse(part.AssemblyMass * rng:NextUnitVector() * rng:NextNumber(angmag.Min, angmag.Max))
 
-    local env = scope.effects.emitNested(realPart, scope.depth + 1, scope)
-    table.insert(promises, env.Finished)
+    scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
 
     -- a piece's own dwell, drawn from the row's range, sampled on the piece's
     -- clock so a modifier moving the row moves a dwell already running
@@ -464,7 +443,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
       drawn = rng:NextNumber(attrs.Lifetime.value.Min, lifeMax)
     end
 
-    inFlight += 1
+    local landed = lifetime.add(outstanding)
 
     -- the dwell's own elapsed when it ended, the moment the piece fires its
     -- despawn lane
@@ -526,39 +505,24 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
           -- a despawn lane is never cut: the emit awaits every exit as well as
           -- the wait below, which a piece's own draws could outlast. a teardown
-          -- cancels the stepper without finishing it, so it settles the wait too
+          -- closes the body waiting on it along with the stepper
           if length > 0 then
-            table.insert(
-              promises,
-              Promise.new(function(resolve)
-                lifetime.hold(scope, function()
-                  resolve()
-                end)
+            local exited = lifetime.add(outstanding)
 
-                lifetime.hold(
-                  scope,
-                  tween.fromParams(
-                    utility.linear_bezier,
-                    length,
-                    function(_, deltaTime, elapsed)
-                      -- a sample that throws would throw every frame and hold
-                      -- the emit until teardown, so it ends the exit instead
-                      local sampled, problem = pcall(exitAt, elapsed)
+            lifetime.hold(
+              scope,
+              tween.fromParams(utility.linear_bezier, length, function(_, deltaTime, elapsed)
+                -- a sample that throws would throw every frame and hold the
+                -- emit until teardown, so it ends the exit instead
+                local sampled, problem = pcall(exitAt, elapsed)
 
-                      if not sampled then
-                        logger.warn(`a piece's exit stopped: {problem}`)
-                        return nil
-                      end
+                if not sampled then
+                  logger.warn(`a piece's exit stopped: {problem}`)
+                  return nil
+                end
 
-                      return deltaTime
-                    end,
-                    nil,
-                    function()
-                      resolve()
-                    end
-                  )
-                )
-              end)
+                return deltaTime
+              end, nil, exited)
             )
           else
             exitAt(0)
@@ -579,8 +543,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
             )
           end
 
-          local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
-          table.insert(promises, env.Finished)
+          scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope, outstanding)
         end)
 
         landed()
@@ -594,15 +557,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
   lifetime.wait(scope, lifeMax + exitLength)
 
-  -- a dwell ending on the wait's own frame files its exit after the wait
-  -- returns, and the promises below would never see it
-  if inFlight > 0 then
-    Promise.new(function(resolve)
-      drained = resolve
-    end):await()
-  end
-
-  Promise.all(promises):await()
+  lifetime.awaitJoin(outstanding)
 end
 
 -- a piece is authored resting on its origin, so what the panel shows is what

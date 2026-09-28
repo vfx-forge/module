@@ -1,3 +1,4 @@
+local tween = require("@mod/tween")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
 local lifetime = require("@mod/lifetime")
@@ -197,6 +198,98 @@ harness.suite(function()
       expect(log).toEqual({ "joined" })
       expect(env.Finished:getStatus()).toBe("Resolved")
       expect(built.count).toBe(1)
+
+      built.restore()
+    end)
+  end)
+
+  -- pattern specs: the join and wait shape a shockwave module runs through,
+  -- not shockwave_ring itself, which lune cannot emit without raycasts
+  harness.describe("the shape a shockwave waits in", function()
+    test("a dwell that outlasts the run files its exit after the body began waiting, and is waited for", function()
+      local built = fresh()
+      local log = {}
+
+      registry.register(module("shape", "Folder", function(ctx: any)
+        local scope = ctx.scope
+        local outstanding = lifetime.join(scope)
+        local landed = lifetime.add(outstanding)
+
+        tween.after(0.75, function(deltaTime: number)
+          return deltaTime
+        end, function()
+          task.spawn(function()
+            -- the exit, a stepper that counts itself out when it lands
+            tween.after(0.5, function(deltaTime: number)
+              return deltaTime
+            end, lifetime.add(outstanding), scope)
+
+            landed()
+          end)
+        end, scope)
+
+        tween.timer(0.5, function(deltaTime: number)
+          return deltaTime
+        end, nil, scope)
+
+        table.insert(log, "waiting")
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, "joined")
+      end))
+
+      effects.emit(0, harness.make("Folder"))
+
+      for _ = 1, 4 do
+        scheduler.frame(0.25)
+      end
+
+      expect(log).toEqual({ "waiting" })
+
+      for _ = 1, 3 do
+        scheduler.frame(0.25)
+      end
+
+      expect(log).toEqual({ "waiting", "joined" })
+
+      built.restore()
+    end)
+
+    test("an on-impact emit started while the body waits is waited for", function()
+      local built = fresh()
+      local log = {}
+
+      registry.register(module("inner", "Configuration", waiting(0.5)))
+      registry.register(module("shape", "Folder", function(ctx: any)
+        local scope = ctx.scope
+        local outstanding = lifetime.join(scope)
+        local landed = lifetime.add(outstanding)
+        local impact = ctx.ref:FindFirstChildOfClass("Model")
+
+        tween.after(0.25, function(deltaTime: number)
+          return deltaTime
+        end, function()
+          scope.effects.emitFromFolder(impact, ctx.ref, scope.depth + 1, scope, outstanding)
+          landed()
+        end, scope)
+
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, "joined")
+      end, true))
+
+      local root = harness.make("Folder")
+      local impact = harness.make("Model", root)
+      harness.make("Configuration", impact)
+
+      effects.emit(0, root)
+
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(log).toEqual({})
+
+      scheduler.frame(0.5)
+
+      expect(log).toEqual({ "joined" })
 
       built.restore()
     end)

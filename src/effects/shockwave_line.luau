@@ -13,7 +13,6 @@ local registry = require("@mod/registry")
 local Shockwave = require("@vfx/shockwave")
 
 local Bezier = require("@obj/Bezier")
-local Promise = require("@pkg/Promise")
 local ObjectCache = require("@obj/ObjectCache")
 
 local rng = Random.new()
@@ -327,29 +326,10 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
   lifetime.wait(scope, attrs.EmitDelay)
 
-  local promises = {}
-
-  -- pieces whose dwell has begun and whose exit is not among the promises yet,
-  -- and what wakes the emit once none is left. a teardown cancels every dwell
-  -- without ending it, so it wakes the emit too
-  local inFlight = 0
-  local drained: (() -> ())? = nil
-
-  local function landed()
-    inFlight -= 1
-
-    if inFlight == 0 and drained ~= nil then
-      drained()
-    end
-  end
-
-  lifetime.hold(scope, function()
-    inFlight = 0
-
-    if drained ~= nil then
-      drained()
-    end
-  end)
+  -- a piece counts from its dwell until its exit and its on-finish emit are
+  -- counted in, and a nested emit until it ends, so the wait at the end sees
+  -- a dwell that ends on the timer's own frame and an emit started after it
+  local outstanding = lifetime.join(scope)
 
   local start = utility.getTransformedOriginExtents(origin)
 
@@ -572,8 +552,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
           lifetime.hold(scope, sizeTween)
         end
 
-        local env = scope.effects.emitNested(realPart, scope.depth + 1, scope)
-        table.insert(promises, env.Finished)
+        scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
 
         -- per PIECE, over the dwell's own ceiling rather than the line's run: a
         -- Lifetime track is sampled on the piece's dwell clock, which never
@@ -587,7 +566,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
           drawn = rng:NextNumber(lifeMin, lifeMax)
         end
 
-        inFlight += 1
+        local landed = lifetime.add(outstanding)
 
         -- the dwell's own elapsed when it ended, the moment the piece fires its
         -- despawn lane. kept every frame, since a speed that stops for good
@@ -671,41 +650,25 @@ function line.emit(ctx: reader.Ctx, attrs: any)
               local exitLength = math.max(sizeReach, offsetReach)
 
               -- a despawn lane is never cut: the emit awaits every exit, however
-              -- far past the line's run it reaches. a teardown cancels the
-              -- stepper without finishing it, so the teardown settles the wait too
+              -- far past the line's run it reaches. a teardown closes the body
+              -- waiting on it along with the stepper, so nothing is left waiting
               if exitLength > 0 then
-                table.insert(
-                  promises,
-                  Promise.new(function(resolve)
-                    lifetime.hold(scope, function()
-                      resolve()
-                    end)
+                local exited = lifetime.add(outstanding)
 
-                    lifetime.hold(
-                      scope,
-                      tween.fromParams(
-                        utility.linear_bezier,
-                        exitLength,
-                        function(_, deltaTime, elapsed)
-                          -- a sample that throws would throw every frame and
-                          -- hold the emit until teardown, so it ends the exit
-                          -- instead
-                          local sampled, problem = pcall(exitAt, elapsed)
+                lifetime.hold(
+                  scope,
+                  tween.fromParams(utility.linear_bezier, exitLength, function(_, deltaTime, elapsed)
+                    -- a sample that throws would throw every frame and hold
+                    -- the emit until teardown, so it ends the exit instead
+                    local sampled, problem = pcall(exitAt, elapsed)
 
-                          if not sampled then
-                            logger.warn(`a piece's exit stopped: {problem}`)
-                            return nil
-                          end
+                    if not sampled then
+                      logger.warn(`a piece's exit stopped: {problem}`)
+                      return nil
+                    end
 
-                          return step(deltaTime, elapsed)
-                        end,
-                        nil,
-                        function()
-                          resolve()
-                        end
-                      )
-                    )
-                  end)
+                    return step(deltaTime, elapsed)
+                  end, nil, exited)
                 )
               else
                 exitAt(0)
@@ -726,8 +689,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
                 )
               end
 
-              local env = scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope)
-              table.insert(promises, env.Finished)
+              scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope, outstanding)
             end)
 
             landed()
@@ -752,15 +714,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
     return step(deltaTime, elapsed)
   end, nil, scope)
 
-  -- a dwell ending on the timer's own frame files its exit after the timer
-  -- returns, and the wait below would never see it
-  if inFlight > 0 then
-    Promise.new(function(resolve)
-      drained = resolve
-    end):await()
-  end
-
-  Promise.all(promises):await()
+  lifetime.awaitJoin(outstanding)
 end
 
 -- a piece is authored resting on its origin, so what the panel shows is what
