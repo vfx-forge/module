@@ -1,4 +1,5 @@
 local value = require("./value")
+local logger = require("@mod/logger")
 
 local codec = {}
 
@@ -8,8 +9,8 @@ local VERSION = 2
 -- snaps a stop's time to 1/255 and merges stops closer than that. a colour in
 -- an endpoint or an extra field rides a one key table holding a buffer instead,
 -- every number in it an f32, the width the engine holds it at
-local COLOUR = 12
 local STOP = 16
+local COLOUR = 12
 
 -- the newest layout this codec reads, for a writer deciding whether a stored
 -- payload is newer than itself
@@ -136,21 +137,22 @@ local function waitOf(wait: any): value.Value?
   return nil
 end
 
-local function wrapped(x: any): { [string]: buffer }?
-  local kind = typeof(x)
+-- a copy of the value with every colour in it wrapped, however deep
+local function packed(v: any): any
+  local kind = typeof(v)
 
   if kind == "Color3" then
     local buf = buffer.create(COLOUR)
 
-    buffer.writef32(buf, 0, x.R)
-    buffer.writef32(buf, 4, x.G)
-    buffer.writef32(buf, 8, x.B)
+    buffer.writef32(buf, 0, v.R)
+    buffer.writef32(buf, 4, v.G)
+    buffer.writef32(buf, 8, v.B)
 
     return { Color3 = buf }
   end
 
   if kind == "ColorSequence" then
-    local points = x.Keypoints
+    local points = v.Keypoints
     local buf = buffer.create(#points * STOP)
 
     for i, point in points do
@@ -166,67 +168,59 @@ local function wrapped(x: any): { [string]: buffer }?
     return { ColorSequence = buf }
   end
 
-  return nil
-end
-
--- a copy of the table with every colour in it wrapped, however deep, or the
--- table itself when it holds none, so the caller's value is never touched
-local function packed(v: any): any
-  if type(v) ~= "table" then
+  if kind ~= "table" then
     return v
   end
 
-  local out = nil
+  local out = {}
 
   for k, x in v do
-    local wrap = wrapped(x) or packed(x)
-
-    if wrap ~= x then
-      out = out or table.clone(v)
-      out[k] = wrap
-    end
+    out[k] = packed(x)
   end
 
-  return out or v
+  return out
 end
 
 -- no endpoint holds a plain table of its own, and no other table is a single
--- key naming a colour type over a buffer, so this shape is only ever a wrap
-local function colourOf(x: { [any]: any }): any
-  local kind, buf = next(x)
-
-  if typeof(buf) ~= "buffer" or next(x, kind) ~= nil then
-    return nil
-  end
-
-  if kind == "Color3" then
-    return Color3.new(buffer.readf32(buf, 0), buffer.readf32(buf, 4), buffer.readf32(buf, 8))
-  end
-
-  if kind == "ColorSequence" then
-    local points = {}
-
-    for at = 0, buffer.len(buf) - STOP, STOP do
-      local colour = Color3.new(buffer.readf32(buf, at + 4), buffer.readf32(buf, at + 8), buffer.readf32(buf, at + 12))
-
-      table.insert(points, ColorSequenceKeypoint.new(buffer.readf32(buf, at), colour))
-    end
-
-    return ColorSequence.new(points)
-  end
-
-  return nil
-end
-
+-- key naming a colour type over a buffer, so that shape is only ever a wrap
 local function unpacked(v: any): any
   if type(v) ~= "table" then
     return v
   end
 
-  for k, x in v do
-    if type(x) == "table" then
-      v[k] = colourOf(x) or unpacked(x)
+  local kind, buf = next(v)
+
+  if typeof(buf) == "buffer" and next(v, kind) == nil then
+    local size = buffer.len(buf)
+
+    if kind == "Color3" then
+      if size ~= COLOUR then
+        logger.error(`malformed modifier queue payload: a colour of {size} bytes`)
+      end
+
+      return Color3.new(buffer.readf32(buf, 0), buffer.readf32(buf, 4), buffer.readf32(buf, 8))
     end
+
+    if kind == "ColorSequence" then
+      if size < STOP * 2 or size % STOP ~= 0 then
+        logger.error(`malformed modifier queue payload: a colour sequence of {size} bytes`)
+      end
+
+      local points = {}
+
+      for at = 0, size - STOP, STOP do
+        local colour =
+          Color3.new(buffer.readf32(buf, at + 4), buffer.readf32(buf, at + 8), buffer.readf32(buf, at + 12))
+
+        table.insert(points, ColorSequenceKeypoint.new(buffer.readf32(buf, at), colour))
+      end
+
+      return ColorSequence.new(points)
+    end
+  end
+
+  for k, x in v do
+    v[k] = unpacked(x)
   end
 
   return v

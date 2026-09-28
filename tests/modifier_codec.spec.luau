@@ -312,6 +312,26 @@ harness.suite(function()
       expect(q.lanes.start[1].stops[1].color).toBe(colour)
     end)
 
+    -- a wrap whose buffer is the wrong length is a broken payload, never a
+    -- colour read off its leading bytes. encode passes a buffer through as it
+    -- is, which is what writes one here
+    test("decode rejects a wrapped colour of the wrong length", function()
+      local cases = {
+        { Color3 = buffer.create(8) },
+        { Color3 = buffer.create(16) },
+        { ColorSequence = buffer.create(16) },
+        { ColorSequence = buffer.create(40) },
+      }
+
+      for _, wrap in cases do
+        local buf = codec.encode({ lanes = { start = { { kind = "tween", chain = false, start = value.lit(wrap) } } } })
+
+        expect(function()
+          codec.decode(buf)
+        end).toThrow()
+      end
+    end)
+
     -- legacy_mods lifts a legacy child's ResetOnFinish onto its modifier as
     -- `reset`, a field the schema does not name, so the applier only sees it if
     -- `extra` carries a boolean faithfully. false is the interesting one,
