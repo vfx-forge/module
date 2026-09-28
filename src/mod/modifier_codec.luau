@@ -1,8 +1,16 @@
 local value = require("./value")
+local logger = require("@mod/logger")
 
 local codec = {}
 
 local VERSION = 2
+
+-- Z writes a Color3 as three bytes and a ColorSequence stop as four, which
+-- snaps a stop's time to 1/255 and merges stops closer than that. a colour in
+-- an endpoint or an extra field rides a one key table holding a buffer instead,
+-- every number in it an f32, the width the engine holds it at
+local STOP = 16
+local COLOUR = 12
 
 -- the newest layout this codec reads, for a writer deciding whether a stored
 -- payload is newer than itself
@@ -66,7 +74,8 @@ local function schema(): (any, any, any)
     -- start, finish, wait and extra ride Z.table's self-describing mode
     -- because their type genuinely varies: an endpoint holds a tagged
     -- value.Value whose payload is whatever the row's property type is
-    -- (number, Color3, UDim2, NumberRange, ...), and extra carries any field
+    -- (number, Color3, UDim2, NumberRange, ...), a colour wrapped by packed
+    -- below, and extra carries any field
     -- this version of the plugin does not know about, which is what keeps
     -- modifier_queue.merge's union-of-keys behaviour honest across versions
     local modifier = Z.schema({
@@ -128,6 +137,95 @@ local function waitOf(wait: any): value.Value?
   return nil
 end
 
+-- a copy of the value with every colour in it wrapped, however deep
+local function packed(v: any): any
+  local kind = typeof(v)
+
+  if kind == "Color3" then
+    local buf = buffer.create(COLOUR)
+
+    buffer.writef32(buf, 0, v.R)
+    buffer.writef32(buf, 4, v.G)
+    buffer.writef32(buf, 8, v.B)
+
+    return { Color3 = buf }
+  end
+
+  if kind == "ColorSequence" then
+    local points = v.Keypoints
+    local buf = buffer.create(#points * STOP)
+
+    for i, point in points do
+      local at = (i - 1) * STOP
+      local colour = point.Value
+
+      buffer.writef32(buf, at, point.Time)
+      buffer.writef32(buf, at + 4, colour.R)
+      buffer.writef32(buf, at + 8, colour.G)
+      buffer.writef32(buf, at + 12, colour.B)
+    end
+
+    return { ColorSequence = buf }
+  end
+
+  if kind ~= "table" then
+    return v
+  end
+
+  local out = {}
+
+  for k, x in v do
+    out[k] = packed(x)
+  end
+
+  return out
+end
+
+-- no endpoint holds a plain table of its own, and no other table is a single
+-- key naming a colour type over a buffer, so that shape is only ever a wrap
+local function unpacked(v: any): any
+  if type(v) ~= "table" then
+    return v
+  end
+
+  local kind, buf = next(v)
+
+  if typeof(buf) == "buffer" and next(v, kind) == nil then
+    local size = buffer.len(buf)
+
+    if kind == "Color3" then
+      if size ~= COLOUR then
+        logger.error(`malformed modifier queue payload: a colour of {size} bytes`)
+      end
+
+      return Color3.new(buffer.readf32(buf, 0), buffer.readf32(buf, 4), buffer.readf32(buf, 8))
+    end
+
+    if kind == "ColorSequence" then
+      if size < STOP * 2 or size % STOP ~= 0 then
+        logger.error(`malformed modifier queue payload: a colour sequence of {size} bytes`)
+      end
+
+      local points = {}
+
+      for at = 0, size - STOP, STOP do
+        local colour =
+          Color3.new(buffer.readf32(buf, at + 4), buffer.readf32(buf, at + 8), buffer.readf32(buf, at + 12))
+
+        table.insert(points, ColorSequenceKeypoint.new(buffer.readf32(buf, at), colour))
+      end
+
+      return ColorSequence.new(points)
+    end
+  end
+
+  for k, x in v do
+    v[k] = unpacked(x)
+  end
+
+  return v
+end
+
 -- the numeric range an older endpoint drew between is a draw of the same two
 -- numbers, which is the one shape that tag ever carried
 local function drawn(x: any): any
@@ -152,14 +250,14 @@ local function entryOf(m: any): Modifier
   }
 
   if type(m.extra) == "table" then
-    for k, v in m.extra do
+    for k, v in unpacked(m.extra) do
       out[k] = v
     end
   end
 
-  out.wait = drawn(out.wait)
-  out.start = drawn(out.start)
-  out.finish = drawn(out.finish)
+  out.wait = unpacked(drawn(out.wait))
+  out.start = unpacked(drawn(out.start))
+  out.finish = unpacked(drawn(out.finish))
 
   return out :: any
 end
@@ -220,13 +318,13 @@ function codec.encode(payload: any): buffer
         kind = m.kind or "",
         chain = m.chain == true,
         duration = m.duration,
-        wait = waitOf(m.wait),
-        start = m.start,
-        finish = m.finish,
+        wait = packed(waitOf(m.wait)),
+        start = packed(m.start),
+        finish = packed(m.finish),
         curve = m.curve,
         weight = m.weight,
         envelope = m.envelope,
-        extra = extra,
+        extra = packed(extra),
       }
     end
 
