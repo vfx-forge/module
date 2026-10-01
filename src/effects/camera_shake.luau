@@ -1,4 +1,5 @@
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
 
 local knob = require("@mod/knob")
 local tween = require("@mod/tween")
@@ -114,6 +115,11 @@ end
 local conn
 local lastCameraCf
 
+-- one name per copy of this module: UnbindFromRenderStep removes every binding
+-- under a name, and two copies alive at once (a plugin swapping versions,
+-- two places with the runtime) would unbind each other's
+local BIND_NAME = `forge_updateCameraShake_{HttpService:GenerateGUID(false)}`
+
 function camera_shake.init()
   if conn then
     return
@@ -129,7 +135,7 @@ function camera_shake.init()
     end)
   end
 
-  RunService:BindToRenderStep("forge_updateCameraShake", Enum.RenderPriority.Last.Value + 1, updateCamera)
+  RunService:BindToRenderStep(BIND_NAME, Enum.RenderPriority.Last.Value + 1, updateCamera)
 end
 
 function camera_shake.deinit()
@@ -138,7 +144,7 @@ function camera_shake.deinit()
     conn = nil
   end
 
-  RunService:UnbindFromRenderStep("forge_updateCameraShake")
+  RunService:UnbindFromRenderStep(BIND_NAME)
 end
 
 function camera_shake.emit(ctx: reader.Ctx, attrs: any)
