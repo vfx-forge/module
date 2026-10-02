@@ -643,6 +643,74 @@ harness.suite(function()
       end)
     end)
 
+    test("a part paused in its launch frame keeps its impulse and leaves at the speed it resumes at", function()
+      withForces(function()
+        local emit, fx = effect()
+        local flying = part()
+
+        adapters.debris(fx)(flying, IMPULSE, SPIN)
+
+        clock.setPaused(emit.clock, true)
+        scheduler.frame(0)
+        step(flying)
+
+        expect(flying.Anchored).toBe(true)
+
+        clock.setPaused(emit.clock, false)
+        at(emit, 0.5)
+        step(flying)
+
+        expect(flying.Anchored).toBe(false)
+        expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 5, 2))
+        expect(flying.AssemblyAngularVelocity).toEqual(Vector3.new(0.5, 0, 0))
+
+        done(emit)
+      end)
+    end)
+
+    test("a part whose speed changes in its launch frame leaves at the new speed", function()
+      withForces(function()
+        local emit, fx = effect()
+        local flying = part()
+
+        adapters.debris(fx)(flying, IMPULSE, SPIN)
+        at(emit, 0.5)
+        step(flying)
+
+        expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 5, 2))
+        expect(flying.AssemblyAngularVelocity).toEqual(Vector3.new(0.5, 0, 0))
+
+        done(emit)
+      end)
+    end)
+
+    test("a part resumed and paused again before a step still keeps its impulse", function()
+      withForces(function()
+        local emit, fx = effect()
+        local flying = part()
+        local launch = adapters.debris(fx)
+
+        clock.setPaused(emit.clock, true)
+        scheduler.frame(0)
+
+        launch(flying, IMPULSE, SPIN)
+
+        clock.setPaused(emit.clock, false)
+        scheduler.frame(0)
+        clock.setPaused(emit.clock, true)
+        scheduler.frame(0)
+        step(flying)
+
+        clock.setPaused(emit.clock, false)
+        scheduler.frame(0)
+        step(flying)
+
+        expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 10, 4))
+
+        done(emit)
+      end)
+    end)
+
     test("a part launched while slowed and then paused leaves at the speed it resumes at", function()
       withForces(function()
         local emit, fx = effect()

@@ -22,6 +22,7 @@ type Flight = {
   angular: Vector3?,
   impulse: Vector3?,
   spin: Vector3?,
+  launched: Vector3?,
 }
 
 local adapters = {}
@@ -306,12 +307,47 @@ function adapters.debris(
   local launched = clock.factorOf(timeline)
   local moving = if launched > 0 then launched else 1
 
+  -- the engine takes an impulse at its next step, so a part is waiting on its
+  -- own until its velocity moves off what it read once the impulse was
+  -- applied; one whose step has come is let go of it
+  local function waiting(flight: Flight): boolean
+    if flight.impulse == nil then
+      return false
+    end
+
+    if flight.part.AssemblyLinearVelocity == flight.launched then
+      return true
+    end
+
+    flight.impulse = nil
+    flight.spin = nil
+    flight.launched = nil
+
+    return false
+  end
+
+  -- an impulse applied now, at the scale of what the part flies at
+  local function push(flight: Flight, impulse: Vector3, spin: Vector3)
+    local part = flight.part
+
+    part:ApplyImpulse(impulse)
+    part:ApplyAngularImpulse(spin)
+
+    flight.impulse = impulse
+    flight.spin = spin
+    flight.launched = part.AssemblyLinearVelocity
+  end
+
   local function apply(factor: number)
     if factor == 0 then
       for _, flight in flights do
         local part = flight.part
 
         if flight.linear == nil then
+          -- an impulse the step has yet to take is lost on an anchored part,
+          -- so a part paused before its step keeps it for the resume
+          waiting(flight)
+
           flight.linear = part.AssemblyLinearVelocity
           flight.angular = part.AssemblyAngularVelocity
           part.Anchored = true
@@ -333,18 +369,30 @@ function adapters.debris(
         part.AssemblyLinearVelocity = linear * ratio
         part.AssemblyAngularVelocity = (flight.angular :: Vector3) * ratio
 
-        if flight.impulse ~= nil then
-          part:ApplyImpulse(flight.impulse * ratio)
-          part:ApplyAngularImpulse((flight.spin :: Vector3) * ratio)
-        end
-
         flight.linear = nil
         flight.angular = nil
-        flight.impulse = nil
-        flight.spin = nil
+
+        if flight.impulse ~= nil then
+          push(flight, flight.impulse * ratio, (flight.spin :: Vector3) * ratio)
+        end
       elseif ratio ~= 1 then
+        local before = waiting(flight)
+
         part.AssemblyLinearVelocity *= ratio
         part.AssemblyAngularVelocity *= ratio
+
+        -- what the step has yet to take is topped up to the new speed
+        if before then
+          local impulse = flight.impulse :: Vector3
+          local spin = flight.spin :: Vector3
+
+          part:ApplyImpulse(impulse * (ratio - 1))
+          part:ApplyAngularImpulse(spin * (ratio - 1))
+
+          flight.impulse = impulse * ratio
+          flight.spin = spin * ratio
+          flight.launched = part.AssemblyLinearVelocity
+        end
       end
 
       pull(flight, factor)
@@ -386,9 +434,7 @@ function adapters.debris(
       part.AssemblyAngularVelocity *= moving
     end
 
-    part:ApplyImpulse(impulse * moving)
-    part:ApplyAngularImpulse(spin * moving)
-
+    push(flight, impulse * moving, spin * moving)
     pull(flight, moving)
   end
 

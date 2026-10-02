@@ -143,6 +143,8 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   local timeScale = props.TimeScale
   local authored = timeScale.at(0)
 
+  -- told apart by value only: an attribute equal to what the other emit
+  -- wrote reads as the property, and an animated row is left as read
   if kept ~= nil and not timeScale.animated and authored == written then
     authored = kept
   end
