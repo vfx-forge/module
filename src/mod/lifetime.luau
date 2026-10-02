@@ -1,3 +1,4 @@
+local clock = require("@mod/clock")
 local logger = require("@mod/logger")
 local scheduler = require("@mod/scheduler")
 local timing_common = require("@mod/common/timing")
@@ -17,6 +18,10 @@ export type emit = {
   effects: { effect },
   children: { emit },
 
+  -- what the handle's speed and pause set, hanging from the clock of the
+  -- effect that started the emit, or from the global clock
+  clock: clock.Clock,
+
   pending: number,
   waiters: { thread },
 
@@ -34,6 +39,10 @@ export type emit = {
 export type effect = {
   emit: emit,
   depth: number,
+
+  -- what every step and wait of the effect advances on, and what its authored
+  -- Speed sets
+  clock: clock.Clock,
 
   -- the effects service, which a module reaches its nested and on-finish emits
   -- through
@@ -86,11 +95,12 @@ local function trace(err: any)
   return debug.traceback(err, 2)
 end
 
-function lifetime.emit(parent: emit?): emit
+function lifetime.emit(parent: emit?, above: clock.Clock?): emit
   local emit: emit = {
     parent = parent,
     effects = {},
     children = {},
+    clock = clock.new(above or (if parent then parent.clock else clock.global)),
     pending = 0,
     waiters = {},
     sealed = false,
@@ -106,10 +116,11 @@ function lifetime.emit(parent: emit?): emit
   return emit
 end
 
-function lifetime.effect(emit: emit, depth: number, effects: any): effect
+function lifetime.effect(emit: emit, depth: number, effects: any, above: clock.Clock?): effect
   local fx: effect = {
     emit = emit,
     depth = depth,
+    clock = clock.new(above or emit.clock),
     effects = effects,
     state = RUNNING,
   }
@@ -285,6 +296,8 @@ function lifetime.release(fx: effect, cancelled: boolean?)
   fx.state = RELEASED
   fx.cancelled = cancelled == true
 
+  clock.drop(fx.clock)
+
   while true do
     local ok, err = pcall(releaseResources, fx, fx.cancelled)
 
@@ -323,6 +336,7 @@ function lifetime.wait(fx: effect, seconds: number): number
   local waited = 0
   local handle: scheduler.Handle
 
+  -- on the effect's clock, so a slowed or paused effect waits longer
   handle = scheduler.add("wait", function(deltaTime: number)
     if fx.state ~= RUNNING then
       handle:Disconnect()
@@ -337,7 +351,7 @@ function lifetime.wait(fx: effect, seconds: number): number
 
     handle:Disconnect()
     task.spawn(thread)
-  end)
+  end, 0, nil, false, fx.clock)
 
   coroutine.yield()
 
@@ -434,6 +448,8 @@ settle = function(emit: emit)
       parent.pending -= 1
       settle(parent)
     end
+
+    clock.drop(emit.clock)
 
     local joins = emit.joins
 
@@ -661,6 +677,9 @@ function lifetime.clear(emit: emit)
   end)
 
   clearing -= 1
+
+  -- nothing runs on a cleared emit again, so nothing below it stays slowed
+  clock.drop(emit.clock)
 
   if not ok then
     logger.warn(`failed to clear an emit with error: {err}`)

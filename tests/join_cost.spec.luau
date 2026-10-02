@@ -5,6 +5,9 @@ local test, expect = harness.test, harness.expect
 
 local Promise = require("@pkg/Promise")
 
+-- the records as they stood before clocks, dev 6c84de0, verbatim
+local before = require("@tests/fixtures/lifetime_6c84de0")
+
 local ROUNDS = 7
 
 -- the evaera machinery alone, per emit, as the 2026-09-28 survey measured it on
@@ -87,6 +90,37 @@ local function emitOf(body: (scope: lifetime.effect) -> (), finishers: { () -> (
 end
 
 harness.suite(function()
+  harness.describe("the record's cost", function()
+    test("an emit of one effect with its clocks costs at most half again what it cost before them", function()
+      local CALLS = 2000
+
+      local function now()
+        local emit = lifetime.emit(nil)
+        local fx = lifetime.effect(emit, 0, nil)
+
+        lifetime.run(fx, function() end)
+        lifetime.seal(emit)
+      end
+
+      local function old()
+        local emit = before.emit(nil)
+        local fx = before.effect(emit, 0, nil)
+
+        before.run(fx, function() end)
+        before.seal(emit)
+      end
+
+      now()
+      old()
+
+      local cost, oldCost = against(CALLS, now, old)
+
+      print(`an emit of one effect: {us(cost)}, {us(oldCost)} before clocks`)
+
+      expect(cost < oldCost * 1.5).toBe(true)
+    end)
+  end)
+
   harness.describe("the join's cost", function()
     test("a join of 64 with its body parked costs a twentieth of Promise.all over 64", function()
       local SIZE = 64

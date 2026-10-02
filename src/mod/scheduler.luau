@@ -1,5 +1,6 @@
 local RunService = game:GetService("RunService")
 
+local clock = require("@mod/clock")
 local logger = require("@mod/logger")
 
 local COMPUTE = { "undo", "wait", "compute" }
@@ -22,6 +23,7 @@ export type Handle = {
 type Step = Handle & {
   run: (deltaTime: number) -> (),
   owner: any,
+  clock: clock.Clock,
   survives: boolean,
   warned: boolean,
 }
@@ -80,7 +82,9 @@ local count = 0
 local delta = 0
 
 -- the pass is read into locals, and written back before each step runs so a
--- throw re-enters from where it left off
+-- throw re-enters from where it left off. while every clock runs at 1, as it
+-- does unless something set a speed, a pause or a controller, the frame's delta
+-- is handed on as it is, at what a frame cost before there were clocks
 local function sweep()
   local b, d, c = bucket, delta, count
   local i, k = index, kept
@@ -104,6 +108,33 @@ local function sweep()
   index, kept = i, k
 end
 
+-- the same pass with each step's delta scaled by its clock
+local function sweepScaled()
+  local b, d, c = bucket, delta, count
+  local i, k = index, kept
+  local frame = clock.frame
+
+  while i < c do
+    i += 1
+
+    local step = b[i]
+
+    if step.Connected then
+      local timeline = step.clock
+
+      index, kept = i, k
+      step.run(d * (if timeline.frame == frame then timeline.factor else clock.factorOf(timeline)))
+    end
+
+    if step.Connected then
+      k += 1
+      b[k] = step
+    end
+  end
+
+  index, kept = i, k
+end
+
 -- every step still connected runs once, in the order it was added. one added
 -- while the pass runs waits for the next pass, and a step that throws is
 -- dropped, reported, and its owner told, while the rest of the pass carries on
@@ -115,7 +146,7 @@ local function runBucket(list: { Step }, deltaTime: number)
   passing = true
 
   while true do
-    local ok, err = xpcall(sweep, debug.traceback)
+    local ok, err = xpcall(if clock.uniform then sweep else sweepScaled, debug.traceback)
 
     if ok then
       break
@@ -204,12 +235,15 @@ local function bind()
   end
 end
 
+-- a step advances on the clock it is given, else on its owner's, else on
+-- real time
 function scheduler.add(
   phase: Phase,
   run: (deltaTime: number) -> (),
   depth: number?,
   owner: any?,
-  survives: boolean?
+  survives: boolean?,
+  timeline: clock.Clock?
 ): Handle
   local slot = slots[phase]
   local at = depth or 0
@@ -226,6 +260,7 @@ function scheduler.add(
     Disconnect = disconnect,
     run = run,
     owner = owner,
+    clock = timeline or (if owner ~= nil then owner.clock else nil) or clock.REAL,
     survives = survives == true,
     warned = false,
   }
@@ -238,8 +273,8 @@ function scheduler.add(
 end
 
 -- a step added with no owner takes the one that holds it, so a throw ends
--- the holder rather than the step alone. a step kept for the session is never
--- adopted
+-- the holder rather than the step alone, and it advances on the holder's
+-- clock from its next frame. a step kept for the session is never adopted
 function scheduler.adopt(handle: Handle, owner: any)
   local step = handle :: Step
 
@@ -248,11 +283,20 @@ function scheduler.adopt(handle: Handle, owner: any)
   end
 
   step.owner = owner
+
+  if step.clock == clock.REAL and owner.clock ~= nil then
+    step.clock = owner.clock
+  end
 end
 
--- the first half of a frame: undoing what the last one left on shared
--- targets, the waits that are due, then every step that computes a value
+-- the first half of a frame: every clock's factor for the frame, undoing
+-- what the last one left on shared targets, the waits that are due, then
+-- every step that computes a value
 function scheduler.compute(deltaTime: number)
+  if not passing then
+    clock.tick()
+  end
+
   runPhases(COMPUTE, deltaTime)
 end
 
