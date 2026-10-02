@@ -1,6 +1,7 @@
 local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local tween = require("@mod/tween")
+local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
 local utility = require("@mod/utility")
@@ -560,20 +561,42 @@ harness.suite(function()
       local seen = {}
       local a, b, rule = siblings("Descendants", 1, seen)
 
-      -- an old style quad, which the row folds into a ramp from 0 to 1
+      -- an old style quad, which the row folds into a linear ramp from 0 to 1
+      -- over a second
       rule:SetAttribute("TimeScale_Start", 0)
       rule:SetAttribute("TimeScale_End", 1)
-      rule:SetAttribute("TimeScaleDuration", 1)
+      rule:SetAttribute("TimeScale_Duration", 1)
+
+      -- a curve is a binary string no instance here can hold, so it goes
+      -- through the attribute cache every reader looks in first
+      rule:SetAttribute("TimeScale_Curve", "")
+      attr.cache(rule)
+      attr.set(rule, "TimeScale_Curve", curves.linear())
 
       local env = effects.emit(0, a, b, rule)
 
-      measure(seen, 0.5)
-      local early = seen.a
+      -- each half second in frames of a hundredth, so what the scope ran is
+      -- the area under the ramp: about 0.125 then 0.375, where a constant
+      -- would give the same twice
+      local function half()
+        for name in seen do
+          seen[name] = 0
+        end
 
-      measure(seen, 0.5)
-      local late = seen.a
+        for _ = 1, 50 do
+          scheduler.frame(0.01)
+        end
 
-      expect(early < late).toBe(true)
+        return seen.a
+      end
+
+      scheduler.frame(0)
+
+      local early = half()
+      local late = half()
+
+      expect(math.abs(early - 0.125) < 0.02).toBe(true)
+      expect(math.abs(late - 0.375) < 0.02).toBe(true)
 
       env:Clear()
     end)
@@ -618,6 +641,35 @@ harness.suite(function()
       connection:Disconnect()
 
       expect(heard).toEqual({ 1 })
+    end)
+
+    test("deinit takes off a Global controller's scale from an emit it does not track", function()
+      local seen = {}
+      local heard = {}
+      local _, _, rule = siblings("Global", 0.5, seen)
+
+      -- a ConstantVFX tick's token: never sealed and never live, so deinit
+      -- cannot clear the controller nested under it
+      local token = lifetime.emit(nil)
+      local tick = lifetime.effect(token, 0, effects)
+
+      effects.emitNested(rule.Parent :: Instance, 1, tick)
+      scheduler.frame(0)
+
+      expect(clock.effective()).toBe(0.5)
+
+      local connection = clock.speedChanged:Connect(function(speed: number)
+        table.insert(heard, speed)
+      end)
+
+      effects.deinit()
+
+      connection:Disconnect()
+
+      expect(clock.effective()).toBe(1)
+      expect(heard).toEqual({ 1 })
+
+      lifetime.clear(token)
     end)
 
     test("a TimeScale that is not a number leaves the scope alone and one below 0 holds it", function()

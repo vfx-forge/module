@@ -101,6 +101,27 @@ harness.suite(function()
       scheduler.frame(0)
     end)
 
+    test("unscaleAll takes every scale off and counts the clock back at 1", function()
+      local c = clock.new(clock.global)
+
+      clock.scale(c, "a", 0.5)
+      clock.scale(c, "b", 0.25)
+      scheduler.frame(0)
+
+      expect(clock.uniform).toBe(false)
+
+      clock.unscaleAll(c)
+      clock.unscaleAll(c)
+      scheduler.frame(0)
+
+      expect(clock.factorOf(c)).toBe(1)
+      expect(c.scales).toBe(nil)
+      expect(clock.uniform).toBe(true)
+
+      clock.drop(c)
+      scheduler.frame(0)
+    end)
+
     test("a dropped clock reads as 1 to what still hangs from it and counts for nothing", function()
       local parent = clock.new(clock.global)
       local child = clock.new(parent)

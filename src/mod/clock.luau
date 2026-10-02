@@ -236,6 +236,19 @@ function clock.unscale(c: Clock, key: any)
   recount(c)
 end
 
+-- every scale off the clock at once, for a teardown that must not trust each
+-- owner to take its own off
+function clock.unscaleAll(c: Clock)
+  if c.scales == nil then
+    return
+  end
+
+  pin(c)
+
+  c.scales = nil
+  recount(c)
+end
+
 -- the factor worked out again now, for an owner that changes its clock inside
 -- a frame and wants its own later steps to see it on that frame. what hangs
 -- from it follows on the next frame

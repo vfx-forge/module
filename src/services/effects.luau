@@ -63,8 +63,11 @@ function effects.deinit()
 
   table.clear(LIVE)
 
-  -- a Global controller cleared here takes its scale off the global clock,
-  -- and no frame may follow to announce it
+  -- a Global controller under an emit that is not live, a ConstantVFX tick's,
+  -- is never cleared here and would leave the global clock scaled
+  clock.unscaleAll(clock.global)
+
+  -- no frame may follow to announce what was taken off
   clock.announce()
 end
 
@@ -173,9 +176,13 @@ local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effec
   end
 
   local function note(obj: Instance, effect: registry.Module?)
+    if effect == nil or effect.id ~= CONTROLLER then
+      return
+    end
+
     local parent = obj.Parent
 
-    if effect == nil or effect.id ~= CONTROLLER or parent == nil or parentOf(parent) ~= nil then
+    if parent == nil or parentOf(parent) ~= nil then
       return
     end
 
@@ -202,10 +209,10 @@ local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effec
   -- the instance a nested emit's children sit under hosts the effect that
   -- started it: that effect's clock is its own, and the emit's is below it
   if host ~= nil then
-    local shared = parentOf(list[1].Parent)
+    local anchor = parentOf(list[1].Parent)
 
-    if shared ~= nil then
-      regions[shared] = {
+    if anchor ~= nil then
+      regions[anchor] = {
         here = host.clock,
         below = emit.clock,
         above = host.clock.parent or emit.clock,
