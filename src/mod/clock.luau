@@ -1,4 +1,5 @@
 local logger = require("@mod/logger")
+local numeric_common = require("@mod/common/numeric")
 
 local GoodSignal = require("@pkg/GoodSignal")
 
@@ -208,8 +209,10 @@ function clock.drop(c: Clock)
   end
 end
 
+-- a NaN or an infinite value is ignored: either would turn a paused parent's 0
+-- into a NaN that stalls every clock below for good
 function clock.setSpeed(c: Clock, speed: number)
-  if c.dropped or speed ~= speed then
+  if c.dropped or not numeric_common.finite(speed) then
     return
   end
 
@@ -231,7 +234,7 @@ function clock.setPaused(c: Clock, paused: boolean)
 end
 
 function clock.scale(c: Clock, key: any, value: number)
-  if c.dropped then
+  if c.dropped or not numeric_common.finite(value) then
     return
   end
 

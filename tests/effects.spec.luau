@@ -448,7 +448,7 @@ harness.suite(function()
 
     -- a host that clones one template per piece and starts each piece's
     -- nested emit, the way a mesh of many pieces or a ring's segments do
-    local function pieces(count: number, rules: { { scope: string, timeScale: number } }, seen: { [string]: number })
+    local function copies(count: number, rules: { { scope: string, timeScale: number } }, seen: { [string]: number })
       fresh()
       registry.register(controller)
 
@@ -474,10 +474,10 @@ harness.suite(function()
         end)
 
         for _ = 1, count do
-          local piece = harness.clone(template)
+          local copy = harness.clone(template)
 
-          piece.Parent = ctx.ref
-          scope.effects.emitNested(piece, scope.depth + 1, scope, children)
+          copy.Parent = ctx.ref
+          scope.effects.emitNested(copy, scope.depth + 1, scope, children)
         end
 
         lifetime.awaitJoin(children)
@@ -488,7 +488,7 @@ harness.suite(function()
 
     test("pieces cloned from one template scale their host once per controller", function()
       local seen = {}
-      local env = effects.emit(0, pieces(20, { { scope = "ParentAndDescendants", timeScale = 0.5 } }, seen))
+      local env = effects.emit(0, copies(20, { { scope = "ParentAndDescendants", timeScale = 0.5 } }, seen))
 
       measure(seen, 1)
 
@@ -504,7 +504,7 @@ harness.suite(function()
         { scope = "ParentAndDescendants", timeScale = 0.5 },
       }
 
-      local env = effects.emit(0, pieces(20, rules, seen))
+      local env = effects.emit(0, copies(20, rules, seen))
 
       measure(seen, 1)
 
@@ -515,7 +515,7 @@ harness.suite(function()
 
     test("a Global controller cloned into every piece scales the global clock once", function()
       local seen = {}
-      local env = effects.emit(0, pieces(20, { { scope = "Global", timeScale = 0.5 } }, seen))
+      local env = effects.emit(0, copies(20, { { scope = "Global", timeScale = 0.5 } }, seen))
 
       scheduler.frame(0)
 
@@ -757,6 +757,7 @@ harness.suite(function()
     test("a TimeScale that is not a number leaves the scope alone and one below 0 holds it", function()
       local cases = {
         { expected = 1, attributes = { TimeScale = 0 / 0 } },
+        { expected = 1, attributes = { TimeScale = math.huge } },
         { expected = 0, attributes = { TimeScale = -1 } },
       }
 
@@ -778,41 +779,43 @@ harness.suite(function()
       end
     end)
 
-    test("a nan the TimeScale row writes never reaches the clocks it scales", function()
-      local seen = {}
+    test("a nan or an infinity the TimeScale row writes never reaches the clocks it scales", function()
+      for _, bad in { 0 / 0, math.huge } do
+        local seen = {}
 
-      fresh()
-      registry.register(module("counts", "Folder", counting(seen)))
+        fresh()
+        registry.register(module("counts", "Folder", counting(seen)))
 
-      -- the controller's own emit, handed a row that writes a nan, the way a
-      -- modifier could where the reader does not see the value
-      registry.register(module(controller.id, "RayValue", function(ctx: any)
-        controller.emit(ctx, {
-          Scope = "Descendants",
-          EmitDelay = 0,
-          EmitDuration = 10,
-          TimeScale = {
-            apply = function(_, write: (value: number) -> ())
-              write(0 / 0)
-            end,
-          },
-        })
-      end))
+        -- the controller's own emit, handed a row that writes the bad value,
+        -- the way a modifier could where the reader does not see it
+        registry.register(module(controller.id, "RayValue", function(ctx: any)
+          controller.emit(ctx, {
+            Scope = "Descendants",
+            EmitDelay = 0,
+            EmitDuration = 10,
+            TimeScale = {
+              apply = function(_, write: (value: number) -> ())
+                write(bad)
+              end,
+            },
+          })
+        end))
 
-      local parent = harness.make("Model")
-      local a = harness.make("Folder", parent)
-      local b = harness.make("Folder", parent)
-      local rule = harness.make("RayValue", parent)
+        local parent = harness.make("Model")
+        local a = harness.make("Folder", parent)
+        local b = harness.make("Folder", parent)
+        local rule = harness.make("RayValue", parent)
 
-      a.Name, b.Name = "a", "b"
+        a.Name, b.Name = "a", "b"
 
-      local env = effects.emit(0, a, b, rule)
+        local env = effects.emit(0, a, b, rule)
 
-      measure(seen, 1)
+        measure(seen, 1)
 
-      expect(seen).toEqual({ a = 1, b = 1 })
+        expect(seen).toEqual({ a = 1, b = 1 })
 
-      env:Clear()
+        env:Clear()
+      end
     end)
   end)
 

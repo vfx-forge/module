@@ -37,6 +37,29 @@ harness.suite(function()
       clock.drop(c)
     end)
 
+    test("an infinite speed or scale leaves the clock as it was, so a paused parent never makes a NaN", function()
+      local parent = clock.new(clock.global)
+      local c = clock.new(parent)
+
+      clock.setSpeed(c, 0.5)
+      clock.setPaused(parent, true)
+
+      for _, bad in { math.huge, -math.huge } do
+        clock.setSpeed(c, bad)
+        clock.scale(c, "rule", bad)
+      end
+
+      scheduler.frame(0)
+
+      expect(c.speed).toBe(0.5)
+      expect(c.scales).toBe(nil)
+      expect(clock.factorOf(c)).toBe(0)
+
+      clock.drop(c)
+      clock.drop(parent)
+      scheduler.frame(0)
+    end)
+
     test("a clock's factor is its parent's times its speed, from the frame after a change", function()
       local parent = clock.new(clock.global)
       local child = clock.new(parent)
@@ -696,23 +719,29 @@ harness.suite(function()
       settle()
     end)
 
-    test("a NaN Speed is ignored like a non-number", function()
+    test("a NaN or infinite Speed is ignored like a non-number", function()
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
 
       lifetime.speed(fx, row(0 / 0))
       expect(fx.clock.speed).toBe(1)
 
+      lifetime.speed(fx, row(math.huge))
+      expect(fx.clock.speed).toBe(1)
+
       lifetime.speed(fx, {
         animated = true,
         duration = 1,
         at = function(elapsed: number)
-          return if elapsed == 0 then 2 else 0 / 0
+          return if elapsed == 0 then 2 elseif elapsed < 0.6 then 0 / 0 else math.huge
         end,
       })
       expect(fx.clock.speed).toBe(2)
 
       scheduler.frame(0.5)
+      expect(fx.clock.speed).toBe(2)
+
+      scheduler.frame(0.2)
       expect(fx.clock.speed).toBe(2)
 
       lifetime.clear(emit)

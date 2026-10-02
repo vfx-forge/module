@@ -8,6 +8,8 @@ local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 
+local numeric_common = require("@mod/common/numeric")
+
 local enabled_effects = {}
 
 -- the emit every tick of an enabled instance is an effect of, never sealed: it
@@ -28,7 +30,7 @@ function enabled_effects.ticker(obj: Instance, module: registry.Module, token: l
     local rate = attr.get(obj, "Rate", 5)
     local speed = attr.getState(obj, "SpeedOverride", 1)
 
-    if typeof(speed) ~= "number" or speed ~= speed or speed <= 0 then
+    if typeof(speed) ~= "number" or not numeric_common.finite(speed) or speed <= 0 then
       return
     end
 

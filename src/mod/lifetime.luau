@@ -2,6 +2,7 @@ local clock = require("@mod/clock")
 local logger = require("@mod/logger")
 local scheduler = require("@mod/scheduler")
 local timing_common = require("@mod/common/timing")
+local numeric_common = require("@mod/common/numeric")
 
 local RUNNING = 1
 local STOPPED = 2
@@ -367,7 +368,7 @@ function lifetime.speed(fx: effect, row: any)
   local timeline = fx.clock
   local first = row.at(0)
 
-  clock.setSpeed(timeline, if typeof(first) == "number" and first == first then math.max(first, 0) else 1)
+  clock.setSpeed(timeline, if typeof(first) == "number" and numeric_common.finite(first) then math.max(first, 0) else 1)
   clock.refresh(timeline)
 
   if not row.animated then
@@ -384,7 +385,7 @@ function lifetime.speed(fx: effect, row: any)
 
     local v = row.at(math.min(elapsed, duration))
 
-    if typeof(v) == "number" and v == v then
+    if typeof(v) == "number" and numeric_common.finite(v) then
       clock.setSpeed(timeline, math.max(v, 0))
       clock.refresh(timeline)
     end

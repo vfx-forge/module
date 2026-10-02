@@ -13,6 +13,7 @@ local scheduler = require("@mod/scheduler")
 
 local path = require("@mod/common/path")
 local context_common = require("@mod/common/context")
+local numeric_common = require("@mod/common/numeric")
 
 local utility = {}
 
@@ -261,12 +262,12 @@ function utility.speedFrom(scope: lifetime.effect, ref: Instance, row: any)
 
   -- the last speed read stands once the emit's state is cleared, and a clock
   -- that has halted stays halted
-  local last = if typeof(first) == "number" and first == first then math.max(first, 0) else 1
+  local last = if typeof(first) == "number" and numeric_common.finite(first) then math.max(first, 0) else 1
 
   local function follow()
     local speed = attr.getState(ref, "SpeedOverride", nil)
 
-    if typeof(speed) == "number" and speed == speed then
+    if typeof(speed) == "number" and numeric_common.finite(speed) then
       last = math.max(speed, 0)
     end
 

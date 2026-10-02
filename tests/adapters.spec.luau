@@ -211,31 +211,35 @@ harness.suite(function()
       expect(obj.TimeScale).toBe(1)
     end)
 
-    test("a NaN authored TimeScale falls back to the emitter's own", function()
-      local emit, fx = effect()
-      local obj = emitter()
+    test("a NaN or infinite authored TimeScale falls back to the emitter's own", function()
+      for _, bad in { 0 / 0, math.huge } do
+        local emit, fx = effect()
+        local obj = emitter()
 
-      obj.TimeScale = 0.5
-      adapters.particle(fx, obj, 0 / 0)
+        obj.TimeScale = 0.5
+        adapters.particle(fx, obj, bad)
 
-      expect(obj.TimeScale).toBe(0.5)
-      expect(obj.Rate).toBe(10)
+        expect(obj.TimeScale).toBe(0.5)
+        expect(obj.Rate).toBe(10)
 
-      done(emit)
+        done(emit)
+      end
     end)
 
-    test("a NaN TimeScale is ignored", function()
-      local emit, fx = effect()
-      local obj = emitter()
+    test("a NaN or infinite TimeScale is ignored", function()
+      for _, bad in { 0 / 0, math.huge } do
+        local emit, fx = effect()
+        local obj = emitter()
 
-      local set = adapters.particle(fx, obj, 0.5)
+        local set = adapters.particle(fx, obj, 0.5)
 
-      set(0 / 0)
+        set(bad)
 
-      expect(obj.TimeScale).toBe(0.5)
-      expect(obj.Rate).toBe(10)
+        expect(obj.TimeScale).toBe(0.5)
+        expect(obj.Rate).toBe(10)
 
-      done(emit)
+        done(emit)
+      end
     end)
   end)
 

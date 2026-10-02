@@ -5,6 +5,8 @@ local utility = require("@mod/utility")
 local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 
+local numeric_common = require("@mod/common/numeric")
+
 local function always()
   return true
 end
@@ -130,8 +132,8 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   local timeScale = props.TimeScale
   local authored = timeScale.at(0)
 
-  if authored ~= authored then
-    authored = if obj.TimeScale == obj.TimeScale then obj.TimeScale else 1
+  if not numeric_common.finite(authored) then
+    authored = if numeric_common.finite(obj.TimeScale) then obj.TimeScale else 1
   end
 
   local scaleTween
@@ -142,7 +144,7 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
     scaleTween = tween.fromParams(utility.linear_bezier, timeScale.duration, function(_, deltaTime, elapsed)
       local v = timeScale.at(elapsed)
 
-      if typeof(v) == "number" and v == v then
+      if typeof(v) == "number" and numeric_common.finite(v) then
         authored = v
         setTimeScale(v)
       end

@@ -2,6 +2,8 @@ local clock = require("@mod/clock")
 local retime = require("@mod/retime")
 local lifetime = require("@mod/lifetime")
 
+local numeric_common = require("@mod/common/numeric")
+
 -- the time rows retime scales on an emitter, which a speed above 1 scales here
 local TIME_ROWS = retime.PROPERTY_UNITS.ParticleEmitter
 
@@ -113,9 +115,9 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
   local timeline = scope.clock
   local retimedBy: number? = 1
 
-  -- a NaN one falls back to what the emitter has, or to 1
-  if authored ~= authored then
-    authored = if obj.TimeScale == obj.TimeScale then obj.TimeScale else 1
+  -- a NaN or infinite one falls back to what the emitter has, or to 1
+  if not numeric_common.finite(authored) then
+    authored = if numeric_common.finite(obj.TimeScale) then obj.TimeScale else 1
   end
 
   local held = false
@@ -159,7 +161,7 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
   end)
 
   return function(value: number)
-    if value ~= value then
+    if not numeric_common.finite(value) then
       return
     end
 
@@ -228,7 +230,7 @@ function adapters.sound(scope: lifetime.effect, clone: any, authored: number): (
   lifetime.hold(scope, stop)
 
   return function(value: number)
-    if value ~= value then
+    if not numeric_common.finite(value) then
       return
     end
 

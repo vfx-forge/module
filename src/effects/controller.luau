@@ -3,6 +3,8 @@ local clock = require("@mod/clock")
 local reader = require("@mod/reader")
 local lifetime = require("@mod/lifetime")
 
+local numeric_common = require("@mod/common/numeric")
+
 local controller = {}
 
 -- how many running controllers scale each clock under each shared key, so the
@@ -103,9 +105,10 @@ function controller.emit(ctx: reader.Ctx, attrs: any)
     end
   end)
 
-  -- a nan would pass math.max and stall every clock below the target for good
+  -- a nan or an infinity would pass math.max and stall every clock below the
+  -- target for good
   attrs.TimeScale:apply(function(v: any)
-    if typeof(v) ~= "number" or v ~= v then
+    if typeof(v) ~= "number" or not numeric_common.finite(v) then
       return
     end
 
