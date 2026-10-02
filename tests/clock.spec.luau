@@ -159,6 +159,7 @@ harness.suite(function()
       scheduler.frame(1)
 
       expect(seen).toEqual({ 0.5 })
+      expect(refreshed).toBe(1)
 
       lifetime.clear(emit)
       scheduler.frame(0)
