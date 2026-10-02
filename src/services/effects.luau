@@ -24,6 +24,15 @@ local EMIT = table.freeze({})
 local EMPTY_ENV: types.EmitEnv = {
   Finished = Promise.resolve(),
   Clear = NOOP,
+  SetSpeed = NOOP,
+  GetSpeed = function()
+    return 1
+  end,
+  Pause = NOOP,
+  Resume = NOOP,
+  IsPaused = function()
+    return false
+  end,
 }
 
 -- every emit handed out, weak so one that ended and is let go costs nothing to

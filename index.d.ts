@@ -56,8 +56,9 @@ export interface Connection {
 }
 
 /**
- * A signal the module fires. Handlers run on the signal's own thread, never inside a frame of
- * effects, so one that yields holds nothing up.
+ * A signal the module fires. Each handler is spawned on a thread of its own and runs
+ * synchronously until it first yields, so a handler that yields cannot stall a frame of
+ * effects.
  */
 export interface Signal<T extends unknown[]> {
   Connect(handler: (...args: T) => void): Connection;

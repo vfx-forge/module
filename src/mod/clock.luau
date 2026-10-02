@@ -141,8 +141,9 @@ clock.global = make(nil)
 clock.wall = make(nil)
 
 -- fire with the effective speed when it changes, and with the pause when it
--- changes. their handlers run on the signal's own runner thread, never on the
--- caller's
+-- changes. each handler is spawned on a runner thread of the signal's own, run
+-- synchronously until it first yields, so a handler that yields cannot stall
+-- the frame
 clock.speedChanged = GoodSignal.new()
 clock.pausedChanged = GoodSignal.new()
 
