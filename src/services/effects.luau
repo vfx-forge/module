@@ -76,6 +76,12 @@ function effects.deinit()
   -- is never cleared here and would leave the global clock scaled
   clock.unscaleAll(clock.global)
 
+  -- nor a speed or a pause the game left, so an init after this one never
+  -- starts its emits slowed or frozen
+  clock.setSpeed(clock.global, 1)
+  clock.setPaused(clock.global, false)
+  clock.setPaused(clock.wall, false)
+
   -- no frame may follow to announce what was taken off
   clock.announce()
 end

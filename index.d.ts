@@ -122,7 +122,9 @@ export function init(): void;
 
 /**
  * Clean up and shut down the Forge VFX system.
- * Destroys all caches and disconnects event handlers.
+ * Destroys all caches and disconnects event handlers. The global speed goes
+ * back to 1 and a global pause is lifted, firing SpeedChanged and
+ * PausedChanged if either moved, so a later init starts at full speed.
  */
 export function deinit(): void;
 

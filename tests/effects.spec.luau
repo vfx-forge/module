@@ -754,6 +754,45 @@ harness.suite(function()
       expect(heard).toEqual({ 1 })
     end)
 
+    test("deinit puts the global speed back at 1 and resumes, so the next init starts at full speed", function()
+      local seen = {}
+      local heard = { speed = {}, paused = {} }
+
+      fresh()
+      registry.register(module("counts", "Folder", counting(seen)))
+
+      clock.setGlobalSpeed(0.5)
+      clock.setGlobalPaused(true)
+
+      local speedConnection = clock.speedChanged:Connect(function(speed: number)
+        table.insert(heard.speed, speed)
+      end)
+
+      local pausedConnection = clock.pausedChanged:Connect(function(paused: boolean)
+        table.insert(heard.paused, paused)
+      end)
+
+      effects.deinit()
+
+      speedConnection:Disconnect()
+      pausedConnection:Disconnect()
+
+      expect(heard).toEqual({ speed = { 1 }, paused = { false } })
+      expect(clock.global.speed).toBe(1)
+      expect(clock.global.paused).toBe(false)
+      expect(clock.wall.paused).toBe(false)
+
+      effects.init({ setup = true } :: any)
+
+      local env = effects.emit(0, harness.make("Folder"))
+
+      measure(seen, 1)
+
+      expect(seen).toEqual({ Folder = 1 })
+
+      env:Clear()
+    end)
+
     test("deinit takes off a Global controller's scale from an emit it does not track", function()
       local seen = {}
       local heard = {}
