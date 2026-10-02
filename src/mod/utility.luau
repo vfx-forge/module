@@ -209,14 +209,24 @@ end
 
 local ENABLED_CANCEL_TOKENS: { [Instance]: lifetime.emit } = setmetatable({}, { __mode = "k" }) :: any
 
-local FORCE_EMIT_SET: { [Instance]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+-- each instance an EmitDuration emit forces, to the clock of the effect that
+-- forces it, or true when no effect does
+local FORCE_EMIT_SET: { [Instance]: clock.Clock | boolean } = setmetatable({}, { __mode = "k" }) :: any
 
-function utility.forceEmit(obj: Instance, value: boolean)
-  FORCE_EMIT_SET[obj] = if value then true else nil :: any
+function utility.forceEmit(obj: Instance, value: boolean, timeline: clock.Clock?)
+  FORCE_EMIT_SET[obj] = if value then timeline or true else nil :: any
 end
 
 function utility.isForceEmitting(obj: Instance): boolean
-  return FORCE_EMIT_SET[obj] == true
+  return FORCE_EMIT_SET[obj] ~= nil
+end
+
+-- the clock of the effect forcing the instance's EmitDuration emit, which its
+-- ticks run on
+function utility.forcedClock(obj: Instance): clock.Clock?
+  local forced = FORCE_EMIT_SET[obj]
+
+  return if typeof(forced) == "table" then forced else nil
 end
 
 function utility.setEnabledCancelToken(obj: Instance, token: lifetime.emit?)

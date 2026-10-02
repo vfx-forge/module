@@ -496,7 +496,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   lifetime.wait(scope, attrs.EmitDelay)
 
   if useEmitDuration and not ctx.constant then
-    utility.forceEmit(ref, true)
+    utility.forceEmit(ref, true, scope.clock)
     attr.trigger(ref, "Enabled", true)
 
     utility.onCancel(scope, function()

@@ -8,6 +8,7 @@ local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
+local enabled_effects = require("@srv/enabled_effects")
 local test, expect = harness.test, harness.expect
 
 local Promise = require("@pkg/Promise")
@@ -1129,6 +1130,87 @@ harness.suite(function()
 
       attr.clearState(ref)
       lifetime.clear(emit)
+      scheduler.frame(0)
+    end)
+
+    -- a stand-in enabled module whose every tick is counted, and its ticker
+    -- on the token an instance it forced or did not force would get
+    local function ticking(timeline: clock.Clock?)
+      fresh()
+
+      local ticks = { count = 0 }
+      local stand = module("ticks", "Model", function()
+        ticks.count += 1
+      end)
+
+      stand.constant = true
+      registry.register(stand)
+
+      local ref = harness.make("Model")
+
+      utility.forceEmit(ref, timeline ~= nil, timeline)
+
+      local token = enabled_effects.token(ref)
+
+      return ticks, token, enabled_effects.ticker(ref, stand :: any, token, effects), ref
+    end
+
+    test("an EmitDuration's ticks run on the clock of the effect that forced them", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, effects)
+      local ticks, token, tick, ref = ticking(fx.clock)
+
+      expect(token.clock.parent).toBe(fx.clock)
+
+      -- the handle of the forcing emit paused: no tick, not even the first
+      clock.setPaused(emit.clock, true)
+      scheduler.frame(0)
+
+      for _ = 1, 3 do
+        tick(1)
+      end
+
+      expect(ticks.count).toBe(0)
+
+      -- resumed at half speed: the first tick at once, the next after 0.2 s of
+      -- the token's clock at the default 5 a second, so after 0.4 s of frames
+      clock.setPaused(emit.clock, false)
+      clock.setSpeed(emit.clock, 0.5)
+      scheduler.frame(0)
+
+      tick(0.1)
+      expect(ticks.count).toBe(1)
+
+      tick(0.3)
+      expect(ticks.count).toBe(1)
+
+      tick(0.11)
+      expect(ticks.count).toBe(2)
+
+      utility.forceEmit(ref, false)
+      lifetime.clear(token)
+      lifetime.clear(emit)
+      scheduler.frame(0)
+    end)
+
+    test("a plain enabled instance's ticks hang from the global clock and stop while it is paused", function()
+      local ticks, token, tick = ticking(nil)
+
+      expect(token.clock.parent).toBe(clock.global)
+
+      clock.setGlobalPaused(true)
+      scheduler.frame(0)
+
+      tick(1)
+      expect(ticks.count).toBe(0)
+
+      clock.setGlobalPaused(false)
+      scheduler.frame(0)
+
+      tick(0)
+      expect(ticks.count).toBe(1)
+
+      lifetime.clear(token)
       scheduler.frame(0)
     end)
 

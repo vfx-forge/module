@@ -467,7 +467,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
   lifetime.wait(scope, attrs.EmitDelay)
 
   if useDuration and not ctx.constant then
-    utility.forceEmit(ref, true)
+    utility.forceEmit(ref, true, scope.clock)
     attr.trigger(ref, "Enabled", true)
 
     utility.onCancel(scope, function()

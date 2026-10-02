@@ -10,6 +10,50 @@ local registry = require("@mod/registry")
 
 local enabled_effects = {}
 
+-- the emit every tick of an enabled instance is an effect of, never sealed: it
+-- lives as long as the instance stays enabled, and finished ticks take
+-- themselves out of it. an EmitDuration emit's ticks hang from the clock of the
+-- effect that forced them, so its handle and controllers reach them; a plain
+-- enabled instance's hang from the global clock
+function enabled_effects.token(obj: Instance): lifetime.emit
+  return lifetime.emit(nil, utility.forcedClock(obj))
+end
+
+-- what an enabled instance runs every frame: a tick each `1 / Rate` seconds of
+-- the token's clock, the first at once, and none while that clock stands still
+function enabled_effects.ticker(obj: Instance, module: registry.Module, token: lifetime.emit, effectsService: any)
+  local waited = math.huge
+
+  return function(deltaTime: number)
+    local rate = attr.get(obj, "Rate", 5)
+    local speed = attr.getState(obj, "SpeedOverride", 1)
+
+    if typeof(speed) ~= "number" or speed ~= speed or speed <= 0 then
+      return
+    end
+
+    local factor = clock.factorOf(token.clock)
+
+    if factor <= 0 then
+      return
+    end
+
+    waited += deltaTime * factor * speed
+
+    if waited <= 1 / rate then
+      return
+    end
+
+    waited = 0
+
+    local emitScope = lifetime.effect(token, 0, effectsService)
+
+    lifetime.run(emitScope, function(scope)
+      emitters.dispatch(obj, scope, { unc = {}, ref = {} }, 1, module, true)
+    end)
+  end
+end
+
 function enabled_effects.init(scope: { any }, effects_service: any)
   local enabledScopes = {}
   local ancestryConnections: { [Instance]: RBXScriptConnection } = {}
@@ -78,41 +122,13 @@ function enabled_effects.init(scope: { any }, effects_service: any)
       if enabled then
         utility.cleanupScope(tempScope)
 
-        -- never sealed: it lives as long as the instance stays enabled, and
-        -- finished ticks take themselves out of it. it hangs from the global
-        -- clock, so the ticks keep to the global speed and stop while paused
-        local cancelToken = lifetime.emit(nil)
+        local cancelToken = enabled_effects.token(obj)
 
         utility.setEnabledCancelToken(obj, cancelToken)
 
-        -- the time since the last tick on the token's clock, as an
-        -- EmitDuration's ramp has it run. the first frame ticks at once
-        local waited = math.huge
-
         table.insert(
           tempScope,
-          RunService.RenderStepped:Connect(function(deltaTime: number)
-            local rate = attr.get(obj, "Rate", 5)
-            local speed = attr.getState(obj, "SpeedOverride", 1)
-
-            if typeof(speed) ~= "number" or speed ~= speed or speed <= 0 then
-              return
-            end
-
-            waited += deltaTime * clock.factorOf(cancelToken.clock) * speed
-
-            if waited <= 1 / rate then
-              return
-            end
-
-            waited = 0
-
-            local emitScope = lifetime.effect(cancelToken, 0, effects_service)
-
-            lifetime.run(emitScope, function(scope)
-              emitters.dispatch(obj, scope, { unc = {}, ref = {} }, 1, module, true)
-            end)
-          end)
+          RunService.RenderStepped:Connect(enabled_effects.ticker(obj, module, cancelToken, effects_service))
         )
       else
         utility.cleanupScope(tempScope)
