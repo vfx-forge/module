@@ -342,5 +342,36 @@ harness.suite(function()
 
       finish(fx)
     end)
+    for _, duration in { 0, 5 } do
+      test(
+        `a Speed resting at 0 ends the shake outright and the camera goes back, with an emit duration of {duration}`,
+        function()
+          start(notRunning)
+
+          local ref = Instance.new("RayValue")
+          local fx = lifetime.effect(lifetime.emit(nil), 0, nil)
+          local row = rows(30)
+
+          row.EmitDuration = duration
+          row.Speed = {
+            animated = false,
+            at = function()
+              return 0
+            end,
+          }
+
+          lifetime.run(fx, function(effect: lifetime.effect)
+            camera_shake.emit({ ref = ref, scope = effect } :: any, row)
+          end)
+
+          frames(3)
+
+          expect(fx.state == lifetime.RUNNING).toBe(false)
+          expect(near(camera.CFrame, BASE)).toBe(true)
+
+          finish(fx)
+        end
+      )
+    end
   end)
 end)

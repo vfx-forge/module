@@ -22,6 +22,7 @@ type Active = {
   ref: RayValue,
   falloff: number,
   thread: thread,
+  timeline: any,
   done: boolean,
 }
 
@@ -139,6 +140,11 @@ local function apply()
 
   for _, active in activeShakes do
     local pos, rot, isDone = active.shake:Update()
+
+    -- a Speed resting at 0 for good ends the shake outright, with no fade
+    if active.timeline.halted then
+      isDone = true
+    end
     local origin = active.ref:FindFirstAncestorOfClass("Attachment") or active.ref:FindFirstAncestorWhichIsA("BasePart")
 
     if origin then
@@ -255,21 +261,22 @@ function camera_shake.emit(ctx: reader.Ctx, attrs: any)
     return elapsed
   end
 
+  lifetime.wait(scope, attrs.EmitDelay)
+
+  lifetime.speed(scope, attrs.Speed)
+
   -- the shake's own time is the effect's clock, so a pause holds the camera
   -- where the shake has it
   lifetime.step(scope, function(deltaTime: number)
     elapsed += deltaTime
   end)
 
-  lifetime.wait(scope, attrs.EmitDelay)
-
-  lifetime.speed(scope, attrs.Speed)
-
   local active: Active = {
     shake = shake,
     ref = ref,
     falloff = math.max(attrs.Falloff, MIN_FALLOFF),
     thread = coroutine.running(),
+    timeline = scope.clock,
     done = false,
   }
 

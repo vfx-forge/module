@@ -634,5 +634,27 @@ harness.suite(function()
       lifetime.clear(emit)
       settle()
     end)
+    test("a NaN Speed is ignored like a non-number", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.speed(fx, row(0 / 0))
+      expect(fx.clock.speed).toBe(1)
+
+      lifetime.speed(fx, {
+        animated = true,
+        duration = 1,
+        at = function(elapsed: number)
+          return if elapsed == 0 then 2 else 0 / 0
+        end,
+      })
+      expect(fx.clock.speed).toBe(2)
+
+      scheduler.frame(0.5)
+      expect(fx.clock.speed).toBe(2)
+
+      lifetime.clear(emit)
+      settle()
+    end)
   end)
 end)

@@ -367,7 +367,7 @@ function lifetime.speed(fx: effect, row: any)
   local timeline = fx.clock
   local first = row.at(0)
 
-  clock.setSpeed(timeline, if typeof(first) == "number" then math.max(first, 0) else 1)
+  clock.setSpeed(timeline, if typeof(first) == "number" and first == first then math.max(first, 0) else 1)
   clock.refresh(timeline)
 
   if not row.animated then
@@ -384,7 +384,7 @@ function lifetime.speed(fx: effect, row: any)
 
     local v = row.at(math.min(elapsed, duration))
 
-    if typeof(v) == "number" then
+    if typeof(v) == "number" and v == v then
       clock.setSpeed(timeline, math.max(v, 0))
       clock.refresh(timeline)
     end
