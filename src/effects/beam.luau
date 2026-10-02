@@ -3,6 +3,7 @@ local knob = require("@mod/knob")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
+local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
 
@@ -186,38 +187,22 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   obj.Enabled = true
 
   local children = lifetime.join(scope)
-  local currentSpeed = 1
 
-  local speedTween
+  lifetime.speed(scope, speed)
 
   scope.effects.emitNested(obj, scope.depth + 1, scope, children)
 
-  local baseTexSpeed = texSpeed.at(0)
+  local timeline = scope.clock
+  local setTexSpeed = adapters.beam(scope, obj, texSpeed.at(0), texSpeed.animated)
 
   if texSpeed.animated then
     lifetime.hold(
       scope,
       tween.fromParams(utility.linear_bezier, texSpeed.duration, function(_, deltaTime, elapsed)
-        baseTexSpeed = texSpeed.at(elapsed)
-        obj.TextureSpeed = baseTexSpeed * currentSpeed
-
+        setTexSpeed(texSpeed.at(elapsed))
         return deltaTime
       end)
     )
-  end
-
-  currentSpeed = speed.at(0)
-
-  if speed.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
-      currentSpeed = speed.at(elapsed)
-
-      obj.TextureSpeed = baseTexSpeed * currentSpeed
-
-      return deltaTime
-    end)
-
-    lifetime.hold(scope, speedTween)
   end
 
   local refTpKp = ref.Transparency.Keypoints
@@ -294,8 +279,8 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
       scope,
       tween.fromParams(utility.linear_bezier, track.duration, function(_, deltaTime, elapsed)
         write(track.at(elapsed))
-        return deltaTime * currentSpeed
-      end, speedTween)
+        return deltaTime
+      end)
     )
   end
 
@@ -337,16 +322,11 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
     local config = {
       ref = ref,
       frames = flipbook,
-      speedTween = speedTween,
       effectDuration = duration,
       syncDuration = attrs.SyncDuration,
 
       curve = attrs.FlipbookChangeCurve,
       duration = attrs.FlipbookChangeDuration,
-
-      getSpeed = function()
-        return currentSpeed
-      end,
 
       setTexture = function(texture)
         obj.Texture = texture
@@ -355,17 +335,13 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
 
     flipbookDuration = flipbook_common.getChangeDuration(config)
 
-    lifetime.hold(
-      scope,
-      tween.fromParams(config.curve, flipbookDuration, flipbook_common.createUpdateCallback(config), speedTween)
-    )
+    lifetime.hold(scope, tween.fromParams(config.curve, flipbookDuration, flipbook_common.createUpdateCallback(config)))
   end
 
-  tween.timer(math.max(duration, flipbookDuration), function(deltaTime, elapsed)
-    return if currentSpeed > 0 or (elapsed > 0 and speedTween and speedTween.Connected)
-      then deltaTime * currentSpeed
-      else nil
-  end, speedTween, scope)
+  -- a Speed resting at 0 for good ends the beam rather than holding it
+  tween.timer(math.max(duration, flipbookDuration), function(deltaTime)
+    return if timeline.halted then nil else deltaTime
+  end, nil, scope)
 
   if emitOnFinish then
     scope.effects.emitOnFinish(emitOnFinish, obj.Parent or workspace.Terrain, scope.depth + 1, scope, children)

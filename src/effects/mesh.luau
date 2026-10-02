@@ -195,11 +195,9 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
   local sync = attrs.SyncPosition
 
-  local speed = attrs.Speed(nil, duration)
   local partTp = attrs.PartTransparency(nil, duration)
   local rotSpeed = attrs.PartRotSpeed(nil, duration)
 
-  local speedStart = speed.at(0)
   local rotSpeedStart = rotSpeed.at(0)
 
   local spreadAngle = attrs.SpreadAngle
@@ -221,7 +219,6 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
   local origin = utility.getTransformedOriginExtents(parent)
   local goalCFrameOffset = start.CFrame:ToObjectSpace(goal.CFrame)
 
-  local currentSpeed = speedStart
   local currentRotSpeed = rotSpeedStart
 
   local currentRot = CFrame.fromOrientation(initRot.x, initRot.y, initRot.z)
@@ -262,24 +259,13 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
   scope.effects.emitNested(obj, scope.depth + 1, scope, children)
 
-  local speedTween
-
-  if speed.animated and not attr.getState(ref, "SpeedOverride", nil) then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
-      currentSpeed = speed.at(elapsed)
-      return deltaTime
-    end)
-
-    lifetime.hold(scope, speedTween)
-  end
-
   if goalCFrameOffset ~= CFrame.identity then
     lifetime.hold(
       scope,
       tween.fromParams(attrs.PartCFrameCurve, duration, function(alpha, deltaTime)
         currentCFrame = CFrame.identity:Lerp(goalCFrameOffset, alpha)
-        return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-      end, speedTween)
+        return deltaTime
+      end)
     )
   end
 
@@ -288,8 +274,8 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
       scope,
       tween.fromParams(utility.linear_bezier, rotSpeed.duration, function(_, deltaTime, elapsed)
         currentRotSpeed = rotSpeed.at(elapsed)
-        return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-      end, speedTween)
+        return deltaTime
+      end)
     )
   end
 
@@ -300,8 +286,8 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
       scope,
       tween.fromParams(utility.linear_bezier, partTp.duration, function(_, deltaTime, elapsed)
         obj.Transparency = partTp.at(elapsed)
-        return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-      end, speedTween)
+        return deltaTime
+      end)
     )
   end
 
@@ -313,18 +299,16 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
     lifetime.hold(
       scope,
       tween.fromParams(attrs.PartSizeCurve, duration, function(alpha, deltaTime)
-        local speed = attr.getState(ref, "SpeedOverride", currentSpeed)
-
         -- reduce size writes
         if math.abs(alpha - lastSizeAlpha) < 0.005 then
-          return deltaTime * speed
+          return deltaTime
         end
 
         lastSizeAlpha = alpha
         obj.Size = sizeStart:Lerp(sizeEnd, alpha)
 
-        return deltaTime * speed
-      end, speedTween)
+        return deltaTime
+      end)
     )
   else
     obj.Size = sizeStart
@@ -344,8 +328,8 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
           scope,
           tween.fromParams(attrs.MeshScaleCurve, duration, function(alpha, deltaTime)
             objMesh.Scale = utility.lerp(scaleStart, scaleEnd, alpha)
-            return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-          end, speedTween)
+            return deltaTime
+          end)
         )
       end
     else
@@ -380,8 +364,8 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
           scope,
           tween.fromParams(utility.default_bezier, duration + legacy_flipbookFadeOffset, function(alpha, deltaTime)
             displayDecal.Transparency = utility.lerp(legacy_decalST, legacy_decalET, alpha)
-            return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-          end, speedTween)
+            return deltaTime
+          end)
         )
       end
     end
@@ -402,8 +386,8 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
           displayDecal.ZIndex = target.ZIndex
         end
 
-        return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-      end, speedTween)
+        return deltaTime
+      end)
     )
   else
     for _, decal in decals do
@@ -422,8 +406,8 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
           scope,
           tween.fromParams(utility.linear_bezier, decalTp.span, function(_, deltaTime, elapsed)
             decal.Transparency = decalTp.at(elapsed)
-            return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-          end, speedTween)
+            return deltaTime
+          end)
         )
       end
 
@@ -436,8 +420,8 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
             decal.Color3 = Oklab.toSRGB(a:Lerp(b, alpha), true)
 
-            return deltaTime * (attr.getState(ref, "SpeedOverride", currentSpeed))
-          end, speedTween)
+            return deltaTime
+          end)
         )
       end
 
@@ -447,16 +431,11 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
         local config = {
           ref = from,
           frames = flipbook,
-          speedTween = speedTween,
           effectDuration = duration,
           syncDuration = attr.get(from, "SyncDuration", false, true) == true,
 
           curve = attr.get(from, "Flipbook_Change_Curve", utility.linear_bezier),
           duration = attr.get(from, "Flipbook_Change_Duration", duration),
-
-          getSpeed = function()
-            return attr.getState(ref, "SpeedOverride", currentSpeed)
-          end,
 
           setTexture = function(texture)
             decal.Texture = texture
@@ -471,7 +450,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
         lifetime.hold(
           scope,
-          tween.fromParams(config.curve, changeDuration, flipbook_common.createUpdateCallback(config), speedTween)
+          tween.fromParams(config.curve, changeDuration, flipbook_common.createUpdateCallback(config))
         )
       end
     end
@@ -479,17 +458,10 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
   tween.timer(
     math.max(duration, longestFlipbookDuration) + legacy_flipbookFadeOffset + destroyDelay,
-    function(deltaTime, elapsed)
-      local speed = attr.getState(ref, "SpeedOverride", currentSpeed)
-
-      currentSpeed = speed
-
-      return if speed > 0
-          or (elapsed > 0 and if speedTween then speedTween.Connected else attr.getState(ref, "SpeedTweening", false))
-        then deltaTime * speed
-        else nil
+    function(deltaTime)
+      return if scope.clock.halted then nil else deltaTime
     end,
-    speedTween,
+    nil,
     scope
   )
 
@@ -564,6 +536,9 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
 
   local emitCount = if useEmitDuration and not ctx.constant then 1 else attrs.EmitCount
   local range = attrs.EffectDuration
+
+  -- every piece runs on the effect's clock, so one Speed track paces them all
+  utility.speedFrom(scope, ref, attrs.Speed)
 
   -- each piece runs on a thread the effect holds, so a clear closes it
   local outstanding = lifetime.join(scope)

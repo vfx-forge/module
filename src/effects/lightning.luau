@@ -534,6 +534,9 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
   local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
+  -- every bolt runs on the effect's clock, so one Speed track paces them all
+  utility.speedFrom(scope, ref, attrs.Speed)
+
   -- a bolt counts until it has dissipated and its on-finish emit is counted in,
   -- and a nested emit until it ends
   local outstanding = lifetime.join(scope)
@@ -554,7 +557,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
     local length = attrs.Length(nil, duration, piece)
     local transparency = attrs.Transparency(nil, duration, piece)
     local fillTp = attrs.FillTransparency(nil, attrs.FillColorDuration, piece)
-    local speed = attrs.Speed(nil, duration)
 
     local landed = lifetime.add(outstanding)
 
@@ -715,7 +717,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
       -- animation state
       local finished = false
 
-      local currentSpeed = speed.at(0)
       local currentWidth = width.at(0)
       local currentLength = length.at(0)
       local currentFillTransparency = fillTp.at(0)
@@ -757,38 +758,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
       local projectileTailPos: Vector3?
 
       local transitionState: TransitionState?
-
-      local speedTween
-
-      if speed.animated and not attr.getState(ref, "SpeedOverride", nil) then
-        speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
-          currentSpeed = speed.at(elapsed)
-          return deltaTime
-        end)
-
-        lifetime.hold(scope, speedTween)
-      end
-
-      local function getEffectiveSpeed()
-        return attr.getState(ref, "SpeedOverride", currentSpeed)
-      end
-
-      local function isSpeedTweening()
-        return if speedTween then speedTween.Connected else attr.getState(ref, "SpeedTweening", false)
-      end
-
-      local function getSpeedDelta(deltaTime: number, allowZeroSpeed: boolean?)
-        local speed = getEffectiveSpeed()
-        currentSpeed = speed
-
-        if speed > 0 then
-          return deltaTime * speed
-        elseif allowZeroSpeed or isSpeedTweening() then
-          return deltaTime * speed
-        else
-          return nil
-        end
-      end
 
       local function getHeadSegmentIndex(): number
         return math.clamp(math.ceil(currentHeadAlpha * attrs.Segments), 1, attrs.Segments)
@@ -1022,7 +991,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
       bezier_common.drivePropertyTrack(scope, width, function(v)
         currentWidth = v
-      end, getEffectiveSpeed, speedTween)
+      end)
 
       -- the segment loop reads the transparency itself, so nothing here has to
       -- write it. the hold stays because an authored lane longer than the bolt
@@ -1031,19 +1000,19 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         lifetime.hold(
           scope,
           tween.fromParams(utility.linear_bezier, transparency.duration, function(_, deltaTime)
-            return deltaTime * getEffectiveSpeed()
-          end, speedTween)
+            return deltaTime
+          end)
         )
       end
 
       bezier_common.drivePropertyTrack(scope, length, function(v)
         currentLength = v
-      end, getEffectiveSpeed, speedTween)
+      end)
 
       if useHighlight then
         bezier_common.drivePropertyTrack(scope, fillTp, function(v)
           currentFillTransparency = v
-        end, getEffectiveSpeed, speedTween)
+        end)
       end
 
       -- a driver steps only its row's own span and the dissipation starts
@@ -1067,7 +1036,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         dissipateStartWidth = startWidth
 
         local dissipation = tween.fromParams(curveData, dissipationDuration, function(alpha, deltaTime)
-          local scaledDelta = deltaTime * getEffectiveSpeed()
+          local scaledDelta = deltaTime
           scaledElapsedTime += scaledDelta
 
           -- a Scale dissipation owns the width, as a Retract one owns the
@@ -1094,8 +1063,8 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
           updateSegments(headAlpha, tailOverride, scaledDelta, attrs.RefreshDuringDissipate, widthOverrideVal)
 
-          return getSpeedDelta(deltaTime, true)
-        end, speedTween, onComplete, true, scope.depth)
+          return deltaTime
+        end, nil, onComplete, true, scope.depth)
 
         lifetime.hold(scope, dissipation)
       end
@@ -1164,7 +1133,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           attrs.EasingCurve,
           duration,
           function(alpha, deltaTime, elapsed)
-            local scaledDelta = deltaTime * getEffectiveSpeed()
+            local scaledDelta = deltaTime
             scaledElapsedTime += scaledDelta
 
             currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
@@ -1189,7 +1158,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
               return nil
             end
 
-            local speedDelta = getSpeedDelta(deltaTime)
+            local speedDelta = if scope.clock.halted then nil else deltaTime
 
             if speedDelta == nil then
               return nil
@@ -1202,7 +1171,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
               return nil
             end
           end,
-          speedTween,
+          nil,
           function()
             if isDissipating or finished then
               return
@@ -1215,7 +1184,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                   utility.linear_bezier,
                   attrs.DestroyDelay,
                   function(_, deltaTime)
-                    local scaledDelta = deltaTime * getEffectiveSpeed()
+                    local scaledDelta = deltaTime
                     scaledElapsedTime += scaledDelta
 
                     currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
@@ -1228,9 +1197,9 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                       return nil
                     end
 
-                    return getSpeedDelta(deltaTime, true)
+                    return deltaTime
                   end,
-                  speedTween,
+                  nil,
                   function()
                     startDissipation()
                   end,
@@ -1292,7 +1261,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             -- this runs inside the main animation's step, which must not yield
             task.spawn(function()
               tween.timer(projectileLifetime, function(deltaTime, elapsed)
-                local scaledDelta = deltaTime * getEffectiveSpeed()
+                local scaledDelta = deltaTime
                 scaledElapsedTime += scaledDelta
 
                 currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
@@ -1334,8 +1303,8 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                   return nil
                 end
 
-                return getSpeedDelta(deltaTime, true)
-              end, speedTween, scope, scope.depth)
+                return deltaTime
+              end, nil, scope, scope.depth)
 
               startDissipation()
             end)

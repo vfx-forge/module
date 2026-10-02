@@ -1,3 +1,4 @@
+local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local tween = require("@mod/tween")
 local harness = require("@tests/harness")
@@ -525,6 +526,58 @@ harness.suite(function()
 
       scheduler.frame(0.5)
       expect(log).toEqual({ "waited" })
+    end)
+
+    test("a tick with no ramp written runs at its own Speed row", function()
+      local ref = harness.make("Model")
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      utility.speedFrom(fx, ref, {
+        animated = false,
+        duration = 0,
+        at = function()
+          return 2
+        end,
+      })
+
+      expect(fx.clock.speed).toBe(2)
+
+      lifetime.clear(emit)
+    end)
+
+    test("a tick follows the speed the EmitDuration's ramp writes, every frame", function()
+      local ref = harness.make("Model")
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      attr.setState(ref, "SpeedTweening", true)
+      attr.setState(ref, "SpeedOverride", 0.5)
+
+      utility.speedFrom(fx, ref, {
+        animated = false,
+        duration = 0,
+        at = function()
+          return 2
+        end,
+      })
+
+      expect(fx.clock.speed).toBe(0.5)
+
+      attr.setState(ref, "SpeedOverride", 0)
+      scheduler.frame(0)
+
+      expect(fx.clock.speed).toBe(0)
+      expect(fx.clock.halted).toBe(false)
+
+      attr.setState(ref, "SpeedTweening", nil)
+      scheduler.frame(0)
+
+      expect(fx.clock.halted).toBe(true)
+
+      attr.clearState(ref)
+      lifetime.clear(emit)
+      scheduler.frame(0)
     end)
 
     test("a clear of the ticks closes every piece they hold", function()

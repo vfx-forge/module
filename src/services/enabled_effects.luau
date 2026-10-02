@@ -2,6 +2,7 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
+local clock = require("@mod/clock")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
@@ -77,17 +78,20 @@ function enabled_effects.init(scope: { any }, effects_service: any)
       if enabled then
         utility.cleanupScope(tempScope)
 
-        local last = 0
-
         -- never sealed: it lives as long as the instance stays enabled, and
-        -- finished ticks take themselves out of it
+        -- finished ticks take themselves out of it. it hangs from the global
+        -- clock, so the ticks keep to the global speed and stop while paused
         local cancelToken = lifetime.emit(nil)
 
         utility.setEnabledCancelToken(obj, cancelToken)
 
+        -- the time since the last tick on the token's clock, as an
+        -- EmitDuration's ramp has it run. the first frame ticks at once
+        local waited = math.huge
+
         table.insert(
           tempScope,
-          RunService.RenderStepped:Connect(function()
+          RunService.RenderStepped:Connect(function(deltaTime: number)
             local rate = attr.get(obj, "Rate", 5)
             local speed = attr.getState(obj, "SpeedOverride", 1)
 
@@ -95,11 +99,13 @@ function enabled_effects.init(scope: { any }, effects_service: any)
               return
             end
 
-            if os.clock() - last <= (1 / rate) / speed then
+            waited += deltaTime * clock.factorOf(cancelToken.clock) * speed
+
+            if waited <= 1 / rate then
               return
             end
 
-            last = os.clock()
+            waited = 0
 
             local emitScope = lifetime.effect(cancelToken, 0, effects_service)
 

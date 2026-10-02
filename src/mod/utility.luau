@@ -5,9 +5,11 @@ local PhysicsService = game:GetService("PhysicsService")
 
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
+local clock = require("@mod/clock")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local lifetime = require("@mod/lifetime")
+local scheduler = require("@mod/scheduler")
 
 local path = require("@mod/common/path")
 local context_common = require("@mod/common/context")
@@ -233,6 +235,32 @@ function utility.stopEmitDuration(ref: Instance)
   utility.forceEmit(ref, false)
 
   return token
+end
+
+-- a tick of an EmitDuration emit runs at the speed the emit's own Speed ramp
+-- has reached, read every frame while the ramp writes it, and ends once that
+-- rests at 0 with the ramp done; any other emit runs at its own Speed row
+function utility.speedFrom(scope: lifetime.effect, ref: Instance, row: any)
+  if attr.getState(ref, "SpeedOverride", nil) == nil and not attr.getState(ref, "SpeedTweening", false) then
+    lifetime.speed(scope, row)
+    return
+  end
+
+  local timeline = scope.clock
+  local first = row.at(0)
+
+  local function follow()
+    local speed = attr.getState(ref, "SpeedOverride", first)
+
+    clock.setSpeed(timeline, if typeof(speed) == "number" then math.max(speed, 0) else 1)
+    clock.refresh(timeline)
+
+    timeline.halted = timeline.speed <= 0 and not attr.getState(ref, "SpeedTweening", false)
+  end
+
+  follow()
+
+  lifetime.hold(scope, scheduler.add("compute", follow, 0, scope, false, timeline.parent))
 end
 
 -- every tick is an effect of the token's emit and waits on its own pieces, so

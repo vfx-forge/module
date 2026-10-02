@@ -171,6 +171,9 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   -- Hitbox params
   local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
+  -- every piece runs on the effect's clock, so one Speed track paces them all
+  utility.speedFrom(scope, ref, attrs.Speed)
+
   -- a piece counts until it finishes and its on-finish emit is counted in, and
   -- a nested emit until it ends
   local outstanding = lifetime.join(scope)
@@ -255,7 +258,6 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
       local finished = false
 
       local prevCF = CFrame.identity
-      local currentSpeed = 1
 
       local currentRot = CFrame.fromOrientation(initRot.x, initRot.y, initRot.z)
       local currentRotSpeed = rotSpeedStart
@@ -289,35 +291,10 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
         return result[1] ~= nil
       end
 
-      -- Speed tween
-      local speedTween
-      local speed = attrs.Speed(nil, duration)
-
-      if not attr.getState(ref, "SpeedOverride", nil) then
-        currentSpeed = speed.at(0)
-
-        if speed.animated then
-          speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, sampledAt)
-            currentSpeed = speed.at(sampledAt)
-            return deltaTime
-          end)
-
-          lifetime.hold(scope, speedTween)
-        end
-      end
-
-      local function getEffectiveSpeed()
-        return attr.getState(ref, "SpeedOverride", currentSpeed)
-      end
-
-      local function isSpeedTweening()
-        return if speedTween then speedTween.Connected else attr.getState(ref, "SpeedTweening", false)
-      end
-
       -- Rotation speed tween
       bezier_common.drivePropertyTrack(scope, rotSpeed, function(v)
         currentRotSpeed = v
-      end, getEffectiveSpeed, speedTween)
+      end)
 
       -- main animation
       lifetime.hold(
@@ -361,21 +338,18 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
               return nil
             end
 
-            local speed = getEffectiveSpeed()
-            currentSpeed = speed
-
-            if speed == 0 and not isSpeedTweening() then
+            if scope.clock.halted then
               return nil
             end
 
             if (attrs.ProjectileEnabled and alpha * duration < projectileLifetime) or not attrs.ProjectileEnabled then
-              return deltaTime * speed
+              return deltaTime
             else
               onFinish()
               return nil
             end
           end,
-          speedTween,
+          nil,
           function(organic)
             if not attrs.ProjectileEnabled or didHit then
               if organic then
@@ -414,11 +388,8 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
                   return nil
                 end
 
-                local speed = getEffectiveSpeed()
-                currentSpeed = speed
-
-                return if speed > 0 or (elapsed > 0 and isSpeedTweening()) then deltaTime * speed else nil
-              end, speedTween, scope, scope.depth)
+                return if scope.clock.halted then nil else deltaTime
+              end, nil, scope, scope.depth)
 
               if not didHit then
                 onFinish()

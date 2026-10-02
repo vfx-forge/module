@@ -432,15 +432,9 @@ function common.getPerpendicularVectors(tangent: Vector3)
 end
 
 -- one knob of a projectile driven from its track: the setter sees the first
--- value at once and every later one on a stepper scaled by the projectile's
--- speed. a constant track costs no stepper
-function common.drivePropertyTrack(
-  scope: lifetime.effect,
-  track: any,
-  setter: (number) -> (),
-  getSpeed: () -> number,
-  speedTween: any?
-)
+-- value at once and every later one on a stepper on the effect's clock. a
+-- constant track costs no stepper
+function common.drivePropertyTrack(scope: lifetime.effect, track: any, setter: (number) -> ())
   setter(track.at(0))
 
   if not track.animated then
@@ -451,8 +445,8 @@ function common.drivePropertyTrack(
     scope,
     tween.fromParams(utility.linear_bezier, track.duration, function(_, deltaTime, elapsed)
       setter(track.at(elapsed))
-      return deltaTime * getSpeed()
-    end, speedTween)
+      return deltaTime
+    end)
   )
 end
 

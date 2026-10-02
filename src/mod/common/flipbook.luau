@@ -69,7 +69,6 @@ end
 export type FlipbookConfig = {
   ref: Instance,
   curve: string,
-  speedTween: any?,
 
   duration: number,
   effectDuration: number,
@@ -77,7 +76,6 @@ export type FlipbookConfig = {
 
   frames: { number },
 
-  getSpeed: () -> number,
   setTexture: (texture: string) -> (),
 }
 
@@ -98,7 +96,7 @@ function common.createUpdateCallback(config: FlipbookConfig)
     local index = math.max(math.round(#config.frames * alpha), 1)
     config.setTexture(`{prefix}{config.frames[index]}`)
 
-    return deltaTime * config.getSpeed()
+    return deltaTime
   end
 end
 
