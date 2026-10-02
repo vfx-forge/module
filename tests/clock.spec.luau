@@ -287,6 +287,96 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("the global clock's signals", function()
+    test("each fires with its own value when that value moves, and only then", function()
+      local heard = {}
+
+      local speed = clock.speedChanged:Connect(function(value: number)
+        table.insert(heard, `speed {value}`)
+      end)
+
+      local paused = clock.pausedChanged:Connect(function(value: boolean)
+        table.insert(heard, `paused {value}`)
+      end)
+
+      clock.setGlobalSpeed(0.5)
+      clock.setGlobalSpeed(0.5)
+      clock.setGlobalPaused(true)
+      clock.setGlobalPaused(true)
+      clock.setGlobalSpeed(0.25)
+      clock.setGlobalPaused(false)
+      clock.setGlobalSpeed(1)
+
+      speed:Disconnect()
+      paused:Disconnect()
+
+      expect(heard).toEqual({ "speed 0.5", "paused true", "speed 0.25", "paused false", "speed 1" })
+    end)
+
+    test("the speed signal fires on the frame a Global scale moves it", function()
+      local heard = {}
+
+      local connection = clock.speedChanged:Connect(function(speed: number)
+        table.insert(heard, speed)
+      end)
+
+      clock.scale(clock.global, "controller", 0.5)
+      expect(heard).toEqual({})
+
+      scheduler.frame(0)
+      scheduler.frame(0)
+      expect(heard).toEqual({ 0.5 })
+
+      clock.unscale(clock.global, "controller")
+      scheduler.frame(0)
+      expect(heard).toEqual({ 0.5, 1 })
+
+      connection:Disconnect()
+    end)
+
+    test("a handler runs off the pass, and one that yields never holds the pass up", function()
+      local inPass = nil
+      local after = {}
+
+      local connection = clock.speedChanged:Connect(function()
+        inPass = scheduler.inPass()
+        coroutine.yield()
+      end)
+
+      local setter = scheduler.add("compute", function()
+        clock.setGlobalSpeed(0.5)
+      end)
+
+      local later = scheduler.add("compute", function()
+        table.insert(after, "ran")
+      end)
+
+      scheduler.frame(0)
+
+      expect(inPass).toBe(false)
+      expect(after).toEqual({ "ran" })
+
+      setter:Disconnect()
+      later:Disconnect()
+      connection:Disconnect()
+      clock.setGlobalSpeed(1)
+      settle()
+    end)
+
+    test("a global pause stops the wall clock too", function()
+      clock.setGlobalPaused(true)
+      scheduler.frame(0)
+
+      expect(clock.factorOf(clock.global)).toBe(0)
+      expect(clock.factorOf(clock.wall)).toBe(0)
+
+      clock.setGlobalPaused(false)
+      scheduler.frame(0)
+
+      expect(clock.factorOf(clock.wall)).toBe(1)
+    end)
+  end)
+
   harness.describe("effects on their clocks", function()
     test("an effect's steps are handed the frame scaled by its emit's clock", function()
       local emit = lifetime.emit(nil)

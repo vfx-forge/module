@@ -1,3 +1,4 @@
+local clock = require("@mod/clock")
 local tween = require("@mod/tween")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
@@ -53,6 +54,33 @@ local function waiting(seconds: number)
   return function(ctx: any)
     lifetime.wait(ctx.scope, seconds)
   end
+end
+
+-- an emit that adds up the time its effect is handed, under `seen[name]`
+local function counting(seen: { [string]: number })
+  return function(ctx: any)
+    local name = ctx.ref.Name
+
+    seen[name] = 0
+
+    lifetime.step(ctx.scope, function(deltaTime: number)
+      seen[name] += deltaTime
+    end)
+
+    lifetime.wait(ctx.scope, 100)
+  end
+end
+
+-- one frame for a change to reach the clocks, then one frame of `seconds`
+-- counted from zero
+local function measure(seen: { [string]: number }, seconds: number)
+  scheduler.frame(0)
+
+  for name in seen do
+    seen[name] = 0
+  end
+
+  scheduler.frame(seconds)
 end
 
 harness.suite(function()
@@ -167,6 +195,128 @@ harness.suite(function()
 
       expect(status).toBe(Promise.Status.Resolved)
 
+      built.restore()
+    end)
+  end)
+
+  harness.describe("an emit's handle", function()
+    test("SetSpeed scales every effect of the emit from the next frame, and GetSpeed answers it", function()
+      local built = fresh()
+      local seen = {}
+      registry.register(module("counts", "Folder", counting(seen)))
+
+      local a = harness.make("Folder")
+      local b = harness.make("Folder")
+      a.Name, b.Name = "a", "b"
+
+      local env = effects.emit(0, a, b)
+
+      expect(env:GetSpeed()).toBe(1)
+
+      env:SetSpeed(2)
+
+      expect(env:GetSpeed()).toBe(2)
+
+      measure(seen, 1)
+
+      expect(seen).toEqual({ a = 2, b = 2 })
+
+      env:Clear()
+      built.restore()
+    end)
+
+    test("Pause stands the emit still and Resume picks it up where it stood", function()
+      local built = fresh()
+      local log = {}
+      registry.register(module("waits", "Folder", function(ctx: any)
+        lifetime.wait(ctx.scope, 1)
+        table.insert(log, "waited")
+      end))
+
+      local env = effects.emit(0, harness.make("Folder"))
+
+      scheduler.frame(0.5)
+
+      env:Pause()
+
+      expect(env:IsPaused()).toBe(true)
+
+      scheduler.frame(0)
+      scheduler.frame(10)
+
+      expect(log).toEqual({})
+
+      env:Resume()
+
+      expect(env:IsPaused()).toBe(false)
+
+      scheduler.frame(0)
+      scheduler.frame(0.5)
+
+      expect(log).toEqual({ "waited" })
+
+      built.restore()
+    end)
+
+    test("refuses a speed that is not a finite number of 0 or more, naming SetSpeed", function()
+      local built = fresh()
+      registry.register(module("waits", "Folder", waiting(10)))
+
+      local env = effects.emit(0, harness.make("Folder"))
+
+      for _, bad in { -1, 0 / 0, math.huge, "fast" :: any } do
+        local ok, err = pcall(function()
+          env:SetSpeed(bad)
+        end)
+
+        expect(ok).toBe(false)
+        expect(string.find(tostring(err), "SetSpeed", 1, true) ~= nil).toBe(true)
+      end
+
+      expect(env:GetSpeed()).toBe(1)
+
+      env:Clear()
+      built.restore()
+    end)
+
+    test("Clear still works called without self", function()
+      local built = fresh()
+      registry.register(module("waits", "Folder", waiting(10)))
+
+      local env = effects.emit(0, harness.make("Folder"))
+      local finished = env.Finished
+
+      env.Clear()
+
+      expect(finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("a nested emit runs on the clock of the effect that started it", function()
+      local built = fresh()
+      local seen = {}
+      registry.register(module("counts", "Part", counting(seen)))
+      registry.register(module("starts", "Model", function(ctx: any)
+        local scope = ctx.scope
+        local children = lifetime.join(scope)
+
+        clock.setSpeed(scope.clock, 0.5)
+        scope.effects.emitNested(ctx.ref, scope.depth + 1, scope, children)
+        lifetime.awaitJoin(children)
+      end, true))
+
+      local model = harness.make("Model")
+      harness.make("Part", model).Name = "nested"
+
+      local env = effects.emit(0, model)
+
+      env:SetSpeed(0.5)
+      measure(seen, 1)
+
+      expect(seen.nested).toBe(0.25)
+
+      env:Clear()
       built.restore()
     end)
   end)

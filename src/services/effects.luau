@@ -1,3 +1,4 @@
+local clock = require("@mod/clock")
 local types = require("@root/types")
 local logger = require("@mod/logger")
 local reader = require("@mod/reader")
@@ -13,6 +14,9 @@ local effects = {}
 local api_ref: types.Api?
 
 local NOOP = function() end
+
+-- the key an env keeps its emit under, out of the way of its public fields
+local EMIT = table.freeze({})
 
 local EMPTY_ENV: types.EmitEnv = {
   Finished = Promise.resolve(),
@@ -55,27 +59,60 @@ local function finishedOf(emit: lifetime.emit)
   end)
 end
 
+-- what every env answers besides Clear and Finished, shared by all of them
+local METHODS = {}
+
+function METHODS.SetSpeed(env: any, speed: number)
+  clock.setSpeed(rawget(env, EMIT).clock, clock.checked(speed, "SetSpeed"))
+end
+
+function METHODS.GetSpeed(env: any)
+  return rawget(env, EMIT).clock.speed
+end
+
+function METHODS.Pause(env: any)
+  clock.setPaused(rawget(env, EMIT).clock, true)
+end
+
+function METHODS.Resume(env: any)
+  clock.setPaused(rawget(env, EMIT).clock, false)
+end
+
+function METHODS.IsPaused(env: any)
+  return rawget(env, EMIT).clock.paused
+end
+
+local ENV = {
+  __index = function(env: any, key: any)
+    local method = METHODS[key]
+
+    if method ~= nil then
+      return method
+    end
+
+    if key ~= "Finished" then
+      return nil
+    end
+
+    local promise = finishedOf(rawget(env, EMIT))
+    rawset(env, "Finished", promise)
+
+    return promise
+  end,
+}
+
 local function envOf(emit: lifetime.emit): types.EmitEnv
-  local env = {}
+  local env = {
+    [EMIT] = emit,
 
-  env.Clear = function()
-    lifetime.clear(emit)
-  end
-
-  setmetatable(env, {
-    __index = function(_, key)
-      if key ~= "Finished" then
-        return nil
-      end
-
-      local promise = finishedOf(emit)
-      rawset(env, "Finished", promise)
-
-      return promise
+    -- a closure rather than a method, so `env.Clear()` with no self keeps
+    -- working as it always has
+    Clear = function()
+      lifetime.clear(emit)
     end,
-  })
+  }
 
-  return env :: any
+  return setmetatable(env, ENV) :: any
 end
 
 local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)

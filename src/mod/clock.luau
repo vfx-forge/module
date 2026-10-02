@@ -1,5 +1,7 @@
 local logger = require("@mod/logger")
 
+local GoodSignal = require("@pkg/GoodSignal")
+
 export type Clock = {
   parent: Clock?,
 
@@ -50,6 +52,9 @@ local watched: { Clock } = {}
 
 -- where the tick stands in `watched`, 0 between ticks
 local cursor = 0
+
+local announcedSpeed = 1
+local announcedPaused = false
 
 local function make(parent: Clock?): Clock
   return {
@@ -130,6 +135,16 @@ clock.REAL = make(nil)
 
 -- the speed and pause every effect runs under, times every Global controller
 clock.global = make(nil)
+
+-- real time that a global pause still stops: a Global controller's own
+-- timeline runs on it, so two of them never slow each other
+clock.wall = make(nil)
+
+-- fire with the effective speed when it changes, and with the pause when it
+-- changes. their handlers run on the signal's own runner thread, never on the
+-- caller's
+clock.speedChanged = GoodSignal.new()
+clock.pausedChanged = GoodSignal.new()
 
 function clock.new(parent: Clock): Clock
   return make(parent)
@@ -311,8 +326,52 @@ local function tell(c: Clock, factor: number)
   end
 end
 
--- once a frame, before any step: a new frame for every factor, and every
--- watcher told of a factor that moved
+-- a speed a caller hands in, refused unless it is a finite number of 0 or
+-- more. `name` is what the caller set, for the error
+function clock.checked(value: any, name: string): number
+  if typeof(value) ~= "number" or value ~= value or value < 0 or value == math.huge then
+    logger.error(`{name} takes a finite number of 0 or more, got {tostring(value)}`)
+  end
+
+  return value
+end
+
+-- the global speed times every Global controller, whether paused or not
+function clock.effective(): number
+  return scaledOf(clock.global)
+end
+
+-- fires each signal whose value moved since it last fired
+function clock.announce()
+  local speed = clock.effective()
+  local paused = clock.global.paused
+
+  if speed ~= announcedSpeed then
+    announcedSpeed = speed
+    clock.speedChanged:Fire(speed)
+  end
+
+  if paused ~= announcedPaused then
+    announcedPaused = paused
+    clock.pausedChanged:Fire(paused)
+  end
+end
+
+function clock.setGlobalSpeed(speed: number)
+  clock.setSpeed(clock.global, speed)
+  clock.announce()
+end
+
+-- a global pause stops the wall clock too, so a Global controller freezes
+-- with everything it scales
+function clock.setGlobalPaused(paused: boolean)
+  clock.setPaused(clock.global, paused)
+  clock.setPaused(clock.wall, paused)
+  clock.announce()
+end
+
+-- once a frame, before any step: a new frame for every factor, every watcher
+-- told of a factor that moved, and the signals of a global change
 function clock.tick()
   clock.frame += 1
   clock.uniform = moving == 0
@@ -333,6 +392,8 @@ function clock.tick()
   end
 
   cursor = 0
+
+  clock.announce()
 end
 
 return clock

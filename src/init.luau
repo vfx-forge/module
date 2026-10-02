@@ -89,6 +89,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
+local clock = require("@mod/clock")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
@@ -337,5 +338,34 @@ api.recolor = require("@mod/recolor")
 api.effects = registry
 api.knob = knob
 api.mod = mod
+
+function api.setSpeed(speed: number)
+  clock.setGlobalSpeed(clock.checked(speed, "setSpeed"))
+end
+
+-- the speed set, which a pause leaves as it is
+function api.getSpeed()
+  return clock.global.speed
+end
+
+function api.pause()
+  clock.setGlobalPaused(true)
+end
+
+function api.resume()
+  clock.setGlobalPaused(false)
+end
+
+function api.isPaused()
+  return clock.global.paused
+end
+
+-- the global speed times every Global controller, whether paused or not
+function api.getEffectiveSpeed()
+  return clock.effective()
+end
+
+api.SpeedChanged = clock.speedChanged
+api.PausedChanged = clock.pausedChanged
 
 return api
