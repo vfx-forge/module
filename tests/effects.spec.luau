@@ -10,6 +10,7 @@ local scheduler = require("@mod/scheduler")
 local test, expect = harness.test, harness.expect
 
 local Promise = require("@pkg/Promise")
+local controller = require("@vfx/controller")
 
 local RAW_NEW = Promise._new
 
@@ -319,6 +320,282 @@ harness.suite(function()
 
       env:Clear()
       built.restore()
+    end)
+  end)
+
+  harness.describe("a controller", function()
+    -- the stand-ins every case scales: two counting folders and a controller,
+    -- siblings under one parent, emitted together
+    local function siblings(scope: string, timeScale: number, seen: { [string]: number })
+      fresh()
+      registry.register(module("counts", "Folder", counting(seen)))
+      registry.register(controller)
+
+      local parent = harness.make("Model")
+      local a = harness.make("Folder", parent)
+      local b = harness.make("Folder", parent)
+      local rule = harness.make("RayValue", parent)
+
+      a.Name, b.Name = "a", "b"
+
+      rule:AddTag("Controller")
+      rule:SetAttribute("Scope", scope)
+      rule:SetAttribute("TimeScale", timeScale)
+      rule:SetAttribute("EmitDuration", 10)
+
+      return a, b, rule
+    end
+
+    -- a counting model that starts the emit of what is under it, the way a
+    -- mesh or a beam does, with a controller among its children
+    local function nested(scope: string, timeScale: number, seen: { [string]: number })
+      fresh()
+      registry.register(module("counts", "Folder", counting(seen)))
+      registry.register(controller)
+      registry.register(module("starts", "Model", function(ctx: any)
+        local scope = ctx.scope
+        local name = ctx.ref.Name
+        local children = lifetime.join(scope)
+
+        seen[name] = 0
+
+        lifetime.step(scope, function(deltaTime: number)
+          seen[name] += deltaTime
+        end)
+
+        scope.effects.emitNested(ctx.ref, scope.depth + 1, scope, children)
+        lifetime.awaitJoin(children)
+      end, true))
+
+      local host = harness.make("Model")
+      local child = harness.make("Folder", host)
+      local rule = harness.make("RayValue", host)
+
+      host.Name, child.Name = "host", "child"
+
+      rule:AddTag("Controller")
+      rule:SetAttribute("Scope", scope)
+      rule:SetAttribute("TimeScale", timeScale)
+      rule:SetAttribute("EmitDuration", 10)
+
+      return host
+    end
+
+    test("ParentAndDescendants and Descendants scale everything under the parent", function()
+      for _, scope in { "ParentAndDescendants", "Descendants" } do
+        local seen = {}
+        local a, b, rule = siblings(scope, 0.5, seen)
+
+        local env = effects.emit(0, a, b, rule)
+
+        measure(seen, 1)
+
+        expect(seen).toEqual({ a = 0.5, b = 0.5 })
+
+        env:Clear()
+      end
+    end)
+
+    test("Parent on an instance that hosts no effect scales nothing", function()
+      local seen = {}
+      local a, b, rule = siblings("Parent", 0.5, seen)
+
+      local env = effects.emit(0, a, b, rule)
+
+      measure(seen, 1)
+
+      expect(seen).toEqual({ a = 1, b = 1 })
+
+      env:Clear()
+    end)
+
+    test("Global scales every effect through the global clock", function()
+      local seen = {}
+      local a, b, rule = siblings("Global", 0.5, seen)
+
+      local env = effects.emit(0, a, rule)
+      local other = effects.emit(0, b)
+
+      measure(seen, 1)
+
+      expect(seen).toEqual({ a = 0.5, b = 0.5 })
+      expect(clock.effective()).toBe(0.5)
+
+      env:Clear()
+      other:Clear()
+    end)
+
+    test("on the instance a nested emit starts from, each scope takes what it names", function()
+      local cases = {
+        Parent = { host = 0.25, child = 0.25 },
+        ParentAndDescendants = { host = 0.25, child = 0.25 },
+        Descendants = { host = 1, child = 0.25 },
+      }
+
+      for scope, expected in cases do
+        local seen = {}
+        local env = effects.emit(0, nested(scope, 0.25, seen))
+
+        measure(seen, 1)
+
+        expect(seen).toEqual(expected)
+
+        env:Clear()
+      end
+    end)
+
+    test("several controllers on one scope multiply", function()
+      local seen = {}
+      local a, b, rule = siblings("Descendants", 0.5, seen)
+      local second = harness.make("RayValue", a.Parent)
+
+      second:AddTag("Controller")
+      second:SetAttribute("Scope", "Descendants")
+      second:SetAttribute("TimeScale", 0.5)
+      second:SetAttribute("EmitDuration", 10)
+
+      local env = effects.emit(0, a, b, rule, second)
+
+      measure(seen, 1)
+
+      expect(seen).toEqual({ a = 0.25, b = 0.25 })
+
+      env:Clear()
+    end)
+
+    test("a local controller runs on the clocks above its scope, never on its own", function()
+      local seen = {}
+      local a, _, rule = siblings("ParentAndDescendants", 0.5, seen)
+
+      rule:SetAttribute("EmitDuration", 1)
+
+      local env = effects.emit(0, a, rule)
+
+      measure(seen, 1)
+      expect(seen.a).toBe(0.5)
+
+      -- its second ran out at the real second, so the scope is back at 1
+      measure(seen, 1)
+      expect(seen.a).toBe(1)
+
+      env:Clear()
+    end)
+
+    test("a Global controller runs on real time a global pause still stops", function()
+      local seen = {}
+      local a, _, rule = siblings("Global", 0.5, seen)
+
+      rule:SetAttribute("EmitDuration", 1)
+
+      local env = effects.emit(0, a, rule)
+
+      clock.setGlobalPaused(true)
+      measure(seen, 5)
+
+      -- still scaled: the controller's real second has not run while paused
+      expect(clock.effective()).toBe(0.5)
+
+      clock.setGlobalPaused(false)
+      measure(seen, 0.5)
+
+      expect(clock.effective()).toBe(0.5)
+
+      measure(seen, 0.5)
+      scheduler.frame(0)
+
+      expect(clock.effective()).toBe(1)
+
+      env:Clear()
+    end)
+
+    test("two Global controllers multiply and never slow each other", function()
+      local seen = {}
+      local a, b, rule = siblings("Global", 0.5, seen)
+      local second = harness.make("RayValue", a.Parent)
+
+      second:AddTag("Controller")
+      second:SetAttribute("Scope", "Global")
+      second:SetAttribute("TimeScale", 0.5)
+      second:SetAttribute("EmitDuration", 1)
+      rule:SetAttribute("EmitDuration", 1)
+
+      local env = effects.emit(0, b, rule, second)
+
+      measure(seen, 0.5)
+
+      expect(clock.effective()).toBe(0.25)
+
+      measure(seen, 0.5)
+      scheduler.frame(0)
+
+      expect(clock.effective()).toBe(1)
+
+      env:Clear()
+    end)
+
+    test("its factor goes on a clear, at deinit and once it ends", function()
+      local seen = {}
+      local a, _, rule = siblings("Global", 0.5, seen)
+
+      local cleared = effects.emit(0, a, rule)
+
+      scheduler.frame(0)
+      expect(clock.effective()).toBe(0.5)
+
+      cleared:Clear()
+      scheduler.frame(0)
+      expect(clock.effective()).toBe(1)
+
+      effects.emit(0, a, rule)
+
+      scheduler.frame(0)
+      expect(clock.effective()).toBe(0.5)
+
+      effects.deinit()
+      scheduler.frame(0)
+      expect(clock.effective()).toBe(1)
+    end)
+
+    test("a hit-stop curve on TimeScale reaches the scope frame by frame", function()
+      local seen = {}
+      local a, b, rule = siblings("Descendants", 1, seen)
+
+      -- an old style quad, which the row folds into a ramp from 0 to 1
+      rule:SetAttribute("TimeScale_Start", 0)
+      rule:SetAttribute("TimeScale_End", 1)
+      rule:SetAttribute("TimeScaleDuration", 1)
+
+      local env = effects.emit(0, a, b, rule)
+
+      measure(seen, 0.5)
+      local early = seen.a
+
+      measure(seen, 0.5)
+      local late = seen.a
+
+      expect(early < late).toBe(true)
+
+      env:Clear()
+    end)
+
+    test("SpeedChanged fires as a Global controller moves the effective speed", function()
+      local seen = {}
+      local heard = {}
+      local a, _, rule = siblings("Global", 0.5, seen)
+
+      local connection = clock.speedChanged:Connect(function(speed: number)
+        table.insert(heard, speed)
+      end)
+
+      local env = effects.emit(0, a, rule)
+
+      scheduler.frame(0)
+      env:Clear()
+      scheduler.frame(0)
+
+      connection:Disconnect()
+
+      expect(heard).toEqual({ 0.5, 1 })
     end)
   end)
 

@@ -20,6 +20,7 @@ local MODULES = {
   "shockwave_ring",
   "shockwave_line",
   "shockwave_debris",
+  "controller",
 }
 
 -- the two piece modules whose Size row rests on a draw between two corners
@@ -102,6 +103,9 @@ local function scene()
   made.lightning = harness.make("Attachment", root)
   made.lightning:AddTag("LightningBolt")
   harness.make("Part", made.lightning)
+
+  made.controller = harness.make("RayValue", root)
+  made.controller:AddTag("Controller")
 
   return root, made
 end

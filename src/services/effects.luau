@@ -15,6 +15,9 @@ local api_ref: types.Api?
 
 local NOOP = function() end
 
+-- the id of the module whose rows scale the effects around it
+local CONTROLLER = "controller"
+
 -- the key an env keeps its emit under, out of the way of its public fields
 local EMIT = table.freeze({})
 
@@ -28,6 +31,22 @@ local EMPTY_ENV: types.EmitEnv = {
 -- enabled (ConstantVFX) tick's token is not handed out here, so it is not in
 -- LIVE and deinit does not clear it
 local LIVE = setmetatable({} :: { [lifetime.emit]: boolean }, { __mode = "k" })
+
+-- the clocks a controller scales, around its parent instance: the one the
+-- effect on that instance hangs from, the one every effect below it hangs
+-- from, and the one both hang from, which the controller itself runs on
+export type Region = {
+  here: clock.Clock,
+  below: clock.Clock,
+  above: clock.Clock,
+
+  -- below hangs from here, as a nested emit's clock hangs from the effect
+  -- that started it, so scaling here scales below as well
+  nested: boolean,
+}
+
+-- each controller's region, keyed by the controller's effect until it takes it
+local REGIONS = setmetatable({} :: { [lifetime.effect]: Region }, { __mode = "k" })
 
 function effects.init(api: types.Api)
   api_ref = api
@@ -115,29 +134,158 @@ local function envOf(emit: lifetime.emit): types.EmitEnv
   return setmetatable(env, ENV) :: any
 end
 
-local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
+-- every root's scan is taken before anything runs, so the clocks a controller
+-- scales stand before the first effect under it starts. `host` is the effect
+-- a nested emit was started by, and the instance its children sit under is
+-- that effect's own
+local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effect?, ...: Instance)
   local shared: reader.Shared = { unc = {}, ref = {} }
 
   local legacyScale = 1
 
   local list = { ... }
+  local modules: { registry.Module? } = table.create(#list)
+  local scans: { { registry.Hit } } = table.create(#list)
+
+  -- the instances a controller sits under, when any does. compared with ==
+  -- rather than looked up as keys, since a host hands back an equal instance
+  -- for a parent, not always the same value
+  local parents: { Instance }? = nil
+
+  local function parentOf(inst: Instance?): Instance?
+    local around = parents
+
+    if around == nil or inst == nil then
+      return nil
+    end
+
+    for _, parent in around do
+      if parent == inst then
+        return parent
+      end
+    end
+
+    return nil
+  end
+
+  local function note(obj: Instance, effect: registry.Module?)
+    local parent = obj.Parent
+
+    if effect == nil or effect.id ~= CONTROLLER or parent == nil or parentOf(parent) ~= nil then
+      return
+    end
+
+    local around = parents or {}
+    table.insert(around, parent)
+    parents = around
+  end
+
+  for i, obj in list do
+    local module = registry.of(obj)
+
+    modules[i] = module
+    scans[i] = registry.scan(obj, module)
+
+    note(obj, module)
+
+    for _, hit in scans[i] do
+      note(hit.instance, hit.effect)
+    end
+  end
+
+  local regions: { [Instance]: Region } = {}
+
+  -- the instance a nested emit's children sit under hosts the effect that
+  -- started it: that effect's clock is its own, and the emit's is below it
+  if host ~= nil then
+    local shared = parentOf(list[1].Parent)
+
+    if shared ~= nil then
+      regions[shared] = {
+        here = host.clock,
+        below = emit.clock,
+        above = host.clock.parent or emit.clock,
+        nested = true,
+      }
+    end
+  end
+
+  -- the nearest controller's parent above an instance, the instance itself
+  -- left out
+  local function aboveOf(inst: Instance): Instance?
+    local current = inst.Parent
+
+    while current ~= nil do
+      local parent = parentOf(current)
+
+      if parent ~= nil then
+        return parent
+      end
+
+      current = current.Parent
+    end
+
+    return nil
+  end
+
+  local function regionAt(parent: Instance): Region
+    local region = regions[parent]
+
+    if region ~= nil then
+      return region
+    end
+
+    local outer = aboveOf(parent)
+    local above = if outer ~= nil then regionAt(outer).below else emit.clock
+
+    region = { here = clock.new(above), below = clock.new(above), above = above, nested = false }
+
+    regions[parent] = region
+
+    return region
+  end
+
+  -- the clock an effect on this instance hangs from: the emit's own unless a
+  -- controller's region reaches it. a controller runs above its own region
+  local function clockFor(obj: Instance, effect: registry.Module?): clock.Clock?
+    if parents == nil then
+      return nil
+    end
+
+    if effect ~= nil and effect.id == CONTROLLER then
+      local parent = parentOf(obj.Parent)
+
+      return if parent ~= nil then regionAt(parent).above else nil
+    end
+
+    local hosted = parentOf(obj)
+
+    if hosted ~= nil then
+      return regionAt(hosted).here
+    end
+
+    local outer = aboveOf(obj)
+
+    return if outer ~= nil then regionAt(outer).below else nil
+  end
 
   local function dispatchInto(target: lifetime.emit, obj: Instance, effectDepth: number, effect: registry.Module?)
-    local fx = lifetime.effect(target, effectDepth, effects)
+    local fx = lifetime.effect(target, effectDepth, effects, clockFor(obj, effect))
+
+    if effect ~= nil and effect.id == CONTROLLER then
+      local parent = parentOf(obj.Parent)
+
+      if parent ~= nil then
+        REGIONS[fx] = regionAt(parent)
+      end
+    end
 
     lifetime.run(fx, function(scope)
       emitters.dispatch(obj, scope, shared, legacyScale, effect)
     end)
   end
 
-  local function queryAndEmitDescendants(
-    target: lifetime.emit,
-    obj: Instance,
-    baseDepth: number,
-    claimant: registry.Module?
-  )
-    local found = registry.scan(obj, claimant)
-
+  local function emitDescendants(target: lifetime.emit, obj: Instance, baseDepth: number, found: { registry.Hit })
     if #found == 0 then
       return
     end
@@ -188,16 +336,18 @@ local function emitInto(emit: lifetime.emit, depth: number, ...: Instance)
     end
   end
 
-  for _, obj in list do
-    local module = registry.of(obj)
-
-    dispatchInto(emit, obj, depth, module)
-
-    -- a module that claims its whole subtree runs the effects under it itself
-    if not (module and module.components == "Instance") then
-      queryAndEmitDescendants(emit, obj, depth + 1, module)
-    end
+  for i, obj in list do
+    dispatchInto(emit, obj, depth, modules[i])
+    emitDescendants(emit, obj, depth + 1, scans[i])
   end
+end
+
+-- the region a controller scales, handed to it once
+function effects.regionOf(fx: lifetime.effect): Region?
+  local region = REGIONS[fx]
+  REGIONS[fx] = nil
+
+  return region
 end
 
 function effects.emit(depth: number, ...: Instance): types.EmitEnv
@@ -208,7 +358,7 @@ function effects.emit(depth: number, ...: Instance): types.EmitEnv
 
   local emit = lifetime.emit(nil)
 
-  emitInto(emit, depth, ...)
+  emitInto(emit, depth, nil, ...)
   lifetime.seal(emit)
 
   if not emit.done then
@@ -248,7 +398,7 @@ local function emitChildren(children: { Instance }, depth: number, parentScope: 
   -- a nested emit runs on the clock of the effect that started it
   local emit = if parentScope then lifetime.emit(parentScope.emit, parentScope.clock) else lifetime.emit(nil)
 
-  emitInto(emit, depth, table.unpack(children))
+  emitInto(emit, depth, parentScope, table.unpack(children))
   lifetime.seal(emit)
 
   if join then

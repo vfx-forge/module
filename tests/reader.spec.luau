@@ -678,6 +678,7 @@ harness.suite(function()
 
     test("apply hands the track and the scope to the driver", function()
       local seen = {}
+      local bind = reader.bind
 
       reader.bind = function(scope, track, write)
         seen.scope, seen.track, seen.write = scope, track, write
@@ -697,7 +698,9 @@ harness.suite(function()
         expect(seen.write).toBe(write)
       end)
 
-      reader.bind = nil
+      -- put back what the dispatcher bound at load, which every later
+      -- spec's apply goes through
+      reader.bind = bind
 
       if not ok then
         error(err, 0)
@@ -705,14 +708,21 @@ harness.suite(function()
     end)
 
     test("apply before a driver is bound errors", function()
+      local bind = reader.bind
       local ctx = ctxFor(Instance.new("Part"))
       ctx.scope = {}
 
       local attrs = reader.resolve(module({ A = knob(2):mod() }), ctx)
 
-      expect(function()
+      reader.bind = nil
+
+      local ok = pcall(function()
         attrs.A:apply(noop)
-      end).toThrow()
+      end)
+
+      reader.bind = bind
+
+      expect(ok).toBe(false)
     end)
 
     test("a vector row accepts the engine's other vector spelling", function()
