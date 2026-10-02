@@ -329,7 +329,10 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
               objAbstr.CFrame = newCF
             end
 
-            lastVelocity = (pos1 - lastPos) / deltaTime
+            if deltaTime > 0 then
+              lastVelocity = (pos1 - lastPos) / deltaTime
+            end
+
             lastPos = pos1
 
             if shapecast() then

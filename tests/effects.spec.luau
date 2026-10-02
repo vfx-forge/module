@@ -580,6 +580,87 @@ harness.suite(function()
       scheduler.frame(0)
     end)
 
+    test("a tick keeps the last speed its ramp wrote once the state is cleared", function()
+      local ref = harness.make("Model")
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      attr.setState(ref, "SpeedTweening", true)
+      attr.setState(ref, "SpeedOverride", 0.2)
+
+      utility.speedFrom(fx, ref, {
+        animated = false,
+        duration = 0,
+        at = function()
+          return 1
+        end,
+      })
+
+      attr.clearState(ref)
+      scheduler.frame(0)
+
+      expect(fx.clock.speed).toBe(0.2)
+
+      lifetime.clear(emit)
+      scheduler.frame(0)
+    end)
+
+    test("a tick that halted stays halted once the state is cleared", function()
+      local ref = harness.make("Model")
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      attr.setState(ref, "SpeedTweening", true)
+      attr.setState(ref, "SpeedOverride", 0)
+
+      utility.speedFrom(fx, ref, {
+        animated = false,
+        duration = 0,
+        at = function()
+          return 1
+        end,
+      })
+
+      attr.setState(ref, "SpeedTweening", nil)
+      scheduler.frame(0)
+
+      expect(fx.clock.halted).toBe(true)
+
+      attr.clearState(ref)
+      scheduler.frame(0)
+
+      expect(fx.clock.halted).toBe(true)
+
+      lifetime.clear(emit)
+      scheduler.frame(0)
+    end)
+
+    test("a tick ignores a NaN speed", function()
+      local ref = harness.make("Model")
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      attr.setState(ref, "SpeedTweening", true)
+      attr.setState(ref, "SpeedOverride", 0.5)
+
+      utility.speedFrom(fx, ref, {
+        animated = false,
+        duration = 0,
+        at = function()
+          return 0 / 0
+        end,
+      })
+
+      attr.setState(ref, "SpeedOverride", 0 / 0)
+      scheduler.frame(0)
+
+      expect(fx.clock.speed).toBe(0.5)
+
+      attr.clearState(ref)
+      lifetime.clear(emit)
+      scheduler.frame(0)
+    end)
+
     test("a clear of the ticks closes every piece they hold", function()
       local token = lifetime.emit(nil)
       local workers: { thread } = {}

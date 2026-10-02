@@ -1063,7 +1063,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
           updateSegments(headAlpha, tailOverride, scaledDelta, attrs.RefreshDuringDissipate, widthOverrideVal)
 
-          return deltaTime
+          return if scope.clock.halted then nil else deltaTime
         end, nil, onComplete, true, scope.depth)
 
         lifetime.hold(scope, dissipation)
@@ -1197,7 +1197,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                       return nil
                     end
 
-                    return deltaTime
+                    return if scope.clock.halted then nil else deltaTime
                   end,
                   nil,
                   function()
@@ -1303,7 +1303,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
                   return nil
                 end
 
-                return deltaTime
+                return if scope.clock.halted then nil else deltaTime
               end, nil, scope, scope.depth)
 
               startDissipation()

@@ -249,13 +249,21 @@ function utility.speedFrom(scope: lifetime.effect, ref: Instance, row: any)
   local timeline = scope.clock
   local first = row.at(0)
 
-  local function follow()
-    local speed = attr.getState(ref, "SpeedOverride", first)
+  -- the last speed read stands once the emit's state is cleared, and a clock
+  -- that has halted stays halted
+  local last = if typeof(first) == "number" and first == first then math.max(first, 0) else 1
 
-    clock.setSpeed(timeline, if typeof(speed) == "number" then math.max(speed, 0) else 1)
+  local function follow()
+    local speed = attr.getState(ref, "SpeedOverride", nil)
+
+    if typeof(speed) == "number" and speed == speed then
+      last = math.max(speed, 0)
+    end
+
+    clock.setSpeed(timeline, last)
     clock.refresh(timeline)
 
-    timeline.halted = timeline.speed <= 0 and not attr.getState(ref, "SpeedTweening", false)
+    timeline.halted = timeline.halted or (timeline.speed <= 0 and not attr.getState(ref, "SpeedTweening", false))
   end
 
   follow()

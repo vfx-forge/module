@@ -95,7 +95,7 @@ function enabled_effects.init(scope: { any }, effects_service: any)
             local rate = attr.get(obj, "Rate", 5)
             local speed = attr.getState(obj, "SpeedOverride", 1)
 
-            if speed == 0 then
+            if typeof(speed) ~= "number" or speed ~= speed or speed <= 0 then
               return
             end
 
