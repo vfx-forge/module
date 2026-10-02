@@ -556,6 +556,58 @@ harness.suite(function()
       expect(clock.effective()).toBe(1)
     end)
 
+    test("an on-finish controller emitted into pieces holding different children scales its host once", function()
+      local seen = {}
+
+      fresh()
+      registry.register(controller)
+
+      local template = harness.make("Folder")
+      template.Name = "EmitOnFinish"
+
+      harness.make("Folder", template)
+
+      local inst = harness.make("RayValue", template)
+
+      inst:AddTag("Controller")
+      inst:SetAttribute("Scope", "ParentAndDescendants")
+      inst:SetAttribute("TimeScale", 0.5)
+      inst:SetAttribute("EmitDuration", 10)
+
+      registry.register(module("finishes", "Model", function(ctx: any)
+        local scope = ctx.scope
+        local children = lifetime.join(scope)
+
+        seen.host = 0
+
+        lifetime.step(scope, function(deltaTime: number)
+          seen.host += deltaTime
+        end)
+
+        -- each piece already holds what the run gave it, a different count
+        -- each, ahead of what the folder moves in
+        for i = 1, 6 do
+          local site = harness.make("Folder", ctx.ref)
+
+          for _ = 1, i do
+            harness.make("Folder", site)
+          end
+
+          scope.effects.emitFromFolder(harness.clone(template), site, scope.depth + 1, scope, children)
+        end
+
+        lifetime.awaitJoin(children)
+      end, true))
+
+      local env = effects.emit(0, harness.make("Model"))
+
+      measure(seen, 1)
+
+      expect(seen.host).toBe(0.5)
+
+      env:Clear()
+    end)
+
     test("several controllers on one scope multiply", function()
       local seen = {}
       local a, b, rule = siblings("Descendants", 0.5, seen)

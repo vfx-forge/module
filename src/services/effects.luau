@@ -197,14 +197,17 @@ local SOURCES = setmetatable({} :: { [lifetime.effect]: { [string]: {} } }, { __
 -- piece's copy of it: keyed by the host and by where the copy sits under its
 -- piece (each step's name and place among its siblings, which every clone of
 -- one template keeps), so a host of many pieces is scaled once per controller
--- of its template rather than once per piece
-local function sourceOf(host: lifetime.effect, from: string, site: Instance?, obj: Instance): {}
+-- of its template rather than once per piece. the top step's place is its
+-- place in what was emitted, since the site may hold children of the run's
+-- own, and an on-finish folder's children are moved in among them
+local function sourceOf(host: lifetime.effect, from: string, site: Instance?, list: { Instance }, obj: Instance): {}
   local steps = { from }
   local current = obj
 
   while current ~= nil and current ~= site do
     local parent = current.Parent
-    local place = if parent ~= nil then table.find(parent:GetChildren(), current) else 0
+    local siblings = if parent == site then list elseif parent ~= nil then parent:GetChildren() else nil
+    local place = if siblings ~= nil then table.find(siblings, current) else 0
 
     table.insert(steps, `{current.Name}#{place}`)
     current = parent
@@ -326,7 +329,7 @@ local function placementOf(
     end
 
     if host ~= nil then
-      KEYS[fx] = sourceOf(host, from, site, obj)
+      KEYS[fx] = sourceOf(host, from, site, list, obj)
     end
   end
 
