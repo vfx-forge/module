@@ -8,6 +8,7 @@ local numeric_common = require("@mod/common/numeric")
 local TIME_ROWS = retime.PROPERTY_UNITS.ParticleEmitter
 
 type Original = {
+  timeScale: number,
   users: number,
   retimers: number,
   rows: { [string]: any }?,
@@ -106,6 +107,25 @@ local function leave(obj: any, reapply: () -> (), held: boolean, timeScale: numb
   obj.TimeScale = timeScale
 end
 
+-- what an emitter's TimeScale or time row was authored as while an emit has
+-- written over it, nil while none has, when the emitter's own is the authored
+function adapters.authoredOf(obj: any, name: string): any?
+  local original = ORIGINALS[obj]
+
+  if original == nil then
+    return nil
+  end
+
+  if name == "TimeScale" then
+    return original.timeScale
+  end
+
+  local rows = original.rows
+  local kept = if rows ~= nil then rows[name] else nil
+
+  return if kept ~= nil then kept else obj[name]
+end
+
 -- a particle emitter runs at its TimeScale times the effect's clock: up to 1
 -- that is its TimeScale, exact for live particles; above 1 TimeScale rests at
 -- 1 and the emitter's time rows take the rest, which reaches new particles
@@ -117,7 +137,9 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
 
   -- a NaN or infinite one falls back to what the emitter has, or to 1
   if not numeric_common.finite(authored) then
-    authored = if numeric_common.finite(obj.TimeScale) then obj.TimeScale else 1
+    local own = adapters.authoredOf(obj, "TimeScale") or obj.TimeScale
+
+    authored = if numeric_common.finite(own) then own else 1
   end
 
   local held = false
@@ -125,7 +147,7 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
   local original = ORIGINALS[obj]
 
   if original == nil then
-    original = { users = 0, retimers = 0, rows = nil, reapply = {} }
+    original = { timeScale = obj.TimeScale, users = 0, retimers = 0, rows = nil, reapply = {} }
     ORIGINALS[obj] = original
   end
 

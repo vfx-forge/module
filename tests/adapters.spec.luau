@@ -3,6 +3,7 @@ local harness = require("@tests/harness")
 local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
+local particle = require("@vfx/particle")
 local test, expect = harness.test, harness.expect
 
 local Vector3 = harness.datatypes.Vector3
@@ -240,6 +241,93 @@ harness.suite(function()
 
         done(emit)
       end
+    end)
+  end)
+
+  harness.describe("the particle module over one emitter in place", function()
+    -- an emitter in the workspace, which an emit plays on rather than a clone
+    local function inPlace()
+      local obj = emitter() :: any
+
+      obj.TimeScale = 0.8
+      obj.Enabled = false
+
+      obj.IsDescendantOf = function()
+        return true
+      end
+
+      obj.Emit = function() end
+      obj.Clear = function() end
+
+      return obj
+    end
+
+    -- an emit at a speed, its rows answered from the emitter as the reader
+    -- answers them, once, when the emit is read
+    local function play(obj: any, speed: number): lifetime.emit
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local read = obj.TimeScale
+
+      at(emit, speed)
+
+      local timeScale = {
+        animated = false,
+        value = read,
+        at = function()
+          return read
+        end,
+      }
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local ctx = { ref = obj, scope = scope, shared = { unc = {}, ref = {} } }
+
+        particle.emit(ctx :: any, { EmitCount = 1, EmitDelay = 0, EmitDuration = 0 }, { TimeScale = timeScale })
+      end)
+
+      lifetime.seal(emit)
+
+      return emit
+    end
+
+    local function run(seconds: number)
+      for _ = 1, math.round(seconds / 0.05) do
+        scheduler.frame(0.05)
+      end
+    end
+
+    test("a second emit over the first's writes reads what was authored, and the last puts it back", function()
+      local obj = inPlace()
+
+      local first = play(obj, 2)
+
+      expect(obj.TimeScale).toBe(1)
+
+      run(0.2)
+
+      local second = play(obj, 0.5)
+
+      expect(particle.duration({ ref = obj } :: any, { EmitDuration = 0 })).toBe(2)
+
+      -- the first runs out 2 / (0.8 * 2) after it starts, the second
+      -- 2 / (0.8 * 0.5) after it does
+      run(1.8)
+
+      expect(first.done).toBe(true)
+      expect(near(obj.TimeScale, 0.4)).toBe(true)
+
+      run(3)
+
+      expect(second.done).toBe(false)
+      expect(near(obj.TimeScale, 0.4)).toBe(true)
+
+      run(0.4)
+
+      expect(second.done).toBe(true)
+      expect(obj.TimeScale).toBe(0.8)
+      expect(obj.Lifetime).toEqual(NumberRange.new(1, 2))
+      expect(obj.Speed).toEqual(NumberRange.new(4, 8))
+      expect(obj.Rate).toBe(10)
     end)
   end)
 

@@ -50,10 +50,18 @@ particle.layout = {
   },
 }
 
+-- the longest a particle can live, as authored even while another emit of
+-- the emitter in place has it retimed
+local function longestOf(ref: ParticleEmitter): number
+  local lifetimeRange = adapters.authoredOf(ref, "Lifetime") or ref.Lifetime
+
+  return lifetimeRange.Max
+end
+
 -- the emitter's own clock: the longest a particle it emits can live, after
 -- the window it emits over
 function particle.duration(ctx: reader.Ctx, attrs: any)
-  return attrs.EmitDuration + (ctx.ref :: ParticleEmitter).Lifetime.Max
+  return attrs.EmitDuration + longestOf(ctx.ref :: ParticleEmitter)
 end
 
 -- the clone an emitter outside the workspace plays on, under a copy of its
@@ -119,9 +127,12 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   end
 
   local useDuration = duration > 0
+  local longest = longestOf(ref)
 
-  -- read before a speed above 1 can retime it
-  local longest = ref.Lifetime.Max
+  -- another emit of the emitter in place has written its own TimeScale over
+  -- the authored one, which a row resting on the property was read from
+  local written = ref.TimeScale
+  local kept = adapters.authoredOf(ref, "TimeScale")
 
   lifetime.wait(scope, attrs.EmitDelay)
 
@@ -132,8 +143,14 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   local timeScale = props.TimeScale
   local authored = timeScale.at(0)
 
+  if kept ~= nil and not timeScale.animated and authored == written then
+    authored = kept
+  end
+
   if not numeric_common.finite(authored) then
-    authored = if numeric_common.finite(obj.TimeScale) then obj.TimeScale else 1
+    local own = adapters.authoredOf(obj, "TimeScale") or obj.TimeScale
+
+    authored = if numeric_common.finite(own) then own else 1
   end
 
   local scaleTween
