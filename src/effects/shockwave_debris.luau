@@ -429,18 +429,16 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     local relDir = utility.randomUnitVector(minDir, maxDir)
     local worldDir = originCFrame:VectorToWorldSpace(relDir)
 
-    part:ApplyImpulse(
-      part.AssemblyMass
-        * utility.getImpulseForce(
-          originPosition,
-          originPosition + worldDir.Unit * rng:NextNumber(linmag.Min, linmag.Max),
-          rng:NextNumber(airtime.Min, airtime.Max)
-        )
-    )
+    local impulse = part.AssemblyMass
+      * utility.getImpulseForce(
+        originPosition,
+        originPosition + worldDir.Unit * rng:NextNumber(linmag.Min, linmag.Max),
+        rng:NextNumber(airtime.Min, airtime.Max)
+      )
 
-    part:ApplyAngularImpulse(part.AssemblyMass * rng:NextUnitVector() * rng:NextNumber(angmag.Min, angmag.Max))
+    local spin = part.AssemblyMass * rng:NextUnitVector() * rng:NextNumber(angmag.Min, angmag.Max)
 
-    launch(realPart)
+    launch(realPart, impulse, spin)
 
     scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
 

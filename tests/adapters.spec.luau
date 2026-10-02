@@ -450,13 +450,42 @@ harness.suite(function()
   harness.describe("the debris adapter", function()
     local made: { any } = {}
 
+    -- what the effect hands a launch: the impulses for a flight at speed 1
+    local IMPULSE = Vector3.new(0, 20, 8)
+    local SPIN = Vector3.new(2, 0, 0)
+
+    -- a part as the engine keeps one: an impulse lands at the next physics
+    -- step rather than when it is applied, and an anchored part takes none
     local function part()
-      return {
+      local p = {
         Anchored = false,
         AssemblyMass = 2,
-        AssemblyLinearVelocity = Vector3.new(0, 10, 4),
-        AssemblyAngularVelocity = Vector3.new(1, 0, 0),
+        AssemblyLinearVelocity = Vector3.zero,
+        AssemblyAngularVelocity = Vector3.zero,
+        pending = Vector3.zero,
+        pendingSpin = Vector3.zero,
       }
+
+      function p.ApplyImpulse(self: any, impulse: Vector3)
+        self.pending += impulse
+      end
+
+      function p.ApplyAngularImpulse(self: any, impulse: Vector3)
+        self.pendingSpin += impulse
+      end
+
+      return p
+    end
+
+    -- the physics step, with an inertia of the part's mass about every axis
+    local function step(p: any)
+      if not p.Anchored then
+        p.AssemblyLinearVelocity += p.pending / p.AssemblyMass
+        p.AssemblyAngularVelocity += p.pendingSpin / p.AssemblyMass
+      end
+
+      p.pending = Vector3.zero
+      p.pendingSpin = Vector3.zero
     end
 
     local function withForces(body: () -> ())
@@ -487,9 +516,11 @@ harness.suite(function()
         local emit, fx = effect()
         local flying = part()
 
-        adapters.debris(fx)(flying)
+        adapters.debris(fx)(flying, IMPULSE, SPIN)
+        step(flying)
 
         expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 10, 4))
+        expect(flying.AssemblyAngularVelocity).toEqual(Vector3.new(1, 0, 0))
         expect(#made).toBe(0)
 
         done(emit)
@@ -501,10 +532,13 @@ harness.suite(function()
         local emit, fx = effect()
         local flying = part()
 
-        at(emit, 0.5)
-        adapters.debris(fx)(flying)
+        flying.AssemblyLinearVelocity = Vector3.new(2, 0, 0)
 
-        expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 5, 2))
+        at(emit, 0.5)
+        adapters.debris(fx)(flying, IMPULSE, SPIN)
+        step(flying)
+
+        expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(1, 5, 2))
         expect(flying.AssemblyAngularVelocity).toEqual(Vector3.new(0.5, 0, 0))
 
         local force = made[2]
@@ -523,10 +557,12 @@ harness.suite(function()
         local emit, fx = effect()
         local flying = part()
 
-        adapters.debris(fx)(flying)
+        adapters.debris(fx)(flying, IMPULSE, SPIN)
+        step(flying)
         at(emit, 2)
 
         expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 20, 8))
+        expect(flying.AssemblyAngularVelocity).toEqual(Vector3.new(2, 0, 0))
         expect(near(made[2].Force.Y, 2 * 100 * (1 - 4))).toBe(true)
 
         done(emit)
@@ -538,15 +574,18 @@ harness.suite(function()
         local emit, fx = effect()
         local flying = part()
 
-        adapters.debris(fx)(flying)
+        adapters.debris(fx)(flying, IMPULSE, SPIN)
+        step(flying)
 
         clock.setPaused(emit.clock, true)
         scheduler.frame(0)
+        step(flying)
 
         expect(flying.Anchored).toBe(true)
 
         clock.setPaused(emit.clock, false)
         at(emit, 0.5)
+        step(flying)
 
         expect(flying.Anchored).toBe(false)
         expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 5, 2))
@@ -565,7 +604,8 @@ harness.suite(function()
 
         local launch, resized = adapters.debris(fx)
 
-        launch(flying)
+        launch(flying, IMPULSE, SPIN)
+        step(flying)
 
         flying.AssemblyMass = 1
         resized(flying)
@@ -585,15 +625,43 @@ harness.suite(function()
         clock.setPaused(emit.clock, true)
         scheduler.frame(0)
 
-        launch(flying)
+        launch(flying, IMPULSE, SPIN)
+        step(flying)
 
         expect(flying.Anchored).toBe(true)
+        expect(flying.AssemblyLinearVelocity).toEqual(Vector3.zero)
 
         clock.setPaused(emit.clock, false)
         at(emit, 2)
+        step(flying)
 
         expect(flying.Anchored).toBe(false)
         expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 20, 8))
+        expect(flying.AssemblyAngularVelocity).toEqual(Vector3.new(2, 0, 0))
+
+        done(emit)
+      end)
+    end)
+
+    test("a part launched while slowed and then paused leaves at the speed it resumes at", function()
+      withForces(function()
+        local emit, fx = effect()
+        local flying = part()
+        local launch = adapters.debris(fx)
+
+        at(emit, 0.5)
+        clock.setPaused(emit.clock, true)
+        scheduler.frame(0)
+
+        launch(flying, IMPULSE, SPIN)
+        step(flying)
+
+        clock.setPaused(emit.clock, false)
+        at(emit, 0.25)
+        step(flying)
+
+        expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 2.5, 1))
+        expect(flying.AssemblyAngularVelocity).toEqual(Vector3.new(0.25, 0, 0))
 
         done(emit)
       end)

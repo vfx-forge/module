@@ -20,6 +20,8 @@ type Flight = {
   force: any?,
   linear: Vector3?,
   angular: Vector3?,
+  impulse: Vector3?,
+  spin: Vector3?,
 }
 
 local adapters = {}
@@ -291,9 +293,11 @@ end
 -- debris flies under the engine's physics, which has no time scale: a part is
 -- launched at the clock's speed and falls under its square, a change in speed
 -- rescales every part in flight, and a pause anchors each one and gives it back
--- its velocity on resume. answers what files a part once it is launched, and
--- what the effect calls after it writes one's Size
-function adapters.debris(scope: lifetime.effect): ((part: any) -> (), (part: any) -> ())
+-- its velocity on resume. answers what launches a part with the impulses of a
+-- flight at speed 1, and what the effect calls after it writes one's Size
+function adapters.debris(
+  scope: lifetime.effect
+): ((part: any, impulse: Vector3, spin: Vector3) -> (), (part: any) -> ())
   local timeline = scope.clock
   local flights: { Flight } = {}
   local byPart: { [any]: Flight } = {}
@@ -329,8 +333,15 @@ function adapters.debris(scope: lifetime.effect): ((part: any) -> (), (part: any
         part.AssemblyLinearVelocity = linear * ratio
         part.AssemblyAngularVelocity = (flight.angular :: Vector3) * ratio
 
+        if flight.impulse ~= nil then
+          part:ApplyImpulse(flight.impulse * ratio)
+          part:ApplyAngularImpulse((flight.spin :: Vector3) * ratio)
+        end
+
         flight.linear = nil
         flight.angular = nil
+        flight.impulse = nil
+        flight.spin = nil
       elseif ratio ~= 1 then
         part.AssemblyLinearVelocity *= ratio
         part.AssemblyAngularVelocity *= ratio
@@ -347,7 +358,11 @@ function adapters.debris(scope: lifetime.effect): ((part: any) -> (), (part: any
     end)
   )
 
-  local function launch(part: any)
+  -- the engine takes an impulse at its next step, so a velocity read after
+  -- one holds none of it: the impulses are scaled themselves, and a part
+  -- launched while paused keeps its own for the resume, as an anchored part
+  -- takes none
+  local function launch(part: any, impulse: Vector3, spin: Vector3)
     local flight: Flight = { part = part }
     local factor = clock.factorOf(timeline)
 
@@ -357,6 +372,8 @@ function adapters.debris(scope: lifetime.effect): ((part: any) -> (), (part: any
     if factor == 0 then
       flight.linear = part.AssemblyLinearVelocity * moving
       flight.angular = part.AssemblyAngularVelocity * moving
+      flight.impulse = impulse * moving
+      flight.spin = spin * moving
       part.Anchored = true
 
       return
@@ -368,6 +385,9 @@ function adapters.debris(scope: lifetime.effect): ((part: any) -> (), (part: any
       part.AssemblyLinearVelocity *= moving
       part.AssemblyAngularVelocity *= moving
     end
+
+    part:ApplyImpulse(impulse * moving)
+    part:ApplyAngularImpulse(spin * moving)
 
     pull(flight, moving)
   end
