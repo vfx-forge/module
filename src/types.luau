@@ -7,6 +7,11 @@ export type scope = lifetime.effect
 export type EmitEnv = {
   Finished: typeof(Promise.resolve()),
   Clear: (self: EmitEnv) -> (),
+  SetSpeed: (self: EmitEnv, speed: number) -> (),
+  GetSpeed: (self: EmitEnv) -> number,
+  Pause: (self: EmitEnv) -> (),
+  Resume: (self: EmitEnv) -> (),
+  IsPaused: (self: EmitEnv) -> boolean,
 }
 
 export type ApiCaches = {

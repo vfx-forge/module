@@ -169,8 +169,9 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
 end
 
 -- a beam's texture scrolls at its TextureSpeed times the effect's clock, so
--- a pause stops it. written at once only when it differs from what the beam
--- already holds. answers what sets the authored TextureSpeed
+-- a pause stops it. written at once when the row is animated or the factor is
+-- not 1, and on every change of the factor after. answers what sets the
+-- authored TextureSpeed
 function adapters.beam(scope: lifetime.effect, obj: any, base: number, animated: boolean): (base: number) -> ()
   local timeline = scope.clock
 

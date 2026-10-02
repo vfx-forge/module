@@ -11,7 +11,108 @@ export interface EmitResult {
    * Clear all emitted effects
    */
   Clear(): void;
+
+  /**
+   * Set the speed every effect of this emit runs at, from the next frame. It multiplies with
+   * the global setSpeed, any controller over the effects and each effect's own Speed.
+   * Errors unless it is a finite number of 0 or more. Once the emit has finished this does
+   * nothing.
+   * @param speed 1 is authored speed, 0.5 half, 2 double
+   */
+  SetSpeed(speed: number): void;
+
+  /**
+   * The speed last set with SetSpeed, 1 by default. Pausing does not change it. Reads 1 once
+   * the emit has finished.
+   */
+  GetSpeed(): number;
+
+  /**
+   * Stand every effect of this emit still, from the next frame, until Resume. Once the emit
+   * has finished this does nothing.
+   */
+  Pause(): void;
+
+  /**
+   * Pick every effect of this emit up where Pause left it, at the speed it had.
+   */
+  Resume(): void;
+
+  /**
+   * Whether this emit is paused by its own Pause. A global pause does not count. Reads false
+   * once the emit has finished.
+   */
+  IsPaused(): boolean;
 }
+
+/**
+ * A handler connected to one of the module's signals.
+ */
+export interface Connection {
+  /**
+   * Stop calling the handler
+   */
+  Disconnect(): void;
+}
+
+/**
+ * A signal the module fires. Handlers run on the signal's own thread, never inside a frame of
+ * effects, so one that yields holds nothing up.
+ */
+export interface Signal<T extends unknown[]> {
+  Connect(handler: (...args: T) => void): Connection;
+  Once(handler: (...args: T) => void): Connection;
+}
+
+/**
+ * Set the global playback speed: every effect emitted from this copy of the module plays at
+ * it, live, from the next frame. It multiplies with each emit's SetSpeed, any controller over
+ * the effects and each effect's own Speed. Unlike retime, which rewrites an instance's
+ * authored values, it leaves every instance as authored and changes only how fast it plays.
+ * Errors unless it is a finite number of 0 or more, and the speed stays as it was.
+ * @param speed 1 is authored speed, 0.5 half, 2 double
+ */
+export function setSpeed(speed: number): void;
+
+/**
+ * The global speed last set with setSpeed, 1 by default. Pausing does not change it, and
+ * Global controllers are not counted in it (see getEffectiveSpeed).
+ */
+export function getSpeed(): number;
+
+/**
+ * Stand every effect emitted from this copy of the module still, from the next frame, until
+ * resume. Each emit keeps its own speed and Pause under it. Calling it again does nothing.
+ */
+export function pause(): void;
+
+/**
+ * Pick every effect up where pause left it, at the speed it had. Calling it again does
+ * nothing.
+ */
+export function resume(): void;
+
+/**
+ * Whether every effect is held by pause. An emit's own Pause does not count.
+ */
+export function isPaused(): boolean;
+
+/**
+ * The global speed times every Global controller running: the speed every effect plays at
+ * before each emit's own. Pausing does not change it; isPaused reports that.
+ */
+export function getEffectiveSpeed(): number;
+
+/**
+ * Fires with getEffectiveSpeed's new value whenever it changes: on setSpeed, and as a Global
+ * controller starts, ramps or ends, which can be every frame while one ramps.
+ */
+export const SpeedChanged: Signal<[effectiveSpeed: number]>;
+
+/**
+ * Fires with true on pause and false on resume, only when the global pause really changes.
+ */
+export const PausedChanged: Signal<[paused: boolean]>;
 
 /**
  * Initialize the Forge VFX system.
