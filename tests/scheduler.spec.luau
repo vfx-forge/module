@@ -280,6 +280,68 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("a step an effect holds", function()
+    test("one added with no owner moves onto the effect's clock from its next frame", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local seen = 0
+
+      clock.setSpeed(fx.clock, 0.5)
+
+      local handle = scheduler.add("compute", function(deltaTime: number)
+        seen += deltaTime
+      end)
+
+      scheduler.frame(1)
+      expect(seen).toBe(1)
+
+      lifetime.hold(fx, handle)
+
+      seen = 0
+      scheduler.frame(1)
+
+      expect(seen).toBe(0.5)
+
+      lifetime.clear(emit)
+
+      expect(handle.Connected).toBe(false)
+
+      scheduler.frame(0)
+    end)
+
+    test("one added on a clock of its own keeps it, and one kept for the session is never adopted", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local own = clock.new(clock.global)
+      local seen = { own = 0, kept = 0 }
+
+      clock.setSpeed(fx.clock, 0.5)
+      clock.setSpeed(own, 2)
+
+      local timed = scheduler.add("compute", function(deltaTime: number)
+        seen.own += deltaTime
+      end, 0, nil, false, own)
+
+      local kept = scheduler.add("compute", function(deltaTime: number)
+        seen.kept += deltaTime
+      end, 0, nil, true)
+
+      lifetime.hold(fx, timed)
+      scheduler.adopt(kept, fx)
+
+      scheduler.frame(0)
+      scheduler.frame(1)
+
+      expect(seen.own).toBe(2)
+      expect(seen.kept).toBe(1)
+
+      kept:Disconnect()
+      lifetime.clear(emit)
+      clock.drop(own)
+      scheduler.frame(0)
+    end)
+  end)
+
   harness.describe("the scheduler's bindings", function()
     test("a running game binds the early half at First and the late half after Last, under one suffix", function()
       local binds = {}

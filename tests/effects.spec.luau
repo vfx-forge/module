@@ -323,6 +323,35 @@ harness.suite(function()
       env:Clear()
       built.restore()
     end)
+    test("an on-finish emit runs on the clock of the effect that started it", function()
+      local built = fresh()
+      local seen = {}
+      registry.register(module("counts", "Part", counting(seen)))
+      registry.register(module("starts", "Model", function(ctx: any)
+        local scope = ctx.scope
+        local children = lifetime.join(scope)
+        local folder = scope.effects.prepareEmitOnFinish(ctx.ref, scope)
+
+        clock.setSpeed(scope.clock, 0.5)
+        scope.effects.emitOnFinish(folder, ctx.ref, scope.depth + 1, scope, children)
+        lifetime.awaitJoin(children)
+      end, true))
+
+      local model = harness.make("Model")
+      local folder = harness.make("Folder", model)
+
+      folder.Name = "EmitOnFinish"
+      harness.make("Part", folder).Name = "finish"
+
+      local env = effects.emit(0, model)
+
+      measure(seen, 1)
+
+      expect(seen.finish).toBe(0.5)
+
+      env:Clear()
+      built.restore()
+    end)
   end)
 
   harness.describe("a controller", function()
