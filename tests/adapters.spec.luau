@@ -156,7 +156,7 @@ harness.suite(function()
       done(emit)
     end)
 
-    test("the rows and the TimeScale go back when the effect ends", function()
+    test("the rows and the emitter's own TimeScale go back when the effect ends", function()
       local emit, fx = effect()
       local obj = emitter()
 
@@ -164,7 +164,7 @@ harness.suite(function()
       at(emit, 2)
       done(emit)
 
-      expect(obj.TimeScale).toBe(0.7)
+      expect(obj.TimeScale).toBe(1)
       expect(obj.Rate).toBe(10)
       expect(obj.Lifetime).toEqual(NumberRange.new(1, 2))
     end)
@@ -706,6 +706,73 @@ harness.suite(function()
         step(flying)
 
         expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 10, 4))
+
+        done(emit)
+      end)
+    end)
+
+    -- a piece that flew, landed and came to rest at zero again, frames after
+    -- its launch
+    local function landed(launch: (any, Vector3, Vector3) -> (), impulse: Vector3, spin: Vector3)
+      local flying = part()
+
+      launch(flying, impulse, spin)
+      step(flying)
+
+      for _ = 1, 3 do
+        scheduler.frame(0)
+        step(flying)
+      end
+
+      flying.AssemblyLinearVelocity = Vector3.zero
+      flying.AssemblyAngularVelocity = Vector3.zero
+
+      return flying
+    end
+
+    test("a piece come to rest frames after its launch is not launched again by a pause", function()
+      withForces(function()
+        local emit, fx = effect()
+        local launch = adapters.debris(fx)
+        local resting = landed(launch, IMPULSE, SPIN)
+        local spinning = landed(launch, Vector3.zero, SPIN)
+
+        clock.setPaused(emit.clock, true)
+        scheduler.frame(0)
+        step(resting)
+        step(spinning)
+
+        clock.setPaused(emit.clock, false)
+        scheduler.frame(0)
+        step(resting)
+        step(spinning)
+
+        expect(resting.AssemblyLinearVelocity).toEqual(Vector3.zero)
+        expect(resting.AssemblyAngularVelocity).toEqual(Vector3.zero)
+        expect(spinning.AssemblyAngularVelocity).toEqual(Vector3.zero)
+
+        done(emit)
+      end)
+    end)
+
+    test("a piece come to rest frames after its launch is not kicked by a speed change", function()
+      withForces(function()
+        local emit, fx = effect()
+        local launch = adapters.debris(fx)
+        local resting = landed(launch, IMPULSE, SPIN)
+        local spinning = landed(launch, Vector3.zero, SPIN)
+
+        at(emit, 0.5)
+        step(resting)
+        step(spinning)
+
+        at(emit, 2)
+        step(resting)
+        step(spinning)
+
+        expect(resting.AssemblyLinearVelocity).toEqual(Vector3.zero)
+        expect(resting.AssemblyAngularVelocity).toEqual(Vector3.zero)
+        expect(spinning.AssemblyAngularVelocity).toEqual(Vector3.zero)
 
         done(emit)
       end)

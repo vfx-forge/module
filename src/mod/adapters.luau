@@ -23,6 +23,7 @@ type Flight = {
   impulse: Vector3?,
   spin: Vector3?,
   launched: Vector3?,
+  pushed: number?,
 }
 
 local adapters = {}
@@ -31,7 +32,7 @@ local adapters = {}
 -- one still has them retimed, so the last to let go puts them back however
 -- many emits of one in-place emitter overlap. the emits sharing an emitter
 -- are counted here too, so one leaving makes the rest write their own
--- TimeScale again and only the last puts the authored one back
+-- TimeScale again and only the last puts the emitter's own back
 local ORIGINALS = setmetatable({} :: { [any]: Original }, { __mode = "k" })
 
 -- how an adapter makes the instances it adds, replaceable so a spec can stand
@@ -76,7 +77,7 @@ local function retimeRows(original: Original, obj: any, by: number, held: boolea
   return true
 end
 
-local function leave(obj: any, reapply: () -> (), held: boolean, timeScale: number)
+local function leave(obj: any, reapply: () -> (), held: boolean)
   local original = ORIGINALS[obj]
 
   if original == nil then
@@ -107,7 +108,7 @@ local function leave(obj: any, reapply: () -> (), held: boolean, timeScale: numb
   end
 
   ORIGINALS[obj] = nil
-  obj.TimeScale = timeScale
+  obj.TimeScale = original.timeScale
 end
 
 -- what an emitter's TimeScale or time row was authored as while an emit has
@@ -182,7 +183,7 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
   lifetime.hold(scope, clock.watch(timeline, apply))
 
   lifetime.hold(scope, function()
-    leave(obj, again, held, math.min(authored, 1))
+    leave(obj, again, held)
   end)
 
   return function(value: number)
@@ -308,20 +309,24 @@ function adapters.debris(
   local moving = if launched > 0 then launched else 1
 
   -- the engine takes an impulse at its next step, so a part is waiting on its
-  -- own until its velocity moves off what it read once the impulse was
-  -- applied; one whose step has come is let go of it
+  -- own while its velocity has not moved off what it read once the impulse
+  -- was applied, within the frame of the push and the next, whose watcher
+  -- call is the first to see a change made in it. past that it is let go,
+  -- so a piece come to rest at the velocity it was launched from is not
+  -- launched again
   local function waiting(flight: Flight): boolean
     if flight.impulse == nil then
       return false
     end
 
-    if flight.part.AssemblyLinearVelocity == flight.launched then
+    if clock.frame - (flight.pushed :: number) <= 1 and flight.part.AssemblyLinearVelocity == flight.launched then
       return true
     end
 
     flight.impulse = nil
     flight.spin = nil
     flight.launched = nil
+    flight.pushed = nil
 
     return false
   end
@@ -336,6 +341,7 @@ function adapters.debris(
     flight.impulse = impulse
     flight.spin = spin
     flight.launched = part.AssemblyLinearVelocity
+    flight.pushed = clock.frame
   end
 
   local function apply(factor: number)
