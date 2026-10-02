@@ -11,7 +11,8 @@ export type Clock = {
   speed: number,
   paused: boolean,
 
-  -- a controller's multiplier, keyed by the controller's effect
+  -- a controller's multiplier, keyed by the key the copies of one nested
+  -- controller share, or else by the controller's effect
   scales: { [any]: number }?,
 
   -- the parent's factor times the speed and every scale, 0 while paused, as

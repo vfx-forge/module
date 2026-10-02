@@ -67,8 +67,8 @@ end
 
 function controller.emit(ctx: reader.Ctx, attrs: any)
   local scope = ctx.scope
-  local region, shared = scope.effects.regionOf(scope)
-  local key = shared or scope
+  local region, source = scope.effects.regionOf(scope)
+  local key = source or scope
   local mode = attrs.Scope
 
   -- a Global controller runs on real time that only a global pause stops,
