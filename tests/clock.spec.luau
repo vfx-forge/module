@@ -136,6 +136,32 @@ harness.suite(function()
       scheduler.frame(0)
     end)
 
+    test("a refresh made on a frame that began at 1 still reaches the owner's later steps", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local seen = {}
+
+      settle()
+
+      expect(clock.uniform).toBe(true)
+
+      lifetime.step(fx, function()
+        clock.setSpeed(fx.clock, 0.5)
+        clock.refresh(fx.clock)
+      end)
+
+      lifetime.step(fx, function(deltaTime: number)
+        table.insert(seen, deltaTime)
+      end)
+
+      scheduler.frame(1)
+
+      expect(seen).toEqual({ 0.5 })
+
+      lifetime.clear(emit)
+      scheduler.frame(0)
+    end)
+
     test("while every clock runs at 1 a step is handed the frame as it is", function()
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
@@ -173,6 +199,58 @@ harness.suite(function()
 
       expect(heard).toEqual({ "1>2", "2>0" })
 
+      clock.drop(c)
+      scheduler.frame(0)
+    end)
+
+    test("watching a dropped clock registers nothing", function()
+      local c = clock.new(clock.global)
+      local heard = 0
+
+      clock.drop(c)
+
+      local stop = clock.watch(c, function()
+        heard += 1
+      end)
+
+      expect(c.watchers).toBe(nil)
+
+      stop()
+      scheduler.frame(0)
+
+      expect(heard).toBe(0)
+    end)
+
+    test("a watcher that stops other clocks watching does not make the frame skip one", function()
+      local a = clock.new(clock.global)
+      local b = clock.new(clock.global)
+      local c = clock.new(clock.global)
+      local heard = {}
+
+      local stopA = clock.watch(a, function()
+        table.insert(heard, "a")
+      end)
+
+      local stopB
+      stopB = clock.watch(b, function()
+        table.insert(heard, "b")
+        stopA()
+        stopB()
+      end)
+
+      clock.watch(c, function()
+        table.insert(heard, "c")
+      end)
+
+      clock.setSpeed(a, 2)
+      clock.setSpeed(b, 2)
+      clock.setSpeed(c, 2)
+      scheduler.frame(0)
+
+      expect(heard).toEqual({ "a", "b", "c" })
+
+      clock.drop(a)
+      clock.drop(b)
       clock.drop(c)
       scheduler.frame(0)
     end)

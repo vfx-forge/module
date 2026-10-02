@@ -38,6 +38,10 @@ clock.frame = 0
 -- take its delta as it is
 clock.uniform = true
 
+-- called when a refresh takes a frame that began at 1 off it, for every
+-- scheduler to scale the rest of its pass
+clock.unfolded = {} :: { () -> () }
+
 -- how many clocks are off 1 of their own
 local moving = 0
 
@@ -217,6 +221,12 @@ function clock.refresh(c: Clock)
   c.frame = -1
 
   if clock.factorOf(c) ~= 1 then
+    if clock.uniform then
+      for _, unfolded in clock.unfolded do
+        unfolded()
+      end
+    end
+
     clock.uniform = false
   end
 end
@@ -233,6 +243,10 @@ end
 -- called with the new factor and the one it was last called with, once a
 -- frame at most, whenever the factor moved. answers what stops the calls
 function clock.watch(c: Clock, watcher: (factor: number, previous: number) -> ())
+  if c.dropped then
+    return function() end
+  end
+
   local watchers = c.watchers
 
   if watchers == nil then
@@ -292,20 +306,21 @@ function clock.tick()
   clock.frame += 1
   clock.uniform = moving == 0
 
-  local i = 1
+  if #watched == 0 then
+    return
+  end
 
-  -- a watcher may stop watching while it is told, so the list is walked by
-  -- index and a clock that left it is not stepped past
-  while i <= #watched do
-    local c = watched[i]
+  -- a watcher may stop watching any clock while it is told, so the walk is
+  -- over a copy and skips a clock that left
+  for _, c in table.clone(watched) do
+    if c.watchers == nil then
+      continue
+    end
+
     local factor = clock.factorOf(c)
 
     if factor ~= c.told then
       tell(c, factor)
-    end
-
-    if watched[i] == c then
-      i += 1
     end
   end
 end

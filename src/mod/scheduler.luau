@@ -81,6 +81,14 @@ local kept = 0
 local count = 0
 local delta = 0
 
+-- set when a step refreshes a clock off 1 during a pass that began at 1: the
+-- rest of that pass is handed scaled deltas
+local scaling = false
+
+table.insert(clock.unfolded, function()
+  scaling = true
+end)
+
 -- the pass is read into locals, and written back before each step runs so a
 -- throw re-enters from where it left off. while every clock runs at 1, as it
 -- does unless something set a speed, a pause or a controller, the frame's delta
@@ -102,6 +110,10 @@ local function sweep()
     if step.Connected then
       k += 1
       b[k] = step
+    end
+
+    if scaling then
+      break
     end
   end
 
@@ -144,12 +156,17 @@ local function runBucket(list: { Step }, deltaTime: number)
   bucket, index, kept, count, delta = list, 0, 0, #list, deltaTime
   passer = coroutine.running()
   passing = true
+  scaling = false
 
   while true do
     local ok, err = xpcall(if clock.uniform then sweep else sweepScaled, debug.traceback)
 
     if ok then
-      break
+      if index >= count then
+        break
+      end
+
+      continue
     end
 
     local step = bucket[index]
