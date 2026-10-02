@@ -30,7 +30,7 @@ controller.attributes = {
 controller.properties = {}
 
 controller.layout = {
-  { title = "Effect", entries = { "EmitDelay", "EmitDuration" } },
+  { title = "Emit", entries = { "EmitDelay", "EmitDuration" } },
   { title = "Time", entries = { "Scope", "TimeScale" } },
 }
 
