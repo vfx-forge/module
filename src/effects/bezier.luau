@@ -106,7 +106,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   lifetime.wait(scope, attrs.EmitDelay)
 
   if useDuration and not ctx.constant then
-    utility.forceEmit(ref, true)
+    utility.forceEmit(ref, true, scope.clock)
     attr.trigger(ref, "Enabled", true)
 
     utility.onCancel(scope, function()
@@ -412,7 +412,13 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
 
   lifetime.awaitJoin(outstanding)
 
-  lifetime.wait(scope, attrs.DestroyDelay)
+  -- on the effect's clock, and over once it halts, since a halted clock never
+  -- moves again
+  if attrs.DestroyDelay > 0 then
+    tween.timer(attrs.DestroyDelay, function(deltaTime)
+      return if scope.clock.halted then nil else deltaTime
+    end, nil, scope)
+  end
 end
 
 -- the template part is authored on the bolt, so a preview of a piece starts
