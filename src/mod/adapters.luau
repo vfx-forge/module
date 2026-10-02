@@ -5,7 +5,12 @@ local lifetime = require("@mod/lifetime")
 -- the time rows retime scales on an emitter, which a speed above 1 scales here
 local TIME_ROWS = retime.PROPERTY_UNITS.ParticleEmitter
 
-type Original = { users: number, rows: { [string]: any } }
+type Original = {
+  users: number,
+  retimers: number,
+  rows: { [string]: any }?,
+  reapply: { [() -> ()]: boolean },
+}
 
 type Flight = {
   part: any,
@@ -18,7 +23,9 @@ local adapters = {}
 
 -- what an emitter's time rows held before any emit retimed them, kept while
 -- one still has them retimed, so the last to let go puts them back however
--- many emits of one in-place emitter overlap
+-- many emits of one in-place emitter overlap. the emits sharing an emitter
+-- are counted here too, so one leaving makes the rest write their own
+-- TimeScale again and only the last puts the authored one back
 local ORIGINALS = setmetatable({} :: { [any]: Original }, { __mode = "k" })
 
 -- how an adapter makes the instances it adds, replaceable so a spec can stand
@@ -35,53 +42,66 @@ local function scaled(v: any, f: number): any
   return v * f
 end
 
-local function retimeRows(obj: any, by: number, held: boolean): boolean
-  local original = ORIGINALS[obj]
+local function retimeRows(original: Original, obj: any, by: number, held: boolean): boolean
+  local rows = original.rows
 
-  if original == nil then
+  if rows == nil then
     if by == 1 then
       return held
     end
 
-    local rows = {}
+    rows = {}
 
     for name in TIME_ROWS do
       rows[name] = obj[name]
     end
 
-    original = { users = 0, rows = rows }
-    ORIGINALS[obj] = original
+    original.rows = rows
   end
 
   if not held then
-    original.users += 1
+    original.retimers += 1
   end
 
   for name, unit in TIME_ROWS do
-    obj[name] = scaled(original.rows[name], retime.factorOf(unit, by) :: number)
+    obj[name] = scaled(rows[name], retime.factorOf(unit, by) :: number)
   end
 
   return true
 end
 
-local function releaseRows(obj: any)
+local function leave(obj: any, reapply: () -> (), held: boolean, timeScale: number)
   local original = ORIGINALS[obj]
 
   if original == nil then
     return
   end
 
+  original.reapply[reapply] = nil
   original.users -= 1
 
+  if held then
+    original.retimers -= 1
+
+    if original.retimers == 0 and original.rows ~= nil then
+      for name, value in original.rows do
+        obj[name] = value
+      end
+
+      original.rows = nil
+    end
+  end
+
   if original.users > 0 then
+    for again in table.clone(original.reapply) do
+      again()
+    end
+
     return
   end
 
   ORIGINALS[obj] = nil
-
-  for name, value in original.rows do
-    obj[name] = value
-  end
+  obj.TimeScale = timeScale
 end
 
 -- a particle emitter runs at its TimeScale times the effect's clock: up to 1
@@ -91,8 +111,15 @@ end
 -- go back when the effect ends
 function adapters.particle(scope: lifetime.effect, obj: any, authored: number): (authored: number) -> ()
   local timeline = scope.clock
-  local retimedBy = 1
+  local retimedBy: number? = 1
   local held = false
+
+  local original = ORIGINALS[obj]
+
+  if original == nil then
+    original = { users = 0, retimers = 0, rows = nil, reapply = {} }
+    ORIGINALS[obj] = original
+  end
 
   local function apply()
     local total = math.min(authored, 1) * clock.factorOf(timeline)
@@ -106,22 +133,30 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
     end
 
     retimedBy = by
-    held = retimeRows(obj, by, held)
+    held = retimeRows(original, obj, by, held)
   end
+
+  local function again()
+    retimedBy = nil
+    apply()
+  end
+
+  original.users += 1
+  original.reapply[again] = true
 
   apply()
 
   lifetime.hold(scope, clock.watch(timeline, apply))
 
   lifetime.hold(scope, function()
-    obj.TimeScale = math.min(authored, 1)
-
-    if held then
-      releaseRows(obj)
-    end
+    leave(obj, again, held, math.min(authored, 1))
   end)
 
   return function(value: number)
+    if value ~= value then
+      return
+    end
+
     authored = value
     apply()
   end
@@ -151,8 +186,9 @@ end
 
 -- a sound plays at its PlaybackSpeed times the effect's clock, tape style, so
 -- its pitch follows, and pauses while the clock stands still. answers what
--- sets the authored PlaybackSpeed
-function adapters.sound(scope: lifetime.effect, clone: any, authored: number): (authored: number) -> ()
+-- sets the authored PlaybackSpeed, and what lets the clock go once the sound
+-- is done with
+function adapters.sound(scope: lifetime.effect, clone: any, authored: number): ((authored: number) -> (), () -> ())
   local timeline = scope.clock
   local paused = false
 
@@ -172,18 +208,29 @@ function adapters.sound(scope: lifetime.effect, clone: any, authored: number): (
 
     if paused then
       paused = false
-      clone:Resume()
+
+      -- a sound that ended by itself while a pause was pending has nothing to resume
+      if clone.IsPaused then
+        clone:Resume()
+      end
     end
   end
 
   apply()
 
-  lifetime.hold(scope, clock.watch(timeline, apply))
+  local stop = clock.watch(timeline, apply)
+
+  lifetime.hold(scope, stop)
 
   return function(value: number)
+    if value ~= value then
+      return
+    end
+
     authored = value
     apply()
-  end
+  end,
+    stop
 end
 
 -- the force that leaves a launched part falling under gravity times the
@@ -215,10 +262,12 @@ end
 -- debris flies under the engine's physics, which has no time scale: a part is
 -- launched at the clock's speed and falls under its square, a change in speed
 -- rescales every part in flight, and a pause anchors each one and gives it back
--- its velocity on resume. answers what files a part once it is launched
-function adapters.debris(scope: lifetime.effect): (part: any) -> ()
+-- its velocity on resume. answers what files a part once it is launched, and
+-- what the effect calls after it writes one's Size
+function adapters.debris(scope: lifetime.effect): ((part: any) -> (), (part: any) -> ())
   local timeline = scope.clock
   local flights: { Flight } = {}
+  local byPart: { [any]: Flight } = {}
 
   -- the last factor above 0 the parts flew at
   local launched = clock.factorOf(timeline)
@@ -269,11 +318,12 @@ function adapters.debris(scope: lifetime.effect): (part: any) -> ()
     end)
   )
 
-  return function(part: any)
+  local function launch(part: any)
     local flight: Flight = { part = part }
     local factor = clock.factorOf(timeline)
 
     table.insert(flights, flight)
+    byPart[part] = flight
 
     if factor == 0 then
       flight.linear = part.AssemblyLinearVelocity * moving
@@ -283,13 +333,29 @@ function adapters.debris(scope: lifetime.effect): (part: any) -> ()
       return
     end
 
-    if factor ~= 1 then
-      part.AssemblyLinearVelocity *= factor
-      part.AssemblyAngularVelocity *= factor
+    -- by what the others fly at, which the watcher rescales from, so a
+    -- change this frame the watcher has yet to tell keeps every part in step
+    if moving ~= 1 then
+      part.AssemblyLinearVelocity *= moving
+      part.AssemblyAngularVelocity *= moving
     end
 
-    pull(flight, factor)
+    pull(flight, moving)
   end
+
+  -- a part whose size the effect has written weighs something else, so the
+  -- force that leaves gravity at the clock's square is worked out again
+  local function resized(part: any)
+    local flight = byPart[part]
+
+    if flight == nil or flight.force == nil or clock.factorOf(timeline) == 0 then
+      return
+    end
+
+    pull(flight, moving)
+  end
+
+  return launch, resized
 end
 
 return adapters

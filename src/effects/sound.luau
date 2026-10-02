@@ -231,6 +231,7 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
   -- what it plays at is that times the clock, set once it plays
   local currentSpeed = clone.PlaybackSpeed
   local setPlayback = nil :: ((speed: number) -> ())?
+  local releasePlayback = nil :: (() -> ())?
 
   clone.Volume = volume.at(0)
 
@@ -279,7 +280,7 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     clone:Destroy()
   else
     clone:Play()
-    setPlayback = adapters.sound(scope, clone, currentSpeed)
+    setPlayback, releasePlayback = adapters.sound(scope, clone, currentSpeed)
   end
 
   if partClone then
@@ -303,6 +304,12 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
         then deltaTime * currentSpeed
         else nil
     end, speedTween, scope)
+  end
+
+  -- the clone goes when this returns, so the clock has nothing more to tell it
+  if releasePlayback then
+    releasePlayback()
+    setPlayback = nil
   end
 
   return speedTween

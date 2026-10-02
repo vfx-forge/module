@@ -137,7 +137,7 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
     scaleTween = tween.fromParams(utility.linear_bezier, timeScale.duration, function(_, deltaTime, elapsed)
       local v = timeScale.at(elapsed)
 
-      if typeof(v) == "number" then
+      if typeof(v) == "number" and v == v then
         authored = v
         setTimeScale(v)
       end

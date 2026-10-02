@@ -190,20 +190,62 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("the particle adapter with a neighbour", function()
+    test("one of two emits ending leaves the other's TimeScale, and the last puts the authored back", function()
+      local first, a = effect()
+      local second, b = effect()
+      local obj = emitter()
+
+      adapters.particle(a, obj, 1)
+      adapters.particle(b, obj, 1)
+
+      clock.setSpeed(second.clock, 0.5)
+      scheduler.frame(0)
+
+      done(first)
+
+      expect(obj.TimeScale).toBe(0.5)
+
+      done(second)
+
+      expect(obj.TimeScale).toBe(1)
+    end)
+
+    test("a NaN TimeScale is ignored", function()
+      local emit, fx = effect()
+      local obj = emitter()
+
+      local set = adapters.particle(fx, obj, 0.5)
+
+      set(0 / 0)
+
+      expect(obj.TimeScale).toBe(0.5)
+      expect(obj.Rate).toBe(10)
+
+      done(emit)
+    end)
+  end)
+
   harness.describe("the sound adapter", function()
     local function sound()
       local log = {}
+      local clone
 
-      return {
+      clone = {
         PlaybackSpeed = 1,
+        IsPaused = false,
         log = log,
         Pause = function()
+          clone.IsPaused = true
           table.insert(log, "pause")
         end,
         Resume = function()
+          clone.IsPaused = false
           table.insert(log, "resume")
         end,
       }
+
+      return clone
     end
 
     test("plays at its speed times the clock, so the pitch follows", function()
@@ -238,6 +280,56 @@ harness.suite(function()
 
       expect(clone.log).toEqual({ "pause", "resume" })
       expect(clone.PlaybackSpeed).toBe(1)
+
+      done(emit)
+    end)
+  end)
+
+  harness.describe("the sound adapter once released", function()
+    test("a released sound is left alone by the clock", function()
+      local emit, fx = effect()
+      local log = {}
+      local clone = {
+        PlaybackSpeed = 1,
+        IsPaused = false,
+        Pause = function()
+          table.insert(log, "pause")
+        end,
+        Resume = function()
+          table.insert(log, "resume")
+        end,
+      }
+
+      local _, release = adapters.sound(fx, clone, 1)
+
+      release()
+      at(emit, 2)
+
+      expect(clone.PlaybackSpeed).toBe(1)
+
+      done(emit)
+    end)
+
+    test("a sound that ended by itself during a pause is not resumed", function()
+      local emit, fx = effect()
+      local log = {}
+      local clone = {
+        PlaybackSpeed = 1,
+        IsPaused = false,
+        Pause = function() end,
+        Resume = function()
+          table.insert(log, "resume")
+        end,
+      }
+
+      adapters.sound(fx, clone, 1)
+
+      clock.setPaused(emit.clock, true)
+      scheduler.frame(0)
+      clock.setPaused(emit.clock, false)
+      scheduler.frame(0)
+
+      expect(#log).toBe(0)
 
       done(emit)
     end)
@@ -347,6 +439,26 @@ harness.suite(function()
         expect(flying.Anchored).toBe(false)
         expect(flying.AssemblyLinearVelocity).toEqual(Vector3.new(0, 5, 2))
         expect(flying.AssemblyAngularVelocity).toEqual(Vector3.new(0.5, 0, 0))
+
+        done(emit)
+      end)
+    end)
+
+    test("a part whose mass changes keeps its effective gravity once it is told", function()
+      withForces(function()
+        local emit, fx = effect()
+        local flying = part()
+
+        at(emit, 0.5)
+
+        local launch, resized = adapters.debris(fx)
+
+        launch(flying)
+
+        flying.AssemblyMass = 1
+        resized(flying)
+
+        expect(near(made[2].Force.Y, 1 * 100 * 0.75)).toBe(true)
 
         done(emit)
       end)

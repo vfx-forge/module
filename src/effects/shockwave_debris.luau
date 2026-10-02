@@ -296,7 +296,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
   lifetime.wait(scope, attrs.EmitDelay)
 
   -- the flight follows the effect's clock through the launch and a force
-  local launch = adapters.debris(scope)
+  local launch, resized = adapters.debris(scope)
 
   for _ = 1, count do
     local iref = #partData ~= 0 and partData[rng:NextInteger(1, #partData)]
@@ -381,6 +381,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
         if typeof(factor) == "Vector3" then
           currentFactor = factor
           part.Size = size * factor
+          resized(realPart)
         end
 
         return deltaTime
@@ -506,6 +507,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
             if typeof(factor) == "Vector3" and factor ~= currentFactor then
               currentFactor = factor
               part.Size = size * factor
+              resized(realPart)
             end
           end
 
