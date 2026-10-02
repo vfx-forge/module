@@ -246,42 +246,19 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
 
   local runLength = ctx.duration :: number
 
-  local speed = attrs.Speed
+  -- a Speed resting at 0 for good ends every stepper, and with them the
+  -- run, rather than holding the parts out of the cache for ever. a speed
+  -- that is merely 0 for now, as a queue reads during a leading delay, does
+  -- not
+  local timeline = scope.clock
 
-  local speedTween
-
-  local currentSpeed = speed.at(0)
-
-  -- a speed of zero advances no stepper's elapsed, so nothing would ever reach
-  -- its end: the hold would never return and the parts would never come back to
-  -- the cache.
-  --
-  -- deliberately WITHOUT the `elapsed > 0` term the other effects carry. theirs
-  -- is safe because they hand the speed tween to tween.timer as its awaitTween
-  -- veto; these do not, and tween.after cannot take one at all. every counter is
-  -- called with elapsed == 0 on its first frame, so with that term a speed that
-  -- is merely zero FOR NOW, which is what a queue reads during a leading delay,
-  -- tears every stepper down on frame one and never rebuilds them
-  local function step(deltaTime: number, elapsed: number): number?
-    if currentSpeed > 0 or (speedTween ~= nil and speedTween.Connected) then
-      return deltaTime * currentSpeed
-    end
-
-    return nil
+  local function step(deltaTime: number): number?
+    return if timeline.halted then nil else deltaTime
   end
 
   lifetime.wait(scope, attrs.EmitDelay)
 
-  -- the speed tween is the clock itself, so it is the one stepper that does not
-  -- scale by it
-  if speed.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
-      currentSpeed = speed.at(elapsed)
-      return deltaTime
-    end)
-
-    lifetime.hold(scope, speedTween)
-  end
+  lifetime.speed(scope, attrs.Speed)
 
   -- a piece counts from its dwell until its exit and its on-finish emit are
   -- counted in, and a nested emit until it ends, so the wait at the end sees
@@ -392,7 +369,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
           part.CFrame = CFrame.new(currentOffset) * rotCF
         end
 
-        return step(deltaTime, elapsed)
+        return step(deltaTime)
       end)
 
       lifetime.hold(scope, offsetTween)
@@ -409,7 +386,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
           part.Size = size * factor
         end
 
-        return step(deltaTime, elapsed)
+        return step(deltaTime)
       end)
 
       lifetime.hold(scope, sizeTween)
@@ -454,7 +431,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
         return nil :: any
       end
 
-      return step(deltaTime, elapsed)
+      return step(deltaTime)
     end, function()
       task.spawn(function()
         -- a despawn that throws still lands its piece, or the emit would wait
@@ -529,7 +506,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
                   return nil
                 end
 
-                return step(deltaTime, elapsed)
+                return step(deltaTime)
               end, nil, exited)
             )
           else
@@ -546,7 +523,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
                   part.Transparency = v
                 end
 
-                return step(deltaTime, elapsed)
+                return step(deltaTime)
               end)
             )
           end
@@ -565,8 +542,8 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
 
   -- the hold has to run on the same clock the dwells do, or a speed below one
   -- stretches them past it and the scope tears down mid dwell
-  tween.timer(runLength, function(deltaTime, elapsed)
-    return step(deltaTime, elapsed)
+  tween.timer(runLength, function(deltaTime)
+    return step(deltaTime)
   end, nil, scope)
 
   lifetime.awaitJoin(outstanding)

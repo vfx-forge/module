@@ -521,4 +521,118 @@ harness.suite(function()
       expect(clock.uniform).toBe(true)
     end)
   end)
+  harness.describe("an authored Speed", function()
+    -- a Speed row as the reader hands it over: a ramp from `from` to `to`
+    -- over `duration`, or a constant when there is no duration
+    local function row(from: number, to: number?, duration: number?)
+      return {
+        animated = duration ~= nil,
+        duration = duration or 0,
+        at = function(elapsed: number)
+          if duration == nil or to == nil then
+            return from
+          end
+
+          return from + (to - from) * math.clamp(elapsed / duration, 0, 1)
+        end,
+      }
+    end
+
+    test("a constant Speed scales the effect's steps from the call on", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local seen = counting(fx)
+
+      lifetime.speed(fx, row(2))
+      scheduler.frame(1)
+
+      expect(seen.total).toBe(2)
+      expect(fx.clock.halted).toBe(false)
+
+      lifetime.clear(emit)
+      settle()
+    end)
+
+    test("a Speed at or below 0 holds the effect and halts it, and never runs time backwards", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local seen = counting(fx)
+
+      lifetime.speed(fx, row(-1))
+      scheduler.frame(1)
+
+      expect(fx.clock.speed).toBe(0)
+      expect(seen.total).toBe(0)
+      expect(fx.clock.halted).toBe(true)
+
+      lifetime.clear(emit)
+      settle()
+    end)
+
+    test("a ramp runs on the clock above the effect's, so it never scales itself", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      clock.setSpeed(emit.clock, 0.5)
+      scheduler.frame(0)
+
+      lifetime.speed(fx, row(1, 3, 1))
+
+      -- half a second of the ramp per second of the frame
+      scheduler.frame(1)
+      expect(fx.clock.speed).toBe(2)
+
+      scheduler.frame(1)
+      expect(fx.clock.speed).toBe(3)
+
+      lifetime.clear(emit)
+      settle()
+    end)
+
+    test("a ramp is sampled ahead of the effect's later steps on the frame it moves", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      clock.setSpeed(emit.clock, 0.5)
+      scheduler.frame(0)
+
+      lifetime.speed(fx, row(1, 3, 2))
+
+      local seen = counting(fx)
+
+      scheduler.frame(1)
+
+      -- the ramp stands at 1.5 after half a second of the emit's clock, and
+      -- the step after it is handed the frame at 0.5 times that
+      expect(seen.total).toBe(0.75)
+
+      lifetime.clear(emit)
+      settle()
+    end)
+
+    test("a ramp that ends at 0 halts once it is done, and 0 partway does not", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+
+      lifetime.speed(fx, {
+        animated = true,
+        duration = 2,
+        at = function(elapsed: number)
+          return if elapsed < 1 then 0 else (if elapsed < 2 then 1 else 0)
+        end,
+      })
+
+      scheduler.frame(0.5)
+      expect(fx.clock.halted).toBe(false)
+
+      scheduler.frame(1)
+      expect(fx.clock.halted).toBe(false)
+
+      scheduler.frame(1)
+      expect(fx.clock.halted).toBe(true)
+
+      lifetime.clear(emit)
+      settle()
+    end)
+  end)
 end)

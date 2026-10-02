@@ -95,18 +95,8 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
 
   lifetime.wait(scope, attrs.EmitDelay)
 
-  local speed = attrs.SpinSpeed
-  local speedTween
-  local currentSpeed = speed.at(0)
-
-  if speed.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
-      currentSpeed = speed.at(elapsed)
-      return deltaTime
-    end)
-
-    lifetime.hold(scope, speedTween)
-  end
+  -- the spin's speed is its clock, so the scale runs on it too
+  lifetime.speed(scope, attrs.SpinSpeed)
 
   local originalPivot = ref:GetPivot()
   local originalScale = ref:GetScale()
@@ -154,10 +144,8 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
 
     ref:PivotTo(cf)
 
-    return if currentSpeed > 0 or (speedTween ~= nil and elapsed > 0 and speedTween.Connected)
-      then deltaTime * currentSpeed
-      else nil
-  end, speedTween, scope, scope.depth)
+    return if scope.clock.halted then nil else deltaTime
+  end, nil, scope, scope.depth)
 end
 
 return spin

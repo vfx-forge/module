@@ -358,6 +358,48 @@ function lifetime.wait(fx: effect, seconds: number): number
   return waited
 end
 
+-- an authored Speed row as the effect's clock. its track runs on the clock
+-- above the effect's, so a speed never scales itself, and is sampled ahead of
+-- every step the effect adds after this call, so those see the frame's speed
+-- on the frame it changes. a speed is never below zero, and one that rests at
+-- or below it for good halts the effect's timers
+function lifetime.speed(fx: effect, row: any)
+  local timeline = fx.clock
+  local first = row.at(0)
+
+  clock.setSpeed(timeline, if typeof(first) == "number" then math.max(first, 0) else 1)
+  clock.refresh(timeline)
+
+  if not row.animated then
+    timeline.halted = timeline.speed <= 0
+    return
+  end
+
+  local duration = row.duration
+  local elapsed = 0
+  local handle: scheduler.Handle
+
+  handle = scheduler.add("compute", function(deltaTime: number)
+    elapsed += deltaTime
+
+    local v = row.at(math.min(elapsed, duration))
+
+    if typeof(v) == "number" then
+      clock.setSpeed(timeline, math.max(v, 0))
+      clock.refresh(timeline)
+    end
+
+    if elapsed < duration then
+      return
+    end
+
+    handle:Disconnect()
+    timeline.halted = timeline.speed <= 0
+  end, 0, fx, false, timeline.parent)
+
+  lifetime.hold(fx, handle)
+end
+
 function lifetime.run(fx: effect, body: (effect) -> ())
   if fx.state ~= RUNNING then
     return

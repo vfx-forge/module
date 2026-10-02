@@ -1,7 +1,6 @@
 local RunService = game:GetService("RunService")
 
 local knob = require("@mod/knob")
-local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
@@ -256,24 +255,15 @@ function camera_shake.emit(ctx: reader.Ctx, attrs: any)
     return elapsed
   end
 
-  local speed = attrs.Speed
-  local currentSpeed = speed.at(0)
-
-  if speed.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, sampledAt)
-        currentSpeed = speed.at(sampledAt)
-        return deltaTime
-      end)
-    )
-  end
-
+  -- the shake's own time is the effect's clock, so a pause holds the camera
+  -- where the shake has it
   lifetime.step(scope, function(deltaTime: number)
-    elapsed += deltaTime * currentSpeed
+    elapsed += deltaTime
   end)
 
   lifetime.wait(scope, attrs.EmitDelay)
+
+  lifetime.speed(scope, attrs.Speed)
 
   local active: Active = {
     shake = shake,
