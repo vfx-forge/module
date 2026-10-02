@@ -115,7 +115,16 @@ function clock.factorOf(c: Clock): number
   end
 
   local parent = c.parent
-  local above = if parent ~= nil then clock.throughOf(parent) else 1
+  local above = 1
+
+  if parent ~= nil then
+    if parent.frame ~= clock.frame then
+      clock.factorOf(parent)
+    end
+
+    above = parent.through
+  end
+
   local f = multiplierOf(c) * above
 
   c.factor = f
@@ -130,15 +139,6 @@ function clock.factorOf(c: Clock): number
   end
 
   return f
-end
-
--- the factor the frame hands a clock hanging from this one as its parent's
-function clock.throughOf(c: Clock): number
-  if c.frame ~= clock.frame then
-    clock.factorOf(c)
-  end
-
-  return c.through
 end
 
 -- the factor the frame has for the clock kept before its owner changes it, so
