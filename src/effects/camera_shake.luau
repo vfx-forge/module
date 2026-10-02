@@ -1,6 +1,7 @@
 local RunService = game:GetService("RunService")
 
 local knob = require("@mod/knob")
+local clock = require("@mod/clock")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
@@ -22,7 +23,7 @@ type Active = {
   ref: RayValue,
   falloff: number,
   thread: thread,
-  timeline: any,
+  timeline: clock.Clock,
   done: boolean,
 }
 
@@ -145,6 +146,7 @@ local function apply()
     if active.timeline.halted then
       isDone = true
     end
+
     local origin = active.ref:FindFirstAncestorOfClass("Attachment") or active.ref:FindFirstAncestorWhichIsA("BasePart")
 
     if origin then

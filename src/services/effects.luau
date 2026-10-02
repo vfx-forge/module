@@ -198,11 +198,11 @@ local SOURCES = setmetatable({} :: { [lifetime.effect]: { [string]: {} } }, { __
 -- piece (each step's name and place among its siblings, which every clone of
 -- one template keeps), so a host of many pieces is scaled once per controller
 -- of its template rather than once per piece
-local function sourceOf(host: lifetime.effect, from: string, piece: Instance?, obj: Instance): {}
+local function sourceOf(host: lifetime.effect, from: string, site: Instance?, obj: Instance): {}
   local steps = { from }
   local current = obj
 
-  while current ~= nil and current ~= piece do
+  while current ~= nil and current ~= site do
     local parent = current.Parent
     local place = if parent ~= nil then table.find(parent:GetChildren(), current) else 0
 
@@ -246,12 +246,12 @@ local function placementOf(
   parents: { Instance }
 ): Placement
   local regions: { [Instance]: Region } = {}
-  local piece = list[1].Parent
+  local site = list[1].Parent
 
   -- the instance a nested emit's children sit under hosts the effect that
   -- started it: that effect's clock is its own, and the emit's is below it
   if host ~= nil then
-    local anchor = parentOf(parents, piece)
+    local anchor = parentOf(parents, site)
 
     if anchor ~= nil then
       regions[anchor] = {
@@ -326,7 +326,7 @@ local function placementOf(
     end
 
     if host ~= nil then
-      KEYS[fx] = sourceOf(host, from, piece, obj)
+      KEYS[fx] = sourceOf(host, from, site, obj)
     end
   end
 
