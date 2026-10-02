@@ -5,6 +5,10 @@ local lifetime = require("@mod/lifetime")
 
 local controller = {}
 
+-- how many running controllers scale each clock under each shared key, so the
+-- last of them takes that scale off
+local HOLDERS = setmetatable({} :: { [any]: { [clock.Clock]: number } }, { __mode = "k" })
+
 controller.id = "controller"
 controller.display = { name = "Controller", icon = "controller", order = 90 }
 controller.classifier = "RayValue.Controller"
@@ -61,7 +65,8 @@ end
 
 function controller.emit(ctx: reader.Ctx, attrs: any)
   local scope = ctx.scope
-  local region = scope.effects.regionOf(scope)
+  local region, shared = scope.effects.regionOf(scope)
+  local key = shared or scope
   local mode = attrs.Scope
 
   -- a Global controller runs on real time that only a global pause stops,
@@ -74,10 +79,27 @@ function controller.emit(ctx: reader.Ctx, attrs: any)
 
   lifetime.wait(scope, attrs.EmitDelay)
 
+  local holders = HOLDERS[key]
+
+  if holders == nil then
+    holders = {}
+    HOLDERS[key] = holders
+  end
+
+  for _, target in targets do
+    holders[target] = (holders[target] or 0) + 1
+  end
+
   -- taken off on end, on a clear and at deinit, so nothing stays slowed
   lifetime.hold(scope, function()
     for _, target in targets do
-      clock.unscale(target, scope)
+      local left = holders[target] - 1
+
+      holders[target] = if left > 0 then left else nil
+
+      if left <= 0 then
+        clock.unscale(target, key)
+      end
     end
   end)
 
@@ -88,7 +110,7 @@ function controller.emit(ctx: reader.Ctx, attrs: any)
     end
 
     for _, target in targets do
-      clock.scale(target, scope, math.max(v, 0))
+      clock.scale(target, key, math.max(v, 0))
     end
   end)
 

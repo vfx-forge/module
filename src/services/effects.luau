@@ -150,75 +150,102 @@ local function envOf(emit: lifetime.emit): types.EmitEnv
   return setmetatable(env, ENV) :: any
 end
 
--- every root's scan is taken before anything runs, so the clocks a controller
--- scales stand before the first effect under it starts. `host` is the effect
--- a nested emit was started by, and the instance its children sit under is
--- that effect's own
-local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effect?, ...: Instance)
-  local shared: reader.Shared = { unc = {}, ref = {} }
-
-  local legacyScale = 1
-
-  local list = { ... }
-  local modules: { registry.Module? } = table.create(#list)
-  local scans: { { registry.Hit } } = table.create(#list)
-
-  -- the instances a controller sits under, when any does. compared with ==
-  -- rather than looked up as keys, since a host hands back an equal instance
-  -- for a parent, not always the same value
-  local parents: { Instance }? = nil
-
-  local function parentOf(inst: Instance?): Instance?
-    local around = parents
-
-    if around == nil or inst == nil then
-      return nil
-    end
-
-    for _, parent in around do
-      if parent == inst then
-        return parent
-      end
-    end
-
+-- the instances a controller sits under, grown by `obj` when it is one. compared
+-- with == rather than looked up as keys, since a host hands back an equal
+-- instance for a parent, not always the same value
+local function parentOf(parents: { Instance }?, inst: Instance?): Instance?
+  if parents == nil or inst == nil then
     return nil
   end
 
-  local function note(obj: Instance, effect: registry.Module?)
-    if effect == nil or effect.id ~= CONTROLLER then
-      return
-    end
-
-    local parent = obj.Parent
-
-    if parent == nil or parentOf(parent) ~= nil then
-      return
-    end
-
-    local around = parents or {}
-    table.insert(around, parent)
-    parents = around
-  end
-
-  for i, obj in list do
-    local module = registry.of(obj)
-
-    modules[i] = module
-    scans[i] = registry.scan(obj, module)
-
-    note(obj, module)
-
-    for _, hit in scans[i] do
-      note(hit.instance, hit.effect)
+  for _, parent in parents do
+    if parent == inst then
+      return parent
     end
   end
 
+  return nil
+end
+
+local function note(parents: { Instance }?, obj: Instance, effect: registry.Module?): { Instance }?
+  if effect == nil or effect.id ~= CONTROLLER then
+    return parents
+  end
+
+  local parent = obj.Parent
+
+  if parent == nil or parentOf(parents, parent) ~= nil then
+    return parents
+  end
+
+  local around = parents or {}
+  table.insert(around, parent)
+
+  return around
+end
+
+-- the scale keys of each host's nested controllers, by where each sits
+local SOURCES = setmetatable({} :: { [lifetime.effect]: { [string]: {} } }, { __mode = "k" })
+
+-- the key a controller under a nested emit scales with, shared by every
+-- piece's copy of it: keyed by the host and by where the copy sits under its
+-- piece (each step's name and place among its siblings, which every clone of
+-- one template keeps), so a host of many pieces is scaled once per controller
+-- of its template rather than once per piece
+local function sourceOf(host: lifetime.effect, from: string, piece: Instance?, obj: Instance): {}
+  local steps = { from }
+  local current = obj
+
+  while current ~= nil and current ~= piece do
+    local parent = current.Parent
+    local place = if parent ~= nil then table.find(parent:GetChildren(), current) else 0
+
+    table.insert(steps, `{current.Name}#{place}`)
+    current = parent
+  end
+
+  local path = table.concat(steps, "/")
+  local keys = SOURCES[host]
+
+  if keys == nil then
+    keys = {}
+    SOURCES[host] = keys
+  end
+
+  local key = keys[path]
+
+  if key == nil then
+    key = {}
+    keys[path] = key
+  end
+
+  return key
+end
+
+-- each nested controller's scale key, keyed by its effect until it takes it
+local KEYS = setmetatable({} :: { [lifetime.effect]: {} }, { __mode = "k" })
+
+-- where the effects of one emit hang when a controller is among them: built
+-- only then, so an emit with none pays for none of it
+type Placement = {
+  clockFor: (obj: Instance, effect: registry.Module?) -> clock.Clock?,
+  claim: (fx: lifetime.effect, obj: Instance) -> (),
+}
+
+local function placementOf(
+  emit: lifetime.emit,
+  host: lifetime.effect?,
+  from: string,
+  list: { Instance },
+  parents: { Instance }
+): Placement
   local regions: { [Instance]: Region } = {}
+  local piece = list[1].Parent
 
   -- the instance a nested emit's children sit under hosts the effect that
   -- started it: that effect's clock is its own, and the emit's is below it
   if host ~= nil then
-    local anchor = parentOf(list[1].Parent)
+    local anchor = parentOf(parents, piece)
 
     if anchor ~= nil then
       regions[anchor] = {
@@ -236,7 +263,7 @@ local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effec
     local current = inst.Parent
 
     while current ~= nil do
-      local parent = parentOf(current)
+      local parent = parentOf(parents, current)
 
       if parent ~= nil then
         return parent
@@ -268,17 +295,13 @@ local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effec
   -- the clock an effect on this instance hangs from: the emit's own unless a
   -- controller's region reaches it. a controller runs above its own region
   local function clockFor(obj: Instance, effect: registry.Module?): clock.Clock?
-    if parents == nil then
-      return nil
-    end
-
     if effect ~= nil and effect.id == CONTROLLER then
-      local parent = parentOf(obj.Parent)
+      local parent = parentOf(parents, obj.Parent)
 
       return if parent ~= nil then regionAt(parent).above else nil
     end
 
-    local hosted = parentOf(obj)
+    local hosted = parentOf(parents, obj)
 
     if hosted ~= nil then
       return regionAt(hosted).here
@@ -289,85 +312,141 @@ local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effec
     return if outer ~= nil then regionAt(outer).below else nil
   end
 
-  local function dispatchInto(target: lifetime.emit, obj: Instance, effectDepth: number, effect: registry.Module?)
-    local fx = lifetime.effect(target, effectDepth, effects, clockFor(obj, effect))
+  local function claim(fx: lifetime.effect, obj: Instance)
+    local parent = parentOf(parents, obj.Parent)
 
-    if effect ~= nil and effect.id == CONTROLLER then
-      local parent = parentOf(obj.Parent)
-
-      if parent ~= nil then
-        REGIONS[fx] = regionAt(parent)
-      end
+    if parent ~= nil then
+      REGIONS[fx] = regionAt(parent)
     end
 
-    lifetime.run(fx, function(scope)
-      emitters.dispatch(obj, scope, shared, legacyScale, effect)
-    end)
+    if host ~= nil then
+      KEYS[fx] = sourceOf(host, from, piece, obj)
+    end
   end
 
-  local function emitDescendants(target: lifetime.emit, obj: Instance, baseDepth: number, found: { registry.Hit })
-    if #found == 0 then
-      return
+  return { clockFor = clockFor, claim = claim }
+end
+
+local function dispatchInto(
+  target: lifetime.emit,
+  obj: Instance,
+  effectDepth: number,
+  effect: registry.Module?,
+  shared: reader.Shared,
+  placement: Placement?
+)
+  local fx = lifetime.effect(target, effectDepth, effects, placement and placement.clockFor(obj, effect))
+
+  if placement ~= nil and effect ~= nil and effect.id == CONTROLLER then
+    placement.claim(fx, obj)
+  end
+
+  lifetime.run(fx, function(scope)
+    emitters.dispatch(obj, scope, shared, 1, effect)
+  end)
+end
+
+-- a hit's depth is how many ancestors lie between it and the root, and a hit
+-- under an ancestor excluded from emitting is left alone. the walk caches
+-- every ancestor it passes, so a tree of many hits walks each branch once. a
+-- hit with no effect is a legacy tween child, which the dispatcher drives
+-- without a module
+local function emitDescendants(
+  target: lifetime.emit,
+  obj: Instance,
+  baseDepth: number,
+  found: { registry.Hit },
+  shared: reader.Shared,
+  placement: Placement?
+)
+  if #found == 0 then
+    return
+  end
+
+  local skipCache: { [Instance]: boolean } = {}
+  local depthCache: { [Instance]: number } = {}
+
+  skipCache[obj] = false
+  depthCache[obj] = baseDepth
+
+  for _, hit in found do
+    local desc = hit.instance
+    local ancestors = {}
+    local current = desc.Parent
+
+    while depthCache[current] == nil do
+      table.insert(ancestors, current)
+      current = current.Parent
     end
 
-    local skipCache: { [Instance]: boolean } = {}
-    local depthCache: { [Instance]: number } = {}
+    local shouldSkip = skipCache[current]
+    local currentDepth = depthCache[current]
 
-    skipCache[obj] = false
-    depthCache[obj] = baseDepth
+    for i = #ancestors, 1, -1 do
+      local ancestor = ancestors[i]
 
-    -- a hit's depth is how many ancestors lie between it and the root, and a
-    -- hit under an ancestor excluded from emitting is left alone. the walk
-    -- caches every ancestor it passes, so a tree of many hits walks each
-    -- branch once. a hit with no effect is a legacy tween child, which the
-    -- dispatcher drives without a module
-    local function visit(desc: Instance, effect: registry.Module?)
-      local ancestors = {}
-      local current = desc.Parent
-
-      while depthCache[current] == nil do
-        table.insert(ancestors, current)
-        current = current.Parent
-      end
-
-      local shouldSkip = skipCache[current]
-      local currentDepth = depthCache[current]
-
-      for i = #ancestors, 1, -1 do
-        local ancestor = ancestors[i]
-
-        currentDepth += 1
-        depthCache[ancestor] = currentDepth
-
-        if not shouldSkip then
-          shouldSkip = ancestor:HasTag(utility.EMIT_EXCLUDE_TAG)
-        end
-
-        skipCache[ancestor] = shouldSkip
-      end
+      currentDepth += 1
+      depthCache[ancestor] = currentDepth
 
       if not shouldSkip then
-        dispatchInto(target, desc, depthCache[desc.Parent], effect)
+        shouldSkip = ancestor:HasTag(utility.EMIT_EXCLUDE_TAG)
       end
+
+      skipCache[ancestor] = shouldSkip
     end
 
-    for _, hit in found do
-      visit(hit.instance, hit.effect)
+    if not shouldSkip then
+      dispatchInto(target, desc, depthCache[desc.Parent], hit.effect, shared, placement)
     end
-  end
-
-  for i, obj in list do
-    dispatchInto(emit, obj, depth, modules[i])
-    emitDescendants(emit, obj, depth + 1, scans[i])
   end
 end
 
--- the region a controller scales, handed to it once
-function effects.regionOf(fx: lifetime.effect): Region?
-  local region = REGIONS[fx]
-  REGIONS[fx] = nil
+-- every root's scan is taken before anything runs, so the clocks a controller
+-- scales stand before the first effect under it starts. `host` is the effect
+-- a nested emit was started by, and the instance its children sit under is
+-- that effect's own; `from` tells a nested emit from an on-finish one
+local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effect?, from: string, ...: Instance)
+  local shared: reader.Shared = { unc = {}, ref = {} }
 
-  return region
+  local list = { ... }
+  local modules: { registry.Module? } = table.create(#list)
+  local scans: { { registry.Hit } } = table.create(#list)
+
+  local parents: { Instance }? = nil
+
+  for i, obj in list do
+    local module = registry.of(obj)
+    local found = registry.scan(obj, module)
+
+    modules[i] = module
+    scans[i] = found
+
+    parents = note(parents, obj, module)
+
+    for _, hit in found do
+      parents = note(parents, hit.instance, hit.effect)
+    end
+  end
+
+  local placement = if parents ~= nil then placementOf(emit, host, from, list, parents) else nil
+
+  for i, obj in list do
+    dispatchInto(emit, obj, depth, modules[i], shared, placement)
+    emitDescendants(emit, obj, depth + 1, scans[i], shared, placement)
+  end
+end
+
+-- the region a controller scales and the key it scales with, handed to it
+-- once. the key is nil for a controller no nested emit started, which scales
+-- with its own effect
+function effects.regionOf(fx: lifetime.effect): (Region?, {}?)
+  local region = REGIONS[fx]
+  local key = KEYS[fx]
+
+  REGIONS[fx] = nil
+  KEYS[fx] = nil
+
+  return region, key
 end
 
 function effects.emit(depth: number, ...: Instance): types.EmitEnv
@@ -378,7 +457,7 @@ function effects.emit(depth: number, ...: Instance): types.EmitEnv
 
   local emit = lifetime.emit(nil)
 
-  emitInto(emit, depth, nil, ...)
+  emitInto(emit, depth, nil, "", ...)
   lifetime.seal(emit)
 
   if not emit.done then
@@ -406,7 +485,13 @@ end
 
 -- a child emit is counted into the join it is given until it is done, so the
 -- effect that started it can keep its parts until the children under them end
-local function emitChildren(children: { Instance }, depth: number, parentScope: types.scope?, join: lifetime.join?)
+local function emitChildren(
+  children: { Instance },
+  depth: number,
+  parentScope: types.scope?,
+  join: lifetime.join?,
+  from: string
+)
   if not api_ref or not api_ref.setup then
     return
   end
@@ -418,7 +503,7 @@ local function emitChildren(children: { Instance }, depth: number, parentScope: 
   -- a nested emit runs on the clock of the effect that started it
   local emit = if parentScope then lifetime.emit(parentScope.emit, parentScope.clock) else lifetime.emit(nil)
 
-  emitInto(emit, depth, parentScope, table.unpack(children))
+  emitInto(emit, depth, parentScope, from, table.unpack(children))
   lifetime.seal(emit)
 
   if join then
@@ -427,7 +512,7 @@ local function emitChildren(children: { Instance }, depth: number, parentScope: 
 end
 
 function effects.emitNested(part: Instance, depth: number, parentScope: types.scope?, join: lifetime.join?)
-  emitChildren(part:GetChildren(), depth, parentScope, join)
+  emitChildren(part:GetChildren(), depth, parentScope, join, "")
 end
 
 function effects.emitFromFolder(
@@ -447,7 +532,7 @@ function effects.emitFromFolder(
     child.Parent = targetParent
   end
 
-  emitChildren(children, depth, parentScope, join)
+  emitChildren(children, depth, parentScope, join, folder.Name)
 end
 
 function effects.emitOnFinish(

@@ -492,6 +492,19 @@ function harness.make(class: string, parent: Instance?): Instance
   return inst
 end
 
+-- a clone that queries reach, as harness.make's instances are
+function harness.clone(inst: Instance): Instance
+  local copy = inst:Clone()
+
+  table.insert(pool, copy)
+
+  for _, desc in copy:GetDescendants() do
+    table.insert(pool, desc)
+  end
+
+  return copy
+end
+
 type Compound = {
   class: string?,
   name: string?,

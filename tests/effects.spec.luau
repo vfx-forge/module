@@ -446,6 +446,87 @@ harness.suite(function()
       end
     end)
 
+    -- a host that clones one template per piece and starts each piece's
+    -- nested emit, the way a mesh of many pieces or a ring's segments do
+    local function pieces(count: number, rules: { { scope: string, timeScale: number } }, seen: { [string]: number })
+      fresh()
+      registry.register(controller)
+
+      local template = harness.make("Folder")
+
+      for _, rule in rules do
+        local inst = harness.make("RayValue", template)
+
+        inst:AddTag("Controller")
+        inst:SetAttribute("Scope", rule.scope)
+        inst:SetAttribute("TimeScale", rule.timeScale)
+        inst:SetAttribute("EmitDuration", 10)
+      end
+
+      registry.register(module("starts", "Model", function(ctx: any)
+        local scope = ctx.scope
+        local children = lifetime.join(scope)
+
+        seen.host = 0
+
+        lifetime.step(scope, function(deltaTime: number)
+          seen.host += deltaTime
+        end)
+
+        for _ = 1, count do
+          local piece = harness.clone(template)
+
+          piece.Parent = ctx.ref
+          scope.effects.emitNested(piece, scope.depth + 1, scope, children)
+        end
+
+        lifetime.awaitJoin(children)
+      end, true))
+
+      return harness.make("Model")
+    end
+
+    test("pieces cloned from one template scale their host once per controller", function()
+      local seen = {}
+      local env = effects.emit(0, pieces(20, { { scope = "ParentAndDescendants", timeScale = 0.5 } }, seen))
+
+      measure(seen, 1)
+
+      expect(seen.host).toBe(0.5)
+
+      env:Clear()
+    end)
+
+    test("two controllers in one template still multiply, however many pieces", function()
+      local seen = {}
+      local rules = {
+        { scope = "ParentAndDescendants", timeScale = 0.5 },
+        { scope = "ParentAndDescendants", timeScale = 0.5 },
+      }
+
+      local env = effects.emit(0, pieces(20, rules, seen))
+
+      measure(seen, 1)
+
+      expect(seen.host).toBe(0.25)
+
+      env:Clear()
+    end)
+
+    test("a Global controller cloned into every piece scales the global clock once", function()
+      local seen = {}
+      local env = effects.emit(0, pieces(20, { { scope = "Global", timeScale = 0.5 } }, seen))
+
+      scheduler.frame(0)
+
+      expect(clock.effective()).toBe(0.5)
+
+      env:Clear()
+      scheduler.frame(0)
+
+      expect(clock.effective()).toBe(1)
+    end)
+
     test("several controllers on one scope multiply", function()
       local seen = {}
       local a, b, rule = siblings("Descendants", 0.5, seen)
