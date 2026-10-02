@@ -8,7 +8,7 @@ local retime = {}
 
 -- how a unit scales when time runs `factor` times faster: a span shrinks, a
 -- rate grows, an acceleration grows by the square, a length is untouched
-local function factorOf(unit: string, factor: number): number?
+function retime.factorOf(unit: string, factor: number): number?
   if unit == "seconds" then
     return 1 / factor
   end
@@ -136,7 +136,7 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
   local module = registry.of(obj)
 
   if module ~= nil then
-    retime.walk(obj, module, factor, factorOf, invFactor, function(source, name, key, f)
+    retime.walk(obj, module, factor, retime.factorOf, invFactor, function(source, name, key, f)
       utility.scaleAttribute(obj, f, key)
 
       if source == "property" and key == name then
@@ -151,7 +151,7 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
     end
 
     for name, unit in units do
-      local f = factorOf(unit, factor)
+      local f = retime.factorOf(unit, factor)
 
       if f ~= nil then
         scaleProperty(obj, name, f)

@@ -2,6 +2,7 @@ local knob = require("@mod/knob")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
+local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 
 local function always()
@@ -117,6 +118,9 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   local useDuration = duration > 0
 
+  -- read before a speed above 1 can retime it
+  local longest = ref.Lifetime.Max
+
   lifetime.wait(scope, attrs.EmitDelay)
 
   if useDuration then
@@ -124,17 +128,24 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   end
 
   local timeScale = props.TimeScale
-  local speedTween
+  local authored = timeScale.at(0)
+  local scaleTween
 
-  obj.TimeScale = timeScale.at(0)
+  local setTimeScale = adapters.particle(scope, obj, authored)
 
   if timeScale.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, timeScale.duration, function(_, deltaTime, elapsed)
-      obj.TimeScale = timeScale.at(elapsed)
+    scaleTween = tween.fromParams(utility.linear_bezier, timeScale.duration, function(_, deltaTime, elapsed)
+      local v = timeScale.at(elapsed)
+
+      if typeof(v) == "number" then
+        authored = v
+        setTimeScale(v)
+      end
+
       return deltaTime
     end)
 
-    lifetime.hold(scope, speedTween)
+    lifetime.hold(scope, scaleTween)
   end
 
   utility.onCancel(scope, function()
@@ -152,11 +163,13 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
     obj.Enabled = false
   end
 
-  tween.timer(ref.Lifetime.Max, function(deltaTime, elapsed)
-    return if obj.TimeScale > 0 or (elapsed > 0 and speedTween and speedTween.Connected)
-      then deltaTime * obj.TimeScale
-      else nil
-  end, speedTween, scope)
+  -- the clock carries the speed, so the particles' own time is that times
+  -- the TimeScale they were authored at
+  tween.timer(longest, function(deltaTime, elapsed)
+    local rate = math.min(authored, 1)
+
+    return if rate > 0 or (elapsed > 0 and scaleTween and scaleTween.Connected) then deltaTime * rate else nil
+  end, scaleTween, scope)
 end
 
 return particle

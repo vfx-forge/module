@@ -7,6 +7,7 @@ local tween = require("@mod/tween")
 local logger = require("@mod/logger")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
+local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
@@ -294,6 +295,9 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
   lifetime.wait(scope, attrs.EmitDelay)
 
+  -- the flight follows the effect's clock through the launch and a force
+  local launch = adapters.debris(scope)
+
   for _ = 1, count do
     local iref = #partData ~= 0 and partData[rng:NextInteger(1, #partData)]
 
@@ -429,6 +433,8 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     )
 
     part:ApplyAngularImpulse(part.AssemblyMass * rng:NextUnitVector() * rng:NextNumber(angmag.Min, angmag.Max))
+
+    launch(realPart)
 
     scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
 

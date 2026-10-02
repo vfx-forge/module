@@ -6,6 +6,7 @@ local knob = require("@mod/knob")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
+local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 
@@ -226,7 +227,10 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
   local speed = props.PlaybackSpeed(nil, clone.TimeLength)
   local rolloff = props.RollOffMinDistance(nil, clone.TimeLength)
 
+  -- the sound's own time runs at its PlaybackSpeed on the effect's clock, and
+  -- what it plays at is that times the clock, set once it plays
   local currentSpeed = clone.PlaybackSpeed
+  local setPlayback = nil :: ((speed: number) -> ())?
 
   clone.Volume = volume.at(0)
 
@@ -248,7 +252,11 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
   if speed.animated then
     speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
       currentSpeed = speed.at(elapsed)
-      clone.PlaybackSpeed = currentSpeed
+
+      if setPlayback then
+        setPlayback(currentSpeed)
+      end
+
       return deltaTime
     end)
 
@@ -271,6 +279,7 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     clone:Destroy()
   else
     clone:Play()
+    setPlayback = adapters.sound(scope, clone, currentSpeed)
   end
 
   if partClone then
@@ -290,8 +299,8 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     clone:Stop()
   else
     tween.timer(clone.TimeLength, function(deltaTime, elapsed)
-      return if clone.PlaybackSpeed > 0 or (elapsed > 0 and speedTween and speedTween.Connected)
-        then deltaTime * clone.PlaybackSpeed
+      return if currentSpeed > 0 or (elapsed > 0 and speedTween and speedTween.Connected)
+        then deltaTime * currentSpeed
         else nil
     end, speedTween, scope)
   end
