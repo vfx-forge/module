@@ -211,6 +211,19 @@ harness.suite(function()
       expect(obj.TimeScale).toBe(1)
     end)
 
+    test("a NaN authored TimeScale falls back to the emitter's own", function()
+      local emit, fx = effect()
+      local obj = emitter()
+
+      obj.TimeScale = 0.5
+      adapters.particle(fx, obj, 0 / 0)
+
+      expect(obj.TimeScale).toBe(0.5)
+      expect(obj.Rate).toBe(10)
+
+      done(emit)
+    end)
+
     test("a NaN TimeScale is ignored", function()
       local emit, fx = effect()
       local obj = emitter()
@@ -233,13 +246,16 @@ harness.suite(function()
 
       clone = {
         PlaybackSpeed = 1,
+        IsPlaying = true,
         IsPaused = false,
         log = log,
         Pause = function()
+          clone.IsPlaying = false
           clone.IsPaused = true
           table.insert(log, "pause")
         end,
         Resume = function()
+          clone.IsPlaying = true
           clone.IsPaused = false
           table.insert(log, "resume")
         end,
@@ -291,6 +307,7 @@ harness.suite(function()
       local log = {}
       local clone = {
         PlaybackSpeed = 1,
+        IsPlaying = true,
         IsPaused = false,
         Pause = function()
           table.insert(log, "pause")
@@ -315,8 +332,11 @@ harness.suite(function()
       local log = {}
       local clone = {
         PlaybackSpeed = 1,
-        IsPaused = false,
-        Pause = function() end,
+        IsPlaying = false,
+        IsPaused = true,
+        Pause = function()
+          table.insert(log, "pause")
+        end,
         Resume = function()
           table.insert(log, "resume")
         end,

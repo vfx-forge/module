@@ -379,9 +379,14 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
         local factor = sizeScale.at(elapsed)
 
         if typeof(factor) == "Vector3" then
+          local changed = factor ~= currentFactor
+
           currentFactor = factor
           part.Size = size * factor
-          resized(realPart)
+
+          if changed then
+            resized(realPart)
+          end
         end
 
         return deltaTime

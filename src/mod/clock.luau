@@ -179,7 +179,7 @@ function clock.drop(c: Clock)
 end
 
 function clock.setSpeed(c: Clock, speed: number)
-  if c.dropped then
+  if c.dropped or speed ~= speed then
     return
   end
 

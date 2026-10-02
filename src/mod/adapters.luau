@@ -112,6 +112,12 @@ end
 function adapters.particle(scope: lifetime.effect, obj: any, authored: number): (authored: number) -> ()
   local timeline = scope.clock
   local retimedBy: number? = 1
+
+  -- a NaN one falls back to what the emitter has, or to 1
+  if authored ~= authored then
+    authored = if obj.TimeScale == obj.TimeScale then obj.TimeScale else 1
+  end
+
   local held = false
 
   local original = ORIGINALS[obj]
@@ -196,7 +202,9 @@ function adapters.sound(scope: lifetime.effect, clone: any, authored: number): (
     local factor = clock.factorOf(timeline)
 
     if factor == 0 then
-      if not paused then
+      -- only what plays is paused, so only that is resumed, a sound that has
+      -- ended answers IsPaused too
+      if not paused and clone.IsPlaying then
         paused = true
         clone:Pause()
       end
@@ -208,11 +216,7 @@ function adapters.sound(scope: lifetime.effect, clone: any, authored: number): (
 
     if paused then
       paused = false
-
-      -- a sound that ended by itself while a pause was pending has nothing to resume
-      if clone.IsPaused then
-        clone:Resume()
-      end
+      clone:Resume()
     end
   end
 

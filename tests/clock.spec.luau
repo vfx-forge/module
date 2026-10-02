@@ -25,6 +25,18 @@ end
 
 harness.suite(function()
   harness.describe("the clock tree", function()
+    test("a NaN speed leaves the clock's speed where it was", function()
+      local c = clock.new(clock.global)
+
+      clock.setSpeed(c, 0.5)
+      clock.setSpeed(c, 0 / 0)
+      scheduler.frame(0)
+
+      expect(clock.factorOf(c)).toBe(0.5)
+
+      clock.drop(c)
+    end)
+
     test("a clock's factor is its parent's times its speed, from the frame after a change", function()
       local parent = clock.new(clock.global)
       local child = clock.new(parent)

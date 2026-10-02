@@ -129,6 +129,7 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   local timeScale = props.TimeScale
   local authored = timeScale.at(0)
+
   local scaleTween
 
   local setTimeScale = adapters.particle(scope, obj, authored)
