@@ -185,6 +185,14 @@ end
 -- the owner is done with the clock: it goes back to 1, so nothing still
 -- hanging from it is scaled by an owner that is gone, and nothing watches it
 function clock.drop(c: Clock)
+  -- a clock its owner never moved off 1 already reads what a dropped one
+  -- does, so nothing below it can see the drop and there is nothing to pin
+  if not c.moved and not c.halted and c.watchers == nil then
+    c.dropped = true
+
+    return
+  end
+
   pin(c)
 
   c.dropped = true
