@@ -62,6 +62,10 @@ function effects.deinit()
   end
 
   table.clear(LIVE)
+
+  -- a Global controller cleared here takes its scale off the global clock,
+  -- and no frame may follow to announce it
+  clock.announce()
 end
 
 -- built the first time somebody reads it, since most emits are fire and forget

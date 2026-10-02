@@ -81,8 +81,9 @@ function controller.emit(ctx: reader.Ctx, attrs: any)
     end
   end)
 
+  -- a nan would pass math.max and stall every clock below the target for good
   attrs.TimeScale:apply(function(v: any)
-    if typeof(v) ~= "number" then
+    if typeof(v) ~= "number" or v ~= v then
       return
     end
 

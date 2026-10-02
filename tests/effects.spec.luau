@@ -597,6 +597,89 @@ harness.suite(function()
 
       expect(heard).toEqual({ 0.5, 1 })
     end)
+
+    test("SpeedChanged fires once with 1 as deinit tears a Global controller down", function()
+      local seen = {}
+      local heard = {}
+      local a, _, rule = siblings("Global", 0.5, seen)
+
+      effects.emit(0, a, rule)
+      scheduler.frame(0)
+
+      expect(clock.effective()).toBe(0.5)
+
+      local connection = clock.speedChanged:Connect(function(speed: number)
+        table.insert(heard, speed)
+      end)
+
+      -- no frame follows a deinit to announce what it cleared
+      effects.deinit()
+
+      connection:Disconnect()
+
+      expect(heard).toEqual({ 1 })
+    end)
+
+    test("a TimeScale that is not a number leaves the scope alone and one below 0 holds it", function()
+      local cases = {
+        { expected = 1, attributes = { TimeScale = 0 / 0 } },
+        { expected = 0, attributes = { TimeScale = -1 } },
+      }
+
+      for _, case in cases do
+        local seen = {}
+        local a, b, rule = siblings("Descendants", 1, seen)
+
+        for name, value in case.attributes do
+          rule:SetAttribute(name, value)
+        end
+
+        local env = effects.emit(0, a, b, rule)
+
+        measure(seen, 1)
+
+        expect(seen).toEqual({ a = case.expected, b = case.expected })
+
+        env:Clear()
+      end
+    end)
+
+    test("a nan the TimeScale row writes never reaches the clocks it scales", function()
+      local seen = {}
+
+      fresh()
+      registry.register(module("counts", "Folder", counting(seen)))
+
+      -- the controller's own emit, handed a row that writes a nan, the way a
+      -- modifier could where the reader does not see the value
+      registry.register(module(controller.id, "RayValue", function(ctx: any)
+        controller.emit(ctx, {
+          Scope = "Descendants",
+          EmitDelay = 0,
+          EmitDuration = 10,
+          TimeScale = {
+            apply = function(_, write: (value: number) -> ())
+              write(0 / 0)
+            end,
+          },
+        })
+      end))
+
+      local parent = harness.make("Model")
+      local a = harness.make("Folder", parent)
+      local b = harness.make("Folder", parent)
+      local rule = harness.make("RayValue", parent)
+
+      a.Name, b.Name = "a", "b"
+
+      local env = effects.emit(0, a, b, rule)
+
+      measure(seen, 1)
+
+      expect(seen).toEqual({ a = 1, b = 1 })
+
+      env:Clear()
+    end)
   end)
 
   harness.describe("a nested emit and the join it is given", function()
