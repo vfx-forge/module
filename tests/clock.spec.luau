@@ -140,12 +140,14 @@ harness.suite(function()
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
       local seen = {}
+      local refreshed = 0
 
       settle()
 
       expect(clock.uniform).toBe(true)
 
       lifetime.step(fx, function()
+        refreshed += 1
         clock.setSpeed(fx.clock, 0.5)
         clock.refresh(fx.clock)
       end)

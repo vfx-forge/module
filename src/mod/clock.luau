@@ -48,6 +48,9 @@ local moving = 0
 -- the clocks something watches, checked once a frame
 local watched: { Clock } = {}
 
+-- where the tick stands in `watched`, 0 between ticks
+local cursor = 0
+
 local function make(parent: Clock?): Clock
   return {
     parent = parent,
@@ -152,6 +155,10 @@ function clock.drop(c: Clock)
 
     if index then
       table.remove(watched, index)
+
+      if index <= cursor then
+        cursor -= 1
+      end
     end
   end
 end
@@ -282,6 +289,10 @@ function clock.watch(c: Clock, watcher: (factor: number, previous: number) -> ()
 
     if at then
       table.remove(watched, at)
+
+      if at <= cursor then
+        cursor -= 1
+      end
     end
   end
 end
@@ -306,23 +317,22 @@ function clock.tick()
   clock.frame += 1
   clock.uniform = moving == 0
 
-  if #watched == 0 then
-    return
-  end
+  -- a watcher may stop watching any clock while it is told, and the cursor
+  -- follows the list as the clock leaves it
+  cursor = 1
 
-  -- a watcher may stop watching any clock while it is told, so the walk is
-  -- over a copy and skips a clock that left
-  for _, c in table.clone(watched) do
-    if c.watchers == nil then
-      continue
-    end
-
+  while cursor <= #watched do
+    local c = watched[cursor]
     local factor = clock.factorOf(c)
 
     if factor ~= c.told then
       tell(c, factor)
     end
+
+    cursor += 1
   end
+
+  cursor = 0
 end
 
 return clock

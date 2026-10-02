@@ -105,15 +105,21 @@ local function sweep()
     if step.Connected then
       index, kept = i, k
       step.run(d)
+
+      -- a refresh took the frame off 1: this step is kept, the rest are scaled
+      if scaling then
+        if step.Connected then
+          k += 1
+          b[k] = step
+        end
+
+        break
+      end
     end
 
     if step.Connected then
       k += 1
       b[k] = step
-    end
-
-    if scaling then
-      break
     end
   end
 
