@@ -18,6 +18,11 @@ export type Clock = {
   factor: number,
   frame: number,
 
+  -- the factor a clock hanging from this one takes as its parent's, worked out
+  -- with it: the factor itself, or under a halted clock the factor as if its
+  -- speed were 1, so a nested emit it started still runs out
+  through: number,
+
   -- counted among the clocks that are not at 1 of their own
   moved: boolean,
   dropped: boolean,
@@ -64,6 +69,7 @@ local function make(parent: Clock?): Clock
     scales = nil,
     factor = 1,
     frame = -1,
+    through = 1,
     moved = false,
     dropped = false,
     halted = false,
@@ -72,9 +78,9 @@ local function make(parent: Clock?): Clock
   }
 end
 
--- the clock's speed times every scale, whether it is paused or not
-local function scaledOf(c: Clock): number
-  local f = c.speed
+-- every scale on the clock multiplied together
+local function scalesOf(c: Clock): number
+  local f = 1
   local scales = c.scales
 
   if scales ~= nil then
@@ -84,6 +90,11 @@ local function scaledOf(c: Clock): number
   end
 
   return f
+end
+
+-- the clock's speed times every scale, whether it is paused or not
+local function scaledOf(c: Clock): number
+  return c.speed * scalesOf(c)
 end
 
 -- the clock's own multiplier, without its parent's
@@ -103,12 +114,30 @@ function clock.factorOf(c: Clock): number
   end
 
   local parent = c.parent
-  local f = multiplierOf(c) * (if parent ~= nil then clock.factorOf(parent) else 1)
+  local above = if parent ~= nil then clock.throughOf(parent) else 1
+  local f = multiplierOf(c) * above
 
   c.factor = f
   c.frame = clock.frame
 
+  if not c.halted then
+    c.through = f
+  elseif c.paused then
+    c.through = 0
+  else
+    c.through = scalesOf(c) * above
+  end
+
   return f
+end
+
+-- the factor the frame hands a clock hanging from this one as its parent's
+function clock.throughOf(c: Clock): number
+  if c.frame ~= clock.frame then
+    clock.factorOf(c)
+  end
+
+  return c.through
 end
 
 -- the factor the frame has for the clock kept before its owner changes it, so

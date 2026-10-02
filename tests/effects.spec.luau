@@ -765,6 +765,65 @@ harness.suite(function()
 
       built.restore()
     end)
+    test("an effect halted at Speed 0 lets its nested emit run out on the clocks above it, and finishes", function()
+      local built = fresh()
+      local log = {}
+      local seen = {}
+
+      registry.register(module("inner", "Configuration", function(ctx: any)
+        seen.inner = 0
+
+        lifetime.step(ctx.scope, function(deltaTime: number)
+          seen.inner += deltaTime
+        end)
+
+        lifetime.wait(ctx.scope, 0.5)
+      end))
+
+      registry.register(module("outer", "Folder", function(ctx: any)
+        local scope = ctx.scope
+        local children = lifetime.join(scope)
+
+        seen.outer = 0
+
+        lifetime.speed(scope, {
+          animated = false,
+          duration = 0,
+          at = function()
+            return 0
+          end,
+        })
+
+        lifetime.step(scope, function(deltaTime: number)
+          seen.outer += deltaTime
+        end)
+
+        scope.effects.emitNested(ctx.ref, scope.depth + 1, scope, children)
+
+        lifetime.awaitJoin(children)
+        table.insert(log, "joined")
+      end, true))
+
+      local root = harness.make("Folder")
+      harness.make("Configuration", root)
+
+      local env = effects.emit(0, root)
+
+      env:SetSpeed(0.5)
+      scheduler.frame(0)
+      scheduler.frame(0.5)
+
+      -- the halted effect stands still, and its child runs at the handle's half
+      expect(seen).toEqual({ outer = 0, inner = 0.25 })
+      expect(log).toEqual({})
+
+      scheduler.frame(0.5)
+
+      expect(log).toEqual({ "joined" })
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
   end)
 
   -- pattern specs: the join and wait shape a shockwave module runs through,

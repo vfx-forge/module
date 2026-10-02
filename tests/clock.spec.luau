@@ -667,6 +667,35 @@ harness.suite(function()
       lifetime.clear(emit)
       settle()
     end)
+
+    test("a halted clock stands still and hands what hangs from it its parent's factor and its scales", function()
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local below = clock.new(fx.clock)
+
+      clock.setSpeed(emit.clock, 0.5)
+      lifetime.speed(fx, row(0))
+      scheduler.frame(0)
+
+      expect(clock.factorOf(fx.clock)).toBe(0)
+      expect(clock.factorOf(below)).toBe(0.5)
+
+      clock.scale(fx.clock, "rule", 0.5)
+      scheduler.frame(0)
+
+      expect(clock.factorOf(fx.clock)).toBe(0)
+      expect(clock.factorOf(below)).toBe(0.25)
+
+      clock.setPaused(fx.clock, true)
+      scheduler.frame(0)
+
+      expect(clock.factorOf(below)).toBe(0)
+
+      clock.drop(below)
+      lifetime.clear(emit)
+      settle()
+    end)
+
     test("a NaN Speed is ignored like a non-number", function()
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
