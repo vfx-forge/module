@@ -11,6 +11,8 @@ local registry = require("@mod/registry")
 local modifiers = require("@mod/modifiers")
 local legacy_mods = require("@mod/legacy_mods")
 
+local timing_common = require("@mod/common/timing")
+
 -- how many throwing writes a driven target gets before the applier gives up on
 -- it, where a throw left to the scheduler would end the driver on the first
 local MAX_WRITE_FAILURES = 3
@@ -167,7 +169,14 @@ local function drive(
     -- the target back too
     local writer = lifetime.write(driver, target, source, name, rule, start)
 
-    tween.timer(span, function(deltaTime, elapsed)
+    local length = timing_common.duration(span)
+    local ended = lifetime.join(driver)
+    local counted = lifetime.add(ended)
+    local elapsed = 0
+    local ticking
+
+    -- how far the ramp's own clock moves this frame, nil once it is over
+    local function advance(deltaTime: number): number?
       local waiting = elapsed < lead
 
       if not waiting then
@@ -197,17 +206,31 @@ local function drive(
 
       -- a legacy speed ramp is allowed to rest at zero or below, and that is
       -- where the tween it scales stopped. a zero read while the ramp is still
-      -- moving is not the end, so the timer only gives up once the ramp has
+      -- moving is not the end, so the driver only gives up once the ramp has
       -- settled there
       return if scaled > 0 or (speedUntil ~= nil and wall < speedUntil) then scaled else nil
-    end, nil, driver)
+    end
+
+    ticking = lifetime.step(driver, function(deltaTime: number)
+      local moved = advance(deltaTime)
+
+      if moved == nil or timing_common.done(elapsed, length) then
+        ticking:Disconnect()
+        counted()
+        return
+      end
+
+      elapsed = math.clamp(elapsed + moved, 0, math.max(length, 0.001))
+    end)
+
+    lifetime.awaitJoin(ended)
   end)
 end
 
 -- a randomizer child is applied before the effect it sits under reads its
 -- target, through a writer on an effect of its own that ends on the next frame,
 -- after that effect has read the drawn value: a reset one gives the target back
--- then, one that keeps leaves the draw. driving it through the timer would
+-- then, one that keeps leaves the draw. driving it through the driver would
 -- write one frame later than the effect needs
 local function applyRandomizer(target: Instance, child: legacy_mods.Child, scope: types.scope)
   local queue = child.queue

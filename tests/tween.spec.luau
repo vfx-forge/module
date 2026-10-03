@@ -11,103 +11,19 @@ local test, expect = harness.test, harness.expect
 -- the tween as it stood before the core, dev 213759c, for the cost gate
 local before = require("@tests/fixtures/tween_213759c")
 
--- getEase interpolates through the engine's vector Lerp, which this host does
--- not have, so the curve cache is seeded with a straight line under a key no
--- effect uses
-local LINE = "spec:line"
-
-tween.bezier_cache[LINE] = {
-  getEase = function(_, t: number)
-    return { y = 1 - t }
-  end,
-} :: any
-
-local function counting(_: any, deltaTime: number)
-  return deltaTime
-end
-
-local function ticking(deltaTime: number)
-  return deltaTime
-end
-
 harness.suite(function()
   harness.describe("tween on the scheduler", function()
-    test("a tween computes early and a follower steps after the screens", function()
-      local log = {}
-      local tweened = tween.fromParams(LINE, 1, function(_, deltaTime: number)
-        table.insert(log, "tween")
-        return deltaTime
-      end)
-      local followed = tween.fromParams(LINE, 1, function(_, deltaTime: number)
-        table.insert(log, "follower")
-        return deltaTime
-      end, nil, nil, nil, 0)
-      local screen = scheduler.add("screen", function()
-        table.insert(log, "screen")
-      end, 5)
-
-      scheduler.frame(0.1)
-
-      tweened:Disconnect()
-      followed:Disconnect()
-      screen:Disconnect()
-
-      expect(log).toEqual({ "tween", "screen", "follower" })
-    end)
-
-    test("a tween ends on its own and one awaiting another runs until that one ends", function()
-      local ended = false
-      local speed = tween.fromParams(LINE, 1, counting)
-      local held = tween.fromParams(LINE, 0.25, counting, speed, function()
-        ended = true
-      end)
-
-      for _ = 1, 3 do
-        scheduler.frame(0.25)
-      end
-
-      expect(speed.Connected).toBe(true)
-      expect(held.Connected).toBe(true)
-      expect(ended).toBe(false)
-
-      scheduler.frame(0.25)
-
-      expect(speed.Connected).toBe(false)
-      expect(held.Connected).toBe(false)
-      expect(ended).toBe(true)
-    end)
-
-    test("a timer resumes its caller the frame after its time is counted", function()
+    test("a waited tween given a depth follows", function()
       local log = {}
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
 
       lifetime.run(fx, function(scope: lifetime.effect)
-        tween.timer(0.5, ticking, nil, scope)
-        table.insert(log, "done")
-      end)
-
-      scheduler.frame(0.25)
-      scheduler.frame(0.25)
-
-      expect(log).toEqual({})
-
-      scheduler.frame(0.25)
-
-      expect(log).toEqual({ "done" })
-      expect(fx.state).toBe(lifetime.RELEASED)
-    end)
-
-    test("a timer given a depth follows", function()
-      local log = {}
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      lifetime.run(fx, function(scope: lifetime.effect)
-        tween.timer(1, function(deltaTime: number)
-          table.insert(log, "timer")
-          return deltaTime
-        end, nil, scope, 0)
+        tween.wait(scope, curve.new(1, "linear"), function(_, deltaTime: number)
+          if deltaTime > 0 then
+            table.insert(log, "tween")
+          end
+        end, 0)
       end)
 
       local computed = scheduler.add("compute", function()
@@ -118,18 +34,20 @@ harness.suite(function()
       computed:Disconnect()
       lifetime.clear(emit)
 
-      expect(log).toEqual({ "computed", "timer" })
+      expect(log).toEqual({ "computed", "tween" })
     end)
 
-    test("a timer whose counter throws kills the effect holding it", function()
+    test("a waited tween that throws kills the effect waiting on it", function()
       local log = {}
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
 
       lifetime.run(fx, function(scope: lifetime.effect)
-        tween.timer(1, function(): number
-          error("boom")
-        end, nil, scope)
+        tween.wait(scope, curve.new(1, "linear"), function(_, deltaTime: number)
+          if deltaTime > 0 then
+            error("boom")
+          end
+        end)
 
         table.insert(log, "resumed")
       end)
@@ -144,21 +62,28 @@ harness.suite(function()
       expect(fx.state).toBe(lifetime.RELEASED)
     end)
 
-    test("a fromParams tween that throws ends alone, once, and its neighbours step on", function()
+    test("a tween that throws ends alone, once, and another effect's tweens step on", function()
       local runs = 0
       local stepped = 0
+      local first = lifetime.effect(lifetime.emit(nil), 0, nil)
+      local second = lifetime.effect(lifetime.emit(nil), 0, nil)
 
-      local function stepping(_: any, deltaTime: number)
-        stepped += 1
-        return deltaTime
+      local function stepping(_: number, deltaTime: number)
+        if deltaTime > 0 then
+          stepped += 1
+        end
       end
 
-      local before = tween.fromParams(LINE, 1, stepping)
-      local thrower = tween.fromParams(LINE, 1, function(): number
-        runs += 1
-        error("boom")
+      tween.play(second, curve.new(1, "linear"), stepping)
+
+      local thrower = tween.play(first, curve.new(1, "linear"), function(_, deltaTime: number)
+        if deltaTime > 0 then
+          runs += 1
+          error("boom")
+        end
       end)
-      local after = tween.fromParams(LINE, 1, stepping)
+
+      tween.play(second, curve.new(1, "linear"), stepping)
 
       local warnings = harness.captureWarnings(function()
         scheduler.frame(0.1)
@@ -166,8 +91,7 @@ harness.suite(function()
         scheduler.frame(0.1)
       end)
 
-      before:Disconnect()
-      after:Disconnect()
+      lifetime.release(second)
 
       expect(runs).toBe(1)
       expect(stepped).toBe(6)
@@ -175,103 +99,17 @@ harness.suite(function()
       expect(#warnings).toBe(1)
     end)
 
-    test("a held fromParams tween that throws ends its effect, and its emit settles", function()
+    test("a follower's done that waits on its own thread resumes it and frames go on", function()
       local log = {}
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
 
-      lifetime.seal(emit)
-
-      lifetime.run(fx, function(scope: lifetime.effect)
-        local body = coroutine.running()
-
-        -- the body waits on the tween's finish, as a bezier piece does
-        lifetime.hold(
-          scope,
-          tween.fromParams(
-            LINE,
-            1,
-            function(): number
-              error("boom")
-            end,
-            nil,
-            function()
-              task.spawn(body)
-            end
-          )
-        )
-
-        coroutine.yield()
-        table.insert(log, "resumed")
-      end)
-
-      local warnings = harness.captureWarnings(function()
-        scheduler.frame(0.1)
-        scheduler.frame(0.1)
-      end)
-
-      expect(log).toEqual({})
-      expect(#warnings).toBe(1)
-      expect(fx.state).toBe(lifetime.RELEASED)
-      expect(emit.done).toBe(true)
-    end)
-
-    test("an unheld fromParams tween that throws leaves the effect running", function()
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      lifetime.run(fx, function()
-        tween.fromParams(LINE, 1, function(): number
-          error("boom")
+      tween.play(fx, curve.new(0.25, "linear"), function() end, 0, function()
+        task.spawn(function()
+          tween.wait(fx, curve.new(0.5, "linear"), nil, 0)
+          table.insert(log, "resumed")
         end)
-
-        coroutine.yield()
       end)
-
-      local warnings = harness.captureWarnings(function()
-        scheduler.frame(0.1)
-        scheduler.frame(0.1)
-      end)
-
-      local running = fx.state == lifetime.RUNNING
-
-      lifetime.release(fx)
-
-      expect(#warnings).toBe(1)
-      expect(running).toBe(true)
-    end)
-
-    test("an after whose effect is released first never finishes", function()
-      local finished = false
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      tween.after(0.25, ticking, function()
-        finished = true
-      end, fx)
-
-      lifetime.release(fx)
-
-      scheduler.frame(0.25)
-      scheduler.frame(0.25)
-
-      expect(finished).toBe(false)
-    end)
-
-    test("a follower's finish that starts a timer on its own thread resumes it and frames go on", function()
-      local log = {}
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      lifetime.hold(
-        fx,
-        tween.fromParams(LINE, 0.25, counting, nil, function()
-          task.spawn(function()
-            tween.timer(0.5, ticking, nil, fx, 0)
-            table.insert(log, "resumed")
-          end)
-        end, true, 0)
-      )
 
       local frames = 0
       local counted = scheduler.add("compute", function()
@@ -292,15 +130,15 @@ harness.suite(function()
       expect(#warnings).toBe(0)
     end)
 
-    test("a timer or a wait started on the pass's own thread fails loudly and frames go on", function()
+    test("a tween waited or a wait started on the pass's own thread fails loudly and frames go on", function()
       local log = {}
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
 
-      tween.fromParams(LINE, 0.25, counting, nil, function()
-        tween.timer(0.5, ticking, nil, fx)
-        table.insert(log, "timer")
-      end, true)
+      tween.play(fx, curve.new(0.25, "linear"), function() end, nil, function()
+        tween.wait(fx, curve.new(0.5, "linear"))
+        table.insert(log, "tween")
+      end)
 
       scheduler.add("compute", function()
         lifetime.wait(fx, 0.5)
@@ -332,37 +170,6 @@ harness.suite(function()
       expect(log).toEqual({})
       expect(frames).toBe(3)
       expect(told).toBe(2)
-    end)
-
-    test("held tweens awaiting a speed tween stop on a clear and never finish", function()
-      local stepped = 0
-      local finished = false
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      local function stepping(_: any, deltaTime: number)
-        stepped += 1
-        return deltaTime
-      end
-
-      local function finish()
-        finished = true
-      end
-
-      local speed = lifetime.hold(fx, tween.fromParams(LINE, 1, counting))
-      local dissipation = lifetime.hold(fx, tween.fromParams(LINE, 0.25, stepping, speed, finish, true, 0))
-      local lingering = lifetime.hold(fx, tween.fromParams(LINE, 0.25, stepping, speed, finish, true, 0))
-
-      scheduler.frame(0.1)
-      lifetime.clear(emit)
-      scheduler.frame(0.1)
-      scheduler.frame(0.1)
-
-      expect(stepped).toBe(2)
-      expect(finished).toBe(false)
-      expect(speed.Connected).toBe(false)
-      expect(dissipation.Connected).toBe(false)
-      expect(lingering.Connected).toBe(false)
     end)
 
     test("a drive writes its first value at once and lands on its last", function()
@@ -713,16 +520,29 @@ harness.suite(function()
   end)
 
   harness.describe("the tween core's callers", function()
-    -- the effects moved onto the core so far
-    local MOVED =
-      { "spin", "beam", "mesh", "sound", "particle", "shockwave_line", "shockwave_ring", "shockwave_debris" }
+    local GONE = { "fromParams", "tween.timer", "tween.after", "bezier_cache", "drivePropertyTrack" }
 
-    test("no moved effect steps through fromParams, timer or after", function()
-      for _, name in MOVED do
-        local source = fs.readFile(`src/effects/{name}.luau`)
+    -- every source file under `dir`, by its path
+    local function sources(dir: string, into: { string })
+      for _, name in fs.readDir(dir) do
+        local at = `{dir}/{name}`
 
-        for _, word in { "tween.fromParams", "tween.timer", "tween.after" } do
-          expect(`{name} {word}: {string.find(source, word, 1, true) ~= nil}`).toBe(`{name} {word}: false`)
+        if fs.isDir(at) then
+          sources(at, into)
+        elseif string.sub(name, -5) == ".luau" then
+          table.insert(into, at)
+        end
+      end
+
+      return into
+    end
+
+    test("nothing in the runtime names a stepper the core replaced", function()
+      for _, at in sources("src", {}) do
+        local source = fs.readFile(at)
+
+        for _, word in GONE do
+          expect(`{at} {word}: {string.find(source, word, 1, true) ~= nil}`).toBe(`{at} {word}: false`)
         end
       end
     end)

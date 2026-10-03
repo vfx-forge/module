@@ -18,13 +18,13 @@ local function cp(x: number, y: number)
 end
 local linear = path.serializePath({ cp(0, 1), cp(1, 0) })
 
--- Empirically verified (scratch script, not committed): sampling this curve
--- via `path.alphaAt` gives alpha == progress to within ~1e-7 (float32
--- round-trip error) at t = 0, 0.1, 0.25, 0.5, 0.75, 0.9, 1, i.e. the `1 - y`
--- orientation established in mod/tween.luau *does* give identity for the
--- endpoints-only "linear" control points, so the brief's test expectations
--- (progress 0.5 -> value 5 on a 0..10 tween) hold. Assertions below use a
--- small epsilon since `Bezier:getEase` is LUT/Newton-based, not exact.
+-- sampling this curve through `curve.sample` gives alpha == progress to
+-- within ~1e-7 (float32 round-trip error) at t = 0, 0.1, 0.25, 0.5, 0.75,
+-- 0.9, 1: the `1 - y` orientation @mod/curve reads a serialized path in
+-- gives identity for the endpoints-only "linear" control points, so the
+-- brief's test expectations (progress 0.5 -> value 5 on a 0..10 tween) hold.
+-- Assertions below use a small epsilon since the curve is solved
+-- numerically, not exactly.
 local EPSILON = 1e-4
 local function near(a: number, b: number): boolean
   return math.abs(a - b) < EPSILON
@@ -1433,7 +1433,7 @@ harness.suite(function()
       expect(modifiers.waitOf({ kind = "delay", duration = -5 })).toBe(0)
     end)
 
-    -- the wait reaches mods.span and then tween.timer, which never satisfies
+    -- the wait reaches mods.span and then the step driving it, which never satisfies
     -- elapsed >= duration for either of these and so never finishes the emit.
     -- the comparison this arithmetic replaced used to reject them for free
     test("refuses a wait that is not finite", function()

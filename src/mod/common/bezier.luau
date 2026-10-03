@@ -2,10 +2,9 @@
 local CollectionService = game:GetService("CollectionService")
 
 local knob = require("@mod/knob")
+local curve = require("@mod/curve")
 local shape = require("@mod/shape")
-local tween = require("@mod/tween")
 local utility = require("@mod/utility")
-local lifetime = require("@mod/lifetime")
 
 local Oklab = require("@mod/color/Oklab")
 local Bezier = require("@obj/Bezier")
@@ -123,9 +122,8 @@ function common.getColorAtTimeOklab(sequence: ColorSequence, time: number)
   return Oklab.toSRGB(blendedLab)
 end
 
-function common.getColorWithEasingOklab(sequence: ColorSequence, time: number, easingBezier)
-  local easedTime = 1 - easingBezier:getEase(math.clamp(time, 0, 1)).y
-  return common.getColorAtTimeOklab(sequence, math.clamp(easedTime, 0, 1))
+function common.getColorWithEasingOklab(sequence: ColorSequence, time: number, easing: curve.Curve)
+  return common.getColorAtTimeOklab(sequence, math.clamp(easing:at(time), 0, 1))
 end
 
 export type HitboxConfig = {
@@ -429,25 +427,6 @@ function common.getPerpendicularVectors(tangent: Vector3)
   local up = tangent:Cross(right).Unit
 
   return right, up
-end
-
--- one knob of a projectile driven from its track: the setter sees the first
--- value at once and every later one on a stepper on the effect's clock. a
--- constant track costs no stepper
-function common.drivePropertyTrack(scope: lifetime.effect, track: any, setter: (number) -> ())
-  setter(track.at(0))
-
-  if not track.animated then
-    return
-  end
-
-  lifetime.hold(
-    scope,
-    tween.fromParams(utility.linear_bezier, track.duration, function(_, deltaTime, elapsed)
-      setter(track.at(elapsed))
-      return deltaTime
-    end)
-  )
 end
 
 return common

@@ -1,6 +1,7 @@
 local fs = require("@lune/fs")
 local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
+local curve = require("@mod/curve")
 local tween = require("@mod/tween")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
@@ -1269,22 +1270,16 @@ harness.suite(function()
         local outstanding = lifetime.join(scope)
         local landed = lifetime.add(outstanding)
 
-        tween.after(0.75, function(deltaTime: number)
-          return deltaTime
-        end, function()
+        tween.play(scope, curve.new(0.75, "linear"), function() end, nil, function()
           task.spawn(function()
-            -- the exit, a stepper that counts itself out when it lands
-            tween.after(0.5, function(deltaTime: number)
-              return deltaTime
-            end, lifetime.add(outstanding), scope)
+            -- the exit, a tween that counts itself out when it lands
+            tween.play(scope, curve.new(0.5, "linear"), function() end, nil, lifetime.add(outstanding))
 
             landed()
           end)
-        end, scope)
+        end)
 
-        tween.timer(0.5, function(deltaTime: number)
-          return deltaTime
-        end, nil, scope)
+        tween.wait(scope, curve.new(0.5, "linear"))
 
         table.insert(log, "waiting")
         lifetime.awaitJoin(outstanding)
@@ -1293,15 +1288,15 @@ harness.suite(function()
 
       effects.emit(0, harness.make("Folder"))
 
+      -- the run ends on the second frame, the dwell on the third and the
+      -- exit it files then on the fifth
       for _ = 1, 4 do
         scheduler.frame(0.25)
       end
 
       expect(log).toEqual({ "waiting" })
 
-      for _ = 1, 3 do
-        scheduler.frame(0.25)
-      end
+      scheduler.frame(0.25)
 
       expect(log).toEqual({ "waiting", "joined" })
 
@@ -1319,12 +1314,10 @@ harness.suite(function()
         local landed = lifetime.add(outstanding)
         local impact = ctx.ref:FindFirstChildOfClass("Model")
 
-        tween.after(0.25, function(deltaTime: number)
-          return deltaTime
-        end, function()
+        tween.play(scope, curve.new(0.25, "linear"), function() end, nil, function()
           scope.effects.emitFromFolder(impact, ctx.ref, scope.depth + 1, scope, outstanding)
           landed()
-        end, scope)
+        end)
 
         lifetime.awaitJoin(outstanding)
         table.insert(log, "joined")
@@ -1369,9 +1362,7 @@ harness.suite(function()
               error("boom")
             end
 
-            tween.after(0.5, function(deltaTime: number)
-              return deltaTime
-            end, landed, scope)
+            tween.play(scope, curve.new(0.5, "linear"), function() end, nil, landed)
           end)
 
           if not ok then
@@ -1390,7 +1381,6 @@ harness.suite(function()
       expect(#warnings).toBe(1)
       expect(log).toEqual({})
 
-      scheduler.frame(0.5)
       scheduler.frame(0.5)
 
       expect(log).toEqual({ "joined" })
@@ -1821,9 +1811,7 @@ harness.suite(function()
 
         ticks += 1
 
-        tween.timer(10, function(deltaTime: number)
-          return if scope.clock.halted then nil else deltaTime
-        end, nil, scope)
+        tween.wait(scope, curve.new(10, "linear"))
 
         ended += 1
       end, row(1, 0, 0.5))
@@ -1853,9 +1841,7 @@ harness.suite(function()
 
         table.insert(scopes, scope)
 
-        tween.timer(10, function(deltaTime: number)
-          return if scope.clock.halted then nil else deltaTime
-        end, nil, scope)
+        tween.wait(scope, curve.new(10, "linear"))
       end
     end
 

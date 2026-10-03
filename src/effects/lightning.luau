@@ -2,6 +2,7 @@
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local mods = require("@mod/mods")
+local curve = require("@mod/curve")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
@@ -490,8 +491,8 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
   local rng = Random.new()
   local baseBezier = not endPoint and Bezier.new(points)
 
-  local colorEasingBezier = Bezier.new(utility.deserializePath(attrs.ColorCurve), 0)
-  local fillColorEasingBezier = Bezier.new(utility.deserializePath(attrs.FillColorCurve), 0)
+  local colorEasing = curve.new(1, attrs.ColorCurve)
+  local fillColorEasing = curve.new(1, attrs.FillColorCurve)
 
   local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
@@ -574,7 +575,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
         local hl = Instance.new("Highlight")
         hl.Adornee = container
-        hl.FillColor = bezier_common.getColorWithEasingOklab(attrs.FillColor, 0, fillColorEasingBezier)
+        hl.FillColor = bezier_common.getColorWithEasingOklab(attrs.FillColor, 0, fillColorEasing)
         hl.FillTransparency = fillTp.at(0)
         hl.OutlineTransparency = 1
         hl.DepthMode = Enum.HighlightDepthMode[attrs.FillDepthMode]
@@ -870,7 +871,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             end
 
             -- color
-            segment.Color = bezier_common.getColorWithEasingOklab(attrs.Color, currentColorAlpha, colorEasingBezier)
+            segment.Color = bezier_common.getColorWithEasingOklab(attrs.Color, currentColorAlpha, colorEasing)
 
             -- a segment holding what it was born with composes only the lanes
             -- that started at or after its birth over that value
@@ -920,7 +921,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         -- update fill
         if highlight then
           highlight.FillColor =
-            bezier_common.getColorWithEasingOklab(attrs.FillColor, currentFillColorAlpha, fillColorEasingBezier)
+            bezier_common.getColorWithEasingOklab(attrs.FillColor, currentFillColorAlpha, fillColorEasing)
 
           highlight.FillTransparency = currentFillTransparency
         end
@@ -950,7 +951,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         lastHeadPos = currentHeadPos
       end
 
-      bezier_common.drivePropertyTrack(scope, width, function(v)
+      tween.drive(scope, width, function(v: number)
         currentWidth = v
       end)
 
@@ -958,20 +959,15 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
       -- write it. the hold stays because an authored lane longer than the bolt
       -- kept the emit open on old content, and a driven row always did
       if transparency.animated then
-        lifetime.hold(
-          scope,
-          tween.fromParams(utility.linear_bezier, transparency.duration, function(_, deltaTime)
-            return deltaTime
-          end)
-        )
+        tween.play(scope, curve.new(transparency.duration, "linear"), function() end)
       end
 
-      bezier_common.drivePropertyTrack(scope, length, function(v)
+      tween.drive(scope, length, function(v: number)
         currentLength = v
       end)
 
       if useHighlight then
-        bezier_common.drivePropertyTrack(scope, fillTp, function(v)
+        tween.drive(scope, fillTp, function(v: number)
           currentFillTransparency = v
         end)
       end
@@ -996,7 +992,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         dissipateStartTail = startTail
         dissipateStartWidth = startWidth
 
-        local dissipation = tween.fromParams(curveData, dissipationDuration, function(alpha, deltaTime)
+        tween.play(scope, curve.new(dissipationDuration, curveData), function(alpha: number, deltaTime: number)
           local scaledDelta = deltaTime
           scaledElapsedTime += scaledDelta
 
@@ -1023,11 +1019,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           local widthOverrideVal = if mode == "Scale" then utility.lerp(dissipateStartWidth, 0, alpha) else nil
 
           updateSegments(headAlpha, tailOverride, scaledDelta, attrs.RefreshDuringDissipate, widthOverrideVal)
-
-          return if scope.clock.halted then nil else deltaTime
-        end, nil, onComplete, true, scope.depth)
-
-        lifetime.hold(scope, dissipation)
+        end, scope.depth, onComplete)
       end
 
       local function startDissipation()
@@ -1077,7 +1069,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             headAlpha,
             math.max(0, headAlpha - currentLength),
             currentWidth,
-            utility.linear_bezier,
+            "linear",
             fade,
             "None",
             onDissipationComplete
@@ -1087,192 +1079,164 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         end
       end
 
-      -- main animation
-      lifetime.hold(
+      tween.play(
         scope,
-        tween.fromParams(
-          attrs.EasingCurve,
-          duration,
-          function(alpha, deltaTime, elapsed)
-            local scaledDelta = deltaTime
-            scaledElapsedTime += scaledDelta
+        curve.new(duration, attrs.EasingCurve),
+        function(alpha: number, deltaTime: number)
+          local scaledDelta = deltaTime
+          scaledElapsedTime += scaledDelta
 
-            currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
-            currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
+          currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
+          currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
 
-            if attrs.SyncPosition then
-              local newOrigin = utility.getTransformedOriginExtents(parent)
-              local offset = newOrigin * currentOriginCFrame:Inverse()
+          if attrs.SyncPosition then
+            local newOrigin = utility.getTransformedOriginExtents(parent)
+            local offset = newOrigin * currentOriginCFrame:Inverse()
 
-              for j = 1, #lightningPoints do
-                lightningPoints[j] =
-                  offset:PointToWorldSpace(currentOriginCFrame:PointToObjectSpace(lightningPoints[j]))
-              end
-
-              currentOriginCFrame = newOrigin
+            for j = 1, #lightningPoints do
+              lightningPoints[j] = offset:PointToWorldSpace(currentOriginCFrame:PointToObjectSpace(lightningPoints[j]))
             end
 
-            updateSegments(alpha, nil, scaledDelta)
+            currentOriginCFrame = newOrigin
+          end
 
-            if shapecast() then
-              startDissipation()
-              return nil
-            end
+          updateSegments(alpha, nil, scaledDelta)
 
-            local speedDelta = if scope.clock.halted then nil else deltaTime
+          if shapecast() then
+            startDissipation()
+            return false
+          end
 
-            if speedDelta == nil then
-              return nil
-            end
+          if (attrs.ProjectileEnabled and alpha * duration < projectileLifetime) or not attrs.ProjectileEnabled then
+            return true
+          end
 
-            if (attrs.ProjectileEnabled and alpha * duration < projectileLifetime) or not attrs.ProjectileEnabled then
-              return speedDelta
-            else
-              startDissipation()
-              return nil
-            end
-          end,
-          nil,
-          function()
-            if isDissipating or finished then
-              return
-            end
+          startDissipation()
 
-            -- non-projectile mode
-            if not attrs.ProjectileEnabled then
-              if attrs.DestroyDelay > 0 then
-                local lingering = tween.fromParams(
-                  utility.linear_bezier,
-                  attrs.DestroyDelay,
-                  function(_, deltaTime)
-                    local scaledDelta = deltaTime
-                    scaledElapsedTime += scaledDelta
+          return false
+        end,
+        scope.depth,
+        function()
+          if isDissipating or finished then
+            return
+          end
 
-                    currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
-                    currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
-
-                    updateSegments(1, nil, scaledDelta, true)
-
-                    if shapecast() then
-                      startDissipation()
-                      return nil
-                    end
-
-                    return if scope.clock.halted then nil else deltaTime
-                  end,
-                  nil,
-                  function()
-                    startDissipation()
-                  end,
-                  true,
-                  scope.depth
-                )
-
-                lifetime.hold(scope, lingering)
-              else
-                startDissipation()
-              end
-
-              return
-            end
-
-            -- projectile mode
-            local dir = if attrs.MatchEndDirection and endPoint
-              then endPoint.WorldCFrame.LookVector
-              else lastVelocity.Unit
-
-            if dir ~= dir or dir.Magnitude < 0.001 then
-              dir = Vector3.zAxis
-            else
-              dir = dir.Unit
-            end
-
-            local initialHeadPos = getPos(1)
-            local initialTailPos = getPos(math.max(0, 1 - currentLength))
-
-            local boltLength = (initialHeadPos - initialTailPos).Magnitude
-
-            local curvedTailT = math.max(0, 1 - currentLength)
-            local curvedLengthT = 1 - curvedTailT
-
-            local transitionBuffer = boltLength * 0.3
-
-            -- preserve existing jaggedness offsets from bezier phase
-            local existingOffsets = table.create(attrs.Segments + 1)
-
-            for j = 0, attrs.Segments do
-              local t = j / attrs.Segments
-              local bezierT = curvedTailT + t * curvedLengthT
-              local basePos = getPos(bezierT)
-
-              existingOffsets[j + 1] = lightningPoints[j + 1] - basePos
-            end
-
-            local state: TransitionState = {
-              curvedTailT = curvedTailT,
-              curvedLengthT = curvedLengthT,
-              boltLength = boltLength,
-              transitionBuffer = transitionBuffer,
-              distanceTraveled = 0,
-              jaggedOffsets = existingOffsets,
-            }
-
-            transitionState = state
-
-            -- this runs inside the main animation's step, which must not yield
-            task.spawn(function()
-              tween.timer(projectileLifetime, function(deltaTime, elapsed)
+          -- non-projectile mode
+          if not attrs.ProjectileEnabled then
+            if attrs.DestroyDelay > 0 then
+              tween.play(scope, curve.new(attrs.DestroyDelay, "linear"), function(_, deltaTime: number)
                 local scaledDelta = deltaTime
                 scaledElapsedTime += scaledDelta
 
                 currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
                 currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
 
-                local distanceTraveled = elapsed * attrs.ProjectileSpeed
-                state.distanceTraveled = distanceTraveled
-
-                local currentHeadPos = initialHeadPos + dir * distanceTraveled
-                local currentTailPos = currentHeadPos - dir * boltLength
-
-                projectileHeadPos = currentHeadPos
-                projectileTailPos = currentTailPos
-                projectileDir = dir
-
-                local shouldRefresh = attrs.RefreshRate > 0
-
-                if shouldRefresh then
-                  lastRefreshTime += scaledDelta
-
-                  if lastRefreshTime >= 1 / attrs.RefreshRate then
-                    refreshPoints()
-                    lastRefreshTime = 0
-                  else
-                    updatePointsBetweenRefreshes(deltaTime)
-                  end
-                else
-                  updatePointsBetweenRefreshes(deltaTime)
-                end
-
-                updateSegments(1, nil, scaledDelta, false)
+                updateSegments(1, nil, scaledDelta, true)
 
                 if shapecast() then
                   startDissipation()
-                  return nil
+                  return false
                 end
 
-                if elapsed >= projectileLifetime then
-                  return nil
-                end
-
-                return if scope.clock.halted then nil else deltaTime
-              end, nil, scope, scope.depth)
-
+                return true
+              end, scope.depth, startDissipation)
+            else
               startDissipation()
-            end)
-          end,
-          true,
-          scope.depth
-        )
+            end
+
+            return
+          end
+
+          -- projectile mode
+          local dir = if attrs.MatchEndDirection and endPoint
+            then endPoint.WorldCFrame.LookVector
+            else lastVelocity.Unit
+
+          if dir ~= dir or dir.Magnitude < 0.001 then
+            dir = Vector3.zAxis
+          else
+            dir = dir.Unit
+          end
+
+          local initialHeadPos = getPos(1)
+          local initialTailPos = getPos(math.max(0, 1 - currentLength))
+
+          local boltLength = (initialHeadPos - initialTailPos).Magnitude
+
+          local curvedTailT = math.max(0, 1 - currentLength)
+          local curvedLengthT = 1 - curvedTailT
+
+          local transitionBuffer = boltLength * 0.3
+
+          -- preserve existing jaggedness offsets from bezier phase
+          local existingOffsets = table.create(attrs.Segments + 1)
+
+          for j = 0, attrs.Segments do
+            local t = j / attrs.Segments
+            local bezierT = curvedTailT + t * curvedLengthT
+            local basePos = getPos(bezierT)
+
+            existingOffsets[j + 1] = lightningPoints[j + 1] - basePos
+          end
+
+          local state: TransitionState = {
+            curvedTailT = curvedTailT,
+            curvedLengthT = curvedLengthT,
+            boltLength = boltLength,
+            transitionBuffer = transitionBuffer,
+            distanceTraveled = 0,
+            jaggedOffsets = existingOffsets,
+          }
+
+          transitionState = state
+
+          -- this runs inside the main animation's step, which must not yield
+          task.spawn(function()
+            tween.wait(scope, curve.new(projectileLifetime, "linear"), function(_, deltaTime: number, elapsed: number)
+              local scaledDelta = deltaTime
+              scaledElapsedTime += scaledDelta
+
+              currentColorAlpha = (currentColorAlpha + scaledDelta / colorCycle) % 1
+              currentFillColorAlpha = (currentFillColorAlpha + scaledDelta / fillColorCycle) % 1
+
+              local distanceTraveled = elapsed * attrs.ProjectileSpeed
+              state.distanceTraveled = distanceTraveled
+
+              local currentHeadPos = initialHeadPos + dir * distanceTraveled
+              local currentTailPos = currentHeadPos - dir * boltLength
+
+              projectileHeadPos = currentHeadPos
+              projectileTailPos = currentTailPos
+              projectileDir = dir
+
+              local shouldRefresh = attrs.RefreshRate > 0
+
+              if shouldRefresh then
+                lastRefreshTime += scaledDelta
+
+                if lastRefreshTime >= 1 / attrs.RefreshRate then
+                  refreshPoints()
+                  lastRefreshTime = 0
+                else
+                  updatePointsBetweenRefreshes(deltaTime)
+                end
+              else
+                updatePointsBetweenRefreshes(deltaTime)
+              end
+
+              updateSegments(1, nil, scaledDelta, false)
+
+              if shapecast() then
+                startDissipation()
+                return false
+              end
+
+              return true
+            end, scope.depth)
+
+            startDissipation()
+          end)
+        end
       )
     end)
 

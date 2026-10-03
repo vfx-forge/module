@@ -286,7 +286,7 @@ function modifiers.waitOf(m: any, picks: Picks?, env: { [string]: any }?): numbe
   end
 
   -- a wait that is not finite cannot place anything on a clock, and it would
-  -- carry through mods.span into tween.timer, which then never satisfies
+  -- carry through mods.span into the step driving it, which then never satisfies
   -- elapsed >= duration and never finishes the emit. the arithmetic here
   -- propagates a NaN where the comparison it replaced used to reject one
   if wait ~= wait or wait == math.huge then

@@ -1,5 +1,6 @@
 --!nolint LocalShadow
 local knob = require("@mod/knob")
+local curve = require("@mod/curve")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
@@ -252,117 +253,105 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
         return result[1] ~= nil
       end
 
-      -- Rotation speed tween
-      bezier_common.drivePropertyTrack(scope, rotSpeed, function(v)
+      tween.drive(scope, rotSpeed, function(v: number)
         currentRotSpeed = v
       end)
 
-      -- main animation
-      lifetime.hold(
+      tween.play(
         scope,
-        tween.fromParams(
-          attrs.EasingCurve,
-          duration,
-          function(alpha, deltaTime, elapsed)
-            local pos1 = getPos(alpha)
-            local newCF = CFrame.new(pos1)
+        curve.new(duration, attrs.EasingCurve),
+        function(alpha: number, deltaTime: number, elapsed: number)
+          local pos1 = getPos(alpha)
+          local newCF = CFrame.new(pos1)
 
-            if attrs.FacePath then
-              local pos2 = getPos(math.clamp((elapsed + (1 / 60)) / duration, 0, 1))
+          if attrs.FacePath then
+            local pos2 = getPos(math.clamp((elapsed + (1 / 60)) / duration, 0, 1))
 
-              if pos1 ~= pos2 then
-                newCF = CFrame.lookAt(pos1, pos2)
+            if pos1 ~= pos2 then
+              newCF = CFrame.lookAt(pos1, pos2)
+            else
+              newCF *= prevCF.Rotation
+            end
+          end
+
+          local add = initRot:Sign() * currentRotSpeed * utility.DEG_TO_RAD * deltaTime
+          currentRot *= CFrame.fromOrientation(add.x, add.y, add.z)
+
+          -- save current cframe before applying rotation
+          prevCF = newCF
+          newCF *= currentRot
+
+          if attrs.SyncPosition then
+            objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * originCFrame:ToObjectSpace(newCF)
+          else
+            objAbstr.CFrame = newCF
+          end
+
+          if deltaTime > 0 then
+            lastVelocity = (pos1 - lastPos) / deltaTime
+          end
+
+          lastPos = pos1
+
+          if shapecast() then
+            onFinish()
+            didHit = true
+            return false
+          end
+
+          if (attrs.ProjectileEnabled and alpha * duration < projectileLifetime) or not attrs.ProjectileEnabled then
+            return true
+          end
+
+          onFinish()
+
+          return false
+        end,
+        scope.depth,
+        function()
+          if not attrs.ProjectileEnabled or didHit then
+            onFinish()
+            return
+          end
+
+          -- Projectile mode
+          local dir = if attrs.MatchEndDirection and endPoint
+            then endPoint.WorldCFrame.LookVector
+            else lastVelocity.Unit
+
+          if dir ~= dir then
+            dir = Vector3.zero
+          end
+
+          lastVelocity = dir * attrs.ProjectileSpeed
+
+          local projectileOrigin = obj.Position
+          local originCFrameAtProjectileInit = utility.getTransformedOriginExtents(parent)
+
+          -- this runs inside the main tween's step, which must not yield
+          task.spawn(function()
+            tween.wait(scope, curve.new(projectileLifetime, "linear"), function(_, _, elapsed: number)
+              if attrs.SyncPosition then
+                objAbstr.CFrame = utility.getTransformedOriginExtents(parent)
+                  * originCFrameAtProjectileInit:ToObjectSpace(CFrame.new(projectileOrigin + lastVelocity * elapsed))
               else
-                newCF *= prevCF.Rotation
+                objAbstr.CFrame = CFrame.new(projectileOrigin + lastVelocity * elapsed) * obj.CFrame.Rotation
               end
-            end
 
-            local add = initRot:Sign() * currentRotSpeed * utility.DEG_TO_RAD * deltaTime
-            currentRot *= CFrame.fromOrientation(add.x, add.y, add.z)
-
-            -- save current cframe before applying rotation
-            prevCF = newCF
-            newCF *= currentRot
-
-            if attrs.SyncPosition then
-              objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * originCFrame:ToObjectSpace(newCF)
-            else
-              objAbstr.CFrame = newCF
-            end
-
-            if deltaTime > 0 then
-              lastVelocity = (pos1 - lastPos) / deltaTime
-            end
-
-            lastPos = pos1
-
-            if shapecast() then
-              onFinish()
-              didHit = true
-              return nil
-            end
-
-            if scope.clock.halted then
-              return nil
-            end
-
-            if (attrs.ProjectileEnabled and alpha * duration < projectileLifetime) or not attrs.ProjectileEnabled then
-              return deltaTime
-            else
-              onFinish()
-              return nil
-            end
-          end,
-          nil,
-          function(organic)
-            if not attrs.ProjectileEnabled or didHit then
-              if organic then
+              if shapecast() then
                 onFinish()
+                didHit = true
+                return false
               end
-              return
+
+              return true
+            end, scope.depth)
+
+            if not didHit then
+              onFinish()
             end
-
-            -- Projectile mode
-            local dir = if attrs.MatchEndDirection and endPoint
-              then endPoint.WorldCFrame.LookVector
-              else lastVelocity.Unit
-
-            if dir ~= dir then
-              dir = Vector3.zero
-            end
-
-            lastVelocity = dir * attrs.ProjectileSpeed
-
-            local projectileOrigin = obj.Position
-            local originCFrameAtProjectileInit = utility.getTransformedOriginExtents(parent)
-
-            -- this runs inside the main tween's step, which must not yield
-            task.spawn(function()
-              tween.timer(projectileLifetime, function(deltaTime, elapsed)
-                if attrs.SyncPosition then
-                  objAbstr.CFrame = utility.getTransformedOriginExtents(parent)
-                    * originCFrameAtProjectileInit:ToObjectSpace(CFrame.new(projectileOrigin + lastVelocity * elapsed))
-                else
-                  objAbstr.CFrame = CFrame.new(projectileOrigin + lastVelocity * elapsed) * obj.CFrame.Rotation
-                end
-
-                if shapecast() then
-                  onFinish()
-                  didHit = true
-                  return nil
-                end
-
-                return if scope.clock.halted then nil else deltaTime
-              end, nil, scope, scope.depth)
-
-              if not didHit then
-                onFinish()
-              end
-            end)
-          end,
-          true, -- start at zero, important for facepath to work on short durations
-          scope.depth
-        )
+          end)
+        end
       )
     end)
 
@@ -376,9 +365,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   -- on the effect's clock, and over once it halts, since a halted clock never
   -- moves again
   if attrs.DestroyDelay > 0 then
-    tween.timer(attrs.DestroyDelay, function(deltaTime)
-      return if scope.clock.halted then nil else deltaTime
-    end, nil, scope)
+    tween.wait(scope, curve.new(attrs.DestroyDelay, "linear"))
   end
 end
 
