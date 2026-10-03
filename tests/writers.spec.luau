@@ -530,6 +530,28 @@ harness.suite(function()
       hook:Disconnect()
     end)
 
+    test("Disconnect quiets the hook's fields", function()
+      local emit, fx = effect()
+      local obj = instance({ Transparency = 0 })
+      local w = lifetime.write(fx, obj, "property", "Transparency")
+
+      lifetime.set(w, 0.5)
+
+      local hook = lifetime.hook(obj, "property", "Transparency")
+
+      expect(hook.Active).toBe(true)
+
+      hook:Disconnect()
+
+      expect(hook.Connected).toBe(false)
+      expect(hook.Active).toBe(false)
+      expect(hook.Value).toBe(nil)
+      expect(hook.Offset).toBe(0)
+      expect(hook.Priority).toBe(nil)
+
+      done(emit)
+    end)
+
     test("a destroyed instance disconnects its hooks", function()
       local fire: () -> () = function() end
       local obj = instance({ Transparency = 0 })

@@ -404,7 +404,7 @@ local function writeProperty(obj: any, name: string, v: any)
 end
 
 -- a property that does not exist throws on the read, which reads as nil
-local function read(target: target): any
+local function read(target: target)
   if target.source ~= "property" then
     return attr.raw(target.obj, target.name)
   end
@@ -416,7 +416,7 @@ end
 
 -- the attribute arm goes through the cache-aware write, where every reader of
 -- an attribute looks
-local function put(target: target, v: any): boolean
+local function put(target: target, v: any)
   if target.source ~= "property" then
     return (pcall(attr.set, target.obj, target.name, v))
   end
@@ -511,7 +511,7 @@ end
 
 -- what a type's Offset reads with nothing written over it, nil for a type with
 -- no subtraction
-local function identityOf(v: any): any
+local function identityOf(v: any)
   local kind = typeof(v)
 
   if kind == "number" then
@@ -575,7 +575,7 @@ end
 -- the owner's value onto the target, or into its hooks while one is
 -- connected. a live value other than the one read back last was written by
 -- somebody else, and is what goes back at the end
-local function land(target: target, v: any): boolean
+local function land(target: target, v: any)
   if target.first == nil then
     target.first = v
   end
@@ -670,7 +670,7 @@ end
 -- the writer's value this frame: written when it owns the target, and kept
 -- for when it comes to own it otherwise. answers false only for a write the
 -- target refused
-function lifetime.set(w: writer, v: any): boolean
+function lifetime.set(w: writer, v: any)
   if w.left or w.fx.state == RELEASED then
     return true
   end
@@ -773,14 +773,14 @@ function lifetime.rank(emit: emit, priority: number)
 end
 
 -- how many writers hold a target now
-function lifetime.writing(obj: any, source: string, name: string): number
+function lifetime.writing(obj: any, source: string, name: string)
   local target = targetOf(obj, source, name, false)
 
   return if target then #target.writers else 0
 end
 
 -- what a target goes back to once its writers leave, nil while none holds it
-function lifetime.restoreOf(obj: any, source: string, name: string): any
+function lifetime.restoreOf(obj: any, source: string, name: string)
   local target = targetOf(obj, source, name, false)
 
   if target == nil or #target.writers == 0 then
@@ -796,8 +796,13 @@ local function unhook(hook: WriteHook)
   end
 
   hook.Connected = false
+  hook.Active = false
+  hook.Value = nil
+  hook.Priority = nil
 
   local target = HOOKED[hook]
+
+  hook.Offset = if target then target.identity else nil
 
   HOOKED[hook] = nil
 

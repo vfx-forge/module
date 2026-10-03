@@ -142,9 +142,6 @@ export const SpeedChanged: Signal<[effectiveSpeed: number]>;
 export const PausedChanged: Signal<[paused: boolean]>;
 
 /**
- * Initialize the Forge VFX system.
- */
-/**
  * What ForgeVFX would write to a property or attribute, for game code to read in place of
  * having it written. While any hook on a target is connected ForgeVFX never writes it, not
  * even to put it back at the end. The fields change only when an effect writes, so a read at
@@ -196,6 +193,9 @@ export function hookAttribute<T = unknown>(
   name: string,
 ): WriteHook<T>;
 
+/**
+ * Initialize the Forge VFX system.
+ */
 export function init(): void;
 
 /**

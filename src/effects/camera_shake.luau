@@ -86,7 +86,7 @@ local activeShakes: { Active } = {}
 local steps: { scheduler.Handle } = {}
 
 -- the hooks game code reads the shake through, which keep the camera unwritten
-local hooks: { any } = {}
+local hooks: { lifetime.WriteHook } = {}
 
 -- in the editor, the shake the last frame applied, taken back off before the
 -- next one is applied
@@ -272,6 +272,12 @@ function camera_shake.init()
   table.insert(steps, scheduler.add("shake", apply, 0, nil, true))
 end
 
+local function quiet(hook: lifetime.WriteHook)
+  hook.Connected = false
+  hook.Active = false
+  hook.Offset = CFrame.identity
+end
+
 -- the steps that would take the last shake off go with it, so it is taken
 -- off here
 function camera_shake.deinit()
@@ -284,23 +290,24 @@ function camera_shake.deinit()
     totalShakeCF = CFrame.identity
   end
 
-  -- a shake left here would be applied again, from where its clock stopped,
-  -- by the next init
   for _, hook in hooks do
-    hook.Connected = false
+    quiet(hook)
   end
 
   table.clear(hooks)
+
+  -- a shake left here would be applied again, from where its clock stopped,
+  -- by the next init
   table.clear(activeShakes)
   disconnectSteps()
 end
 
-local function unhook(hook: any)
+local function unhook(hook: lifetime.WriteHook)
   if not hook.Connected then
     return
   end
 
-  hook.Connected = false
+  quiet(hook)
 
   local index = table.find(hooks, hook)
 
@@ -311,8 +318,8 @@ end
 
 -- the shake as an Offset game code applies itself, while the camera is left
 -- alone; it has no Value and no Priority
-function camera_shake.hook(): any
-  local hook = {
+function camera_shake.hook(): lifetime.WriteHook
+  local hook: lifetime.WriteHook = {
     Connected = true,
     Active = #activeShakes > 0,
     Value = nil,

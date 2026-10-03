@@ -1706,5 +1706,35 @@ harness.suite(function()
 
       built.restore()
     end)
+
+    test("a LengthScale of 1 leaves an attachment the game moved where it is", function()
+      local built = fresh()
+      local CFrame = harness.datatypes.CFrame
+      registry.register(require("@vfx/beam"))
+
+      local part = harness.make("Part")
+      local a0 = harness.make("Attachment", part)
+      local a1 = harness.make("Attachment", part)
+
+      a0.CFrame = CFrame.new(0, 0, 0)
+      a1.CFrame = CFrame.new(0, 0, 10)
+
+      local beam = harness.make("Beam", part) :: any
+
+      beam.Attachment0 = a0
+      beam.Attachment1 = a1
+
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0)
+
+      a1.CFrame = CFrame.new(0, 0, 20)
+
+      env:Clear()
+
+      expect(a1.CFrame).toEqual(CFrame.new(0, 0, 20))
+
+      built.restore()
+    end)
   end)
 end)

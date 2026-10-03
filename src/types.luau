@@ -4,6 +4,8 @@ local ObjectCache = require("@obj/ObjectCache")
 
 export type scope = lifetime.effect
 
+export type WriteHook = lifetime.WriteHook
+
 export type EmitOptions = {
   priority: number?,
 }
@@ -60,8 +62,8 @@ export type Api = {
 
   emit: (vfxOrScale: number | Instance, ...any) -> EmitEnv,
   emitWithDepth: (depth: number, ...Instance) -> EmitEnv,
-  hookProperty: (obj: Instance, property: string) -> lifetime.WriteHook,
-  hookAttribute: (obj: Instance, name: string) -> lifetime.WriteHook,
+  hookProperty: (obj: Instance, property: string) -> WriteHook,
+  hookAttribute: (obj: Instance, name: string) -> WriteHook,
 }
 
 return {}
