@@ -318,13 +318,15 @@ The one genuinely non-inferable fact belongs at its use site, not in a header:
 ### Misplaced module state
 
 ```luau
--- BEFORE: path.bezier_cache declared mid-file, after two functions
--- AFTER: immediately after the module table
-local path = {}
+-- BEFORE: a cache declared mid-file, after the functions that read it
+-- AFTER: immediately after the module table, as src/mod/curve.luau keeps its
+-- shape caches
+local curve = {}
 
-path.bezier_cache = {} :: { [string]: Bezier.Bezier }
+-- the four presets, decoded once per runtime and never let go
+local Presets: { [string]: Shape } = {}
 
-function path.serializePath(points: { Path2DControlPoint })
+local function solve(shape: Shape, t: number): number
 ```
 
 ## 12. Roblox guide deltas
