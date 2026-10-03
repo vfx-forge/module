@@ -586,6 +586,11 @@ function effects.emitNested(part: Instance, depth: number, parentScope: types.sc
   emitChildren(part:GetChildren(), depth, parentScope, join, "")
 end
 
+-- one instance emitted under an effect, on its clock, counted into the join
+function effects.emitInstance(inst: Instance, depth: number, parentScope: types.scope?, join: lifetime.join?)
+  emitChildren({ inst }, depth, parentScope, join, "")
+end
+
 function effects.emitFromFolder(
   folder: Folder?,
   targetParent: Instance,

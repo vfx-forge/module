@@ -32,6 +32,7 @@ export type EffectsService = {
 
   emit: (depth: number, ...any) -> EmitEnv,
   emitNested: (part: Instance, depth: number, parentScope: scope?, join: lifetime.join?) -> (),
+  emitInstance: (inst: Instance, depth: number, parentScope: scope?, join: lifetime.join?) -> (),
   emitFromFolder: (
     folder: Folder?,
     targetParent: Instance,
