@@ -122,11 +122,16 @@ local function soleClass(classifier: string, subjects: { string }?): string?
   return subjects[1]
 end
 
-local function fail(id: string, message: string)
-  logger.error(`effect module {id}: {message}`)
+-- every reason a module cannot be registered is gathered rather than raised at
+-- the first, so an author fixing one sees them all at once
+type Found = { string }
+
+local function fail(found: Found, id: string, message: string)
+  table.insert(found, `effect module {id}: {message}`)
 end
 
 local function checkRow(
+  found: Found,
   id: string,
   source: string,
   name: string,
@@ -135,18 +140,19 @@ local function checkRow(
   events: { string }?
 )
   if not knob.is(row) then
-    fail(id, `{source} row {name} is not a knob`)
+    fail(found, id, `{source} row {name} is not a knob`)
+    return
   end
 
   if taken[name] then
-    fail(id, `{name} is already the name or alias of {taken[name]}`)
+    fail(found, id, `{name} is already the name or alias of {taken[name]}`)
   end
 
   taken[name] = name
 
   for _, alias in row.names do
     if taken[alias] then
-      fail(id, `alias {alias} of {name} is already the name or alias of {taken[alias]}`)
+      fail(found, id, `alias {alias} of {name} is already the name or alias of {taken[alias]}`)
     end
 
     taken[alias] = name
@@ -154,40 +160,41 @@ local function checkRow(
 
   if row.hasDefault then
     if (row.lower ~= nil or row.upper ~= nil) and not knob.ordered(row.default) then
-      fail(id, `{name} has a bound but its default cannot be ordered`)
+      fail(found, id, `{name} has a bound but its default cannot be ordered`)
     end
 
     local kind = mods.kindOf(row.default)
 
     if row.lower ~= nil and typeof(row.lower) ~= "number" and mods.kindOf(row.lower) ~= kind then
-      fail(id, `the min of {name} is neither a number nor a {kind}`)
+      fail(found, id, `the min of {name} is neither a number nor a {kind}`)
     end
 
     if row.upper ~= nil and typeof(row.upper) ~= "number" and mods.kindOf(row.upper) ~= kind then
-      fail(id, `the max of {name} is neither a number nor a {kind}`)
+      fail(found, id, `the max of {name} is neither a number nor a {kind}`)
     end
 
     if knob.clamp(row.default, row.lower, row.upper) ~= row.default then
-      fail(id, `the default of {name} lies outside its own bounds`)
+      fail(found, id, `the default of {name} lies outside its own bounds`)
     end
 
     if row.choices ~= nil and (typeof(row.default) ~= "string" or not table.find(row.choices, row.default)) then
-      fail(id, `{name} has options its default is not one of`)
+      fail(found, id, `{name} has options its default is not one of`)
     end
   end
 
   if row.units ~= nil and not knob.UNITS[row.units] then
-    fail(id, `{name} has an unknown unit {row.units}`)
+    fail(found, id, `{name} has an unknown unit {row.units}`)
   end
 
   if row.preset ~= nil and curves.PRESETS[row.preset] == nil then
-    fail(id, `{name} has an unknown curve preset {row.preset}`)
+    fail(found, id, `{name} has an unknown curve preset {row.preset}`)
   end
 
   if row.modDefault ~= nil then
     for _, spec in row.modDefault do
       if not mod.is(spec) then
-        fail(id, `a default modifier of {name} is not a mod spec`)
+        fail(found, id, `a default modifier of {name} is not a mod spec`)
+        continue
       end
 
       local lane = spec.opts.lane
@@ -196,7 +203,7 @@ local function checkRow(
       -- behind one would sit on the row for the whole emit and never run
       if lane ~= nil and lane ~= "start" and lane ~= "end" then
         if events == nil or table.find(events, lane) == nil then
-          fail(id, `a default modifier of {name} waits on {lane}, which this module never declares`)
+          fail(found, id, `a default modifier of {name} waits on {lane}, which this module never declares`)
         end
       end
     end
@@ -204,20 +211,20 @@ local function checkRow(
 
   for _, field in { "hiddenRule", "readonlyRule", "rule" } do
     if row[field] ~= nil and type(row[field]) ~= "function" then
-      fail(id, `{field} of {name} is not a function`)
+      fail(found, id, `{field} of {name} is not a function`)
     end
   end
 end
 
-local function checkLayout(id: string, entries: { any }, rows: { [string]: boolean })
+local function checkLayout(found: Found, id: string, entries: { any }, rows: { [string]: boolean })
   for _, entry in entries do
     if type(entry) == "string" then
       if not rows[entry] then
-        fail(id, `layout names no row {entry}`)
+        fail(found, id, `layout names no row {entry}`)
       end
     elseif type(entry) == "table" and entry.action ~= nil then
       if type(entry.action) ~= "string" or type(entry.label) ~= "string" then
-        fail(id, "an action row needs a string action and label")
+        fail(found, id, "an action row needs a string action and label")
       end
     elseif type(entry) == "table" and entry.curve ~= nil then
       -- a compound entry draws a set of rows as one; the runtime reads nothing
@@ -226,17 +233,17 @@ local function checkLayout(id: string, entries: { any }, rows: { [string]: boole
         local named = entry[key]
 
         if named ~= nil and (type(named) ~= "string" or not rows[named]) then
-          fail(id, `a compound row names no row {tostring(named)}`)
+          fail(found, id, `a compound row names no row {tostring(named)}`)
         end
       end
     elseif type(entry) == "table" and type(entry.entries) == "table" then
       if entry.hidden ~= nil and type(entry.hidden) ~= "function" then
-        fail(id, `hidden on group {tostring(entry.title)} is not a function`)
+        fail(found, id, `hidden on group {tostring(entry.title)} is not a function`)
       end
 
-      checkLayout(id, entry.entries, rows)
+      checkLayout(found, id, entry.entries, rows)
     else
-      fail(id, "a layout entry is a row name, an action row or a group")
+      fail(found, id, "a layout entry is a row name, an action row or a group")
     end
   end
 end
@@ -316,68 +323,123 @@ local function ownedOf(module: Module): Owned
   return out
 end
 
-function registry.register(module: Module)
+local function checkEvents(found: Found, id: string, events: any)
+  if type(events) ~= "table" then
+    fail(found, id, "events must be a list of lane names")
+    return
+  end
+
+  local named = {}
+
+  for _, event in events do
+    if type(event) ~= "string" or event == "" then
+      fail(found, id, "an event needs a name")
+      continue
+    end
+
+    if event == "start" or event == "end" then
+      fail(found, id, `{event} is a built in lane rather than an event`)
+    end
+
+    if named[event] then
+      fail(found, id, `event {event} is declared twice`)
+    end
+
+    named[event] = true
+  end
+end
+
+local function checkRows(found: Found, id: string, module: Module, rows: { [string]: boolean })
+  local taken = {}
+  local events = if type(module.events) == "table" then module.events else nil
+
+  for _, source in { "attributes", "properties" } do
+    local list = (module :: any)[source]
+
+    if list == nil then
+      continue
+    end
+
+    if type(list) ~= "table" then
+      fail(found, id, `{source} must be a table of knobs`)
+      continue
+    end
+
+    for name, row in list do
+      checkRow(found, id, string.sub(source, 1, -2), name, row, taken, events)
+      rows[name] = true
+    end
+  end
+end
+
+-- every reason the module cannot be registered, none when it can. `except` is
+-- a module the caller is about to take out, whose id is free to claim
+function registry.problems(module: Module, except: Module?): { string }
+  local found: Found = {}
   local id = module.id
 
   if type(id) ~= "string" or id == "" then
-    logger.error("an effect module needs a string id")
-  end
-
-  if byId[id] then
-    fail(id, "already registered")
+    table.insert(found, "an effect module needs a string id")
+    id = "?"
+  elseif byId[id] ~= nil and byId[id] ~= except then
+    fail(found, id, "already registered")
   end
 
   if type(module.display) ~= "table" or type(module.display.name) ~= "string" then
-    fail(id, "display needs a name")
+    fail(found, id, "display needs a name")
   end
 
   if type(module.classifier) ~= "string" then
-    fail(id, "classifier must be a selector string")
+    fail(found, id, "classifier must be a selector string")
   end
 
   if module.components ~= nil and type(module.components) ~= "string" then
-    fail(id, "components must be a selector string")
+    fail(found, id, "components must be a selector string")
   end
 
   if type(module.emit) ~= "function" then
-    fail(id, "emit must be a function")
+    fail(found, id, "emit must be a function")
   end
 
   if module.duration ~= nil and type(module.duration) ~= "function" then
-    fail(id, "duration must be a rule")
+    fail(found, id, "duration must be a rule")
   end
 
   if module.selected ~= nil and type(module.selected) ~= "function" then
-    fail(id, "selected must be a function")
+    fail(found, id, "selected must be a function")
   end
 
   if module.constant ~= nil and type(module.constant) ~= "boolean" then
-    fail(id, "constant must be a boolean")
+    fail(found, id, "constant must be a boolean")
   end
 
   if module.events ~= nil then
-    if type(module.events) ~= "table" then
-      fail(id, "events must be a list of lane names")
-    end
+    checkEvents(found, id, module.events)
+  end
 
-    local named = {}
+  local rows = {}
 
-    for _, event in module.events do
-      if type(event) ~= "string" or event == "" then
-        fail(id, "an event needs a name")
-      end
+  checkRows(found, id, module, rows)
 
-      if event == "start" or event == "end" then
-        fail(id, `{event} is a built in lane rather than an event`)
-      end
-
-      if named[event] then
-        fail(id, `event {event} is declared twice`)
-      end
-
-      named[event] = true
+  if module.layout ~= nil then
+    if type(module.layout) == "table" then
+      checkLayout(found, id, module.layout, rows)
+    else
+      fail(found, id, "layout must be a list of entries")
     end
   end
+
+  return found
+end
+
+function registry.register(module: Module)
+  local found = registry.problems(module)
+
+  if #found > 0 then
+    logger.error(table.concat(found, "\n"))
+  end
+
+  local id = module.id
 
   if module.attributes == nil then
     module.attributes = {}
@@ -387,21 +449,7 @@ function registry.register(module: Module)
     module.properties = {}
   end
 
-  local taken = {}
-  local rows = {}
-
-  for name, row in module.attributes do
-    checkRow(id, "attribute", name, row, taken, module.events)
-    rows[name] = true
-  end
-
-  for name, row in module.properties do
-    checkRow(id, "property", name, row, taken, module.events)
-    rows[name] = true
-  end
-
   if module.layout ~= nil then
-    checkLayout(id, module.layout, rows)
     freezeLayout(module.layout)
   end
 
@@ -438,6 +486,22 @@ function registry.register(module: Module)
 
     return a.id < b.id
   end)
+end
+
+-- the module taken out of every lookup, so its id and classifier are free
+-- again. an emit already running it keeps running
+function registry.unregister(module: Module)
+  local index = table.find(modules, module)
+
+  if index == nil then
+    return
+  end
+
+  table.remove(modules, index)
+
+  byId[module.id] = nil
+  owned[module] = nil
+  shape[module] = nil
 end
 
 function registry.get(id: string): Module?

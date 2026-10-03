@@ -664,4 +664,80 @@ harness.suite(function()
       })
     end)
   end)
+  harness.describe("registry.problems and registry.unregister", function()
+    test("every reason a module is refused for is named at once, and nothing is registered", function()
+      registry.clear()
+
+      local bad = stub("x", {
+        display = { icon = "x" },
+        classifier = 5,
+        emit = "no",
+        attributes = { A = knob(5):max(2), B = 0 },
+      })
+
+      local found = registry.problems(bad)
+
+      expect(#found).toBe(5)
+      expect(table.concat(found, "\n")).toBe(table.concat({
+        "effect module x: display needs a name",
+        "effect module x: classifier must be a selector string",
+        "effect module x: emit must be a function",
+        "effect module x: the default of A lies outside its own bounds",
+        "effect module x: attribute row B is not a knob",
+      }, "\n"))
+
+      local ok, err = pcall(registry.register, bad)
+
+      expect(ok).toBe(false)
+      expect(string.find(tostring(err), "emit must be a function", 1, true) ~= nil).toBe(true)
+      expect(string.find(tostring(err), "row B is not a knob", 1, true) ~= nil).toBe(true)
+      expect(registry.get("x")).toBe(nil)
+      expect(#registry.list()).toBe(0)
+    end)
+
+    test("a module that can be registered has no problems, and a taken id is one", function()
+      registry.clear()
+
+      local first = stub("x")
+
+      expect(registry.problems(first)).toEqual({})
+
+      registry.register(first)
+
+      expect(registry.problems(stub("x"))).toEqual({ "effect module x: already registered" })
+      expect(registry.problems(stub("x"), first)).toEqual({})
+    end)
+
+    test("a module that is no table of rows is refused rather than walked", function()
+      registry.clear()
+
+      expect(registry.problems(stub("x", { attributes = 3, layout = "a" }))).toEqual({
+        "effect module x: attributes must be a table of knobs",
+        "effect module x: layout must be a list of entries",
+      })
+    end)
+
+    test("unregister frees the id and every lookup, and leaves the others", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      harness.reset()
+
+      local beam = stub("beam")
+      local trail = stub("trail", { classifier = "Trail" })
+
+      registry.register(beam)
+      registry.register(trail)
+      registry.unregister(beam)
+
+      expect(registry.get("beam")).toBe(nil)
+      expect(registry.list()).toEqual({ trail })
+      expect(registry.of(harness.make("Beam"))).toBe(nil)
+      expect(registry.of(harness.make("Trail"))).toBe(trail)
+
+      registry.unregister(beam)
+      registry.register(stub("beam"))
+
+      expect(registry.get("beam") ~= nil).toBe(true)
+    end)
+  end)
 end)
