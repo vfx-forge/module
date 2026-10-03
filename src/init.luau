@@ -372,8 +372,13 @@ api.SpeedChanged = clock.speedChanged
 api.PausedChanged = clock.pausedChanged
 
 -- the value ForgeVFX would write to a property, read in place of having it
--- written until the hook disconnects
+-- written until the hook disconnects. the current camera's CFrame is the
+-- camera shake's
 function api.hookProperty(obj: Instance, property: string)
+  if obj == workspace.CurrentCamera and property == "CFrame" then
+    return CameraShake.hook()
+  end
+
   return lifetime.hook(obj, "property", property)
 end
 

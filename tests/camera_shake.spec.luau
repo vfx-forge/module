@@ -373,5 +373,82 @@ harness.suite(function()
         end
       )
     end
+
+    test("a hook takes the shake as an Offset and the camera is left alone", function()
+      start(running)
+
+      local hook = camera_shake.hook()
+      local fx = shake(nil, 30)
+
+      frames(3)
+
+      expect(near(camera.CFrame, BASE)).toBe(true)
+      expect(hook.Active).toBe(true)
+      expect(hook.Value).toBe(nil)
+      expect(hook.Priority).toBe(nil)
+      expect(near(hook.Offset, CFrame.identity)).toBe(false)
+
+      hook:Disconnect()
+      frames(1)
+
+      expect(near(camera.CFrame, BASE)).toBe(false)
+
+      finish(fx)
+    end)
+
+    test("a hooked shake is ready by the end of the compute phase", function()
+      start(running)
+
+      local hook = camera_shake.hook()
+      local fx = shake(nil, 30)
+
+      frames(2)
+
+      local before = hook.Offset
+
+      scheduler.compute(0.1)
+
+      expect(near(hook.Offset, before)).toBe(false)
+
+      scheduler.late(0.1)
+      hook:Disconnect()
+      finish(fx)
+    end)
+
+    test("a hook made in the editor takes the shake already applied back off", function()
+      start(notRunning)
+
+      local fx = shake(nil, 30)
+
+      frames(2)
+
+      expect(near(camera.CFrame, BASE)).toBe(false)
+
+      local hook = camera_shake.hook()
+
+      frames(1)
+
+      expect(near(camera.CFrame, BASE)).toBe(true)
+
+      hook:Disconnect()
+      finish(fx)
+    end)
+
+    test("a hook with no shake running is inactive at the identity, and deinit disconnects it", function()
+      start(running)
+
+      local hook = camera_shake.hook()
+
+      frames(1)
+
+      expect(hook.Active).toBe(false)
+      expect(hook.Offset).toEqual(CFrame.identity)
+
+      camera_shake.deinit()
+
+      expect(hook.Connected).toBe(false)
+
+      RunService.IsRunning = notRunning
+    end)
   end)
 end)

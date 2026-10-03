@@ -85,6 +85,9 @@ end
 local activeShakes: { Active } = {}
 local steps: { scheduler.Handle } = {}
 
+-- the hooks game code reads the shake through, which keep the camera unwritten
+local hooks: { any } = {}
+
 -- in the editor, the shake the last frame applied, taken back off before the
 -- next one is applied
 local totalShakeCF = CFrame.identity
@@ -109,30 +112,9 @@ local function undo()
   camera:SetAttribute(WRITTEN_ATTRIBUTE, nil)
 end
 
-local function apply()
-  local running = RunService:IsRunning()
-
-  if #activeShakes == 0 and (running or totalShakeCF == CFrame.identity) then
-    return
-  end
-
-  local camera = workspace.CurrentCamera
-
-  if not running then
-    camera.CFrame *= totalShakeCF:Inverse()
-
-    -- forgotten as soon as it is off, so a frame that throws past here is
-    -- not taken off the camera a second time by the next
-    totalShakeCF = CFrame.identity
-
-    -- I <3 THE STUDIO CAMERA SYSTEM !!!! YAYAY AIHU;S H;GDFAH GSDFL
-    local cf = camera.CFrame
-    local rx, ry = cf:ToOrientation()
-
-    -- NO HAX ALLOWED!!!!!!!
-    camera.CFrame = CFrame.new(cf.Position) * CFrame.fromOrientation(rx, ry, 0)
-  end
-
+-- every running shake one frame on: the shakes summed as one CFrame, and the
+-- threads of those that ended, taken out of the list
+local function advance(camera: any): (CFrame, { thread }?)
   local totalPos = Vector3.zero
   local totalRot = CFrame.identity
 
@@ -175,7 +157,50 @@ local function apply()
 
   activeShakes = stillActive
 
-  local total = CFrame.new(totalPos) * totalRot
+  return CFrame.new(totalPos) * totalRot, finished
+end
+
+-- woken once the list is settled, since a body that ends here takes its shake
+-- out of it
+local function wake(finished: { thread }?)
+  if finished == nil then
+    return
+  end
+
+  for _, thread in finished do
+    task.spawn(thread)
+  end
+end
+
+local function apply()
+  if #hooks > 0 then
+    return
+  end
+
+  local running = RunService:IsRunning()
+
+  if #activeShakes == 0 and (running or totalShakeCF == CFrame.identity) then
+    return
+  end
+
+  local camera = workspace.CurrentCamera
+
+  if not running then
+    camera.CFrame *= totalShakeCF:Inverse()
+
+    -- forgotten as soon as it is off, so a frame that throws past here is
+    -- not taken off the camera a second time by the next
+    totalShakeCF = CFrame.identity
+
+    -- I <3 THE STUDIO CAMERA SYSTEM !!!! YAYAY AIHU;S H;GDFAH GSDFL
+    local cf = camera.CFrame
+    local rx, ry = cf:ToOrientation()
+
+    -- NO HAX ALLOWED!!!!!!!
+    camera.CFrame = CFrame.new(cf.Position) * CFrame.fromOrientation(rx, ry, 0)
+  end
+
+  local total, finished = advance(camera)
 
   if running then
     local current = camera.CFrame
@@ -194,15 +219,39 @@ local function apply()
     camera.CFrame *= total
   end
 
-  if finished == nil then
+  wake(finished)
+end
+
+-- with a hook connected the shake goes to game code in the compute phase,
+-- after every effect's own step, and the camera is never written. a shake
+-- the editor already applied comes back off first
+local function offer()
+  if #hooks == 0 then
     return
   end
 
-  -- woken once the list is settled, since a body that ends here takes its
-  -- shake out of it
-  for _, thread in finished do
-    task.spawn(thread)
+  local camera = workspace.CurrentCamera
+
+  if totalShakeCF ~= CFrame.identity then
+    camera.CFrame *= totalShakeCF:Inverse()
+    totalShakeCF = CFrame.identity
   end
+
+  local total = CFrame.identity
+  local finished: { thread }? = nil
+
+  if #activeShakes > 0 then
+    total, finished = advance(camera)
+  end
+
+  local active = #activeShakes > 0
+
+  for _, hook in hooks do
+    hook.Active = active
+    hook.Offset = if active then total else CFrame.identity
+  end
+
+  wake(finished)
 end
 
 local function disconnectSteps()
@@ -219,6 +268,7 @@ function camera_shake.init()
   end
 
   table.insert(steps, scheduler.add("undo", undo, 0, nil, true))
+  table.insert(steps, scheduler.add("compute", offer, math.huge, nil, true))
   table.insert(steps, scheduler.add("shake", apply, 0, nil, true))
 end
 
@@ -236,8 +286,44 @@ function camera_shake.deinit()
 
   -- a shake left here would be applied again, from where its clock stopped,
   -- by the next init
+  for _, hook in hooks do
+    hook.Connected = false
+  end
+
+  table.clear(hooks)
   table.clear(activeShakes)
   disconnectSteps()
+end
+
+local function unhook(hook: any)
+  if not hook.Connected then
+    return
+  end
+
+  hook.Connected = false
+
+  local index = table.find(hooks, hook)
+
+  if index then
+    table.remove(hooks, index)
+  end
+end
+
+-- the shake as an Offset game code applies itself, while the camera is left
+-- alone; it has no Value and no Priority
+function camera_shake.hook(): any
+  local hook = {
+    Connected = true,
+    Active = #activeShakes > 0,
+    Value = nil,
+    Offset = CFrame.identity,
+    Priority = nil,
+    Disconnect = unhook,
+  }
+
+  table.insert(hooks, hook)
+
+  return hook
 end
 
 function camera_shake.emit(ctx: reader.Ctx, attrs: any)
