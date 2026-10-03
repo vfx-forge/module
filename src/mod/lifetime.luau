@@ -75,7 +75,7 @@ export type effect = {
 export type join = {
   fx: effect,
   count: number,
-  waiter: thread?,
+  waiters: { thread }?,
 }
 
 -- one property or attribute on one instance that some effect writes but did
@@ -1122,7 +1122,7 @@ function lifetime.await(emit: emit)
 end
 
 function lifetime.join(fx: effect): join
-  return { fx = fx, count = 0, waiter = nil }
+  return { fx = fx, count = 0, waiters = nil }
 end
 
 -- counts one more thing into the join and answers what counts it out. only the
@@ -1141,15 +1141,18 @@ function lifetime.add(join: join)
     counted = false
     join.count -= 1
 
-    local waiter = join.waiter
+    local waiters = join.waiters
 
-    if join.count > 0 or waiter == nil then
+    if join.count > 0 or waiters == nil then
       return
     end
 
-    join.waiter = nil
+    join.waiters = nil
 
-    table.insert(wakes, waiter)
+    for _, waiter in waiters do
+      table.insert(wakes, waiter)
+    end
+
     flushWakes()
   end
 end
@@ -1216,8 +1219,8 @@ function lifetime.spawn(join: join, body: (...any) -> (), ...: any)
 end
 
 -- parks the calling thread until everything counted into the join is out, and
--- not at all once the join's effect has stopped. a join has one waiter at a
--- time, and may be waited on again once it is empty
+-- not at all once the join's effect has stopped. every thread parked on a
+-- join wakes when it empties, and it may be waited on again after
 function lifetime.awaitJoin(join: join)
   if scheduler.inPass() then
     logger.error(
@@ -1229,7 +1232,14 @@ function lifetime.awaitJoin(join: join)
     return
   end
 
-  join.waiter = coroutine.running()
+  local waiters = join.waiters
+
+  if waiters == nil then
+    waiters = {}
+    join.waiters = waiters
+  end
+
+  table.insert(waiters, coroutine.running())
   coroutine.yield()
 end
 

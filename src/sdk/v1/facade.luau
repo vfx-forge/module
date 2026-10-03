@@ -190,9 +190,9 @@ local function shapeOf(given: any): any
   local kind = typeof(given)
 
   if kind == "string" then
-    -- a curve row's value is binary and starts at time zero, so a name made of
-    -- letters is always meant as a preset
-    if curves.PRESETS[given] == nil and string.match(given, "^[%a_][%w_]*$") then
+    -- a curve row's value is binary and starts with four zero bytes, so any
+    -- other text is meant as a preset
+    if curves.PRESETS[given] == nil and string.sub(given, 1, 4) ~= "\0\0\0\0" then
       logger.error(`{given} is no curve preset, use linear, easeIn, easeOut or easeInOut`)
     end
 
@@ -200,7 +200,7 @@ local function shapeOf(given: any): any
   end
 
   if kind == "buffer" then
-    return given
+    return buffer.tostring(given)
   end
 
   if kind == "function" then

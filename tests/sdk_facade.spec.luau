@@ -159,6 +159,33 @@ harness.suite(function()
       ).toBe(true)
     end)
 
+    test("refuses any text that is no preset, and still reads a serialized value", function()
+      for _, text in { "ease-out", "easeOut ", "ease out" } do
+        local ok, err = pcall(sdk.curve, 1, text)
+
+        expect(ok).toBe(false)
+        expect(string.find(tostring(err), `{text} is no curve preset, use linear`, 1, true) ~= nil).toBe(true)
+      end
+
+      local serialized = curves.PRESETS.easeIn
+
+      expect(math.abs(sdk.curve(1, serialized):at(0.3) - sdk.curve(1, "easeIn"):at(0.3)) < 1e-9).toBe(true)
+    end)
+
+    test("copies a buffer shape, so a buffer changed later changes nothing", function()
+      local source = buffer.fromstring(curves.PRESETS.linear)
+      local first = sdk.curve(1, source)
+      local before = first:at(0.5)
+
+      buffer.writestring(source, 0, curves.PRESETS.easeIn)
+
+      local second = sdk.curve(1, source)
+
+      expect(first:at(0.5)).toBe(before)
+      expect(math.abs(second:at(0.5) - sdk.curve(1, "easeIn"):at(0.5)) < 1e-9).toBe(true)
+      expect(math.abs(second:at(0.5) - before) > 1e-3).toBe(true)
+    end)
+
     test("refuses a bad chain with the reason, and a point that is no vector", function()
       local ok, err = pcall(sdk.curve, 1, { vector.create(0, 0), vector.create(0.5, 1), vector.create(1, 1) })
 
@@ -458,6 +485,67 @@ harness.suite(function()
       scheduler.frame(0.25)
 
       expect(seen).toEqual({ 0.5 })
+    end)
+  end)
+
+  harness.describe("awaiting a join", function()
+    test("a piece awaits another join after the body returned, and the effect ends", function()
+      fresh()
+
+      local order = {}
+
+      custom("cross_await", function(sdk: any, ctx: any)
+        local a = sdk.join(ctx)
+        local b = sdk.join(ctx)
+
+        sdk.spawn(a, function()
+          sdk.wait(ctx, 1)
+          table.insert(order, "a")
+        end)
+
+        sdk.spawn(b, function()
+          sdk.wait(ctx, 0.5)
+          sdk.await(a)
+          table.insert(order, "b")
+        end)
+      end)
+
+      local env = play()
+
+      scheduler.frame(0.5)
+      scheduler.frame(0.5)
+
+      expect(order).toEqual({ "a", "b" })
+      expect(ended(env)).toBe(true)
+    end)
+
+    test("two pieces awaiting one join both resume", function()
+      fresh()
+
+      local resumed = 0
+
+      custom("double_await", function(sdk: any, ctx: any)
+        local a = sdk.join(ctx)
+        local b = sdk.join(ctx)
+
+        sdk.spawn(a, function()
+          sdk.wait(ctx, 1)
+        end)
+
+        for _ = 1, 2 do
+          sdk.spawn(b, function()
+            sdk.await(a)
+            resumed += 1
+          end)
+        end
+      end)
+
+      local env = play()
+
+      scheduler.frame(1)
+
+      expect(resumed).toBe(2)
+      expect(ended(env)).toBe(true)
     end)
   end)
 

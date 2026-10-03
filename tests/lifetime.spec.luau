@@ -848,6 +848,32 @@ harness.suite(function()
       expect(log).toEqual({ "joined" })
     end)
 
+    test("every thread parked on one join wakes when it empties", function()
+      local log = {}
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local out
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local outstanding = lifetime.join(scope)
+        out = lifetime.add(outstanding)
+
+        lifetime.spawn(lifetime.join(scope), function()
+          lifetime.awaitJoin(outstanding)
+          table.insert(log, "piece")
+        end)
+
+        lifetime.awaitJoin(outstanding)
+        table.insert(log, "body")
+      end)
+
+      expect(log).toEqual({})
+
+      out()
+
+      expect(#log).toBe(2)
+    end)
+
     test("a join with nothing counted in does not yield", function()
       local log = {}
       local emit = lifetime.emit(nil)
