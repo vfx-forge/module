@@ -486,7 +486,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   -- a plain emit of an enabled model switches it off; the tick's own emits
   -- leave it as it is
   if attrs.Enabled and not ctx.constant then
-    attr.set(ref, "Enabled", false)
+    enabled_effects.switch(ref, false)
   end
 
   lifetime.wait(scope, attrs.EmitDelay)

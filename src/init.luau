@@ -312,11 +312,7 @@ local function setEnabled(obj: Instance, enabled: boolean)
     return
   end
 
-  if attributes.isCached(obj) then
-    attributes.trigger(obj, "Enabled", enabled)
-  else
-    obj:SetAttribute("Enabled", enabled)
-  end
+  enabled_effects.switch(obj, enabled)
 end
 
 function api.enable(obj: Instance)

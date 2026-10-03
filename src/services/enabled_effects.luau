@@ -12,6 +12,13 @@ local scheduler = require("@mod/scheduler")
 
 local enabled_effects = {}
 
+-- every instance whose passive loop runs, to what the loop holds, and to the
+-- signal that follows it in and out of where it may run
+local Loops: { [Instance]: { any } } = {}
+local Moves: { [Instance]: RBXScriptConnection } = {}
+
+local service: any = nil
+
 -- the emit every tick of a passive loop is an effect of, never sealed: it lives
 -- as long as the instance stays enabled, and finished ticks take themselves out
 -- of it. its ticks hang from the global clock and rank under a one-shot emit's
@@ -119,101 +126,149 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
   handle:Disconnect()
 end
 
-function enabled_effects.init(scope: { any }, effects_service: any)
-  local enabledScopes = {}
-  local ancestryConnections: { [Instance]: RBXScriptConnection } = {}
+-- whether the instance sits where its passive loop may run, and the signal that
+-- tells it moved. a spec stands its own in, since lune has neither
+function enabled_effects.placed(obj: Instance)
+  return obj:IsDescendantOf(workspace) or (obj.Parent ~= nil and obj.Parent:HasTag("AllowEmitting"))
+end
 
-  local function removeEnabledEffect(obj: Instance)
-    local effectScope = enabledScopes[obj]
+function enabled_effects.moved(obj: Instance, callback: () -> ()): RBXScriptConnection
+  return obj.AncestryChanged:Connect(callback)
+end
 
-    if effectScope then
-      utility.cleanupScope(effectScope)
-    end
+-- the loop taken off an instance that left where it may run; the signal that
+-- brings it back stays
+local function stop(obj: Instance)
+  local loop = Loops[obj]
 
-    enabledScopes[obj] = nil
+  if loop then
+    utility.cleanupScope(loop)
   end
 
-  local function removeEnabledEffectFull(obj: Instance)
-    removeEnabledEffect(obj)
+  Loops[obj] = nil
+end
 
-    local conn = ancestryConnections[obj]
-
-    if conn then
-      conn:Disconnect()
-      ancestryConnections[obj] = nil
-    end
+-- the instance's passive loop, started once: it ticks while Enabled is true and
+-- the instance sits where it may run, the tag listener's path and api.enable's
+function enabled_effects.add(obj: Instance)
+  if Loops[obj] ~= nil or service == nil then
+    return
   end
 
-  local function addEnabledEffect(obj: Instance)
-    local module = registry.of(obj)
+  local module = registry.of(obj)
 
-    if module == nil or not module.constant then
+  if module == nil or not module.constant then
+    return
+  end
+
+  local tempScope = {} :: { any }
+  local loop = { tempScope } :: { any }
+
+  Loops[obj] = loop
+
+  if Moves[obj] == nil then
+    Moves[obj] = enabled_effects.moved(obj, function()
+      if enabled_effects.placed(obj) then
+        enabled_effects.add(obj)
+      else
+        stop(obj)
+      end
+    end)
+  end
+
+  local function onEnabled(enabled: boolean?)
+    if enabled == nil then
+      enabled = attr.get(obj, "Enabled", true)
+    end
+
+    if enabled and not enabled_effects.placed(obj) then
       return
     end
 
-    local tempScope = {} :: { any }
-    local effectScope = {} :: { any }
+    utility.cleanupScope(tempScope)
 
-    table.insert(effectScope, tempScope)
-
-    enabledScopes[obj] = effectScope
-
-    if not ancestryConnections[obj] then
-      ancestryConnections[obj] = obj.AncestryChanged:Connect(function()
-        if obj:IsDescendantOf(workspace) or (obj.Parent and obj.Parent:HasTag("AllowEmitting")) then
-          if not enabledScopes[obj] then
-            addEnabledEffect(obj)
-          end
-        else
-          removeEnabledEffect(obj)
-        end
-      end)
+    if not enabled then
+      return
     end
 
-    local function onEnabled(enabled: boolean?)
-      if enabled == nil then
-        enabled = attr.get(obj, "Enabled", true)
-      end
+    local tick = enabled_effects.ticker(obj, module, enabled_effects.token(), service)
 
-      local canEmit = obj:IsDescendantOf(workspace) or (obj.Parent and obj.Parent:HasTag("AllowEmitting"))
-
-      if enabled and not canEmit then
-        return
-      end
-
-      if enabled then
-        utility.cleanupScope(tempScope)
-
-        local tick = enabled_effects.ticker(obj, module, enabled_effects.token(), effects_service)
-
-        table.insert(tempScope, RunService.RenderStepped:Connect(tick))
-      else
-        utility.cleanupScope(tempScope)
-      end
-    end
-
-    table.insert(effectScope, attr.observe(obj, "Enabled", onEnabled))
-
-    onEnabled()
+    table.insert(tempScope, RunService.RenderStepped:Connect(tick))
   end
+
+  table.insert(loop, attr.observe(obj, "Enabled", onEnabled))
+
+  onEnabled()
+end
+
+-- the instance's passive loop gone for good, and the signal that would bring it
+-- back with it
+function enabled_effects.remove(obj: Instance)
+  stop(obj)
+
+  local moves = Moves[obj]
+
+  if moves then
+    moves:Disconnect()
+    Moves[obj] = nil
+  end
+end
+
+-- a lightning, bezier or mesh instance's passive loop starts and stops with the
+-- switch, tagged or not, and in Studio's edit mode it takes the tag so the
+-- place saves with it. switching one off leaves the tag
+function enabled_effects.switch(obj: Instance, enabled: boolean)
+  attr.set(obj, "Enabled", enabled)
+
+  -- a cached instance's listeners hear nothing from the write itself
+  if attr.isCached(obj) then
+    attr.trigger(obj, "Enabled", enabled)
+  end
+
+  local module = registry.of(obj)
+
+  if module == nil or not module.constant then
+    return
+  end
+
+  if not enabled then
+    if not obj:HasTag(utility.ENABLED_VFX_TAG) then
+      enabled_effects.remove(obj)
+    end
+
+    return
+  end
+
+  if not RunService:IsRunning() then
+    obj:AddTag(utility.ENABLED_VFX_TAG)
+  end
+
+  enabled_effects.add(obj)
+end
+
+function enabled_effects.init(scope: { any }, effects_service: any)
+  service = effects_service
 
   for _, obj in CollectionService:GetTagged(utility.ENABLED_VFX_TAG) do
-    addEnabledEffect(obj)
+    enabled_effects.add(obj)
   end
 
-  CollectionService:GetInstanceAddedSignal(utility.ENABLED_VFX_TAG):Connect(addEnabledEffect)
-  CollectionService:GetInstanceRemovedSignal(utility.ENABLED_VFX_TAG):Connect(removeEnabledEffectFull)
+  table.insert(scope, CollectionService:GetInstanceAddedSignal(utility.ENABLED_VFX_TAG):Connect(enabled_effects.add))
+  table.insert(
+    scope,
+    CollectionService:GetInstanceRemovedSignal(utility.ENABLED_VFX_TAG):Connect(enabled_effects.remove)
+  )
 
   table.insert(scope, function()
-    for obj, effectScope in enabledScopes do
-      utility.cleanupScope(effectScope)
+    for obj in Loops do
+      enabled_effects.remove(obj)
     end
 
-    for obj, conn in ancestryConnections do
-      conn:Disconnect()
+    for obj in Moves do
+      enabled_effects.remove(obj)
     end
 
-    table.clear(ancestryConnections)
+    service = nil
   end)
 end
 

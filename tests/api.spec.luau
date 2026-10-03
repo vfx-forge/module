@@ -1,7 +1,15 @@
+local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local harness = require("@tests/harness")
+local effects = require("@srv/effects")
+local utility = require("@mod/utility")
+local emitters = require("@root/emitters")
 local registry = require("@mod/registry")
+local scheduler = require("@mod/scheduler")
+local enabled_effects = require("@srv/enabled_effects")
 local test, expect = harness.test, harness.expect
+
+local mesh = require("@vfx/mesh")
 
 -- the api registers every built-in when it first loads, so the registry is
 -- emptied first and left empty for whichever spec runs next
@@ -125,6 +133,276 @@ harness.suite(function()
       glow:Disconnect()
 
       expect(transparency.Connected).toBe(false)
+    end)
+  end)
+
+  harness.describe("enable and disable", function()
+    -- runs `body` against the api in a running game, with mesh registered and
+    -- the passive loops started, and puts every stand-in back whether `body`
+    -- passes or not. `stand.where.placed` is where an instance sits,
+    -- `stand.moved` keeps each reparent signal for the spec to fire,
+    -- `stand.deinit` is the api's teardown of the loops, and every tick is
+    -- counted in `stand.seen` by the emit it belongs to, while a plain emit
+    -- runs as it is
+    local function passive(body: (stand: any) -> ())
+      local vfx = api()
+      local scope = {}
+
+      local runService = game:GetService("RunService")
+      local isRunning = runService.IsRunning
+      local placed, moves, dispatch = enabled_effects.placed, enabled_effects.moved, emitters.dispatch
+
+      local stand = {
+        vfx = vfx,
+        seen = { passive = 0, window = 0 },
+        where = { placed = true },
+        moved = {} :: { [Instance]: () -> () },
+        deinit = function()
+          utility.cleanupScope(scope)
+        end,
+      }
+
+      registry.configure({ query = harness.query })
+      harness.reset()
+      registry.register(mesh)
+      mesh.init({})
+      effects.init({ setup = true } :: any)
+      enabled_effects.init(scope, effects)
+      scheduler.start()
+
+      runService.IsRunning = function()
+        return true
+      end
+
+      enabled_effects.placed = function()
+        return stand.where.placed
+      end
+
+      enabled_effects.moved = function(obj: Instance, callback: () -> ())
+        stand.moved[obj] = callback
+
+        return {
+          Disconnect = function()
+            stand.moved[obj] = nil
+          end,
+        } :: any
+      end
+
+      emitters.dispatch = function(obj: any, fx: any, shared: any, legacyScale: number, effect: any, constant: boolean?)
+        if not constant then
+          dispatch(obj, fx, shared, legacyScale, effect, constant)
+          return
+        end
+
+        local kind = if fx.emit.constant then "passive" else "window"
+
+        stand.seen[kind] += 1
+      end
+
+      local ok, err = pcall(body, stand)
+
+      utility.cleanupScope(scope)
+      mesh.deinit()
+      registry.clear()
+
+      runService.IsRunning = isRunning
+      enabled_effects.placed, enabled_effects.moved, emitters.dispatch = placed, moves, dispatch
+
+      if not ok then
+        error(err, 0)
+      end
+    end
+
+    -- an untagged, cached mesh model that is not enabled, under `parent` or a
+    -- folder of its own
+    local function model(parent: Instance?): Instance
+      local m = harness.make("Model", parent or harness.make("Folder"))
+      local start = harness.make("Part", m)
+      local goal = harness.make("Part", m)
+
+      start.Name = "Start"
+      goal.Name = "End"
+
+      m:SetAttribute("Enabled", false)
+      m:SetAttribute("EmitDuration", 1)
+      attr.cache(m)
+
+      return m
+    end
+
+    test("enable on an untagged mesh ticks with no tag added in a running game, and disable leaves no loop", function()
+      passive(function(stand: any)
+        local m = model()
+
+        stand.vfx.enable(m)
+
+        harness.render(0.21)
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(2)
+        expect(attr.get(m, "Enabled", false)).toBe(true)
+        expect(m:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
+
+        stand.vfx.disable(m)
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(2)
+        expect(attr.get(m, "Enabled", true)).toBe(false)
+        expect(stand.moved[m]).toBe(nil)
+      end)
+    end)
+
+    test("enable in edit mode adds the tag, and disable stops the loop and keeps it", function()
+      passive(function(stand: any)
+        local m = model()
+        local runService = game:GetService("RunService")
+        local running = runService.IsRunning
+
+        runService.IsRunning = function()
+          return false
+        end
+
+        stand.vfx.enable(m)
+        runService.IsRunning = running
+
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+        expect(m:HasTag(utility.ENABLED_VFX_TAG)).toBe(true)
+
+        stand.vfx.disable(m)
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+        expect(m:HasTag(utility.ENABLED_VFX_TAG)).toBe(true)
+      end)
+    end)
+
+    test("disable stops the passive loop and leaves an open window ticking", function()
+      passive(function(stand: any)
+        local m = model()
+        local env = effects.emit(0, m)
+
+        stand.vfx.enable(m)
+        harness.render(0.21)
+
+        -- the window ticked as it opened and again with the frame
+        expect(stand.seen).toEqual({ passive = 1, window = 2 })
+
+        stand.vfx.disable(m)
+        harness.render(0.21)
+
+        expect(stand.seen).toEqual({ passive = 1, window = 3 })
+
+        env:Clear()
+      end)
+    end)
+
+    test("enable on a cached instance survives a reparent", function()
+      passive(function(stand: any)
+        local m = model()
+
+        stand.vfx.enable(m)
+        harness.render(0.21)
+
+        stand.where.placed = false
+        stand.moved[m]()
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+
+        stand.where.placed = true
+        stand.moved[m]()
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(2)
+      end)
+    end)
+
+    test("deinit tears down a loop enable started without the tag", function()
+      passive(function(stand: any)
+        local m = model()
+
+        stand.vfx.enable(m)
+        harness.render(0.21)
+        stand.deinit()
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+        expect(stand.moved[m]).toBe(nil)
+      end)
+    end)
+
+    test("enable on the folder that holds a mesh starts the mesh's loop", function()
+      passive(function(stand: any)
+        local folder = harness.make("Folder")
+
+        model(folder)
+        stand.vfx.enable(folder)
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+      end)
+    end)
+
+    test("enable twice, on an instance the tag listener already holds, keeps one loop", function()
+      passive(function(stand: any)
+        local m = model()
+
+        m:AddTag(utility.ENABLED_VFX_TAG)
+        enabled_effects.add(m)
+
+        stand.vfx.enable(m)
+        stand.vfx.enable(m)
+
+        harness.render(0.21)
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(2)
+      end)
+    end)
+
+    test("any other instance stores Enabled, a cached one in its cache", function()
+      local vfx = api()
+      local folder = harness.make("Folder")
+      local emitter = harness.make("ParticleEmitter", folder) :: ParticleEmitter
+
+      folder:SetAttribute("Enabled", false)
+      attr.cache(folder)
+      emitter.Enabled = false
+
+      vfx.enable(folder)
+
+      expect(attr.get(folder, "Enabled", false)).toBe(true)
+      expect(folder:GetAttribute("Enabled")).toBe(nil)
+      expect(emitter.Enabled).toBe(true)
+
+      vfx.disable(folder)
+
+      expect(attr.get(folder, "Enabled", true)).toBe(false)
+      expect(emitter.Enabled).toBe(false)
+    end)
+
+    test("an emit of a cached enabled mesh stops its passive loop", function()
+      passive(function(stand: any)
+        local m = model()
+
+        attr.set(m, "Enabled", true)
+        m:AddTag(utility.ENABLED_VFX_TAG)
+        enabled_effects.add(m)
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+
+        local env = effects.emit(0, m)
+
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+        expect(attr.get(m, "Enabled", true)).toBe(false)
+
+        env:Clear()
+      end)
     end)
   end)
 end)

@@ -251,7 +251,11 @@ export function emitWithDepth(
 /**
  * Enable a VFX instance and all its descendants.
  * For ParticleEmitters and Beams, sets the Enabled property directly.
- * For other instances, sets the "Enabled" attribute.
+ * For other instances, sets the "Enabled" attribute, in the attribute cache
+ * when the instance's attributes are cached.
+ * A lightning, bezier or mesh instance starts emitting at its Rate at once,
+ * with or without the ConstantVFX tag; in Studio edit mode it also gets the
+ * tag, so the place saves with it.
  * @param obj The instance to enable (propagates to descendants)
  */
 export function enable(obj: Instance): void;
@@ -259,7 +263,11 @@ export function enable(obj: Instance): void;
 /**
  * Disable a VFX instance and all its descendants.
  * For ParticleEmitters and Beams, sets the Enabled property directly.
- * For other instances, sets the "Enabled" attribute.
+ * For other instances, sets the "Enabled" attribute, in the attribute cache
+ * when the instance's attributes are cached.
+ * A lightning, bezier or mesh instance stops emitting at its Rate. An emit
+ * with an EmitDuration still running keeps going, and the ConstantVFX tag
+ * stays.
  * @param obj The instance to disable (propagates to descendants)
  */
 export function disable(obj: Instance): void;

@@ -159,7 +159,34 @@ do
     })
   end
 
-  local services: { [string]: any } = {}
+  -- the tag service the passive loops start from: nothing is tagged, and its
+  -- signals connect to nothing
+  local signal = {
+    Connect = function()
+      return {
+        Connected = true,
+        Disconnect = function() end,
+      }
+    end,
+  }
+
+  local tags: any = inertService("CollectionService")
+
+  tags.GetTagged = function()
+    return {}
+  end
+
+  tags.GetInstanceAddedSignal = function()
+    return signal
+  end
+
+  tags.GetInstanceRemovedSignal = function()
+    return signal
+  end
+
+  local services: { [string]: any } = {
+    CollectionService = tags,
+  }
 
   game = {
     GetService = function(_, name: string)

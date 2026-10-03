@@ -1,5 +1,4 @@
 --!nolint LocalShadow
-local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
@@ -88,7 +87,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   -- a plain emit of an enabled bolt switches it off; the tick's own emits
   -- leave it as it is
   if attrs.Enabled and not ctx.constant then
-    attr.set(ref, "Enabled", false)
+    enabled_effects.switch(ref, false)
   end
 
   local refObj = template:Clone()
