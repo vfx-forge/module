@@ -21,16 +21,6 @@ local emitters = {}
 -- effect steps with, handed in here because the reader stays engine-free
 reader.bind = tween.drive
 
--- the attribute arm goes through the cache-aware write, so a driven or restored
--- attribute lands where every reader on this path looks for it
-local function writeTarget(obj: Instance, source: string, name: string, v: any)
-  if source == "property" then
-    (obj :: any)[name] = v
-  else
-    attr.set(obj, name, v)
-  end
-end
-
 -- a property that does not exist throws on the read, so a failed read reports
 -- as nil and every caller treats that as "nothing there"
 local function currentOf(obj: Instance, source: string, name: string): any
@@ -57,27 +47,35 @@ end
 
 -- a legacy RayValue child carried a ResetOnFinish flag, default true, and the
 -- target went back on finish: a tween to its authored _START_VALUE when it had
--- one and otherwise to the value the target held at emit time, a randomizer
--- always to that pre-drive value. legacy_mods lifts the flag onto its entries
--- as `reset`, and those two collapse to one rule. a queue authored in the
--- modifier panel carries no `reset` at all and gets no restore, because the
--- panel presents a modifier as what the value IS
-local function resetTo(queue: { any }, snapshot: any): (boolean, any)
-  local wants = false
-  local restore = snapshot
+-- one and otherwise to the value the target held before, a randomizer always
+-- to that value. legacy_mods lifts the flag onto its entries as `reset`, and
+-- it becomes the writer's end rule: false keeps the last value, a tween with a
+-- start value leaves that behind. a queue authored in the modifier panel
+-- carries no `reset`, and its target goes back to what it held before
+local function endOf(queue: { any }): (string?, any)
+  local rule: string? = nil
+  local start = nil
 
   -- legacy entries never chain, so the last of them is the one that actually
   -- drove the target and its own flag is the one that decides
   for _, m in queue do
-    if m.reset ~= true then
+    if m.reset == nil then
       continue
     end
 
-    wants = true
-    restore = if m.kind ~= "randomizer" and m.start ~= nil then value.resolve(m.start) else snapshot
+    if m.reset == false then
+      rule = "keep"
+      start = nil
+    elseif m.kind ~= "randomizer" and m.start ~= nil then
+      rule = "start"
+      start = value.resolve(m.start)
+    else
+      rule = nil
+      start = nil
+    end
   end
 
-  return wants, restore
+  return rule, start
 end
 
 -- the clock the applier falls back to when no modifier on a queue names a
@@ -156,7 +154,7 @@ local function drive(
     return
   end
 
-  local wants, restore = resetTo(queue, currentOf(target, source, name))
+  local rule, start = endOf(queue)
   local speedAt, speedUntil, lead = speedOf(queue, rolls, linked)
 
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
@@ -165,15 +163,9 @@ local function drive(
     local failures = 0
     local wall = 0
 
-    -- the restore rides the record rather than the line after the timer, so a
-    -- clear runs it too. a release fires this whether the driver reached its
-    -- own end or was cancelled, which is what the legacy child did by holding
-    -- its restore in the scope
-    if wants and restore ~= nil then
-      lifetime.defer(driver, function()
-        pcall(writeTarget, target, source, name, restore)
-      end)
-    end
+    -- joined at its first write and let go with the driver, so a clear puts
+    -- the target back too
+    local writer = lifetime.write(driver, target, source, name, rule, start)
 
     tween.timer(span, function(deltaTime, elapsed)
       local waiting = elapsed < lead
@@ -184,7 +176,7 @@ local function drive(
 
       local v = sample(elapsed)
 
-      if v ~= nil and not pcall(writeTarget, target, source, name, v) then
+      if v ~= nil and not lifetime.set(writer, v) then
         failures += 1
 
         if failures >= MAX_WRITE_FAILURES then
@@ -213,10 +205,11 @@ local function drive(
 end
 
 -- a randomizer child is applied before the effect it sits under reads its
--- target, and with `reset` the target goes back on the next frame, after that
--- effect has read the drawn value. driving it through the timer would do the
--- same one frame later than the effect needs
-local function applyRandomizer(target: Instance, child: legacy_mods.Child)
+-- target, through a writer on an effect of its own that ends on the next frame,
+-- after that effect has read the drawn value: a reset one gives the target back
+-- then, one that keeps leaves the draw. driving it through the timer would
+-- write one frame later than the effect needs
+local function applyRandomizer(target: Instance, child: legacy_mods.Child, scope: types.scope)
   local queue = child.queue
   local rolls = mods.roll(queue)
   local sample = mods.sampler(target, child.source, child.name, 0, queue, rolls, 0)
@@ -231,23 +224,29 @@ local function applyRandomizer(target: Instance, child: legacy_mods.Child)
     return
   end
 
-  local wants, restore = resetTo(queue, currentOf(target, child.source, child.name))
+  -- an effect of its own on the same emit, so the draw outlives the dispatch
+  -- that made it until the next frame and a clear still gives it back
+  local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
+  local rule = endOf(queue)
+  local writer = lifetime.write(fx, target, child.source, child.name, rule)
 
-  if not pcall(writeTarget, target, child.source, child.name, drawn) then
+  local function finish()
+    lifetime.leave(writer)
+    lifetime.release(fx)
+  end
+
+  if not lifetime.set(writer, drawn) then
+    finish()
     return
   end
 
-  if wants and restore ~= nil then
-    task.defer(function()
-      pcall(writeTarget, target, child.source, child.name, restore)
-    end)
-  end
+  task.defer(finish)
 end
 
 -- the randomizer children directly under an instance, applied before its
 -- effect runs. an instance that is itself a randomizer counts as its own child,
 -- which is how one is emitted on its own
-local function processRandomizers(obj: Instance)
+local function processRandomizers(obj: Instance, scope: types.scope)
   local children = obj:GetChildren()
 
   if obj:IsA("RayValue") then
@@ -268,7 +267,7 @@ local function processRandomizers(obj: Instance)
     local target = utility.getTarget(child)
 
     if target then
-      utility.try(`failed to apply a randomizer with error: %s`, applyRandomizer, target, read)
+      utility.try(`failed to apply a randomizer with error: %s`, applyRandomizer, target, read, scope)
     end
   end
 end
@@ -281,6 +280,8 @@ end
 -- `owned` is keyed by source first, then name, because a name alone is not a
 -- target: an instance can carry both a property and an attribute called Scale,
 -- which is the ambiguity the two prefixes exist to remove
+-- every target it drives is written through a writer, so two emits driving one
+-- hand it over, and the last to end puts back what it held before
 function emitters.applyMods(
   obj: Instance,
   scope: types.scope,
@@ -361,7 +362,7 @@ function emitters.dispatch(
   constant: boolean?
 )
   if not constant then
-    processRandomizers(obj)
+    processRandomizers(obj, scope)
   end
 
   if effect then

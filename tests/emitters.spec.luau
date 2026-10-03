@@ -259,6 +259,117 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("a driven target", function()
+    -- a part with a panel queue of its own, dispatched as an emit of its own
+    local function driven(): Instance
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(module("piece", "Part"))
+      harness.reset()
+
+      local part = harness.make("Part")
+
+      part.Transparency = 0.25
+
+      framed(part, "property", "Transparency", {
+        { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(1) },
+      })
+
+      return part
+    end
+
+    local function dispatchOn(obj: Instance): lifetime.emit
+      local em = lifetime.emit(nil)
+
+      lifetime.run(lifetime.effect(em, 0, nil), function(scope)
+        emitters.dispatch(obj, scope, { unc = {}, ref = {} }, 1, registry.get("piece"))
+      end)
+
+      lifetime.seal(em)
+
+      return em
+    end
+
+    local function seconds(total: number)
+      for _ = 1, math.round(total / 0.25) do
+        harness.render(0.25)
+      end
+    end
+
+    test("a panel queue on a property puts the authored value back once its emit ends", function()
+      local part = driven()
+      local em = dispatchOn(part)
+
+      seconds(0.75)
+
+      expect(near(part.Transparency, 0.5)).toBe(true)
+
+      seconds(1.5)
+
+      expect(em.done).toBe(true)
+      expect(near(part.Transparency, 0.25)).toBe(true)
+    end)
+
+    test("two overlapping emits of one panel queue hand the property over and the last puts it back", function()
+      local part = driven()
+      local first = dispatchOn(part)
+
+      seconds(0.5)
+
+      local second = dispatchOn(part)
+
+      seconds(1)
+
+      -- the first has ended, and the second carries on from where it is
+      expect(first.done).toBe(true)
+      expect(second.done).toBe(false)
+      expect(part.Transparency > 0.3 and part.Transparency < 0.95).toBe(true)
+
+      seconds(1.5)
+
+      expect(second.done).toBe(true)
+      expect(near(part.Transparency, 0.25)).toBe(true)
+    end)
+
+    test("a legacy child with ResetOnFinish false keeps its last value", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local part = harness.make("Part", root)
+
+      part.Transparency = 0.25
+
+      local child = tweener(part, "Transparency", 0, 1, 1)
+
+      child:SetAttribute("ResetOnFinish", false)
+
+      emit(root)
+      seconds(2)
+
+      expect(near(part.Transparency, 1)).toBe(true)
+    end)
+
+    test("a legacy child that resets goes back to its authored start value", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local part = harness.make("Part", root)
+
+      part.Transparency = 0.25
+
+      tweener(part, "Transparency", 0.4, 1, 1)
+
+      emit(root)
+      seconds(2)
+
+      expect(near(part.Transparency, 0.4)).toBe(true)
+    end)
+  end)
+
   harness.describe("the dispatcher", function()
     test("a constant emit reads and emits the module alone, where a plain one draws and drives too", function()
       registry.clear()
