@@ -67,7 +67,7 @@ local function soundLike()
   })
 end
 
--- a module of a built-in's id and rows, for the behaviour resize keys by id.
+-- a module of a built-in's id and rows, for the behavior resize keys by id.
 -- the built-ins are frozen by the time this file runs, and a frozen module
 -- cannot be registered a second time
 local function effectStub(id: string, classifier: string, attributes: { [string]: any })

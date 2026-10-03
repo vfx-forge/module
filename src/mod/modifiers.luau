@@ -268,7 +268,7 @@ end
 -- a delay carries its wait in `wait`, a Value, so a drawn one is the same draw
 -- tag every other randomizable number here uses, and so a runtime that predates
 -- the kind sees a modifier with no start and passes the previous value through
--- untouched. a plain number in `duration` is honoured too, since that is how a
+-- untouched. a plain number in `duration` is honored too, since that is how a
 -- delay reads if you write one by hand
 function modifiers.waitOf(m: any, picks: Picks?, env: { [string]: any }?): number
   local wait = m.wait

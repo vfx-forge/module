@@ -59,7 +59,7 @@ local function multiplyRGB(color: Color3, factor: number)
   return Color3.new(color.R * factor, color.G * factor, color.B * factor)
 end
 
--- one colour multiplied by another, the way this module has always meant it:
+-- one color multiplied by another, the way this module has always meant it:
 -- the hue rotated, the saturation and value pushed, the overbright factor kept
 local function multiplyColor(c: Color3, color: Color3): Color3
   local hue, sat, val = color:ToHSV()
@@ -111,9 +111,9 @@ local function recolorObj(obj: Instance, color: Color3, mode: string, isDirect: 
   end
 end
 
--- the colour rows of a classified instance: a sequence row is replaced by a
--- flat sequence of the colour, or multiplied keypoint by keypoint. the row goes
--- through the cache-aware read and write, so a cached instance is recoloured
+-- the color rows of a classified instance: a sequence row is replaced by a
+-- flat sequence of the color, or multiplied keypoint by keypoint. the row goes
+-- through the cache-aware read and write, so a cached instance is recolored
 -- where every reader on this path looks, and a soft read stamps nothing
 local function recolorRows(obj: Instance, color: Color3, mode: string)
   local module = registry.of(obj)

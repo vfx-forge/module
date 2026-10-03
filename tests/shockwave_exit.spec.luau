@@ -193,7 +193,7 @@ harness.suite(function()
       end
     end)
 
-    -- behaviour difference 1, pinned as the new reading: the hand exit lerped
+    -- behavior difference 1, pinned as the new reading: the hand exit lerped
     -- from an offset only its entry stepper ever updated, so a piece resting at
     -- a plain OffsetIn with OffsetOut at zero never left; the lane starts where
     -- the row stands

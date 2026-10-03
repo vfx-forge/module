@@ -14,8 +14,8 @@ local BLUE = Color3.new(0, 0, 1)
 
 local function noop() end
 
--- the bolt's own shape: colour rows that are sequences, one of them under an
--- old spelling, beside a flat colour row and a row of another kind
+-- the bolt's own shape: color rows that are sequences, one of them under an
+-- old spelling, beside a flat color row and a row of another kind
 local function boltLike()
   registry.clear()
   registry.configure({ query = harness.query })
@@ -41,7 +41,7 @@ local function bolt(key: string, authored: any): Instance
   return obj
 end
 
--- the colour a row reads as, whichever kind it holds, through the read every
+-- the color a row reads as, whichever kind it holds, through the read every
 -- other reader on this path uses
 local function colorOf(obj: Instance, name: string): Color3
   local current = attr.get(obj, name, nil, true)
@@ -59,7 +59,7 @@ end
 
 harness.suite(function()
   harness.describe("recolor rows", function()
-    test("a replaced sequence row reads as the new colour, cached or live", function()
+    test("a replaced sequence row reads as the new color, cached or live", function()
       boltLike()
 
       local live = bolt("Color", ColorSequence.new(RED))
@@ -91,7 +91,7 @@ harness.suite(function()
       expect(cached:GetAttribute("Color")).toBe(nil)
     end)
 
-    test("a flat colour row is replaced and multiplied the same way", function()
+    test("a flat color row is replaced and multiplied the same way", function()
       boltLike()
 
       local replaced = bolt("Tint", RED)
@@ -108,7 +108,7 @@ harness.suite(function()
       expect(typeof(attr.get(multiplied, "Tint", nil, true))).toBe("Color3")
     end)
 
-    test("a row authored under an old spelling is recoloured where it was authored", function()
+    test("a row authored under an old spelling is recolored where it was authored", function()
       boltLike()
 
       local obj = bolt("Fill_Color", ColorSequence.new(RED))
@@ -120,7 +120,7 @@ harness.suite(function()
       expect(attr.get(obj, "FillColor", nil, true)).toBe(nil)
     end)
 
-    test("a row nothing authored is recoloured from its default, and a plain row is left alone", function()
+    test("a row nothing authored is recolored from its default, and a plain row is left alone", function()
       boltLike()
 
       local obj = bolt("Rate", 30)
@@ -133,7 +133,7 @@ harness.suite(function()
       expect(attr.get(obj, "Rate", nil, true)).toBe(30)
     end)
 
-    test("a descendant of a recoloured root is classified and recoloured too", function()
+    test("a descendant of a recolored root is classified and recolored too", function()
       boltLike()
 
       local root = Instance.new("Folder")

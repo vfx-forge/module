@@ -558,6 +558,35 @@ harness.suite(function()
         end
       end
     end)
+
+    -- the two vendored color modules are their author's, the fixtures are old
+    -- code kept as it was, and this file names the spellings it looks for
+    local SKIPPED = {
+      ["src/mod/color/Oklab.luau"] = true,
+      ["src/mod/color/sRGB.luau"] = true,
+      ["tests/tween.spec.luau"] = true,
+    }
+    local BRITISH = { "colour", "behaviour", "honour", "neighbour", "metre" }
+
+    test("the runtime, its tests and its guides spell the US way", function()
+      local files = sources("tests", sources("src", {}))
+
+      table.insert(files, "AGENTS.md")
+      table.insert(files, ".agents/skills/forge-luau-style/SKILL.md")
+      table.insert(files, ".agents/skills/forge-luau-style/reference.md")
+
+      for _, at in files do
+        if SKIPPED[at] or string.find(at, "tests/fixtures/", 1, true) then
+          continue
+        end
+
+        local source = string.lower(fs.readFile(at))
+
+        for _, word in BRITISH do
+          expect(`{at} {word}: {string.find(source, word, 1, true) ~= nil}`).toBe(`{at} {word}: false`)
+        end
+      end
+    end)
   end)
 
   harness.describe("the tween's cost", function()

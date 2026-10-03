@@ -145,7 +145,7 @@ harness.suite(function()
       registry.clear()
 
       expect(function()
-        registry.register(stub("x", { attributes = { A = knob(1):unit("metres") } }))
+        registry.register(stub("x", { attributes = { A = knob(1):unit("meters") } }))
       end).toThrow()
 
       expect(function()

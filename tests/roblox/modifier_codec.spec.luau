@@ -9,20 +9,20 @@ local function roundTrip(v: any): any
   return codec.decode(codec.encode(q :: any)).lanes.start[1].start.v
 end
 
--- pins endpoint colour precision against the engine's own Color3 and
+-- pins endpoint color precision against the engine's own Color3 and
 -- ColorSequence, a stronger claim than the lune spec's pin against lune's
 -- emulated ones
 return {
   {
-    name = "an endpoint colour round trips at full precision",
+    name = "an endpoint color round trips at full precision",
     run = function()
-      local colour = Color3.new(0.1234567, 0.5, 0.987654)
-      assertEqual(roundTrip(colour), colour, "round tripped color")
+      local color = Color3.new(0.1234567, 0.5, 0.987654)
+      assertEqual(roundTrip(color), color, "round tripped color")
     end,
   },
 
   {
-    name = "a colour sequence endpoint keeps stops closer than 1/255 apart",
+    name = "a color sequence endpoint keeps stops closer than 1/255 apart",
     run = function()
       local stops = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.new(1, 0, 0)),

@@ -196,7 +196,7 @@ src/mod/common/bezier.luau    function common.findEndAttachments(ref: Attachment
 src/services/effects.luau     function effects.prepareEmitFolder(...): Folder?
 ```
 
-Plain-value returns are left inferred (`recolor.luau`'s colour maths, all of `logger.luau`).
+Plain-value returns are left inferred (`recolor.luau`'s color math, all of `logger.luau`).
 
 Other habits: generics on attribute accessors (`attr.get<T>`); `typeof(cache)` intersection for class types; casts via `:: any`; `any` accepted at boundaries with a comment.
 
@@ -319,7 +319,7 @@ The one genuinely non-inferable fact belongs at its use site, not in a header:
 
 ```luau
 -- BEFORE: path.bezier_cache declared mid-file, after two functions
--- AFTER: immediately after the module table, the way tween.luau holds its own
+-- AFTER: immediately after the module table
 local path = {}
 
 path.bezier_cache = {} :: { [string]: Bezier.Bezier }

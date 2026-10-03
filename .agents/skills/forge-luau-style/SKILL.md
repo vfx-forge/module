@@ -37,7 +37,6 @@ Every module has these parts, in this order. Omit a part you don't need; never r
 local knob = require("@mod/knob")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
-local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 
 local MIN_SCALE = 0.001
@@ -80,15 +79,11 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
 
   local scale = attrs.Scale
 
-  task.wait(attrs.EmitDelay)
+  lifetime.wait(scope, attrs.EmitDelay)
 
-  lifetime.hold(
-    scope,
-    tween.fromParams(utility.linear_bezier, scale.duration, function(_, deltaTime, elapsed)
-      ref:ScaleTo(math.max(scale.at(elapsed), MIN_SCALE))
-      return deltaTime
-    end)
-  )
+  tween.drive(scope, scale, function(value: number)
+    ref:ScaleTo(math.max(value, MIN_SCALE))
+  end)
 end
 
 return spin

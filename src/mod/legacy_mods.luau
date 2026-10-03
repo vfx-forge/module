@@ -162,7 +162,7 @@ local function durationOf(v: any): number?
   return nil
 end
 
--- both legacy child shapes honour a ResetOnFinish attribute and default it to
+-- both legacy child shapes honor a ResetOnFinish attribute and default it to
 -- true. the modifier codec passes a field it does not know through its `extra`
 -- table, so `reset` round trips with no schema change
 local function resetOf(v: any): boolean
@@ -234,7 +234,7 @@ function legacy_mods.complete(queue: { any }, fillStart: value.Value?, fillFinis
 end
 
 -- the speed ramp a legacy tween child carried beside its tween: a multiplier on
--- the clock the tween counts, which the applier honours. carried only when it
+-- the clock the tween counts, which the applier honors. carried only when it
 -- does something, so an ordinary child stays a plain tween entry
 local function speedOf(child: Instance): { start: number, finish: number, duration: number, curve: string | buffer }?
   local startV = attr.get(child, "Speed_Start", nil, true)

@@ -98,26 +98,26 @@ lightning.attributes = bezier_common.rows({
     :label("Mode")
     :hint("Which segments spawn nested child effects."),
 
-  Color = knob(ColorSequence.new(Color3.new(1, 1, 1))):label("Color"):hint("Colour of the segments."),
-  ColorCurve = knob(linear):aliases("Color_Curve"):label("Curve"):hint("Easing of the colour cycle."),
+  Color = knob(ColorSequence.new(Color3.new(1, 1, 1))):label("Color"):hint("Color of the segments."),
+  ColorCurve = knob(linear):aliases("Color_Curve"):label("Curve"):hint("Easing of the color cycle."),
   ColorDuration = knob(1)
     :min(0)
     :aliases("Color_Duration")
     :unit("seconds")
     :label("Duration")
-    :hint("Seconds one colour cycle takes."),
+    :hint("Seconds one color cycle takes."),
 
   FillColor = knob(ColorSequence.new(Color3.new(1, 1, 1)))
     :aliases("Fill_Color")
     :label("Color")
     :hint("Fill (glow) color of the bolt."),
-  FillColorCurve = knob(linear):aliases("Fill_Color_Curve"):label("Curve"):hint("Easing of the fill colour cycle."),
+  FillColorCurve = knob(linear):aliases("Fill_Color_Curve"):label("Curve"):hint("Easing of the fill color cycle."),
   FillColorDuration = knob(1)
     :min(0)
     :aliases("Fill_Color_Duration")
     :unit("seconds")
     :label("Duration")
-    :hint("Seconds one fill colour cycle takes."),
+    :hint("Seconds one fill color cycle takes."),
   FillDepthMode = knob("Occluded")
     :options({ "AlwaysOnTop", "Occluded" })
     :aliases("Fill_DepthMode")
@@ -127,7 +127,7 @@ lightning.attributes = bezier_common.rows({
     :aliases("Fill_Transparency")
     :mod()
     :label("Transparency")
-    :hint("Fill transparency over the fill colour's duration."),
+    :hint("Fill transparency over the fill color's duration."),
 
   -- the six old fade keys stay rows so the panel reaches them through the
   -- Transparency drawer and retime still scales the two spans

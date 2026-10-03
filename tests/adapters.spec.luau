@@ -191,7 +191,7 @@ harness.suite(function()
     end)
   end)
 
-  harness.describe("the particle adapter with a neighbour", function()
+  harness.describe("the particle adapter with a neighbor", function()
     test("an emit at 1 joining while another holds the rows retimed leaves them to follow its own speed", function()
       local first, a = effect()
       local second, b = effect()

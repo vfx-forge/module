@@ -185,15 +185,15 @@ harness.suite(function()
       end
     end)
 
-    test("an endpoint colour round trips at full precision", function()
-      local colour = Color3.new(0.1234567, 0.5, 0.987654)
-      local back = roundTrip(colour)
+    test("an endpoint color round trips at full precision", function()
+      local color = Color3.new(0.1234567, 0.5, 0.987654)
+      local back = roundTrip(color)
 
       expect(typeof(back)).toBe("Color3")
-      expect(back).toBe(colour)
+      expect(back).toBe(color)
     end)
 
-    test("a colour sequence endpoint keeps its stop times exactly", function()
+    test("a color sequence endpoint keeps its stop times exactly", function()
       local stops = ColorSequence.new({
         ColorSequenceKeypoint.new(0, Color3.new(1, 0, 0)),
         ColorSequenceKeypoint.new(0.29045, Color3.new(0.2, 0.4, 0.6)),
@@ -225,7 +225,7 @@ harness.suite(function()
       expect(roundTrip(stops)).toBe(stops)
     end)
 
-    test("drawn colour endpoints round trip at full precision", function()
+    test("drawn color endpoints round trip at full precision", function()
       local a = Color3.new(0.011, 0.5, 0.25)
       local b = ColorSequence.new(Color3.new(0.3, 0.6, 0.9), Color3.new(0.001, 0.002, 0.003))
       local q = { lanes = { start = { { kind = "tween", chain = false, finish = value.draw(a, b) } } } }
@@ -236,16 +236,16 @@ harness.suite(function()
       expect(finish.b).toBe(b)
     end)
 
-    test("encoding a colour endpoint leaves the caller's value alone", function()
-      local colour = Color3.new(0.1234567, 0.5, 0.987654)
-      local start = value.lit(colour)
+    test("encoding a color endpoint leaves the caller's value alone", function()
+      local color = Color3.new(0.1234567, 0.5, 0.987654)
+      local start = value.lit(color)
 
       codec.encode({ lanes = { start = { { kind = "tween", chain = false, start = start } } } })
 
-      expect(start.v).toBe(colour)
+      expect(start.v).toBe(color)
     end)
 
-    test("a table beside a colour in an unknown tag round trips as the table it is", function()
+    test("a table beside a color in an unknown tag round trips as the table it is", function()
       local q = {
         lanes = {
           start = {
@@ -290,15 +290,15 @@ harness.suite(function()
       expect(m.blend).toBe("linear")
     end)
 
-    test("a gradient stop colour round trips at full precision", function()
-      local colour = Color3.new(0.1234567, 0.5, 0.987654)
+    test("a gradient stop color round trips at full precision", function()
+      local color = Color3.new(0.1234567, 0.5, 0.987654)
       local q = {
         lanes = {
           start = {
             {
               kind = "gradient",
               chain = false,
-              stops = { { time = 0.29045, color = colour, alpha = 0 }, { time = 1, color = Color3.new(), alpha = 1 } },
+              stops = { { time = 0.29045, color = color, alpha = 0 }, { time = 1, color = Color3.new(), alpha = 1 } },
             },
           },
         },
@@ -306,16 +306,16 @@ harness.suite(function()
 
       local stops = codec.decode(codec.encode(q)).lanes.start[1].stops
 
-      expect(stops[1].color).toBe(colour)
+      expect(stops[1].color).toBe(color)
       expect(stops[1].time).toBe(0.29045)
       expect(stops[2].color).toBe(Color3.new())
-      expect(q.lanes.start[1].stops[1].color).toBe(colour)
+      expect(q.lanes.start[1].stops[1].color).toBe(color)
     end)
 
     -- a wrap whose buffer is the wrong length is a broken payload, never a
-    -- colour read off its leading bytes. encode passes a buffer through as it
+    -- color read off its leading bytes. encode passes a buffer through as it
     -- is, which is what writes one here
-    test("decode rejects a wrapped colour of the wrong length", function()
+    test("decode rejects a wrapped color of the wrong length", function()
       local cases = {
         { Color3 = buffer.create(8) },
         { Color3 = buffer.create(16) },
