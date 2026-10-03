@@ -123,4 +123,4 @@ The plugin reloads a custom effect when any ModuleScript inside the tagged modul
 - A module required by absolute path from elsewhere, such as `ReplicatedStorage.Shared.Util`, is not reloaded. The plugin tells you when one changes; reload the plugin to pick it up.
 - A require that climbs out of the tagged module (`script.Parent.Shared`) does not resolve in the copy.
 
-Do no work when the module loads: no connections, loops or threads at the top level. Everything belongs in `emit`. If the module must start something, stop it in `effect.unload()`, which the plugin calls on the old version before a reload drops it. Effects already playing finish on the version they started with.
+Do no work when the module loads: no connections, loops or threads at the top level. Everything belongs in `emit`. If the module must start something, stop it in `effect.unload()`, which is called on the old version once a reload has replaced it, on a removed one, and on a version that is refused. Effects already playing finish on the version they started with.

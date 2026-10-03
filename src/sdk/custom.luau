@@ -11,8 +11,8 @@ local entries: { [any]: Entry } = {}
 
 local custom = {}
 
-local function unload(entry: Entry)
-  local fn = entry.author.unload
+local function unload(author: any, path: string)
+  local fn = if type(author) == "table" then author.unload else nil
 
   if type(fn) ~= "function" then
     return
@@ -21,8 +21,20 @@ local function unload(entry: Entry)
   local ok, err = pcall(fn)
 
   if not ok then
-    logger.warn(`{entry.path}: unload failed: {tostring(err)}`)
+    logger.warn(`{path}: unload failed: {tostring(err)}`)
   end
+end
+
+-- a version that ran its top level but was not registered is unloaded, unless
+-- the very table is one that is registered, as a cached require answers
+local function discard(author: any, path: string)
+  for _, entry in entries do
+    if entry.author == author then
+      return
+    end
+  end
+
+  unload(author, path)
 end
 
 local function holderOf(module: any): Entry?
@@ -37,12 +49,13 @@ end
 
 -- registers what a tagged module returned under `key`, replacing what that key
 -- registered before. answers whether it took and every reason it did not; a
--- refusal leaves the earlier version registered
+-- refusal leaves the earlier version registered and unloads the refused one
 function custom.add(key: any, author: any, path: string): (boolean, { string })
   local previous = entries[key]
   local module, found = load.assemble(author, path, if previous ~= nil then previous.module else nil)
 
   if module == nil then
+    discard(author, path)
     return false, found
   end
 
@@ -50,6 +63,8 @@ function custom.add(key: any, author: any, path: string): (boolean, { string })
 
   if holder ~= nil and (previous == nil or holder ~= previous.module) then
     local other = holderOf(holder)
+
+    discard(author, path)
 
     return false,
       {
@@ -68,7 +83,7 @@ function custom.add(key: any, author: any, path: string): (boolean, { string })
   entries[key] = { path = path, author = author, module = module }
 
   if previous ~= nil then
-    unload(previous)
+    unload(previous.author, previous.path)
   end
 
   enabled_effects.resync()
@@ -87,7 +102,7 @@ function custom.remove(key: any)
 
   entries[key] = nil
   registry.unregister(entry.module)
-  unload(entry)
+  unload(entry.author, entry.path)
   enabled_effects.resync()
 end
 

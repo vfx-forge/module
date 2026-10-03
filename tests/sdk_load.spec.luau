@@ -318,6 +318,54 @@ harness.suite(function()
       expect(unloaded).toBe(0)
     end)
 
+    test("a version refused or beaten to its id is unloaded, and the one registered is not", function()
+      fresh()
+
+      local unloaded = {}
+
+      local function counted(name: string, extra: { [string]: any }?)
+        local author = effect(extra)
+
+        author.unload = function()
+          table.insert(unloaded, name)
+        end
+
+        return author
+      end
+
+      local first = counted("first")
+
+      custom.add("a", first, "ReplicatedStorage.A")
+
+      expect((custom.add("a", counted("broken", { emit = 4 }), "ReplicatedStorage.A"))).toBe(false)
+      expect((custom.add("b", counted("rival", { classifier = "Folder.Other" }), "ReplicatedStorage.B"))).toBe(false)
+
+      -- a cached require answers the registered table itself
+      expect((custom.add("b", first, "ReplicatedStorage.B"))).toBe(false)
+      expect(unloaded).toEqual({ "broken", "rival" })
+      expect(registry.get("my_effect").classifier).toBe("Folder.MyEffect")
+    end)
+
+    test("a refused version's unload that throws is warned with its path", function()
+      fresh()
+
+      local warnings = harness.captureWarnings(function()
+        custom.add(
+          "a",
+          effect({
+            emit = 4,
+            unload = function()
+              error("unload boom")
+            end,
+          }),
+          "ReplicatedStorage.A"
+        )
+      end)
+
+      expect(#warnings).toBe(1)
+      expect(string.find(warnings[1], "ReplicatedStorage.A: unload failed", 1, true) ~= nil).toBe(true)
+    end)
+
     test("a new version may change its id and classifier", function()
       fresh()
 
