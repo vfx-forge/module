@@ -231,10 +231,10 @@ function enabled_effects.remove(obj: Instance)
 end
 
 -- a lightning, bezier or mesh instance's passive loop starts and stops with the
--- switch, tagged or not, and in Studio's edit mode it takes the tag so the
--- place saves with it. switched off, a tagged instance keeps its tag and its
--- loop record, so Enabled set back on resumes it; an untagged one has its
--- record removed
+-- switch, tagged or not, and in Studio's edit mode the tag follows it so the
+-- place saves as it was left. switched off in a running game, a tagged instance
+-- keeps its tag and its loop record, so Enabled set back on resumes it; an
+-- untagged one has its record removed
 function enabled_effects.switch(obj: Instance, enabled: boolean)
   attr.set(obj, "Enabled", enabled)
 
@@ -250,7 +250,10 @@ function enabled_effects.switch(obj: Instance, enabled: boolean)
   end
 
   if not enabled then
-    if not obj:HasTag(utility.ENABLED_VFX_TAG) then
+    if not RunService:IsRunning() then
+      obj:RemoveTag(utility.ENABLED_VFX_TAG)
+      enabled_effects.remove(obj)
+    elseif not obj:HasTag(utility.ENABLED_VFX_TAG) then
       enabled_effects.remove(obj)
     end
 

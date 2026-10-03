@@ -250,8 +250,8 @@ export function enable(obj: Instance): void;
  * For other instances, sets the "Enabled" attribute, in the attribute cache
  * when the instance's attributes are cached.
  * A lightning, bezier or mesh instance stops emitting at its Rate. An emit
- * with an EmitDuration still running keeps going, and the ConstantVFX tag
- * stays.
+ * with an EmitDuration still running keeps going. In Studio edit mode the
+ * ConstantVFX tag is removed; in a running game it stays.
  * @param obj The instance to disable (propagates to descendants)
  */
 export function disable(obj: Instance): void;

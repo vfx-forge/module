@@ -299,7 +299,7 @@ harness.suite(function()
       end)
     end)
 
-    test("enable in edit mode adds the tag, and disable stops the loop and keeps it", function()
+    test("enable in edit mode adds the tag, and disable stops the loop and removes it", function()
       passive(function(stand: any)
         local m = model()
         local runService = game:GetService("RunService")
@@ -310,12 +310,32 @@ harness.suite(function()
         end
 
         stand.vfx.enable(m)
-        runService.IsRunning = running
 
         harness.render(0.21)
 
         expect(stand.seen.passive).toBe(1)
         expect(m:HasTag(utility.ENABLED_VFX_TAG)).toBe(true)
+
+        stand.vfx.disable(m)
+        runService.IsRunning = running
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+        expect(m:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
+        expect(stand.moved[m]).toBe(nil)
+      end)
+    end)
+
+    test("disable of a tagged mesh in a running game stops the loop and keeps the tag", function()
+      passive(function(stand: any)
+        local m = model()
+
+        m:AddTag(utility.ENABLED_VFX_TAG)
+        attr.set(m, "Enabled", true)
+        enabled_effects.add(m)
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
 
         stand.vfx.disable(m)
         harness.render(0.21)
