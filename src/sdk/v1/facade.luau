@@ -21,10 +21,9 @@ local NAN_VECTOR = vector.create(NAN, NAN, NAN)
 local STOP = table.freeze({})
 
 -- what an emit waits for once the author's emit returns: the tweens and nested
--- emits counted into `join`, and every join the author made
-type Own = { join: lifetime.join?, joins: { lifetime.join } }
-
-local OWN: { [lifetime.effect]: Own } = setmetatable({}, { __mode = "k" }) :: any
+-- emits counted into its own join, and every join the author made
+local OWN: { [lifetime.effect]: lifetime.join } = setmetatable({}, { __mode = "k" }) :: any
+local MADE: { [lifetime.effect]: { lifetime.join } } = setmetatable({}, { __mode = "k" }) :: any
 
 -- per module, the instances a failure was already reported for
 local WARNED: { [any]: { [Instance]: boolean } } = setmetatable({}, { __mode = "k" }) :: any
@@ -33,9 +32,16 @@ local WARNED: { [any]: { [Instance]: boolean } } = setmetatable({}, { __mode = "
 local PIECES: { [thread]: lifetime.effect } = setmetatable({}, { __mode = "k" }) :: any
 
 local JOINS: { [any]: { join: lifetime.join, ctx: any } } = setmetatable({}, { __mode = "k" }) :: any
-local WRITERS: { [any]: { writer: lifetime.writer, warned: boolean } } = setmetatable({}, { __mode = "k" }) :: any
 local PATHS: { [any]: Bezier.Bezier } = setmetatable({}, { __mode = "k" }) :: any
-local CURVES: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+
+-- the writers whose refused write was already warned about
+local REFUSED: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+
+-- the key a writer handle keeps its writer under, which no author can spell
+local WRITER = table.freeze({})
+
+-- what every curve the facade makes is, told apart from any other table by it
+local CURVE = getmetatable(curve.new(1, "linear"))
 
 -- a traceback for the author's error, and STOP as it came
 local function trace(err: any)
@@ -73,24 +79,12 @@ local function yielding(name: string)
   end
 end
 
-local function ownOf(scope: lifetime.effect): Own
-  local own = OWN[scope]
-
-  if own == nil then
-    own = { join = nil, joins = {} }
-    OWN[scope] = own
-  end
-
-  return own
-end
-
 local function joinOf(scope: lifetime.effect): lifetime.join
-  local own = ownOf(scope)
-  local join = own.join
+  local join = OWN[scope]
 
   if join == nil then
     join = lifetime.join(scope)
-    own.join = join
+    OWN[scope] = join
   end
 
   return join
@@ -247,17 +241,13 @@ function v1.curve(duration: number, given: any, options: {}?)
     logger.error("sdk.curve takes no options yet")
   end
 
-  local made = table.freeze(curve.new(duration, shapeOf(given)))
-
-  CURVES[made] = true
-
-  return made
+  return table.freeze(curve.new(duration, shapeOf(given)))
 end
 
 function v1.tween(ctx: any, eased: any, fn: (alpha: number) -> ())
   local scope = scopeOf(ctx, "tween")
 
-  if not CURVES[eased] then
+  if getmetatable(eased) ~= CURVE or not table.isfrozen(eased) then
     logger.error("sdk.tween plays a curve made by sdk.curve")
   end
 
@@ -288,8 +278,14 @@ function v1.join(ctx: any)
   local scope = scopeOf(ctx, "join")
   local join = lifetime.join(scope)
   local token = table.freeze({})
+  local made = MADE[scope]
 
-  table.insert(ownOf(scope).joins, join)
+  if made == nil then
+    MADE[scope] = { join }
+  else
+    table.insert(made, join)
+  end
+
   JOINS[token] = { join = join, ctx = ctx }
 
   return token
@@ -341,15 +337,13 @@ local Writer = {}
 Writer.__index = Writer
 
 function Writer.set(self: any, value: any)
-  local entry = WRITERS[self]
+  local w = self[WRITER]
 
-  if lifetime.set(entry.writer, value) or entry.warned then
+  if lifetime.set(w, value) or REFUSED[self] then
     return
   end
 
-  entry.warned = true
-
-  local w = entry.writer
+  REFUSED[self] = true
 
   logger.warn(`a {typeof(value)} could not be written to {w.name} of {w.obj:GetFullName()}`)
 end
@@ -367,11 +361,7 @@ local function writerOf(ctx: any, obj: Instance, source: string, name: string, c
     logger.error(`sdk.{call} takes the name it writes to, got {typeof(name)}`)
   end
 
-  local made = table.freeze(setmetatable({}, Writer))
-
-  WRITERS[made] = { writer = lifetime.write(scope, obj, source, name), warned = false }
-
-  return made
+  return table.freeze(setmetatable({ [WRITER] = lifetime.write(scope, obj, source, name) }, Writer))
 end
 
 function v1.getWriter(ctx: any, obj: Instance, property: string)
@@ -510,17 +500,12 @@ function facade.run(emit: any, ctx: any, attrs: any, props: any)
     return
   end
 
-  local own = OWN[scope]
-
-  if own == nil then
-    return
-  end
-
   while scope.state == lifetime.RUNNING do
-    local waiting = if own.join ~= nil and own.join.count > 0 then own.join else nil
+    local own = OWN[scope]
+    local waiting = if own ~= nil and own.count > 0 then own else nil
 
     if waiting == nil then
-      for _, join in own.joins do
+      for _, join in MADE[scope] or {} do
         if join.count > 0 then
           waiting = join
           break

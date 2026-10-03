@@ -8,6 +8,7 @@
     "root": "./src",
     "z": "./pkg/Z/src",
     "tiniest": "./pkg/tiniest",
-    "tests": "./tests"
+    "tests": "./tests",
+    "docs": "./docs"
   }
 }

@@ -43,6 +43,7 @@ require("@tests/sdk_facade.spec")
 require("@tests/sdk_load.spec")
 require("@tests/sdk_watch.spec")
 require("@tests/read_cost.spec")
+require("@tests/sdk_sample.spec")
 -- last: its promise churn leaves the collector mid cycle for whatever follows
 require("@tests/join_cost.spec")
 

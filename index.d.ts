@@ -337,3 +337,269 @@ export const effects: {
 	/** The effect registered under an id. */
 	get(id: string): RegisteredEffect | undefined;
 };
+
+/**
+ * The custom effect SDK, version 1. A custom effect is a ModuleScript tagged VFXForgeEffect
+ * whose module is an SDK.Effect; every method of it is handed the facade, SDK.V1, first.
+ */
+export namespace SDK {
+	/** A param's rule, run with the read's ctx and the other params. */
+	export type Rule = (
+		ctx: Ctx,
+		attrs: Record<string, unknown>,
+		props: Record<string, unknown>,
+	) => unknown;
+
+	/** A param: one row in the panel and one value in attrs or props. */
+	export interface Knob {
+		/** The lowest value, a number or one of the value's own type. */
+		min(value: unknown): Knob;
+		/** The highest value, a number or one of the value's own type. */
+		max(value: unknown): Knob;
+		/** Older names the value is still read under. */
+		aliases(...names: string[]): Knob;
+		/** The strings a text param may hold, shown as a dropdown. */
+		options(list: string[]): Knob;
+		/** The row's name in the panel. */
+		label(text: string): Knob;
+		/** The row's tooltip. */
+		hint(text: string): Knob;
+		/** A curve param edited in the curve editor, starting as this preset. */
+		curve(preset: string): Knob;
+		/** What the number measures. */
+		unit(
+			unit:
+				| "seconds"
+				| "perSecond"
+				| "perSecondSquared"
+				| "studs"
+				| "studsPerSecond"
+				| "studsPerSecondSquared",
+		): Knob;
+		/** Hides the row while the rule answers true. */
+		hidden(rule: Rule): Knob;
+		/** Locks the row to its default while the rule answers true. */
+		readonly(rule: Rule): Knob;
+		/** A value modifiers can animate, read as a Track, with default modifiers. */
+		mod(...mods: Mod[]): Knob;
+	}
+
+	/** A default modifier on an animated param. */
+	export interface Mod {
+		/** Seconds it runs, or a rule answering them. */
+		duration(seconds: number | Rule): Mod;
+		/** The preset or curve param value it eases with. */
+		curve(shape: string | Rule): Mod;
+		/** Seconds it waits before it starts. */
+		delay(seconds: number | Rule): Mod;
+		/** The moment of the effect it runs from. */
+		lane(name: "start" | "end"): Mod;
+	}
+
+	/** What params answers. */
+	export interface Params {
+		/** Params stored as attributes, by name. */
+		attributes?: Record<string, Knob>;
+		/** Params that are properties of the emitted instance, by property name. */
+		properties?: Record<string, Knob>;
+	}
+
+	/** An animated param's value. */
+	export interface Track<T = unknown> {
+		/** The value at the start. */
+		readonly value: T;
+		/** False when no modifier moves it. */
+		readonly animated: boolean;
+		/** Seconds the modifiers run. */
+		readonly duration: number;
+		/** The value at a time in seconds. */
+		at(elapsed: number): T;
+	}
+
+	/** What emit is handed about the instance it plays. */
+	export interface Ctx {
+		/** The instance being emitted. */
+		readonly ref: Instance;
+		/** The effect's length in seconds, from duration, else 1. */
+		readonly duration: number;
+		/** True when an Enabled loop emitted it. */
+		readonly constant?: boolean;
+	}
+
+	/** A value over time. */
+	export interface Curve {
+		/** Seconds it runs. */
+		readonly duration: number;
+		/** The value at t, 0 to 1 over the curve. */
+		at(t: number): number;
+	}
+
+	/** A preset's name, a curve param's value, a chain of points, or a function of t from 0 to 1. */
+	export type CurveShape =
+		| string
+		| buffer
+		| Vector3[]
+		| ((t: number) => number);
+
+	/** One property or attribute this effect writes, handed over between overlapping emits and put back at the end. */
+	export interface Writer<T = unknown> {
+		/** Writes the value now. */
+		set(value: T): void;
+	}
+
+	/** A group of pieces the effect waits for. */
+	export interface Join {
+		readonly _nominal_Join: never;
+	}
+
+	/** A 3D path through a chain of points. */
+	export interface Bezier {
+		/** New points, in the same format. */
+		set(points: Vector3[]): void;
+		/** The point at t, 0 to 1 with each segment an equal share. */
+		at(t: number): Vector3;
+		/** The point u of the way along by distance, 0 to 1. */
+		atUniform(u: number): Vector3;
+		/** The length in studs. */
+		length(): number;
+		/** The unit direction of travel at t, zero where the path stands still. */
+		tangent(t: number): Vector3;
+	}
+
+	/** Where a shape draws its point. */
+	export interface ShapeOptions {
+		/** On the surface rather than inside. */
+		surface?: boolean;
+		/** How much of the shape it draws from, 0 to 1. */
+		partial?: number;
+		/** The way the shape faces, Top when none is given. */
+		normal?: Enum.NormalId;
+		/** The same seed draws the same point. */
+		seed?: number;
+	}
+
+	/** A random point in a shape at cframe with size, in world space. */
+	export type ShapeFunction = (
+		cframe: CFrame,
+		size: Vector3,
+		options?: ShapeOptions,
+	) => Vector3;
+
+	/** What every method of a custom effect is handed first. */
+	export interface V1 {
+		/** A param with its default value, or a rule answering it. */
+		knob(defaultValue?: unknown): Knob;
+		/** Default modifiers for an animated param. */
+		readonly mod: {
+			/** Runs from value to the param's own value. */
+			from(value: unknown): Mod;
+			/** Runs from the param's own value to value. */
+			to(value: unknown): Mod;
+		};
+		/** Waits seconds of effect time, and answers the seconds waited. */
+		wait(ctx: Ctx, seconds: number): number;
+		/** Calls fn every frame, and answers a function that stops it. */
+		step(ctx: Ctx, fn: (dt: number, elapsed: number) => void): () => void;
+		/** A curve running for duration seconds. */
+		curve(
+			duration: number,
+			shape: CurveShape,
+			options?: Record<string, never>,
+		): Curve;
+		/** Plays the curve on effect time, calling fn with each value; the effect waits for it. */
+		tween(ctx: Ctx, curve: Curve, fn: (alpha: number) => void): void;
+		/** Cleans thing up when the effect ends. */
+		hold<T extends Instance | RBXScriptConnection | Callback | thread>(
+			ctx: Ctx,
+			thing: T,
+		): T;
+		/** A group of pieces the effect waits for. */
+		join(ctx: Ctx): Join;
+		/** Runs fn on a thread of its own, counted into join. */
+		spawn<A extends unknown[]>(
+			join: Join,
+			fn: (...args: A) => void,
+			...args: A
+		): void;
+		/** Waits until every piece of join is done. */
+		await(join: Join): void;
+		/** Emits instance as a nested effect the effect waits for. */
+		emit(ctx: Ctx, instance: Instance): void;
+		/** A writer for a property of obj. */
+		getWriter<T = unknown>(
+			ctx: Ctx,
+			obj: Instance,
+			property: string,
+		): Writer<T>;
+		/** A writer for an attribute of obj. */
+		getAttributeWriter<T = unknown>(
+			ctx: Ctx,
+			obj: Instance,
+			name: string,
+		): Writer<T>;
+		/** Runs the effect's time at an animated param's value. */
+		speed(ctx: Ctx, track: Track<number>): void;
+		/** t of the way from a to b, for any value that blends. */
+		lerp<T>(a: T, b: T, t: number): T;
+		/** Colors blended the way eyes see them. */
+		readonly color: {
+			/** t of the way from a to b, in Oklab. */
+			blend(a: Color3, b: Color3, t: number): Color3;
+			/** A color as Oklab lightness and its two hues. */
+			toOklab(color: Color3): Vector3;
+			/** An Oklab value back as a color, clamped into range. */
+			fromOklab(lab: Vector3): Color3;
+		};
+		/** Random points in shapes. */
+		readonly shape: {
+			/** A point in a box. */
+			box: ShapeFunction;
+			/** A point in a cylinder whose axis runs along the normal. */
+			cylinder: ShapeFunction;
+			/** A point in a sphere. */
+			sphere: ShapeFunction;
+			/** A point in a disc lying across the normal. */
+			disc: ShapeFunction;
+		};
+		/** 3D paths. */
+		readonly bezier: {
+			/** A path through 3n + 1 points, or 2 for a straight one. */
+			new (points: Vector3[]): Bezier;
+		};
+	}
+
+	/** A custom effect module. */
+	export interface Effect {
+		/** The facade version it is written against. */
+		sdk_version: 1;
+		/** Unique across every effect. */
+		id: string;
+		/** How the panel shows it. */
+		display: { name: string; icon?: string };
+		/** The selector an instance must match to play it. */
+		classifier: string;
+		/** A selector for the descendants it plays itself. */
+		components?: string;
+		/** The panel's rows: param names and groups of them. */
+		layout?: unknown[];
+		/** True when an Enabled loop may emit it. */
+		constant?: boolean;
+		/** The params, called once per load. */
+		params?(sdk: V1): Params;
+		/** The effect's length in seconds. */
+		duration?(
+			sdk: V1,
+			attrs: Record<string, unknown>,
+			props: Record<string, unknown>,
+		): number;
+		/** Plays the effect on ctx.ref. */
+		emit(
+			sdk: V1,
+			ctx: Ctx,
+			attrs: Record<string, unknown>,
+			props: Record<string, unknown>,
+		): void;
+		/** Called on the old version before a reload drops it. */
+		unload?(): void;
+	}
+}
