@@ -1111,6 +1111,61 @@ harness.suite(function()
         env:Clear()
       end
     end)
+
+    test("of two holding one key, the newest's value stands, and the older's once it ends first", function()
+      local KEY = {}
+      local region = {
+        here = clock.new(clock.global),
+        below = clock.new(clock.global),
+        above = clock.global,
+        nested = false,
+      }
+
+      local function hold(timeScale: number, length: number): lifetime.emit
+        local emit = lifetime.emit(nil)
+        local stub = {
+          regionOf = function()
+            return region, KEY
+          end,
+        }
+
+        lifetime.run(lifetime.effect(emit, 0, stub), function(scope: lifetime.effect)
+          controller.emit({ scope = scope } :: any, {
+            Scope = "Parent",
+            EmitDelay = 0,
+            EmitDuration = length,
+            TimeScale = {
+              apply = function(_, write: (v: number) -> ())
+                write(timeScale)
+              end,
+            },
+          })
+        end)
+
+        lifetime.seal(emit)
+
+        return emit
+      end
+
+      local older = hold(0.5, 2)
+      local newer = hold(0.25, 1)
+
+      scheduler.frame(0)
+
+      expect(clock.factorOf(region.here)).toBe(0.25)
+
+      scheduler.frame(1)
+      scheduler.frame(0)
+
+      expect(newer.done).toBe(true)
+      expect(clock.factorOf(region.here)).toBe(0.5)
+
+      scheduler.frame(1)
+      scheduler.frame(0)
+
+      expect(older.done).toBe(true)
+      expect(clock.factorOf(region.here)).toBe(1)
+    end)
   end)
 
   harness.describe("a nested emit and the join it is given", function()

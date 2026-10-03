@@ -7,9 +7,12 @@ local numeric_common = require("@mod/common/numeric")
 
 local controller = {}
 
--- how many running controllers scale each clock under each shared key, so the
--- last of them takes that scale off
-local HOLDERS = setmetatable({} :: { [any]: { [clock.Clock]: number } }, { __mode = "k" })
+-- each running controller under a shared key, for each clock it scales,
+-- oldest first: the newest one's value is that key's scale, and when it ends
+-- the one before it takes over, the last taking the scale off
+type Holding = { value: number? }
+
+local HOLDERS = setmetatable({} :: { [any]: { [clock.Clock]: { Holding } } }, { __mode = "k" })
 
 controller.id = "controller"
 controller.display = { name = "Controller", icon = "controller", order = 90 }
@@ -88,19 +91,42 @@ function controller.emit(ctx: reader.Ctx, attrs: any)
     HOLDERS[key] = holders
   end
 
+  local mine: Holding = { value = nil }
+
   for _, target in targets do
-    holders[target] = (holders[target] or 0) + 1
+    local list = holders[target]
+
+    if list == nil then
+      list = {}
+      holders[target] = list
+    end
+
+    table.insert(list, mine)
   end
 
   -- taken off on end, on a clear and at deinit, so nothing stays slowed
   lifetime.hold(scope, function()
     for _, target in targets do
-      local left = holders[target] - 1
+      local list = holders[target]
+      local index = if list then table.find(list, mine) else nil
 
-      holders[target] = if left > 0 then left else nil
+      if list == nil or index == nil then
+        continue
+      end
 
-      if left <= 0 then
+      table.remove(list, index)
+
+      if #list == 0 then
+        holders[target] = nil
         clock.unscale(target, key)
+
+        continue
+      end
+
+      local newest = list[#list]
+
+      if newest.value ~= nil then
+        clock.scale(target, key, newest.value)
       end
     end
   end)
@@ -112,8 +138,14 @@ function controller.emit(ctx: reader.Ctx, attrs: any)
       return
     end
 
+    mine.value = math.max(v, 0)
+
     for _, target in targets do
-      clock.scale(target, key, math.max(v, 0))
+      local list = holders[target]
+
+      if list ~= nil and list[#list] == mine then
+        clock.scale(target, key, mine.value)
+      end
     end
   end)
 
