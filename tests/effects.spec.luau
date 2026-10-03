@@ -1,8 +1,11 @@
 local fs = require("@lune/fs")
+local mods = require("@mod/mods")
 local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local curve = require("@mod/curve")
 local tween = require("@mod/tween")
+local codec = require("@mod/modifier_codec")
+local frame = require("@mod/modifier_frame")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local harness = require("@tests/harness")
@@ -23,6 +26,8 @@ local lightning = require("@vfx/lightning")
 local controller = require("@vfx/controller")
 
 local RAW_NEW = Promise._new
+
+frame.configure(harness.fakeEncoding, harness.fakeCompression)
 
 local function noop() end
 
@@ -2146,15 +2151,16 @@ harness.suite(function()
     end)
   end)
 
-  harness.describe("a fixed amount line's emission", function()
-    -- a line has its pieces cast one by one, and a piece a ray misses is not
-    -- made, so the rays it casts are the ticks it fired
-    local function casts(frames: number, deltaTime: number, sweep: number, amount: number): number
+  harness.describe("a line's emission", function()
+    -- a line whose rays all land, so the pieces it makes are the ones the
+    -- cache hands out
+    local function pieces(frames: number, deltaTime: number, authored: { [string]: any }): number
       local built = fresh()
       local line = require("@vfx/shockwave_line")
-      local rays = 0
+      local made = 0
       local raycast = workspace.Raycast
       local params = RaycastParams
+      local Vector3 = harness.datatypes.Vector3
 
       -- selene: allow(unscoped_variables, incorrect_standard_library_use)
       RaycastParams = {
@@ -2163,14 +2169,31 @@ harness.suite(function()
         end,
       }
       workspace.Raycast = function()
-        rays += 1
-        return nil
+        return {
+          Instance = { Color = harness.datatypes.Color3.new(1, 1, 1), Transparency = 0 },
+          Material = "Plastic",
+          Position = Vector3.zero,
+          Normal = Vector3.yAxis,
+        }
       end
       workspace.Terrain = workspace.Terrain or {}
 
       registry.register(require("@vfx/shockwave"))
       registry.register(table.clone(line))
-      line.init({ get = noop, free = noop } :: any)
+      line.init({
+        get = function()
+          made += 1
+
+          local real = harness.make("Part")
+
+          return {
+            _getReal = function()
+              return real
+            end,
+          }
+        end,
+        free = noop,
+      } :: any)
 
       local extents = utility.getTransformedOriginExtents
       utility.getTransformedOriginExtents = function()
@@ -2179,15 +2202,23 @@ harness.suite(function()
 
       local origin = harness.make("Attachment", harness.make("Folder"))
       origin:AddTag("Shockwave")
-      origin:SetAttribute("RayDirection", harness.datatypes.Vector3.new(0, -50, 0))
+      origin:SetAttribute("RayDirection", Vector3.new(0, -50, 0))
 
       local lines = harness.make("Folder", origin)
       lines.Name = "Lines"
 
       local ref = harness.make("Part", lines)
-      ref:SetAttribute("FixedAmount", amount)
-      ref:SetAttribute("Duration", sweep)
-      ref:SetAttribute("Direction", harness.datatypes.Vector3.new(0, 0, -1))
+      ref:SetAttribute("Direction", Vector3.new(0, 0, -1))
+
+      for key, v in authored do
+        ref:SetAttribute(key, v)
+      end
+
+      -- lune keeps a native vector apart from a Vector3, so the piece rows'
+      -- vector defaults and the size's grow from zero are authored over
+      ref:SetAttribute("OffsetIn", Vector3.zero)
+      ref:SetAttribute("SizeScaleIn", Vector3.one)
+      ref:SetAttribute(mods.attrName("attribute", "SizeScaleIn"), frame.frame(codec.encode({ lanes = { start = {} } })))
 
       local env = effects.emit(0, ref)
 
@@ -2202,14 +2233,23 @@ harness.suite(function()
       RaycastParams = params
       built.restore()
 
-      return rays
+      return made
     end
 
-    test("emits every piece of the amount even where the summed deltas fall short", function()
+    test("emits every piece of a fixed amount even where the summed deltas fall short", function()
       -- 0.3 s at sixtieths summed a float short of the third tick
-      expect(casts(30, 1 / 60, 0.3, 3)).toBe(3)
-      expect(casts(100, 1 / 120, 0.5, 7)).toBe(7)
-      expect(casts(60, 1 / 30, 1, 4)).toBe(4)
+      expect(pieces(30, 1 / 60, { Duration = 0.3, FixedAmount = 3 })).toBe(3)
+      expect(pieces(100, 1 / 120, { Duration = 0.5, FixedAmount = 7 })).toBe(7)
+      expect(pieces(60, 1 / 30, { Duration = 1, FixedAmount = 4 })).toBe(4)
+    end)
+
+    test("a rate line counts the frame that ends its sweep toward a piece", function()
+      -- the sweep ends a frame after the summed deltas reach it, and that
+      -- frame's time is what lands the last piece
+      expect(pieces(80, 1 / 240, { Duration = 0.25, Rate = 20 })).toBe(5)
+      expect(pieces(100, 1 / 240, { Duration = 0.3, Rate = 10 })).toBe(3)
+      expect(pieces(100, 1 / 240, { Duration = 0.3, Rate = 20 })).toBe(6)
+      expect(pieces(60, 1 / 60, { Duration = 0.5, Rate = 10 })).toBe(5)
     end)
   end)
 end)

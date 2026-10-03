@@ -340,9 +340,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
   local sweep = curve.new(1, attrs.PathCurve)
 
-  -- the emission runs on the effect's clock too, so a speed knob spaces the
-  -- pieces out and shortens the line's run by the same factor
-  tween.play(scope, curve.new(duration, "linear"), function(_, deltaTime: number, elapsed: number)
+  local function emitFrame(deltaTime: number, closing: boolean)
     last += deltaTime
 
     local threshold = 1 / currentRate
@@ -350,15 +348,15 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
     -- a fixed amount lands whole: the closing frame emits what the summed
     -- deltas left a float short of a tick
-    local closing = fixedAmount > 0 and elapsed >= duration
+    local whole = closing and fixedAmount > 0
 
-    if (last < threshold and not closing) or total >= max then
+    if (last < threshold and not whole) or total >= max then
       return
     end
 
     local ticks = last // threshold
 
-    if closing then
+    if whole then
       ticks = math.max(ticks, fixedAmount - total)
     end
 
@@ -634,6 +632,24 @@ function line.emit(ctx: reader.Ctx, attrs: any)
     end
 
     last %= threshold
+  end
+
+  -- the sweep ends on the first frame that starts at or past its duration, a
+  -- frame after the summed deltas reach it, and that frame's time still counts
+  -- toward a piece. the play has a second's grace to outlast it
+  local clocked = 0
+  local grace = duration + 1
+
+  -- the emission runs on the effect's clock too, so a speed knob spaces the
+  -- pieces out and shortens the line's run by the same factor
+  tween.play(scope, curve.new(grace, "linear"), function(_, deltaTime: number, elapsed: number)
+    local closing = clocked >= duration or elapsed >= grace
+
+    clocked = math.min(clocked + deltaTime, duration)
+
+    emitFrame(deltaTime, closing)
+
+    return not closing
   end, scope.depth)
 
   -- the hold runs on the clock the dwells do, or a speed below one stretches
