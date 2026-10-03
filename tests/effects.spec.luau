@@ -1617,4 +1617,39 @@ harness.suite(function()
       expect(#token.effects).toBe(0)
     end)
   end)
+
+  harness.describe("a beam", function()
+    test("a LengthScale other than 1 never moves the authored attachments", function()
+      local built = fresh()
+      local CFrame = harness.datatypes.CFrame
+      registry.register(require("@vfx/beam"))
+
+      local part = harness.make("Part")
+      local a0 = harness.make("Attachment", part)
+      local a1 = harness.make("Attachment", part)
+
+      a0.CFrame = CFrame.new(0, 0, 0)
+      a1.CFrame = CFrame.new(0, 0, 10)
+
+      local beam = harness.make("Beam", part) :: any
+
+      beam.Attachment0 = a0
+      beam.Attachment1 = a1
+      beam:SetAttribute("LengthScale", 2)
+
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0)
+
+      expect(a0.CFrame).toEqual(CFrame.new(0, 0, 0))
+      expect(a1.CFrame).toEqual(CFrame.new(0, 0, 10))
+
+      env:Clear()
+
+      expect(a0.CFrame).toEqual(CFrame.new(0, 0, 0))
+      expect(a1.CFrame).toEqual(CFrame.new(0, 0, 10))
+
+      built.restore()
+    end)
+  end)
 end)

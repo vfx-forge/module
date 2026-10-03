@@ -114,9 +114,10 @@ function beam.duration(_, attrs: any)
   return rng:NextNumber(range.Min, range.Max)
 end
 
--- the clone every emit plays on, with throwaway attachments when the length
--- moves: getting this wrong is not cosmetic, since setLengthScale below would
--- move the real attachments and the scope's restore runs on the clone
+-- the clone every emit plays on, with throwaway attachments whenever the
+-- length is not 1: getting this wrong is not cosmetic, since setLengthScale
+-- below would move the real attachments and the scope's restore runs on the
+-- clone
 local function prepare(ctx: reader.Ctx, attrs: any): Beam?
   local ref = ctx.ref :: Beam
   local scope = ctx.scope
@@ -130,7 +131,11 @@ local function prepare(ctx: reader.Ctx, attrs: any): Beam?
   clone.Archivable = false
   clone.Parent = workspace.Terrain
 
-  if attrs.LengthScale.animated then
+  -- any length other than 1 moves attachments, and only throwaway ones may
+  -- move, or an overlapping emit would read the scaled ones as authored
+  local lengthScale = attrs.LengthScale
+
+  if lengthScale.animated or lengthScale.at(0) ~= 1 then
     local a, b = att0:Clone(), att1:Clone()
 
     lifetime.hold(scope, a)
