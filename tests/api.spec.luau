@@ -113,6 +113,29 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("the registered effects", function()
+    test("are read through a frozen view of list and get alone", function()
+      local vfx = api()
+
+      registry.register(mesh)
+
+      expect(table.isfrozen(vfx.effects)).toBe(true)
+      expect(vfx.effects.get("mesh")).toBe(mesh)
+      expect(vfx.effects.list()).toEqual({ mesh })
+      expect(vfx.effects.clear).toBe(nil)
+      expect(vfx.effects.register).toBe(nil)
+
+      registry.clear()
+    end)
+
+    test("knob and mod are no longer on the api", function()
+      local vfx = api()
+
+      expect(vfx.knob).toBe(nil)
+      expect(vfx.mod).toBe(nil)
+    end)
+  end)
+
   harness.describe("the hook functions", function()
     test("hookProperty and hookAttribute hand back a connected hook", function()
       local vfx = api()

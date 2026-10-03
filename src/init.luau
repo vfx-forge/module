@@ -87,8 +87,6 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local mod = require("@mod/mod")
-local knob = require("@mod/knob")
 local clock = require("@mod/clock")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
@@ -118,10 +116,14 @@ local effects = require("@srv/effects")
 local texture_loader = require("@srv/texture_loader")
 local enabled_effects = require("@srv/enabled_effects")
 
+local watch = require("@root/sdk/watch")
+
 local PluginContext = utility.PLUGIN_CONTEXT
 local ServerContext = utility.SERVER_CONTEXT
 
-type params = {}
+-- `discover` false leaves tagged custom effects to a host that registers them
+-- itself, as the plugin does to reload them as they are edited
+type params = { discover: boolean? }
 
 local api = {}
 
@@ -182,6 +184,10 @@ function api.init(params: params?)
 
   api.setup = true
 
+  if params == nil or params.discover ~= false then
+    watch.start()
+  end
+
   if RunService:IsServer() and not PluginContext then
     return
   end
@@ -218,6 +224,8 @@ function api.deinit()
   api.setup = false
 
   shared.vfx = nil
+
+  watch.stop()
 
   if RunService:IsServer() and not PluginContext then
     return
@@ -342,9 +350,16 @@ end
 api.retime = require("@mod/retime").batch
 api.resize = require("@mod/resize").batch
 api.recolor = require("@mod/recolor")
-api.effects = registry
-api.knob = knob
-api.mod = mod
+-- what is registered, built-in and custom, to read and never to change
+api.effects = table.freeze({
+  list = function()
+    return registry.list()
+  end,
+
+  get = function(id: string)
+    return registry.get(id)
+  end,
+})
 
 function api.setSpeed(speed: number)
   clock.setGlobalSpeed(clock.checked(speed, "setSpeed"))

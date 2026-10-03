@@ -194,9 +194,20 @@ export function hookAttribute<T = unknown>(
 ): WriteHook<T>;
 
 /**
- * Initialize the Forge VFX system.
+ * Options for init.
  */
-export function init(): void;
+export interface InitOptions {
+	/**
+	 * Whether ModuleScripts tagged VFXForgeEffect are found and registered as custom effects.
+	 * True when left out.
+	 */
+	discover?: boolean;
+}
+
+/**
+ * Initialize the Forge VFX system, registering every custom effect tagged VFXForgeEffect.
+ */
+export function init(options?: InitOptions): void;
 
 /**
  * Clean up and shut down the Forge VFX system.
@@ -303,3 +314,26 @@ export function cacheAttributes(obj: Instance, shallow: boolean): void;
  * @param shallow If true, only restore the instance itself (skip descendants)
  */
 export function restoreAttributes(obj: Instance, shallow?: boolean): void;
+
+/**
+ * A registered effect, built-in or custom, as the runtime holds it.
+ */
+export interface RegisteredEffect {
+	readonly id: string;
+	readonly display: {
+		readonly name: string;
+		readonly icon?: string;
+		readonly order?: number;
+	};
+	readonly classifier: string;
+}
+
+/**
+ * Every registered effect, built-in and custom, to read and never to change.
+ */
+export const effects: {
+	/** Every registered effect, in the order the panel shows them. */
+	list(): ReadonlyArray<RegisteredEffect>;
+	/** The effect registered under an id. */
+	get(id: string): RegisteredEffect | undefined;
+};
