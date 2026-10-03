@@ -257,14 +257,18 @@ harness.suite(function()
       end
 
       obj.Emit = function() end
-      obj.Clear = function() end
+      obj.cleared = 0
+
+      obj.Clear = function()
+        obj.cleared += 1
+      end
 
       return obj
     end
 
     -- an emit at a speed, its rows answered from the emitter as the reader
     -- answers them, once, when the emit is read
-    local function play(obj: any, speed: number): lifetime.emit
+    local function play(obj: any, speed: number, window: number?): lifetime.emit
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)
       local read = obj.TimeScale
@@ -282,7 +286,11 @@ harness.suite(function()
       lifetime.run(fx, function(scope: lifetime.effect)
         local ctx = { ref = obj, scope = scope, shared = { unc = {}, ref = {} } }
 
-        particle.emit(ctx :: any, { EmitCount = 1, EmitDelay = 0, EmitDuration = 0 }, { TimeScale = timeScale })
+        particle.emit(
+          ctx :: any,
+          { EmitCount = 1, EmitDelay = 0, EmitDuration = window or 0 },
+          { TimeScale = timeScale }
+        )
       end)
 
       lifetime.seal(emit)
@@ -328,6 +336,44 @@ harness.suite(function()
       expect(obj.Lifetime).toEqual(NumberRange.new(1, 2))
       expect(obj.Speed).toEqual(NumberRange.new(4, 8))
       expect(obj.Rate).toBe(10)
+    end)
+
+    test("two overlapping windows keep the emitter on until the last closes", function()
+      local obj = inPlace()
+      local first = play(obj, 1, 1)
+
+      expect(obj.Enabled).toBe(true)
+
+      run(0.5)
+
+      local second = play(obj, 1, 1)
+
+      expect(obj.Enabled).toBe(true)
+
+      run(0.6)
+
+      expect(obj.Enabled).toBe(true)
+
+      run(0.5)
+
+      expect(obj.Enabled).toBe(false)
+
+      lifetime.clear(first)
+      lifetime.clear(second)
+    end)
+
+    test("a clear wipes the emitter only when no other emit plays on it", function()
+      local obj = inPlace()
+      local first = play(obj, 1)
+      local second = play(obj, 1)
+
+      lifetime.clear(first)
+
+      expect(obj.cleared).toBe(0)
+
+      lifetime.clear(second)
+
+      expect(obj.cleared).toBe(1)
     end)
   end)
 

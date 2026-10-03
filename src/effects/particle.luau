@@ -122,7 +122,9 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   ctx.obj = obj
 
-  if ref.Enabled then
+  -- an emitter left enabled would emit on its own; one another emit's window
+  -- holds is that window's to switch off
+  if ref.Enabled and lifetime.writing(ref, "property", "Enabled") == 0 then
     ref.Enabled = false
   end
 
@@ -134,10 +136,14 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   local written = ref.TimeScale
   local kept = adapters.authoredOf(ref, "TimeScale")
 
+  -- the window holds the emitter on, and the last window to close lets it go
+  local enabled = lifetime.write(scope, obj, "property", "Enabled")
+  local emitted = false
+
   lifetime.wait(scope, attrs.EmitDelay)
 
   if useDuration then
-    obj.Enabled = true
+    lifetime.set(enabled, true)
   end
 
   local timeScale = props.TimeScale
@@ -150,9 +156,9 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   end
 
   if not numeric_common.finite(authored) then
-    local own = adapters.authoredOf(obj, "TimeScale") or obj.TimeScale
+    local current = adapters.authoredOf(obj, "TimeScale") or obj.TimeScale
 
-    authored = if numeric_common.finite(own) then own else 1
+    authored = if numeric_common.finite(current) then current else 1
   end
 
   local scaleTween
@@ -174,19 +180,20 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
     lifetime.hold(scope, scaleTween)
   end
 
+  -- what is in the air is wiped only by the last emit playing on the emitter,
+  -- since every one that has started holds its TimeScale
   utility.onCancel(scope, function()
-    if useDuration then
-      obj.Enabled = false
+    if emitted and lifetime.writing(obj, "property", "TimeScale") <= 1 then
+      obj:Clear()
     end
-
-    obj:Clear()
   end)
 
   obj:Emit(count)
+  emitted = true
 
   if useDuration then
     lifetime.wait(scope, duration)
-    obj.Enabled = false
+    lifetime.leave(enabled)
   end
 
   -- the clock carries the speed, so the particles' own time is that times

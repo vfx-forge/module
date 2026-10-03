@@ -7,14 +7,6 @@ local numeric_common = require("@mod/common/numeric")
 -- the time rows retime scales on an emitter, which a speed above 1 scales here
 local TIME_ROWS = retime.PROPERTY_UNITS.ParticleEmitter
 
-type Original = {
-  timeScale: number,
-  users: number,
-  retimers: number,
-  rows: { [string]: any }?,
-  reapply: { [() -> ()]: boolean },
-}
-
 type Flight = {
   part: any,
   force: any?,
@@ -27,13 +19,6 @@ type Flight = {
 }
 
 local adapters = {}
-
--- what an emitter's time rows held before any emit retimed them, kept while
--- one still has them retimed, so the last to let go puts them back however
--- many emits of one in-place emitter overlap. the emits sharing an emitter
--- are counted here too, so one leaving makes the rest write their own
--- TimeScale again and only the last puts the emitter's own back
-local ORIGINALS = setmetatable({} :: { [any]: Original }, { __mode = "k" })
 
 -- how an adapter makes the instances it adds, replaceable so a spec can stand
 -- one in
@@ -49,116 +34,36 @@ local function scaled(v: any, f: number): any
   return v * f
 end
 
-local function retimeRows(original: Original, obj: any, by: number, held: boolean): boolean
-  local rows = original.rows
-
-  if rows == nil then
-    if by == 1 then
-      return held
-    end
-
-    rows = {}
-
-    for name in TIME_ROWS do
-      rows[name] = obj[name]
-    end
-
-    original.rows = rows
-  end
-
-  if not held then
-    original.retimers += 1
-  end
-
-  for name, unit in TIME_ROWS do
-    obj[name] = scaled(rows[name], retime.factorOf(unit, by) :: number)
-  end
-
-  return true
-end
-
-local function leave(obj: any, reapply: () -> (), held: boolean)
-  local original = ORIGINALS[obj]
-
-  if original == nil then
-    return
-  end
-
-  original.reapply[reapply] = nil
-  original.users -= 1
-
-  if held then
-    original.retimers -= 1
-
-    if original.retimers == 0 and original.rows ~= nil then
-      for name, value in original.rows do
-        obj[name] = value
-      end
-
-      original.rows = nil
-    end
-  end
-
-  if original.users > 0 then
-    for again in table.clone(original.reapply) do
-      again()
-    end
-
-    return
-  end
-
-  ORIGINALS[obj] = nil
-  obj.TimeScale = original.timeScale
-end
-
--- what an emitter's TimeScale or time row was authored as while an emit has
--- written over it, nil while none has, when the emitter's own is the authored
+-- what an emitter's TimeScale or time row goes back to once the emits writing
+-- it leave, nil while none does, when the emitter's own is the authored
 function adapters.authoredOf(obj: any, name: string): any?
-  local original = ORIGINALS[obj]
-
-  if original == nil then
-    return nil
-  end
-
-  if name == "TimeScale" then
-    return original.timeScale
-  end
-
-  local rows = original.rows
-  local kept = if rows ~= nil then rows[name] else nil
-
-  return if kept ~= nil then kept else obj[name]
+  return lifetime.restoreOf(obj, "property", name)
 end
 
 -- a particle emitter runs at its TimeScale times the effect's clock: up to 1
 -- that is its TimeScale, exact for live particles; above 1 TimeScale rests at
 -- 1 and the emitter's time rows take the rest, which reaches new particles
--- only. answers what sets the authored TimeScale. the rows and the TimeScale
--- go back when the effect ends
+-- only. every write goes through a writer, so of two emits of one emitter
+-- the owner's TimeScale and clock are what the emitter runs at, and the last
+-- to leave puts the authored back. answers what sets the authored TimeScale
 function adapters.particle(scope: lifetime.effect, obj: any, authored: number): (authored: number) -> ()
   local timeline = scope.clock
-  local retimedBy: number? = 1
 
   -- a NaN or infinite one falls back to what the emitter has, or to 1
   if not numeric_common.finite(authored) then
-    local own = adapters.authoredOf(obj, "TimeScale") or obj.TimeScale
+    local current = adapters.authoredOf(obj, "TimeScale") or obj.TimeScale
 
-    authored = if numeric_common.finite(own) then own else 1
+    authored = if numeric_common.finite(current) then current else 1
   end
 
-  local held = false
-
-  local original = ORIGINALS[obj]
-
-  if original == nil then
-    original = { timeScale = obj.TimeScale, users = 0, retimers = 0, rows = nil, reapply = {} }
-    ORIGINALS[obj] = original
-  end
+  local timeScale = lifetime.write(scope, obj, "property", "TimeScale")
+  local rows: { [string]: lifetime.writer }? = nil
+  local retimedBy = 1
 
   local function apply()
     local total = math.min(authored, 1) * clock.factorOf(timeline)
 
-    obj.TimeScale = math.min(total, 1)
+    lifetime.set(timeScale, math.min(total, 1))
 
     local by = math.max(total, 1)
 
@@ -167,24 +72,34 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
     end
 
     retimedBy = by
-    held = retimeRows(original, obj, by, held)
-  end
 
-  local function again()
-    retimedBy = nil
-    apply()
-  end
+    local writers = rows
 
-  original.users += 1
-  original.reapply[again] = true
+    if writers == nil then
+      writers = {}
+
+      for name in TIME_ROWS do
+        writers[name] = lifetime.write(scope, obj, "property", name)
+      end
+
+      rows = writers
+    end
+
+    -- from the rows as authored, never from what the last speed left
+    for name, unit in TIME_ROWS do
+      local base = adapters.authoredOf(obj, name)
+
+      if base == nil then
+        base = obj[name]
+      end
+
+      lifetime.set(writers[name], scaled(base, retime.factorOf(unit, by) :: number))
+    end
+  end
 
   apply()
 
   lifetime.hold(scope, clock.watch(timeline, apply))
-
-  lifetime.hold(scope, function()
-    leave(obj, again, held)
-  end)
 
   return function(value: number)
     if not numeric_common.finite(value) then
