@@ -95,7 +95,8 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
 
   lifetime.hold(scope, refObj)
 
-  local drawFunc = bezier_common.drawFuncMap[attrs.Shape] and bezier_common.drawFuncMap[attrs.Shape][attrs.ShapeStyle]
+  local styled = attrs.ShapeStyle == "Volume" or attrs.ShapeStyle == "Surface"
+  local drawFunc = if styled then bezier_common.SHAPES[attrs.Shape] else nil
 
   if not drawFunc then
     return

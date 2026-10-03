@@ -11,42 +11,13 @@ local Bezier = require("@obj/Bezier")
 
 local common = {}
 
-common.drawFuncMap = {
-  Box = {
-    Volume = shape.getPointWithinBox,
-    Surface = shape.getPointOnBox,
-  },
-
-  Cylinder = {
-    Volume = function(seed, cframe, size, normal, partial)
-      return shape.getPointWithinCylinder(seed, 0, partial, cframe, size, normal)
-    end,
-
-    Surface = function(seed, cframe, size, normal, partial)
-      return shape.getPointWithinCylinder(seed, 1, partial, cframe, size, normal)
-    end,
-  },
-
-  Sphere = {
-    Volume = function(seed, cframe, size, normal, partial)
-      return shape.getPointWithinSphere(seed, 0, partial, cframe, size, normal)
-    end,
-
-    Surface = function(seed, cframe, size, normal, partial)
-      return shape.getPointWithinSphere(seed, 1, partial, cframe, size, normal)
-    end,
-  },
-
-  Disc = {
-    Volume = function(seed, cframe, size, normal, partial)
-      return shape.getPointWithinDisc(seed, 0, partial, cframe, size, normal)
-    end,
-
-    Surface = function(seed, cframe, size, normal, partial)
-      return shape.getPointWithinDisc(seed, 1, partial, cframe, size, normal)
-    end,
-  },
-}
+-- the shape a piece is emitted from, by the Shape row
+common.SHAPES = table.freeze({
+  Box = shape.box,
+  Disc = shape.disc,
+  Sphere = shape.sphere,
+  Cylinder = shape.cylinder,
+})
 
 function common.getColorAtTime(sequence: ColorSequence, time: number)
   local keypoints = sequence.Keypoints
@@ -157,6 +128,7 @@ export type EmissionConfig = {
   mirror: boolean,
   mirrorRot: Vector3,
   partial: number,
+  surface: boolean,
   emissionDirection: Enum.NormalId,
 }
 
@@ -164,7 +136,7 @@ function common.calculateEmissionCFrame(
   originCFrame: CFrame,
   originSize: Vector3,
   config: EmissionConfig,
-  drawFunc: ((...any) -> CFrame)?,
+  drawFunc: ((CFrame, Vector3, shape.Options?) -> CFrame)?,
   rng: Random,
   endPoint: Attachment?,
   isAttachment: boolean
@@ -174,7 +146,11 @@ function common.calculateEmissionCFrame(
   if isAttachment then
     cf = originCFrame * CFrame.new(Vector3.zero, Vector3.FromNormalId(config.emissionDirection)).Rotation
   elseif drawFunc then
-    cf = drawFunc(nil, originCFrame, originSize, config.emissionDirection, config.partial)
+    cf = drawFunc(originCFrame, originSize, {
+      surface = config.surface,
+      partial = config.partial,
+      normal = config.emissionDirection,
+    })
   else
     cf = originCFrame
   end
@@ -377,6 +353,7 @@ function common.emissionOf(attrs: any)
     mirror = attrs.MirrorPaths,
     mirrorRot = attrs.MirrorRotation,
     partial = attrs.ShapePartial,
+    surface = attrs.ShapeStyle == "Surface",
     emissionDirection = Enum.NormalId[attrs.EmissionDirection],
   }
 end
