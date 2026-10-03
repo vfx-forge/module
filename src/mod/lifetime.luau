@@ -1,3 +1,4 @@
+local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local logger = require("@mod/logger")
 local scheduler = require("@mod/scheduler")
@@ -22,6 +23,15 @@ export type emit = {
   -- what the handle's speed and pause set, hanging from the clock of the
   -- effect that started the emit, or from the global clock
   clock: clock.Clock,
+
+  -- what every write of the emit ranks at against another emit's, and
+  -- whether it is a ConstantVFX tick's, which a one-shot emit outranks. both
+  -- are inherited by the emits it starts
+  priority: number,
+  constant: boolean,
+
+  -- the writers its effects hold, so a new priority reaches their targets
+  writers: { writer }?,
 
   pending: number,
   waiters: { thread },
@@ -68,6 +78,44 @@ export type join = {
   waiter: thread?,
 }
 
+-- one property or attribute on one instance that some effect writes but did
+-- not make, and every writer on it
+export type target = {
+  obj: any,
+  source: string,
+  name: string,
+
+  -- what goes back once the last writer leaves: the value read when the
+  -- first joined, or whatever somebody else has written over the owner since
+  restore: any,
+
+  -- what the target read back after the owner's last write, which a property
+  -- stores single precision
+  written: any,
+
+  owner: writer?,
+  writers: { writer },
+}
+
+-- one effect's claim on one target, joined at its first set
+export type writer = {
+  fx: effect,
+  obj: any,
+  source: string,
+  name: string,
+
+  target: target?,
+  order: number,
+
+  -- what a legacy child leaves behind when it leaves owning the target:
+  -- "keep" its own last value, "start" the start value it was authored with
+  rule: string?,
+  start: any,
+
+  last: any,
+  left: boolean,
+}
+
 -- keyed by the locked instance for as long as one effect holds it, and cleared
 -- by that effect's release, so a cancelled effect can no longer leak one. weak
 -- keyed like the registry in utility, so a lock never pins an instance whose
@@ -82,6 +130,13 @@ local clearing = 0
 -- go, so a spawned thread that started another can tell it belongs to the
 -- stopped effect
 local SPAWNED = setmetatable({} :: { [thread]: effect }, { __mode = "k" })
+
+-- every target some writer holds, by instance, source and name. weak keyed
+-- like LOCKS, so a destroyed instance takes its targets with it
+local TARGETS = setmetatable({} :: { [any]: { [string]: { [string]: target } } }, { __mode = "k" })
+
+-- how many writers have joined so far, which ranks the newer of two
+local joined = 0
 
 -- thrown through a body or a piece whose effect it cleared, or a piece it
 -- started cleared, and taken by that thread's own wrapper, so the thread ends
@@ -102,6 +157,9 @@ function lifetime.emit(parent: emit?, above: clock.Clock?): emit
     effects = {},
     children = {},
     clock = clock.new(above or (if parent then parent.clock else clock.global)),
+    priority = if parent then parent.priority else 0,
+    constant = if parent then parent.constant else false,
+    writers = nil,
     pending = 0,
     waiters = {},
     sealed = false,
@@ -310,6 +368,308 @@ function lifetime.release(fx: effect, cancelled: boolean?)
   end
 
   finishEffect(fx)
+end
+
+local function readProperty(obj: any, name: string): any
+  return obj[name]
+end
+
+local function writeProperty(obj: any, name: string, v: any)
+  obj[name] = v
+end
+
+-- a property that does not exist throws on the read, which reads as nil
+local function read(target: target): any
+  if target.source ~= "property" then
+    return attr.get(target.obj, target.name, nil, true)
+  end
+
+  local ok, v = pcall(readProperty, target.obj, target.name)
+
+  return if ok then v else nil
+end
+
+-- the attribute arm goes through the cache-aware write, where every reader of
+-- an attribute looks
+local function put(target: target, v: any): boolean
+  if target.source ~= "property" then
+    return (pcall(attr.set, target.obj, target.name, v))
+  end
+
+  return (pcall(writeProperty, target.obj, target.name, v))
+end
+
+local function targetOf(obj: any, source: string, name: string, make: boolean): target?
+  local sources = TARGETS[obj]
+
+  if sources == nil then
+    if not make then
+      return nil
+    end
+
+    sources = {}
+    TARGETS[obj] = sources
+  end
+
+  local names = sources[source]
+
+  if names == nil then
+    if not make then
+      return nil
+    end
+
+    names = {}
+    sources[source] = names
+  end
+
+  local target = names[name]
+
+  if target == nil and make then
+    target = {
+      obj = obj,
+      source = source,
+      name = name,
+      restore = nil,
+      written = nil,
+      owner = nil,
+      writers = {},
+    }
+
+    names[name] = target
+  end
+
+  return target
+end
+
+local function forget(target: target)
+  local sources = TARGETS[target.obj]
+  local names = if sources then sources[target.source] else nil
+
+  if names == nil then
+    return
+  end
+
+  names[target.name] = nil
+end
+
+-- the newer of two writers at one priority, unless only the newer is a
+-- ConstantVFX tick's
+local function outranks(a: writer, b: writer): boolean
+  local above, below = a.fx.emit, b.fx.emit
+
+  if above.priority ~= below.priority then
+    return above.priority > below.priority
+  end
+
+  if above.constant ~= below.constant then
+    return below.constant
+  end
+
+  return a.order > b.order
+end
+
+local function ownerOf(target: target): writer?
+  local best: writer? = nil
+
+  for _, w in target.writers do
+    if best == nil or outranks(w, best) then
+      best = w
+    end
+  end
+
+  return best
+end
+
+-- the owner's value onto the target. a live value other than the one read
+-- back last was written by somebody else, and is what goes back at the end
+local function land(target: target, v: any): boolean
+  local live = read(target)
+
+  if live ~= target.written then
+    target.restore = live
+  end
+
+  if not put(target, v) then
+    return false
+  end
+
+  target.written = if target.source == "property" then read(target) else v
+
+  return true
+end
+
+-- the owner worked out again, and a new one's value written at once so the
+-- target never shows a frame of the old owner's
+local function retarget(target: target)
+  local owner = ownerOf(target)
+
+  if owner == target.owner then
+    return
+  end
+
+  target.owner = owner
+
+  if owner ~= nil then
+    land(target, owner.last)
+  end
+end
+
+-- an effect's claim on one target, which joins the target's writers at its
+-- first set. a legacy child's `rule` says what it leaves behind
+function lifetime.write(fx: effect, obj: any, source: string, name: string, rule: string?, start: any?): writer
+  return {
+    fx = fx,
+    obj = obj,
+    source = source,
+    name = name,
+    target = nil,
+    order = 0,
+    rule = rule,
+    start = start,
+    last = nil,
+    left = false,
+  }
+end
+
+local function join(w: writer): target
+  local target = targetOf(w.obj, w.source, w.name, true) :: target
+
+  if #target.writers == 0 then
+    local current = read(target)
+
+    target.restore = current
+    target.written = current
+  end
+
+  joined += 1
+
+  w.target = target
+  w.order = joined
+
+  table.insert(target.writers, w)
+
+  local emit = w.fx.emit
+  local writers = emit.writers
+
+  if writers then
+    table.insert(writers, w)
+  else
+    emit.writers = { w }
+  end
+
+  lifetime.hold(w.fx, function()
+    lifetime.leave(w)
+  end)
+
+  return target
+end
+
+-- the writer's value this frame: written when it owns the target, and kept
+-- for when it comes to own it otherwise. answers false only for a write the
+-- target refused
+function lifetime.set(w: writer, v: any): boolean
+  if w.left or w.fx.state == RELEASED then
+    return true
+  end
+
+  w.last = v
+
+  local target = w.target
+
+  if target == nil then
+    target = join(w)
+    target.owner = ownerOf(target)
+  end
+
+  if target.owner ~= w then
+    return true
+  end
+
+  return land(target, v)
+end
+
+-- the writer gives the target up, and the next owner takes it from where
+-- that one is. the last to leave puts back what the target goes back to
+function lifetime.leave(w: writer)
+  if w.left then
+    return
+  end
+
+  w.left = true
+
+  local target = w.target
+
+  if target == nil then
+    return
+  end
+
+  swapRemove(target.writers, w)
+
+  local writers = w.fx.emit.writers
+
+  if writers then
+    swapRemove(writers, w)
+  end
+
+  if target.owner == w then
+    if w.rule == "keep" then
+      target.restore = w.last
+    elseif w.rule == "start" then
+      target.restore = w.start
+    end
+
+    target.owner = nil
+    retarget(target)
+  end
+
+  if #target.writers > 0 then
+    return
+  end
+
+  local live = read(target)
+
+  if live ~= target.written then
+    target.restore = live
+  end
+
+  put(target, target.restore)
+  forget(target)
+end
+
+-- a new priority for an emit and every emit it started, and the owner of
+-- every target their writers hold worked out again
+function lifetime.rank(emit: emit, priority: number)
+  emit.priority = priority
+
+  local writers = emit.writers
+
+  if writers then
+    for _, w in writers do
+      retarget(w.target :: target)
+    end
+  end
+
+  for _, child in emit.children do
+    lifetime.rank(child, priority)
+  end
+end
+
+-- how many writers hold a target now
+function lifetime.writing(obj: any, source: string, name: string): number
+  local target = targetOf(obj, source, name, false)
+
+  return if target then #target.writers else 0
+end
+
+-- what a target goes back to once its writers leave, nil while none holds it
+function lifetime.restoreOf(obj: any, source: string, name: string): any
+  local target = targetOf(obj, source, name, false)
+
+  if target == nil or #target.writers == 0 then
+    return nil
+  end
+
+  return target.restore
 end
 
 -- a step of this effect in one of the scheduler's phases, stopped when the
