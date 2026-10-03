@@ -28,7 +28,7 @@ local load = {}
 load.SUPPORTED = #VERSIONS
 
 -- how many single letter edits apart two names are
-local function distance(a: string, b: string): number
+local function distance(a: string, b: string)
   local previous = table.create(#b + 1)
 
   for j = 0, #b do
@@ -50,7 +50,7 @@ local function distance(a: string, b: string): number
   return previous[#b + 1]
 end
 
-local function unknown(key: any): string
+local function unknown(key: any)
   if type(key) ~= "string" then
     return `a field named by a {typeof(key)}`
   end
@@ -120,10 +120,8 @@ local function checkFields(author: any, found: { string })
     table.insert(found, "classifier must be a selector string")
   end
 
-  for _, field in { "components" } do
-    if author[field] ~= nil and type(author[field]) ~= "string" then
-      table.insert(found, `{field} must be a selector string`)
-    end
+  if author.components ~= nil and type(author.components) ~= "string" then
+    table.insert(found, "components must be a selector string")
   end
 
   if author.layout ~= nil and type(author.layout) ~= "table" then
@@ -145,7 +143,8 @@ local function checkFields(author: any, found: { string })
   end
 end
 
--- what params answered, or nil and why it could not be used
+-- the attributes and properties params answered, each empty when it could
+-- not be used and every reason added to `found`
 local function paramsOf(author: any, sdk: any, found: { string }): ({ [string]: any }, { [string]: any })
   if author.params == nil then
     return {}, {}
@@ -253,6 +252,10 @@ function load.overlap(classifier: string, except: any?): string?
       return `classifier {classifier} must name a class and a tag of its own, as in Attachment.MyEffect`
     end
 
+    if BROAD[class] then
+      return `classifier {classifier}: {class} is too broad a class for a custom effect, name a concrete class such as BasePart`
+    end
+
     for _, module in others do
       for _, theirs in registry.alternatives(module.classifier) do
         for _, tag in tagsOf(theirs[#theirs] or "") do
@@ -263,7 +266,7 @@ function load.overlap(classifier: string, except: any?): string?
 
         local claimed = whole(theirs)
 
-        if claimed ~= nil and (claimed == class or BROAD[class]) then
+        if claimed ~= nil and claimed == class then
           return `classifier {classifier} overlaps {module.id}, which plays every {claimed}`
         end
       end

@@ -39,7 +39,7 @@ return effect
 - `sdk_version` is read first. A module without one is refused, and so is one asking for a version newer than the plugin or emit module you run.
 - `id` is a name of letters, digits and underscores, unique across every effect. A built-in's id is refused. When two modules claim one id, the first registered keeps it and the other is refused, with both named.
 - `display` takes `name` and an optional `icon`.
-- `classifier` is a selector. Every alternative in it names a class and a tag of its own, as in `BasePart.MyEffect`, so no instance can be yours and another effect's at once. Tag the instances that play it with that tag. A classifier that shares a tag with another effect, or names a class a built-in plays whole (`Beam`, `Trail`, `ParticleEmitter`, `Sound`, `Model`), is refused.
+- `classifier` is a selector. Every alternative in it names a class and a tag of its own, as in `BasePart.MyEffect`, so no instance can be yours and another effect's at once. Tag the instances that play it with that tag. A classifier that shares a tag with another effect, or names a class a built-in plays whole (`Beam`, `Trail`, `ParticleEmitter`, `Sound`, `Model`), is refused. So is `Instance` or `PVInstance`, which is too broad to tell your instances apart; name a concrete class such as `BasePart`.
 - Optional fields: `components` (a selector for descendants the effect plays itself), `layout` (the panel's rows), `constant` (an Enabled loop may emit it), `params`, `duration` and `unload`.
 - Any other field is refused, so a typo like `clasifier` is caught.
 

@@ -179,12 +179,25 @@ harness.suite(function()
       })
 
       expect(refusal(effect({ classifier = "Instance.MyEffect" }))).toEqual({
-        "classifier Instance.MyEffect overlaps beam, which plays every Beam",
+        "classifier Instance.MyEffect: Instance is too broad a class for a custom effect, name a concrete class such as BasePart",
+      })
+
+      expect(refusal(effect({ classifier = "Folder.MyEffect, PVInstance.MyOther" }))).toEqual({
+        "classifier Folder.MyEffect, PVInstance.MyOther: PVInstance is too broad a class for a custom effect, name a concrete class such as BasePart",
       })
 
       local module = load.assemble(effect({ classifier = "Attachment.MyEffect" }), "ReplicatedStorage.MyEffect")
 
       expect(module ~= nil).toBe(true)
+    end)
+
+    test("a class too broad to tell apart is refused even when no other effect is registered", function()
+      fresh()
+
+      expect(#registry.list()).toBe(0)
+      expect(refusal(effect({ classifier = "Instance.MyEffect" }))).toEqual({
+        "classifier Instance.MyEffect: Instance is too broad a class for a custom effect, name a concrete class such as BasePart",
+      })
     end)
 
     test("a built-in's id is refused, and a second module claiming an id names the first", function()
