@@ -136,6 +136,12 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   local written = ref.TimeScale
   local kept = adapters.authoredOf(ref, "TimeScale")
 
+  -- a clone has the template's Enabled, so it is switched off before the
+  -- window joins, or its restore would be on
+  if obj ~= ref then
+    obj.Enabled = false
+  end
+
   -- the window holds the emitter on, and the last window to close lets it go
   local enabled = lifetime.write(scope, obj, "property", "Enabled")
   local emitted = false
@@ -181,7 +187,8 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   end
 
   -- what is in the air is wiped only by the last emit playing on the emitter,
-  -- since every one that has started holds its TimeScale
+  -- since every one that has started holds its TimeScale. one still in its
+  -- EmitDelay holds none yet, and wipes nothing
   utility.onCancel(scope, function()
     if emitted and lifetime.writing(obj, "property", "TimeScale") <= 1 then
       obj:Clear()

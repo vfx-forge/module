@@ -192,6 +192,39 @@ harness.suite(function()
   end)
 
   harness.describe("the particle adapter with a neighbour", function()
+    test("an emit at 1 joining while another holds the rows retimed leaves them to follow its own speed", function()
+      local first, a = effect()
+      local second, b = effect()
+      local obj = emitter()
+
+      adapters.particle(a, obj, 1)
+      at(first, 2)
+
+      adapters.particle(b, obj, 1)
+
+      expect(obj.Rate).toBe(10)
+
+      done(second)
+
+      expect(obj.Rate).toBe(20)
+
+      done(first)
+
+      expect(obj.Rate).toBe(10)
+      expect(obj.Lifetime).toEqual(NumberRange.new(1, 2))
+    end)
+
+    test("a lone emit at 1 writes no row", function()
+      local emit, fx = effect()
+      local obj = emitter()
+
+      adapters.particle(fx, obj, 1)
+
+      expect(lifetime.writing(obj, "property", "Rate")).toBe(0)
+
+      done(emit)
+    end)
+
     test("one of two emits ending leaves the other's TimeScale, and the last puts the authored back", function()
       local first, a = effect()
       local second, b = effect()
@@ -284,7 +317,7 @@ harness.suite(function()
       }
 
       lifetime.run(fx, function(scope: lifetime.effect)
-        local ctx = { ref = obj, scope = scope, shared = { unc = {}, ref = {} } }
+        local ctx = { ref = obj, scope = scope, shared = { unc = {}, ref = obj.refMap or {} } }
 
         particle.emit(
           ctx :: any,
@@ -374,6 +407,73 @@ harness.suite(function()
       lifetime.clear(second)
 
       expect(obj.cleared).toBe(1)
+    end)
+
+    test("a burst and a window on one emitter leave it off once the window closes", function()
+      local obj = inPlace()
+      local burst = play(obj, 1)
+
+      expect(obj.Enabled).toBe(false)
+
+      local window = play(obj, 1, 1)
+
+      expect(obj.Enabled).toBe(true)
+
+      run(1.1)
+
+      expect(obj.Enabled).toBe(false)
+
+      lifetime.clear(burst)
+      lifetime.clear(window)
+
+      expect(obj.Enabled).toBe(false)
+    end)
+
+    test("a clear in the middle of a window puts Enabled back", function()
+      local obj = inPlace()
+      local window = play(obj, 1, 1)
+
+      run(0.3)
+
+      expect(obj.Enabled).toBe(true)
+
+      lifetime.clear(window)
+
+      expect(obj.Enabled).toBe(false)
+    end)
+
+    test("a clone of an enabled emitter ends off once its window closes", function()
+      local parent = {}
+      local clone = inPlace()
+      local template = inPlace()
+
+      clone.Enabled = true
+      clone.Archivable = true
+      template.Enabled = true
+      template.Parent = parent
+      template.refMap = { [parent] = { Destroy = function() end } }
+
+      template.IsDescendantOf = function()
+        return false
+      end
+
+      template.FindFirstAncestorWhichIsA = function()
+        return {}
+      end
+
+      template.Clone = function()
+        return clone
+      end
+
+      local window = play(template, 1, 1)
+
+      expect(clone.Enabled).toBe(true)
+
+      run(1.1)
+
+      expect(clone.Enabled).toBe(false)
+
+      lifetime.clear(window)
     end)
   end)
 

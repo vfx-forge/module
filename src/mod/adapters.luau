@@ -45,7 +45,9 @@ end
 -- 1 and the emitter's time rows take the rest, which reaches new particles
 -- only. every write goes through a writer, so of two emits of one emitter
 -- the owner's TimeScale and clock are what the emitter runs at, and the last
--- to leave puts the authored back. answers what sets the authored TimeScale
+-- to leave puts the authored back. the rows are joined once the speed is
+-- above 1 or another emit holds them, so a lone emit at 1 writes none.
+-- answers what sets the authored TimeScale
 function adapters.particle(scope: lifetime.effect, obj: any, authored: number): (authored: number) -> ()
   local timeline = scope.clock
 
@@ -60,6 +62,16 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
   local rows: { [string]: lifetime.writer }? = nil
   local retimedBy = 1
 
+  local function held(): boolean
+    for name in TIME_ROWS do
+      if lifetime.writing(obj, "property", name) > 0 then
+        return true
+      end
+    end
+
+    return false
+  end
+
   local function apply()
     local total = math.min(authored, 1) * clock.factorOf(timeline)
 
@@ -67,13 +79,17 @@ function adapters.particle(scope: lifetime.effect, obj: any, authored: number): 
 
     local by = math.max(total, 1)
 
-    if by == retimedBy then
+    local writers = rows
+
+    if writers ~= nil and by == retimedBy then
+      return
+    end
+
+    if writers == nil and by == 1 and not held() then
       return
     end
 
     retimedBy = by
-
-    local writers = rows
 
     if writers == nil then
       writers = {}
