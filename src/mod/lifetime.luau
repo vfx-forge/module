@@ -381,7 +381,7 @@ end
 -- a property that does not exist throws on the read, which reads as nil
 local function read(target: target): any
   if target.source ~= "property" then
-    return attr.get(target.obj, target.name, nil, true)
+    return attr.raw(target.obj, target.name)
   end
 
   local ok, v = pcall(readProperty, target.obj, target.name)

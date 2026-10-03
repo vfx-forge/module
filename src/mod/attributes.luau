@@ -164,6 +164,19 @@ function attr.set<T>(obj: Instance, key: string, value: T)
   end
 end
 
+-- the value as stored, a cached instance's entry first, with no check that it
+-- is usable
+function attr.raw(obj: Instance, key: string): any
+  local cache = Cache[obj:GetAttribute(ATTR_CACHE_ID)]
+  local value = cache and cache[key]
+
+  if value ~= nil then
+    return value
+  end
+
+  return obj:GetAttribute(key)
+end
+
 function attr.isCached(obj: Instance): boolean
   return obj:GetAttribute(ATTR_CACHE_ID) ~= nil
 end

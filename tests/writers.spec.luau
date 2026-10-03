@@ -229,6 +229,20 @@ harness.suite(function()
       expect(part:GetAttribute("Fresh")).toBe(nil)
     end)
 
+    test("an attribute authored at infinity goes back as it was", function()
+      local emit, fx = effect()
+      local part = harness.make("Part")
+
+      part:SetAttribute("Range", math.huge)
+
+      local w = lifetime.write(fx, part, "attribute", "Range")
+
+      lifetime.set(w, 5)
+      done(emit)
+
+      expect(part:GetAttribute("Range")).toBe(math.huge)
+    end)
+
     test("that refuses writes answers false, and the leave never throws", function()
       local emit, fx = effect()
       local values = { Transparency = 0 }
