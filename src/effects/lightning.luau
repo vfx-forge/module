@@ -8,6 +8,7 @@ local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local bezier_common = require("@mod/common/bezier")
+local enabled_effects = require("@srv/enabled_effects")
 
 local Bezier = require("@obj/Bezier")
 local ObjectCache = require("@obj/ObjectCache")
@@ -462,48 +463,10 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
     return
   end
 
-  local useDuration = attrs.EmitDuration > 0
-
   lifetime.wait(scope, attrs.EmitDelay)
 
-  if useDuration and not ctx.constant then
-    utility.forceEmit(ref, true, scope.clock)
-    attr.trigger(ref, "Enabled", true)
-
-    utility.onCancel(scope, function()
-      local token = utility.stopEmitDuration(ref)
-
-      if token then
-        lifetime.clear(token)
-      end
-    end)
-
-    local speed = attrs.Speed
-
-    if speed.animated then
-      attr.setState(ref, "SpeedTweening", true)
-
-      lifetime.hold(
-        scope,
-        tween.fromParams(
-          utility.linear_bezier,
-          speed.duration,
-          function(_, deltaTime, elapsed)
-            attr.setState(ref, "SpeedOverride", speed.at(elapsed))
-            return deltaTime
-          end,
-          nil,
-          function()
-            attr.setState(ref, "SpeedTweening", nil)
-          end
-        )
-      )
-    end
-
-    lifetime.wait(scope, attrs.EmitDuration)
-
-    utility.awaitEmitDuration(utility.stopEmitDuration(ref))
-
+  if attrs.EmitDuration > 0 and not ctx.constant then
+    enabled_effects.window(ctx, lightning, attrs.EmitDuration)
     return
   end
 

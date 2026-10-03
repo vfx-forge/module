@@ -14,7 +14,9 @@ local enabled_effects = require("@srv/enabled_effects")
 local test, expect = harness.test, harness.expect
 
 local mesh = require("@vfx/mesh")
+local bezier = require("@vfx/bezier")
 local Promise = require("@pkg/Promise")
+local lightning = require("@vfx/lightning")
 local controller = require("@vfx/controller")
 
 local RAW_NEW = Promise._new
@@ -1984,6 +1986,35 @@ harness.suite(function()
 
       expect(seen).toEqual({ true, true, true })
       expect(model:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
+    end)
+
+    -- a bolt as its emit needs it to reach the window: under a part, with its
+    -- points and its template
+    local function bolt(tag: string)
+      return function()
+        local att = harness.make("Attachment", harness.make("Part"))
+        local points = harness.make("Attachment", att)
+
+        att:AddTag(tag)
+        points.Name = "Points"
+        harness.make("Part", att)
+
+        return att
+      end
+    end
+
+    test("an untagged lightning window ticks", function()
+      local att, seen = untagged(lightning, bolt(utility.LIGHTNING_TAG))
+
+      expect(seen).toEqual({ true, true, true })
+      expect(att:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
+    end)
+
+    test("an untagged bezier window ticks", function()
+      local att, seen = untagged(bezier, bolt(utility.BEZIER_TAG))
+
+      expect(seen).toEqual({ true, true, true })
+      expect(att:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
     end)
   end)
 
