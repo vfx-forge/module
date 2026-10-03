@@ -78,6 +78,18 @@ local function compounds(alternative: string)
   return out
 end
 
+-- each alternative of a classifier as its compounds, parenthesized parts
+-- blanked, the subject last
+function registry.alternatives(classifier: string): { { string } }
+  local out = {}
+
+  for alternative in string.gmatch(flatten(classifier), "[^,]+") do
+    table.insert(out, compounds(alternative))
+  end
+
+  return out
+end
+
 function registry.depth(classifier: string)
   local deepest = 0
 
