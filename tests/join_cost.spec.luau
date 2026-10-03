@@ -121,6 +121,45 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("a writer's cost", function()
+    test("a property written through one writer costs at most four times a bare protected write", function()
+      local CALLS = 20000
+      local obj = { Transparency = 0 }
+      local bare = { Transparency = 0 }
+
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local w = lifetime.write(fx, obj, "property", "Transparency")
+
+      local function write(target: any, name: string, v: any)
+        target[name] = v
+      end
+
+      local i = 0
+
+      local function now()
+        i += 1
+        lifetime.set(w, i % 2)
+      end
+
+      local function old()
+        i += 1
+        pcall(write, bare, "Transparency", i % 2)
+      end
+
+      now()
+      old()
+
+      local cost, oldCost = against(CALLS, now, old)
+
+      print(`a write through one writer: {us(cost)}, {us(oldCost)} bare`)
+
+      expect(cost < oldCost * 4).toBe(true)
+
+      lifetime.clear(emit)
+    end)
+  end)
+
   harness.describe("the join's cost", function()
     test("a join of 64 with its body parked costs a twentieth of Promise.all over 64", function()
       local SIZE = 64
