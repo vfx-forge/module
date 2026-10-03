@@ -1,16 +1,3 @@
--- Pure Path2D control-point (de)serialization + curve sampling. No engine
--- access (no `game`/`script`) so this is requirable under lune as well as in
--- Studio, unlike `@mod/utility`, which does top-level `game:GetService`.
---
--- `serializePath`/`deserializePath` are moved verbatim from `mod/utility.luau`
--- (which now delegates to this module; see its comment). `alphaAt` mirrors
--- the ease-sampling semantics `mod/tween.luau` uses at runtime exactly:
--- deserialize -> `Bezier.new(points, 0)` -> `1 - bezier:getEase(t).y`. The
--- `1 - y` inversion is an established semantic (the curves are authored in
--- UI space, where Y increases downward); match it exactly so editor- and
--- runtime-sampled curves agree.
-local Bezier = require("@obj/Bezier")
-
 local path = {}
 
 function path.serializePath(points: { Path2DControlPoint })
@@ -72,60 +59,6 @@ function path.deserializePath(data: string | buffer)
   end
 
   return points
-end
-
-path.bezier_cache = {} :: { [string]: Bezier.Bezier }
-
--- a curve handed in as a buffer, keyed by the buffer itself in front of the
--- string cache, so `buffer.tostring` runs once per distinct buffer rather than
--- once per sample. weak keyed, so caching one never keeps it alive
-local buffer_cache: { [buffer]: Bezier.Bezier } = setmetatable({}, { __mode = "k" }) :: any
-
--- the pcall target, hoisted so sampling allocates no closure per call
-local function ease(bezier: any, t: number): number
-  return bezier:getEase(t).y
-end
-
--- Sample a serialized curve at progress `t` in [0,1]. Keyed like
--- `tween.bezier_cache`, by the serialized form (buffers are converted to
--- their string form for a stable cache key).
-function path.alphaAt(curve: string | buffer, t: number): number
-  local held = typeof(curve) == "buffer"
-  local bezier = if held then buffer_cache[curve :: buffer] else path.bezier_cache[curve :: string]
-
-  if not bezier then
-    local key = if held then buffer.tostring(curve :: buffer) else curve :: string
-
-    bezier = path.bezier_cache[key]
-
-    if not bezier then
-      local points = path.deserializePath(key)
-      bezier = Bezier.new(points, 0)
-      path.bezier_cache[key] = bezier
-    end
-
-    if held then
-      buffer_cache[curve :: buffer] = bezier
-    end
-  end
-
-  -- `getEase` (the production path everywhere else in forge-vfx) interpolates
-  -- its ease LUT via the native `vector` type's `:Lerp` method. Some Luau
-  -- hosts don't implement it, confirmed empirically on lune 0.10.4: no
-  -- `:Lerp` method, no `vector.lerp` function either, and the `vector`
-  -- library table is read-only (can't be monkeypatched). Real Roblox/Studio
-  -- always has it, so this fallback is dead code there; under a host that
-  -- lacks it, fall back to the LUT-free Newton solve (`_getEaseRaw`), the
-  -- exact same per-point algorithm `getEase` uses to build its LUT, just
-  -- without the fast lerp-interpolation step, so results agree to numerical
-  -- precision.
-  local ok, y = pcall(ease, bezier, t)
-
-  if not ok then
-    y = (bezier :: any):_getEaseRaw(t).y
-  end
-
-  return 1 - y
 end
 
 return path

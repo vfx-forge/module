@@ -3,57 +3,56 @@ local logger = require("@mod/logger")
 
 local curves = {}
 
-local default_curve: string? = nil
-local linear_curve: string? = nil
+-- a chain in the serialized form a curve row stores: the points as f32 pairs,
+-- y down, an anchor every 24 bytes with its handles between. taken as plain
+-- numbers, y up, since a vector would round them to single precision first
+local function encode(numbers: { number }): string
+  local buf = buffer.create((#numbers // 6 + 1) * 24)
+
+  for i = 1, #numbers, 2 do
+    buffer.writef32(buf, (i - 1) * 4, numbers[i])
+    buffer.writef32(buf, (i - 1) * 4 + 4, 1 - numbers[i + 1])
+  end
+
+  return buffer.tostring(buf)
+end
+
+-- each a chain of x and y pairs, y up: an anchor, its outgoing handle, the next
+-- anchor's incoming handle, the next anchor. the eased three are the cubic
+-- easings CSS names. the out cubic is the one every effect always eased with,
+-- its incoming handle's x as the editor stored it, one f32 step off 0.355
+curves.PRESETS = table.freeze({
+  linear = encode({ 0, 0, 0, 0, 1, 1, 1, 1 }),
+  easeIn = encode({ 0, 0, 0.55, 0.055, 0.675, 0.19, 1, 1 }),
+  easeOut = encode({ 0, 0, 0.215, 0.61, 0.355000019, 1, 1, 1 }),
+  easeInOut = encode({ 0, 0, 0.645, 0.045, 0.355, 1, 1, 1 }),
+})
 
 -- whether a string naming no preset is a serialized path, decided once per
 -- string: a rule handing back a curve row's value asks again for every piece
 local PATHS: { [string]: boolean } = {}
 
--- built on first call rather than at module scope, so a module that requires
--- this one still LOADS outside the engine: Path2DControlPoint and UDim2 are
--- Roblox datatypes and lune has neither. legacy_mods needs the same out cubic
--- default utility hands every effect, and cannot require utility for it because
--- utility requires mods which requires legacy_mods
+-- the out cubic every effect always eased with
 function curves.default(): string
-  if default_curve == nil then
-    default_curve = buffer.tostring(path.serializePath({
-      Path2DControlPoint.new(UDim2.fromScale(0, 1), UDim2.new(), UDim2.fromScale(0.215, -0.61)),
-      Path2DControlPoint.new(UDim2.fromScale(1, 0), UDim2.fromScale(-0.645, 0), UDim2.new()),
-    }))
-  end
-
-  return default_curve :: string
+  return curves.PRESETS.easeOut
 end
 
 function curves.linear(): string
-  if linear_curve == nil then
-    linear_curve = buffer.tostring(path.serializePath({
-      Path2DControlPoint.new(UDim2.fromScale(0, 1)),
-      Path2DControlPoint.new(UDim2.fromScale(1, 0)),
-    }))
-  end
-
-  return linear_curve :: string
+  return curves.PRESETS.linear
 end
 
-curves.PRESETS = {
-  easeOut = curves.default,
-  linear = curves.linear,
-}
-
--- a row names its curve by preset; nil is the out cubic every effect always
--- eased with. a string naming no preset is a serialized path when it holds
--- points, which is what a rule reading a curve row hands back
+-- a row names its curve by preset; nil is the out cubic. a string naming no
+-- preset is a serialized path when it holds points, which is what a rule
+-- reading a curve row hands back
 function curves.preset(name: (string | buffer)?)
   if typeof(name) == "buffer" then
     return name
   end
 
-  local build = curves.PRESETS[name or "easeOut"]
+  local serialized = curves.PRESETS[name or "easeOut"]
 
-  if build ~= nil then
-    return build()
+  if serialized ~= nil then
+    return serialized
   end
 
   if typeof(name) == "string" then

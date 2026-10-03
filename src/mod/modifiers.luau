@@ -1,5 +1,5 @@
 local lerp = require("@mod/lerp")
-local path = require("@mod/common/path")
+local curve = require("@mod/curve")
 local value = require("@mod/value")
 
 local modifiers = {}
@@ -105,14 +105,13 @@ end
 -- and A depends on the CURVE ALONE. Not on the endpoints, not on the duration
 -- (which only scales the step count), so one table serves every instance
 -- sampling that curve whatever lifetime it drew. Cached here the way
--- path.bezier_cache caches the curve itself: a memo, so evaluate stays a pure
+-- @mod/curve caches the curve itself: a memo, so evaluate stays a pure
 -- function of its inputs.
 --
 -- 128 rather than 32, which a gentle ramp is perfectly happy with: a rate that
 -- LEAPS inside one cell puts a large slice of the whole integral in that cell,
 -- and the trapezoid error over it lands the steps around the leap visibly wrong.
--- Measured at 0.35ms to build against 0.09ms, once per curve, on lune's slower
--- Newton-solve path; Studio takes the LUT and is faster than both.
+-- Measured at 0.35ms to build against 0.09ms, once per curve.
 local PHASE_SAMPLES = 128
 
 modifiers.phase_cache = {} :: { [string]: any }
@@ -431,9 +430,9 @@ function modifiers.schedule(
 end
 
 -- sample a serialized curve (a Path2D control-point buffer or string) at
--- progress in [0,1], mirroring mod/tween.luau's runtime semantics exactly
-function modifiers.alphaFromCurve(curve: string | buffer, progress: number): number
-  return path.alphaAt(curve, progress)
+-- progress in [0,1], through the same shapes every tween plays
+function modifiers.alphaFromCurve(shape: string | buffer, progress: number): number
+  return curve.sample(shape, progress)
 end
 
 -- a randomizer over two Vector3s, drawn once per component. a weight curve

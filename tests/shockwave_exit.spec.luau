@@ -9,7 +9,7 @@ local reader = require("@mod/reader")
 local harness = require("@tests/harness")
 local registry = require("@mod/registry")
 
-local Bezier = require("@obj/Bezier")
+local Bezier = require("@tests/fixtures/Bezier_213759c")
 
 local test, expect = harness.test, harness.expect
 local Vector3 = harness.datatypes.Vector3
@@ -17,8 +17,8 @@ local NumberRange = harness.datatypes.NumberRange
 
 frame.configure(harness.fakeEncoding, harness.fakeCompression)
 
--- the pieces' own Bezier is LUT and Newton based rather than exact, so every
--- comparison here allows the same slack the runtime's own sampling does
+-- the old Bezier's Newton solve stops short of exact, so every comparison here
+-- allows the slack between it and the runtime's own sampling
 local EPSILON = 1e-4
 
 -- the two piece modules whose exits are the same pair of lanes
@@ -34,19 +34,10 @@ local function nearVector(a: any, b: any): boolean
   return near(a.X, b.X) and near(a.Y, b.Y) and near(a.Z, b.Z)
 end
 
--- getEase interpolates its LUT through the native vector type's :Lerp, which
--- this host does not implement; fall back to the LUT-free Newton solve the
--- same object uses to build that LUT, agreeing to numerical precision
+-- the Newton solve this host always took, where Studio read a 64 step table
+-- built from it
 local function easeOf(bez: any, alpha: number): number
-  local ok, y = pcall(function()
-    return bez:getEase(alpha).y
-  end)
-
-  if not ok then
-    y = bez:_getEaseRaw(alpha).y
-  end
-
-  return y
+  return bez:_getEaseRaw(alpha).y
 end
 
 -- the size factor the hand shrink wrote, as a fraction of the piece's drawn
@@ -544,7 +535,8 @@ harness.suite(function()
 
     -- an event lane answers its reach before it fires, and builds its sampler
     -- only once a piece has fired it: a curve nothing else eases through is
-    -- first decoded when that sampler first runs, and not a moment before
+    -- first decoded for sampling when that sampler first runs, and not a
+    -- moment before
     test("a despawn lane never fired builds nothing it would sample through", function()
       for i, id in PIECES do
         local curve = buffer.tostring(path.serializePath({
@@ -552,25 +544,45 @@ harness.suite(function()
           Path2DControlPoint.new(UDim2.fromScale(1, 0), UDim2.fromScale(-0.53, 0), UDim2.new()),
         }))
 
-        local attrs, module = pieceOf(id, {
-          SizeScaleIn = Vector3.new(1, 1, 1),
-          ShrinkScale = Vector3.new(0.2, 0.2, 0.2),
-          ShrinkDuration = 0.4,
-          ShrinkCurve = curve,
-        })
+        local original = path.deserializePath
+        local decoded = 0
 
-        local piece = mods.piece(module.events)
-        local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
+        path.deserializePath = function(data: string | buffer)
+          if data == curve then
+            decoded += 1
+          end
 
-        expect(sizeIn.has("despawn")).toBe(true)
-        expect(near(sizeIn.reach("despawn"), 0.4)).toBe(true)
-        expect(sizeIn.at(1) == Vector3.new(1, 1, 1)).toBe(true)
-        expect(path.bezier_cache[curve]).toBe(nil)
+          return original(data)
+        end
 
-        piece:fire("despawn", 1)
+        local ok, err = pcall(function()
+          local attrs, module = pieceOf(id, {
+            SizeScaleIn = Vector3.new(1, 1, 1),
+            ShrinkScale = Vector3.new(0.2, 0.2, 0.2),
+            ShrinkDuration = 0.4,
+            ShrinkCurve = curve,
+          })
 
-        expect(nearVector(sizeIn.at(1.4), Vector3.new(0.2, 0.2, 0.2))).toBe(true)
-        expect(path.bezier_cache[curve] ~= nil).toBe(true)
+          local piece = mods.piece(module.events)
+          local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
+          local read = decoded
+
+          expect(sizeIn.has("despawn")).toBe(true)
+          expect(near(sizeIn.reach("despawn"), 0.4)).toBe(true)
+          expect(sizeIn.at(1) == Vector3.new(1, 1, 1)).toBe(true)
+          expect(decoded).toBe(read)
+
+          piece:fire("despawn", 1)
+
+          expect(nearVector(sizeIn.at(1.4), Vector3.new(0.2, 0.2, 0.2))).toBe(true)
+          expect(decoded).toBe(read + 1)
+        end)
+
+        path.deserializePath = original
+
+        if not ok then
+          error(err, 0)
+        end
       end
     end)
 

@@ -7,14 +7,14 @@ local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local registry = require("@mod/registry")
 
-local Bezier = require("@obj/Bezier")
+local Bezier = require("@tests/fixtures/Bezier_213759c")
 
 local test, expect = harness.test, harness.expect
 
 frame.configure(harness.fakeEncoding, harness.fakeCompression)
 
--- the bolt's own Bezier is LUT and Newton based rather than exact, so every
--- comparison here allows the same slack the runtime's own sampling does
+-- the old Bezier's Newton solve stops short of exact, so every comparison here
+-- allows the slack between it and the runtime's own sampling
 local EPSILON = 1e-4
 
 local function near(a: number, b: number): boolean
@@ -30,19 +30,10 @@ local function lerp(a: number, b: number, t: number): number
   return a + (b - a) * t
 end
 
--- getEase interpolates its LUT through the native vector type's :Lerp, which
--- this host does not implement; fall back to the LUT-free Newton solve the
--- same object uses to build that LUT, agreeing to numerical precision
+-- the Newton solve this host always took, where Studio read a 64 step table
+-- built from it
 local function easeOf(bez: any, alpha: number): number
-  local ok, y = pcall(function()
-    return bez:getEase(alpha).y
-  end)
-
-  if not ok then
-    y = bez:_getEaseRaw(alpha).y
-  end
-
-  return y
+  return bez:_getEaseRaw(alpha).y
 end
 
 -- the transparency the hand-written segment loop produced, written out here

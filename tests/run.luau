@@ -2,6 +2,7 @@ local process = require("@lune/process")
 local harness = require("@tests/harness")
 
 require("@tests/context.spec")
+require("@tests/curve.spec")
 require("@tests/modifiers_eval.spec")
 require("@tests/mods_span.spec")
 require("@tests/mods_track.spec")
