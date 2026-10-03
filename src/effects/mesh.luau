@@ -8,6 +8,7 @@ local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
+local enabled_effects = require("@srv/enabled_effects")
 
 local Oklab = require("@mod/color/Oklab")
 
@@ -488,53 +489,13 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
     attr.set(ref, "Enabled", false)
   end
 
-  local emitDuration = attrs.EmitDuration
-  local useEmitDuration = ref:HasTag(utility.ENABLED_VFX_TAG) and emitDuration > 0
-
-  local speed = attrs.Speed
-
   lifetime.wait(scope, attrs.EmitDelay)
 
-  if useEmitDuration and not ctx.constant then
-    utility.forceEmit(ref, true, scope.clock)
-    attr.trigger(ref, "Enabled", true)
-
-    utility.onCancel(scope, function()
-      local token = utility.stopEmitDuration(ref)
-
-      if token then
-        lifetime.clear(token)
-      end
-    end)
-
-    if speed.animated then
-      attr.setState(ref, "SpeedTweening", true)
-
-      lifetime.hold(
-        scope,
-        tween.fromParams(
-          utility.linear_bezier,
-          speed.duration,
-          function(_, deltaTime, elapsed)
-            attr.setState(ref, "SpeedOverride", speed.at(elapsed))
-            return deltaTime
-          end,
-          nil,
-          function()
-            attr.setState(ref, "SpeedTweening", nil)
-          end
-        )
-      )
-    end
-
-    lifetime.wait(scope, emitDuration)
-
-    utility.awaitEmitDuration(utility.stopEmitDuration(ref))
-
+  if attrs.EmitDuration > 0 and not ctx.constant then
+    enabled_effects.window(ctx, mesh, attrs.EmitDuration)
     return
   end
 
-  local emitCount = if useEmitDuration and not ctx.constant then 1 else attrs.EmitCount
   local range = attrs.EffectDuration
 
   -- every piece runs on the effect's clock, so one Speed track paces them all
@@ -543,7 +504,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   -- each piece runs on a thread the effect holds, so a clear closes it
   local outstanding = lifetime.join(scope)
 
-  for _ = 1, emitCount do
+  for _ = 1, attrs.EmitCount do
     local duration = rng:NextNumber(range.Min, range.Max)
 
     lifetime.spawn(outstanding, function()

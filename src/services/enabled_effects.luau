@@ -3,10 +3,12 @@ local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
+local scheduler = require("@mod/scheduler")
 
 local numeric_common = require("@mod/common/numeric")
 
@@ -60,6 +62,45 @@ function enabled_effects.ticker(obj: Instance, module: registry.Module, token: l
       emitters.dispatch(obj, scope, { unc = {}, ref = {} }, 1, module, true)
     end)
   end
+end
+
+-- an EmitDuration emit's window: an emit of its own under the effect's, so the
+-- handle's speed, pause, priority and clear reach it and its ticks, ticking
+-- every `1 / Rate` seconds of its clock for `duration` seconds of the
+-- effect's, then waited on until its last tick has ended
+function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, duration: number)
+  local scope = ctx.scope
+  local window = lifetime.emit(scope.emit, scope.clock)
+
+  -- a window's ticks rank as a one-shot emit's, wherever the emit that
+  -- opened it came from
+  window.constant = false
+
+  -- a clear of the emit reaches the window through the tree; a kill of this
+  -- effect alone does not, so it takes the window's ticks with it
+  lifetime.defer(scope, function(cancelled: boolean)
+    if cancelled then
+      lifetime.clear(window)
+    end
+
+    lifetime.seal(window)
+  end)
+
+  local tick = enabled_effects.ticker(ctx.ref, module, window, scope.effects)
+
+  -- on real time, since the ticker counts the window's clock itself, and at
+  -- depth 0, ahead of every step its ticks add
+  local handle = lifetime.hold(scope, scheduler.add("compute", tick, 0, scope, false, clock.REAL))
+
+  -- the first tick as the window opens, so one shorter than a frame still
+  -- spawns it
+  tick(0)
+
+  lifetime.wait(scope, duration)
+
+  handle:Disconnect()
+  lifetime.seal(window)
+  lifetime.await(window)
 end
 
 function enabled_effects.init(scope: { any }, effects_service: any)

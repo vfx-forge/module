@@ -6,12 +6,14 @@ local logger = require("@mod/logger")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
 local utility = require("@mod/utility")
+local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
 local enabled_effects = require("@srv/enabled_effects")
 local test, expect = harness.test, harness.expect
 
+local mesh = require("@vfx/mesh")
 local Promise = require("@pkg/Promise")
 local controller = require("@vfx/controller")
 
@@ -1670,6 +1672,318 @@ harness.suite(function()
       expect(coroutine.status(workers[1])).toBe("dead")
       expect(coroutine.status(workers[2])).toBe("dead")
       expect(#token.effects).toBe(0)
+    end)
+  end)
+
+  harness.describe("an EmitDuration window", function()
+    -- a stand-in for the three modules that open windows: a plain emit opens a
+    -- window of `duration` seconds, and each tick of it is handed to `onTick`.
+    -- the instance ticks at the default 5 a second: once as the window opens,
+    -- then once a frame of 0.21
+    local function windowed(duration: number, onTick: (ctx: any) -> ())
+      local built = fresh()
+      local stand = module("windows", "Model", noop)
+
+      stand.emit = function(ctx: any)
+        if ctx.constant then
+          onTick(ctx)
+          return
+        end
+
+        enabled_effects.window(ctx, stand, duration)
+      end
+
+      stand.constant = true
+      registry.register(stand)
+
+      return harness.make("Model"), built
+    end
+
+    -- each tick as the number of its window, counted in the order the windows
+    -- first ticked
+    local function labelled(log: { number })
+      local windows = {}
+
+      return function(ctx: any)
+        local window = ctx.scope.emit
+        local index = table.find(windows, window)
+
+        if index == nil then
+          table.insert(windows, window)
+          index = #windows
+        end
+
+        table.insert(log, index)
+      end
+    end
+
+    test("two overlapping windows of one instance each tick to their own end", function()
+      local log = {}
+      local ref, built = windowed(1, labelled(log))
+
+      local first = effects.emit(0, ref)
+
+      scheduler.frame(0.21)
+      scheduler.frame(0.21)
+
+      local second = effects.emit(0, ref)
+
+      for _ = 1, 5 do
+        scheduler.frame(0.21)
+      end
+
+      expect(log).toEqual({ 1, 1, 1, 2, 1, 2, 1, 2, 2, 2 })
+      expect(first.Finished:getStatus()).toBe("Resolved")
+      expect(second.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("clearing one window's emit leaves the other ticking", function()
+      local log = {}
+      local ref, built = windowed(10, labelled(log))
+
+      local first = effects.emit(0, ref)
+      local second = effects.emit(0, ref)
+
+      scheduler.frame(0.21)
+      first:Clear()
+      scheduler.frame(0.21)
+      scheduler.frame(0.21)
+
+      expect(log).toEqual({ 1, 2, 1, 2, 2, 2 })
+      expect(first.Finished:getStatus()).toBe("Resolved")
+      expect(second.Finished:getStatus()).toBe("Started")
+
+      second:Clear()
+      built.restore()
+    end)
+
+    test("the handle stays pending until the window's last tick has ended", function()
+      local ref, built = windowed(0.3, function(ctx: any)
+        lifetime.wait(ctx.scope, 1)
+      end)
+
+      local env = effects.emit(0, ref)
+
+      scheduler.frame(0.21)
+      scheduler.frame(0.21)
+
+      -- the window closed at 0.42, its ticks from 0 and 0.21 still playing
+      expect(env.Finished:getStatus()).toBe("Started")
+
+      for _ = 1, 3 do
+        scheduler.frame(0.21)
+      end
+
+      expect(env.Finished:getStatus()).toBe("Started")
+
+      scheduler.frame(0.21)
+
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("a window shorter than a frame still spawns its first tick", function()
+      local ticks = 0
+      local ref, built = windowed(0.05, function()
+        ticks += 1
+      end)
+
+      local env = effects.emit(0, ref)
+
+      scheduler.frame(0.21)
+
+      expect(ticks).toBe(1)
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("a window at half speed ticks at half the rate and its ticks run at half speed", function()
+      local ticks = {}
+      local ref, built = windowed(2, function(ctx: any)
+        table.insert(ticks, ctx.scope)
+        lifetime.wait(ctx.scope, 10)
+      end)
+
+      local env = effects.emit(0, ref)
+
+      env:SetSpeed(0.5)
+
+      for _ = 1, 10 do
+        scheduler.frame(0.21)
+      end
+
+      -- the tick at the open, then one every other frame where full speed
+      -- would have ticked every frame
+      expect(#ticks).toBe(6)
+
+      for _, tick in ticks do
+        expect(clock.factorOf(tick.clock)).toBe(0.5)
+      end
+
+      env:Clear()
+      built.restore()
+    end)
+
+    test("a paused window spawns nothing, and ticks again once resumed", function()
+      local log = {}
+      local ref, built = windowed(1, labelled(log))
+
+      local env = effects.emit(0, ref)
+
+      scheduler.frame(0.21)
+      env:Pause()
+
+      for _ = 1, 3 do
+        scheduler.frame(0.21)
+      end
+
+      expect(log).toEqual({ 1, 1 })
+
+      env:Resume()
+
+      for _ = 1, 4 do
+        scheduler.frame(0.21)
+      end
+
+      expect(log).toEqual({ 1, 1, 1, 1, 1 })
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("SetPriority on a window's handle hands a target its ticks write over at once", function()
+      local target = { Transparency = 0 }
+      local ref, built = windowed(10, function(ctx: any)
+        lifetime.set(lifetime.write(ctx.scope, target, "property", "Transparency"), 0.25)
+        lifetime.wait(ctx.scope, 10)
+      end)
+
+      registry.register(module("writes", "Folder", function(ctx: any)
+        lifetime.set(lifetime.write(ctx.scope, target, "property", "Transparency"), 0.75)
+        lifetime.wait(ctx.scope, 10)
+      end))
+
+      local window = effects.emit(0, ref)
+      local plain = effects.emit(0, harness.make("Folder"))
+
+      expect(target.Transparency).toBe(0.75)
+
+      window:SetPriority(1)
+
+      expect(target.Transparency).toBe(0.25)
+
+      window:SetPriority(0)
+
+      expect(target.Transparency).toBe(0.75)
+
+      window:Clear()
+      plain:Clear()
+
+      expect(target.Transparency).toBe(0)
+
+      built.restore()
+    end)
+
+    test("a window whose effect is killed takes its ticks with it", function()
+      local built = fresh()
+      local ticks = {}
+      local frames = 0
+      local stand = module("windows", "Model", noop)
+
+      stand.emit = function(ctx: any)
+        if ctx.constant then
+          table.insert(ticks, ctx.scope)
+          lifetime.wait(ctx.scope, 10)
+          return
+        end
+
+        lifetime.step(ctx.scope, function()
+          frames += 1
+
+          if frames == 2 then
+            error("boom")
+          end
+        end)
+
+        enabled_effects.window(ctx, stand, 10)
+      end
+
+      stand.constant = true
+      registry.register(stand)
+
+      local env = effects.emit(0, harness.make("Model"))
+
+      local warnings = harness.captureWarnings(function()
+        scheduler.frame(0.21)
+        scheduler.frame(0.21)
+      end)
+
+      expect(#ticks).toBe(2)
+      expect(ticks[1].state).toBe(lifetime.RELEASED)
+      expect(ticks[2].state).toBe(lifetime.RELEASED)
+      expect(env.Finished:getStatus()).toBe("Resolved")
+      expect(#warnings > 0).toBe(true)
+
+      built.restore()
+    end)
+
+    -- an untagged instance built after the registry is fresh, and the ticks its
+    -- window dispatches as it opens and over two frames, each true when it is
+    -- a tick of that instance's own module. a tick is counted rather than run,
+    -- since a piece of these modules needs Studio, and a tick of anything else
+    -- is dropped; a plain emit runs as it is
+    local function untagged(effect: any, build: () -> Instance): (Instance, { boolean })
+      local built = fresh()
+      local inst = build()
+      local seen = {}
+      local dispatch = emitters.dispatch
+
+      effect.init({})
+      registry.register(effect)
+      inst:SetAttribute("EmitDuration", 1)
+
+      emitters.dispatch = function(obj: any, fx: any, shared: any, legacyScale: number, ticked: any, constant: boolean?)
+        if not constant then
+          dispatch(obj, fx, shared, legacyScale, ticked, constant)
+          return
+        end
+
+        if obj == inst then
+          table.insert(seen, ticked == effect)
+        end
+      end
+
+      local env = effects.emit(0, inst)
+
+      scheduler.frame(0.21)
+      scheduler.frame(0.21)
+
+      emitters.dispatch = dispatch
+      env:Clear()
+      effect.deinit()
+      built.restore()
+
+      return inst, seen
+    end
+
+    test("an untagged mesh window ticks", function()
+      local model, seen = untagged(mesh, function()
+        local model = harness.make("Model", harness.make("Folder"))
+        local start = harness.make("Part", model)
+        local goal = harness.make("Part", model)
+
+        start.Name = "Start"
+        goal.Name = "End"
+
+        return model
+      end)
+
+      expect(seen).toEqual({ true, true, true })
+      expect(model:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
     end)
   end)
 
