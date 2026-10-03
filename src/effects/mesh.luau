@@ -3,6 +3,7 @@ local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
 local mods = require("@mod/mods")
+local curve = require("@mod/curve")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
@@ -259,56 +260,33 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
   scope.effects.emitNested(obj, scope.depth + 1, scope, children)
 
   if goalCFrameOffset ~= CFrame.identity then
-    lifetime.hold(
-      scope,
-      tween.fromParams(attrs.PartCFrameCurve, duration, function(alpha, deltaTime)
-        currentCFrame = CFrame.identity:Lerp(goalCFrameOffset, alpha)
-        return deltaTime
-      end)
-    )
+    tween.play(scope, curve.new(duration, attrs.PartCFrameCurve), function(alpha: number)
+      currentCFrame = CFrame.identity:Lerp(goalCFrameOffset, alpha)
+    end)
   end
 
-  if rotSpeed.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, rotSpeed.duration, function(_, deltaTime, elapsed)
-        currentRotSpeed = rotSpeed.at(elapsed)
-        return deltaTime
-      end)
-    )
-  end
+  tween.drive(scope, rotSpeed, function(v: number)
+    currentRotSpeed = v
+  end)
 
-  obj.Transparency = partTp.at(0)
-
-  if partTp.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, partTp.duration, function(_, deltaTime, elapsed)
-        obj.Transparency = partTp.at(elapsed)
-        return deltaTime
-      end)
-    )
-  end
+  tween.drive(scope, partTp, function(v: number)
+    obj.Transparency = v
+  end)
 
   local sizeStart, sizeEnd = start.Size, goal.Size
 
   if sizeStart ~= sizeEnd then
     local lastSizeAlpha = -1
 
-    lifetime.hold(
-      scope,
-      tween.fromParams(attrs.PartSizeCurve, duration, function(alpha, deltaTime)
-        -- reduce size writes
-        if math.abs(alpha - lastSizeAlpha) < 0.005 then
-          return deltaTime
-        end
+    tween.play(scope, curve.new(duration, attrs.PartSizeCurve), function(alpha: number)
+      -- reduce size writes
+      if math.abs(alpha - lastSizeAlpha) < 0.005 then
+        return
+      end
 
-        lastSizeAlpha = alpha
-        obj.Size = sizeStart:Lerp(sizeEnd, alpha)
-
-        return deltaTime
-      end)
-    )
+      lastSizeAlpha = alpha
+      obj.Size = sizeStart:Lerp(sizeEnd, alpha)
+    end)
   else
     obj.Size = sizeStart
   end
@@ -323,13 +301,9 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
       local scaleStart, scaleEnd = startMesh.Scale, goalMesh.Scale
 
       if scaleStart ~= scaleEnd then
-        lifetime.hold(
-          scope,
-          tween.fromParams(attrs.MeshScaleCurve, duration, function(alpha, deltaTime)
-            objMesh.Scale = utility.lerp(scaleStart, scaleEnd, alpha)
-            return deltaTime
-          end)
-        )
+        tween.play(scope, curve.new(duration, attrs.MeshScaleCurve), function(alpha: number)
+          objMesh.Scale = utility.lerp(scaleStart, scaleEnd, alpha)
+        end)
       end
     else
       objMesh.Parent = nil
@@ -359,35 +333,26 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
     if legacy_flipbookFadeOffset > 0 then
       if legacy_decalST ~= legacy_decalET then
-        lifetime.hold(
-          scope,
-          tween.fromParams(utility.default_bezier, duration + legacy_flipbookFadeOffset, function(alpha, deltaTime)
-            displayDecal.Transparency = utility.lerp(legacy_decalST, legacy_decalET, alpha)
-            return deltaTime
-          end)
-        )
+        tween.play(scope, curve.new(duration + legacy_flipbookFadeOffset, "easeOut"), function(alpha: number)
+          displayDecal.Transparency = utility.lerp(legacy_decalST, legacy_decalET, alpha)
+        end)
       end
     end
 
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.default_bezier, duration, function(alpha, deltaTime)
-        local index = math.max(math.round(#decals * alpha), 1)
-        local target = decals[index]
+    tween.play(scope, curve.new(duration, "easeOut"), function(alpha: number)
+      local index = math.max(math.round(#decals * alpha), 1)
+      local target = decals[index]
 
-        displayDecal.Texture = target.Texture
+      displayDecal.Texture = target.Texture
 
-        displayDecal.Color3 = target.Color3
+      displayDecal.Color3 = target.Color3
+      displayDecal.ZIndex = target.ZIndex
+
+      if legacy_flipbookFadeOffset == 0 then
+        displayDecal.Transparency = utility.lerp(legacy_decalST, legacy_decalET, alpha)
         displayDecal.ZIndex = target.ZIndex
-
-        if legacy_flipbookFadeOffset == 0 then
-          displayDecal.Transparency = utility.lerp(legacy_decalST, legacy_decalET, alpha)
-          displayDecal.ZIndex = target.ZIndex
-        end
-
-        return deltaTime
-      end)
-    )
+      end
+    end)
   else
     for _, decal in decals do
       local from = decal
@@ -401,27 +366,20 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
       decal.Transparency = decalTp.at(0)
 
       if decalTp.animated then
-        lifetime.hold(
-          scope,
-          tween.fromParams(utility.linear_bezier, decalTp.span, function(_, deltaTime, elapsed)
-            decal.Transparency = decalTp.at(elapsed)
-            return deltaTime
-          end)
-        )
+        tween.play(scope, curve.new(decalTp.span, "linear"), function(_, _, elapsed: number)
+          decal.Transparency = decalTp.at(elapsed)
+        end)
       end
 
       if from.Color3 ~= to.Color3 then
-        lifetime.hold(
-          scope,
-          tween.fromParams(attr.get(from, "Color_Curve", utility.default_bezier), duration, function(alpha, deltaTime)
-            local a = Oklab.fromSRGB(from.Color3)
-            local b = Oklab.fromSRGB(to.Color3)
+        local colorCurve = curve.new(duration, attr.get(from, "Color_Curve", utility.default_bezier))
 
-            decal.Color3 = Oklab.toSRGB(a:Lerp(b, alpha), true)
+        tween.play(scope, colorCurve, function(alpha: number)
+          local a = Oklab.fromSRGB(from.Color3)
+          local b = Oklab.fromSRGB(to.Color3)
 
-            return deltaTime
-          end)
-        )
+          decal.Color3 = Oklab.toSRGB(a:Lerp(b, alpha), true)
+        end)
       end
 
       local flipbook = flipbooks[from]
@@ -447,21 +405,14 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
           longestFlipbookDuration = changeDuration
         end
 
-        lifetime.hold(
-          scope,
-          tween.fromParams(config.curve, changeDuration, flipbook_common.createUpdateCallback(config))
-        )
+        tween.play(scope, curve.new(changeDuration, config.curve), flipbook_common.createUpdateCallback(config))
       end
     end
   end
 
-  tween.timer(
-    math.max(duration, longestFlipbookDuration) + legacy_flipbookFadeOffset + destroyDelay,
-    function(deltaTime)
-      return if scope.clock.halted then nil else deltaTime
-    end,
-    nil,
-    scope
+  tween.wait(
+    scope,
+    curve.new(math.max(duration, longestFlipbookDuration) + legacy_flipbookFadeOffset + destroyDelay, "linear")
   )
 
   lifetime.awaitJoin(children)

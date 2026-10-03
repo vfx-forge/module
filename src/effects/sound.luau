@@ -10,6 +10,8 @@ local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 
+local timing_common = require("@mod/common/timing")
+
 local rng = Random.new()
 
 -- an asset that has not loaded reports a TimeLength of 0, which ends the
@@ -201,7 +203,7 @@ end
 -- one clone played to its end: its three tracks are seeded from its own
 -- properties once it has loaded, over its own asset length, through the rows
 -- of whichever sound the emit reads
-local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?, emitDuration: number): tween.Handle?
+local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?, emitDuration: number)
   local ref = ctx.ref :: Sound
   local scope = ctx.scope
 
@@ -213,7 +215,7 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     end
 
     if not clone.Parent then
-      return nil
+      return
     end
   end
 
@@ -233,48 +235,46 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
   local setPlayback = nil :: ((speed: number) -> ())?
   local releasePlayback = nil :: (() -> ())?
 
-  clone.Volume = volume.at(0)
+  -- a row sampled on the sound's own time, its first value at once and then
+  -- one a frame until that time reaches the row's end
+  local function heard(row: reader.Track, write: (v: any) -> ())
+    write(row.at(0))
 
-  if volume.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, volume.duration, function(_, deltaTime, elapsed)
-        clone.Volume = volume.at(elapsed)
-        return deltaTime * currentSpeed
-      end)
-    )
+    if not row.animated then
+      return
+    end
+
+    local at = 0
+    local handle
+
+    handle = lifetime.step(scope, function(deltaTime: number)
+      at = math.min(at + deltaTime * currentSpeed, row.duration)
+      write(row.at(at))
+
+      if at >= row.duration then
+        handle:Disconnect()
+      end
+    end)
   end
 
-  local speedTween: tween.Handle? = nil
+  heard(volume, function(v: any)
+    clone.Volume = v
+  end)
 
   currentSpeed = speed.at(0)
   clone.PlaybackSpeed = currentSpeed
 
-  if speed.animated then
-    speedTween = tween.fromParams(utility.linear_bezier, speed.duration, function(_, deltaTime, elapsed)
-      currentSpeed = speed.at(elapsed)
+  local speeding = tween.drive(scope, speed, function(v: any)
+    currentSpeed = v
 
-      if setPlayback then
-        setPlayback(currentSpeed)
-      end
+    if setPlayback then
+      setPlayback(v)
+    end
+  end)
 
-      return deltaTime
-    end)
-
-    lifetime.hold(scope, speedTween)
-  end
-
-  clone.RollOffMinDistance = rolloff.at(0)
-
-  if rolloff.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, rolloff.duration, function(_, deltaTime, elapsed)
-        clone.RollOffMinDistance = rolloff.at(elapsed)
-        return deltaTime * currentSpeed
-      end, speedTween)
-    )
-  end
+  heard(rolloff, function(v: any)
+    clone.RollOffMinDistance = v
+  end)
 
   if clone.PlayOnRemove and not utility.PLUGIN_CONTEXT then
     clone:Destroy()
@@ -299,11 +299,30 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     lifetime.wait(scope, emitDuration)
     clone:Stop()
   else
-    tween.timer(clone.TimeLength, function(deltaTime, elapsed)
-      return if currentSpeed > 0 or (elapsed > 0 and speedTween and speedTween.Connected)
-        then deltaTime * currentSpeed
-        else nil
-    end, speedTween, scope)
+    -- the sound's own time run out to its length. it is not over while its
+    -- speed is still moving, and a speed of 0 ends it unless one is
+    local lasts = timing_common.duration(clone.TimeLength)
+    local played = lifetime.join(scope)
+    local counted = lifetime.add(played)
+    local at = 0
+    local handle
+
+    handle = lifetime.step(scope, function(deltaTime: number)
+      local moving = speeding ~= nil and speeding.Connected
+      local stopped = currentSpeed <= 0 and not (at > 0 and moving)
+
+      if (stopped or timing_common.done(at, lasts)) and not moving then
+        handle:Disconnect()
+        counted()
+        return
+      end
+
+      if not stopped then
+        at += deltaTime * currentSpeed
+      end
+    end)
+
+    lifetime.awaitJoin(played)
   end
 
   -- the clone goes when this returns, so the clock has nothing more to tell it
@@ -311,8 +330,6 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     releasePlayback()
     setPlayback = nil
   end
-
-  return speedTween
 end
 
 function sound.init()

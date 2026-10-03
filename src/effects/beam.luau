@@ -1,5 +1,6 @@
 --!nolint LocalShadow
 local knob = require("@mod/knob")
+local curve = require("@mod/curve")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
@@ -197,17 +198,10 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   scope.effects.emitNested(obj, scope.depth + 1, scope, children)
 
-  local timeline = scope.clock
   local setTexSpeed = adapters.beam(scope, obj, texSpeed.at(0), texSpeed.animated)
 
   if texSpeed.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, texSpeed.duration, function(_, deltaTime, elapsed)
-        setTexSpeed(texSpeed.at(elapsed))
-        return deltaTime
-      end)
-    )
+    tween.drive(scope, texSpeed, setTexSpeed)
   end
 
   local refTpKp = ref.Transparency.Keypoints
@@ -268,50 +262,34 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
     att1.CFrame = CFrame.new(center + scaledHalfOffset) * (cf1 - cf1.Position)
   end
 
-  -- every stepper below counts the beam's own clock, which the speed row scales
-  local function step(track: reader.Track, write: (v: any) -> ())
-    write(track.at(0))
+  -- every tween below counts the beam's own clock, which the speed row scales
+  tween.drive(scope, tScale, setTScale)
 
-    if not track.animated then
-      return
-    end
-
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, track.duration, function(_, deltaTime, elapsed)
-        write(track.at(elapsed))
-        return deltaTime
-      end)
-    )
-  end
-
-  step(tScale, setTScale)
-
-  step(texLength, function(v)
+  tween.drive(scope, texLength, function(v: number)
     obj.TextureLength = v
   end)
 
   local lengthScaleStart = lengthScale.at(0)
 
   if lengthScale.animated then
-    step(lengthScale, setLengthScale)
+    tween.drive(scope, lengthScale, setLengthScale)
   elseif lengthScaleStart ~= 1 then
     setLengthScale(lengthScaleStart)
   end
 
-  step(width0, function(v)
+  tween.drive(scope, width0, function(v: number)
     obj.Width0 = v
   end)
 
-  step(width1, function(v)
+  tween.drive(scope, width1, function(v: number)
     obj.Width1 = v
   end)
 
-  step(curve0, function(v)
+  tween.drive(scope, curve0, function(v: number)
     obj.CurveSize0 = v
   end)
 
-  step(curve1, function(v)
+  tween.drive(scope, curve1, function(v: number)
     obj.CurveSize1 = v
   end)
 
@@ -336,13 +314,11 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
 
     flipbookDuration = flipbook_common.getChangeDuration(config)
 
-    lifetime.hold(scope, tween.fromParams(config.curve, flipbookDuration, flipbook_common.createUpdateCallback(config)))
+    tween.play(scope, curve.new(flipbookDuration, config.curve), flipbook_common.createUpdateCallback(config))
   end
 
   -- a Speed resting at 0 for good ends the beam rather than holding it
-  tween.timer(math.max(duration, flipbookDuration), function(deltaTime)
-    return if timeline.halted then nil else deltaTime
-  end, nil, scope)
+  tween.wait(scope, curve.new(math.max(duration, flipbookDuration), "linear"))
 
   if emitOnFinish then
     scope.effects.emitOnFinish(emitOnFinish, obj.Parent or workspace.Terrain, scope.depth + 1, scope, children)

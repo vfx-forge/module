@@ -2049,6 +2049,53 @@ harness.suite(function()
   end)
 
   harness.describe("a beam", function()
+    -- a beam between two attachments of one part, its rows authored as given
+    local function beamOf(attributes: { [string]: any })
+      local built = fresh()
+      registry.register(require("@vfx/beam"))
+
+      local part = harness.make("Part")
+      local beam = harness.make("Beam", part) :: any
+
+      beam.Attachment0 = harness.make("Attachment", part)
+      beam.Attachment1 = harness.make("Attachment", part)
+
+      for name, v in attributes do
+        beam:SetAttribute(name, v)
+      end
+
+      return beam, built
+    end
+
+    test("a beam plays out its duration on its clock, then its handle resolves", function()
+      local beam, built = beamOf({ EffectDuration = harness.datatypes.NumberRange.new(0.5, 0.5), Speed = 0.5 })
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(env.Finished:getStatus()).toBe("Started")
+
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("a beam whose Speed rests at 0 ends rather than holding", function()
+      local beam, built = beamOf({ Speed = 0 })
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0.25)
+
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
     test("a LengthScale other than 1 never moves the authored attachments", function()
       local built = fresh()
       local CFrame = harness.datatypes.CFrame

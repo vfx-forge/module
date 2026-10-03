@@ -92,11 +92,9 @@ end
 function common.createUpdateCallback(config: FlipbookConfig)
   local prefix = common.getTexturePrefix(config.ref)
 
-  return function(alpha, deltaTime)
+  return function(alpha: number)
     local index = math.max(math.round(#config.frames * alpha), 1)
     config.setTexture(`{prefix}{config.frames[index]}`)
-
-    return deltaTime
   end
 end
 

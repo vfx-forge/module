@@ -1,3 +1,4 @@
+local fs = require("@lune/fs")
 local clock = require("@mod/clock")
 local curve = require("@mod/curve")
 local tween = require("@mod/tween")
@@ -708,6 +709,21 @@ harness.suite(function()
 
       expect(log).toEqual({})
       expect(fx.state).toBe(lifetime.RELEASED)
+    end)
+  end)
+
+  harness.describe("the tween core's callers", function()
+    -- the effects moved onto the core so far
+    local MOVED = { "particle", "sound", "spin", "beam", "mesh" }
+
+    test("no moved effect steps through fromParams, timer or after", function()
+      for _, name in MOVED do
+        local source = fs.readFile(`src/effects/{name}.luau`)
+
+        for _, word in { "tween.fromParams", "tween.timer", "tween.after" } do
+          expect(`{name} {word}: {string.find(source, word, 1, true) ~= nil}`).toBe(`{name} {word}: false`)
+        end
+      end
     end)
   end)
 

@@ -5,6 +5,7 @@ local utility = require("@mod/utility")
 local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 
+local timing_common = require("@mod/common/timing")
 local numeric_common = require("@mod/common/numeric")
 
 local function always()
@@ -167,24 +168,16 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
     authored = if numeric_common.finite(current) then current else 1
   end
 
-  local scaleTween
-
   local setTimeScale = adapters.particle(scope, obj, authored)
 
-  if timeScale.animated then
-    scaleTween = tween.fromParams(utility.linear_bezier, timeScale.duration, function(_, deltaTime, elapsed)
-      local v = timeScale.at(elapsed)
-
+  local scaling = if timeScale.animated
+    then tween.drive(scope, timeScale, function(v: any)
       if typeof(v) == "number" and numeric_common.finite(v) then
         authored = v
         setTimeScale(v)
       end
-
-      return deltaTime
     end)
-
-    lifetime.hold(scope, scaleTween)
-  end
+    else nil
 
   -- what is in the air is wiped only by the last emit playing on the emitter,
   -- since every one that has started holds its TimeScale. one still in its
@@ -204,12 +197,31 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   end
 
   -- the clock carries the speed, so the particles' own time is that times
-  -- the TimeScale they were authored at
-  tween.timer(longest, function(deltaTime, elapsed)
-    local rate = math.min(authored, 1)
+  -- the TimeScale they were authored at. they are not gone while a scale is
+  -- still moving it, and a rate of 0 ends the wait unless one is
+  local lasts = timing_common.duration(longest)
+  local aged = lifetime.join(scope)
+  local counted = lifetime.add(aged)
+  local age = 0
+  local ageing
 
-    return if rate > 0 or (elapsed > 0 and scaleTween and scaleTween.Connected) then deltaTime * rate else nil
-  end, scaleTween, scope)
+  ageing = lifetime.step(scope, function(deltaTime: number)
+    local rate = math.min(authored, 1)
+    local moving = scaling ~= nil and scaling.Connected
+    local stopped = rate <= 0 and not (age > 0 and moving)
+
+    if (stopped or timing_common.done(age, lasts)) and not moving then
+      ageing:Disconnect()
+      counted()
+      return
+    end
+
+    if not stopped then
+      age += deltaTime * rate
+    end
+  end)
+
+  lifetime.awaitJoin(aged)
 end
 
 return particle
