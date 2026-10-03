@@ -16,12 +16,13 @@ local enabled_effects = {}
 -- lives as long as the instance stays enabled, and finished ticks take
 -- themselves out of it. an EmitDuration emit's ticks hang from the clock of the
 -- effect that forced them, so its handle and controllers reach them; a plain
--- enabled instance's hang from the global clock. its writes rank under a
--- one-shot emit's at the same priority
+-- enabled instance's hang from the global clock. a plain enabled instance's
+-- ticks rank under a one-shot emit's at the same priority, and a forced
+-- EmitDuration's do not
 function enabled_effects.token(obj: Instance): lifetime.emit
   local token = lifetime.emit(nil, utility.forcedClock(obj))
 
-  token.constant = true
+  token.constant = not utility.isForceEmitting(obj)
 
   return token
 end

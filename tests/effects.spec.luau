@@ -516,6 +516,16 @@ harness.suite(function()
       expect(token.constant).toBe(true)
       expect(token.priority).toBe(0)
     end)
+
+    test("an EmitDuration's forced ticks are not marked constant", function()
+      local obj = harness.make("Part")
+
+      utility.forceEmit(obj, true)
+
+      expect(enabled_effects.token(obj).constant).toBe(false)
+
+      utility.forceEmit(obj, false)
+    end)
   end)
 
   harness.describe("a controller", function()
