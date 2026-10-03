@@ -1,8 +1,13 @@
-local Oklab = require("@mod/color/Oklab")
+local color = require("@mod/color/color")
+local logger = require("@mod/logger")
 
-local MAX_KEYPOINTS = 20
+-- the most keypoints the engine takes in a sequence
+local ENGINE_KEYPOINTS = 20
 
 local lerp = {}
+
+-- a blend past the limit is told once a session, not once a frame
+local warned = false
 
 function lerp.number(a: number, b: number, t: number)
   return a + (b - a) * t
@@ -41,10 +46,7 @@ function lerp.NumberRange(a: NumberRange, b: NumberRange, t: number)
 end
 
 function lerp.Color3(a: Color3, b: Color3, t: number)
-  -- stylua: ignore
-  return Oklab.toSRGB(
-    Oklab.fromSRGB(a):Lerp(Oklab.fromSRGB(b), t)
-  )
+  return color.blend(a, b, t)
 end
 
 function lerp.PhysicalProperties(a: PhysicalProperties, b: PhysicalProperties, t: number)
@@ -139,11 +141,18 @@ function lerp.NumberSequence(a: NumberSequence, b: NumberSequence, t: number)
 
   local finalKeypoints
 
-  if #keypoints > MAX_KEYPOINTS then
-    finalKeypoints = {}
-    local step = (#keypoints - 1) / (MAX_KEYPOINTS - 1)
+  if #keypoints > ENGINE_KEYPOINTS then
+    if not warned then
+      warned = true
+      logger.warn(
+        `a NumberSequence blend has {#keypoints} keypoints, past the engine's {ENGINE_KEYPOINTS}; {ENGINE_KEYPOINTS} spread over them are kept`
+      )
+    end
 
-    for i = 0, MAX_KEYPOINTS - 1 do
+    finalKeypoints = {}
+    local step = (#keypoints - 1) / (ENGINE_KEYPOINTS - 1)
+
+    for i = 0, ENGINE_KEYPOINTS - 1 do
       local index = math.floor(i * step + 1)
       table.insert(finalKeypoints, keypoints[index])
     end
@@ -158,46 +167,14 @@ function lerp.NumberSequence(a: NumberSequence, b: NumberSequence, t: number)
   return NumberSequence.new(finalKeypoints)
 end
 
-local function getColorAtTime(sequence: ColorSequence, time: number)
-  local keypoints = sequence.Keypoints
-
-  if time <= keypoints[1].Time then
-    return keypoints[1].Value
-  end
-
-  if time >= keypoints[#keypoints].Time then
-    return keypoints[#keypoints].Value
-  end
-
-  local closestBelow
-  local closestAbove
-
-  for i = 1, #keypoints do
-    local kp = keypoints[i]
-    if kp.Time == time then
-      return kp.Value
-    elseif kp.Time < time then
-      closestBelow = kp
-    elseif kp.Time > time then
-      closestAbove = kp
-      break
-    end
-  end
-
-  local alpha = (time - closestBelow.Time) / (closestAbove.Time - closestBelow.Time)
-
-  return closestBelow.Value:Lerp(closestAbove.Value, alpha)
-end
-
 function lerp.ColorSequence(a: ColorSequence, b: ColorSequence, t: number)
   local newKeypoints = {}
 
-  for _, bp in ipairs(b.Keypoints) do
-    local aValueAtBTime = getColorAtTime(a, bp.Time)
-    -- use linear space because color sequences are in linear space anyway
-    local finalColor = Oklab.toSRGB(Oklab.fromSRGB(aValueAtBTime:Lerp(bp.Value, t)))
-
-    table.insert(newKeypoints, ColorSequenceKeypoint.new(bp.Time, finalColor))
+  for _, bp in b.Keypoints do
+    table.insert(
+      newKeypoints,
+      ColorSequenceKeypoint.new(bp.Time, color.blend(color.sequenceAt(a, bp.Time), bp.Value, t))
+    )
   end
 
   return ColorSequence.new(newKeypoints)

@@ -4,14 +4,13 @@ local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
 local mods = require("@mod/mods")
 local curve = require("@mod/curve")
+local color = require("@mod/color/color")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
 local enabled_effects = require("@srv/enabled_effects")
-
-local Oklab = require("@mod/color/Oklab")
 
 local rng = Random.new()
 
@@ -375,10 +374,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
         local colorCurve = curve.new(duration, attr.get(from, "Color_Curve", utility.default_bezier))
 
         tween.play(scope, colorCurve, function(alpha: number)
-          local a = Oklab.fromSRGB(from.Color3)
-          local b = Oklab.fromSRGB(to.Color3)
-
-          decal.Color3 = Oklab.toSRGB(a:Lerp(b, alpha), true)
+          decal.Color3 = color.blend(from.Color3, to.Color3, alpha, true)
         end)
       end
 

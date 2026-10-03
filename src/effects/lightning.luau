@@ -3,6 +3,7 @@ local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local mods = require("@mod/mods")
 local curve = require("@mod/curve")
+local color = require("@mod/color/color")
 local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
@@ -581,7 +582,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
         local hl = Instance.new("Highlight")
         hl.Adornee = container
-        hl.FillColor = bezier_common.getColorWithEasingOklab(attrs.FillColor, 0, fillColorEasing)
+        hl.FillColor = color.sequenceAt(attrs.FillColor, math.clamp(fillColorEasing:at(0), 0, 1))
         hl.FillTransparency = fillTp.at(0)
         hl.OutlineTransparency = 1
         hl.DepthMode = Enum.HighlightDepthMode[attrs.FillDepthMode]
@@ -877,7 +878,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
             end
 
             -- color
-            segment.Color = bezier_common.getColorWithEasingOklab(attrs.Color, currentColorAlpha, colorEasing)
+            segment.Color = color.sequenceAt(attrs.Color, math.clamp(colorEasing:at(currentColorAlpha), 0, 1))
 
             -- a segment holding what it was born with composes only the lanes
             -- that started at or after its birth over that value
@@ -927,7 +928,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         -- update fill
         if highlight then
           highlight.FillColor =
-            bezier_common.getColorWithEasingOklab(attrs.FillColor, currentFillColorAlpha, fillColorEasing)
+            color.sequenceAt(attrs.FillColor, math.clamp(fillColorEasing:at(currentFillColorAlpha), 0, 1))
 
           highlight.FillTransparency = currentFillTransparency
         end

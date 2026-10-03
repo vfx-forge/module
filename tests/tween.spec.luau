@@ -519,8 +519,20 @@ harness.suite(function()
     end)
   end)
 
-  harness.describe("the tween core's callers", function()
-    local GONE = { "fromParams", "tween.timer", "tween.after", "bezier_cache", "getEase", "drivePropertyTrack" }
+  harness.describe("what the cleanup replaced", function()
+    -- each name a helper the cleanup removed, added by the task that removed it
+    local GONE = {
+      "fromParams",
+      "tween.timer",
+      "tween.after",
+      "bezier_cache",
+      "drivePropertyTrack",
+      "getEase",
+      "drawFuncMap",
+      "getPointWithin",
+      "getColorAtTime",
+      "getColorWithEasing",
+    }
 
     -- every source file under `dir`, by its path
     local function sources(dir: string, into: { string })
@@ -537,7 +549,7 @@ harness.suite(function()
       return into
     end
 
-    test("nothing in the runtime names a stepper the core replaced", function()
+    test("nothing in the runtime names a helper the cleanup removed", function()
       for _, at in sources("src", {}) do
         local source = fs.readFile(at)
 

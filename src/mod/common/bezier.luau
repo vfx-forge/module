@@ -2,11 +2,9 @@
 local CollectionService = game:GetService("CollectionService")
 
 local knob = require("@mod/knob")
-local curve = require("@mod/curve")
 local shape = require("@mod/shape")
 local utility = require("@mod/utility")
 
-local Oklab = require("@mod/color/Oklab")
 local Bezier = require("@obj/Bezier")
 
 local common = {}
@@ -18,84 +16,6 @@ common.SHAPES = table.freeze({
   Sphere = shape.sphere,
   Cylinder = shape.cylinder,
 })
-
-function common.getColorAtTime(sequence: ColorSequence, time: number)
-  local keypoints = sequence.Keypoints
-
-  if time <= keypoints[1].Time then
-    return keypoints[1].Value
-  end
-
-  if time >= keypoints[#keypoints].Time then
-    return keypoints[#keypoints].Value
-  end
-
-  local closestBelow
-  local closestAbove
-
-  for i = 1, #keypoints do
-    local kp = keypoints[i]
-    if kp.Time == time then
-      return kp.Value
-    elseif kp.Time < time then
-      closestBelow = kp
-    elseif kp.Time > time then
-      closestAbove = kp
-      break
-    end
-  end
-
-  if not closestBelow or not closestAbove then
-    return keypoints[1].Value
-  end
-
-  local alpha = (time - closestBelow.Time) / (closestAbove.Time - closestBelow.Time)
-  return closestBelow.Value:Lerp(closestAbove.Value, alpha)
-end
-
-function common.getColorAtTimeOklab(sequence: ColorSequence, time: number)
-  local keypoints = sequence.Keypoints
-
-  if time <= keypoints[1].Time then
-    return keypoints[1].Value
-  end
-
-  if time >= keypoints[#keypoints].Time then
-    return keypoints[#keypoints].Value
-  end
-
-  local closestBelow
-  local closestAbove
-
-  for i = 1, #keypoints do
-    local kp = keypoints[i]
-    if kp.Time == time then
-      return kp.Value
-    elseif kp.Time < time then
-      closestBelow = kp
-    elseif kp.Time > time then
-      closestAbove = kp
-      break
-    end
-  end
-
-  if not closestBelow or not closestAbove then
-    return keypoints[1].Value
-  end
-
-  local alpha = (time - closestBelow.Time) / (closestAbove.Time - closestBelow.Time)
-
-  local labA = Oklab.fromSRGB(closestBelow.Value)
-  local labB = Oklab.fromSRGB(closestAbove.Value)
-
-  local blendedLab = labA:Lerp(labB, alpha)
-
-  return Oklab.toSRGB(blendedLab)
-end
-
-function common.getColorWithEasingOklab(sequence: ColorSequence, time: number, easing: curve.Curve)
-  return common.getColorAtTimeOklab(sequence, math.clamp(easing:at(time), 0, 1))
-end
 
 export type HitboxConfig = {
   enabled: boolean,
