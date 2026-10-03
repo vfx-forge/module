@@ -12,17 +12,14 @@ local scheduler = require("@mod/scheduler")
 
 local enabled_effects = {}
 
--- the emit every tick of an enabled instance is an effect of, never sealed: it
--- lives as long as the instance stays enabled, and finished ticks take
--- themselves out of it. an EmitDuration emit's ticks hang from the clock of the
--- effect that forced them, so its handle and controllers reach them; a plain
--- enabled instance's hang from the global clock. a plain enabled instance's
--- ticks rank under a one-shot emit's at the same priority, and a forced
--- EmitDuration's do not
-function enabled_effects.token(obj: Instance): lifetime.emit
-  local token = lifetime.emit(nil, utility.forcedClock(obj))
+-- the emit every tick of a passive loop is an effect of, never sealed: it lives
+-- as long as the instance stays enabled, and finished ticks take themselves out
+-- of it. its ticks hang from the global clock and rank under a one-shot emit's
+-- at the same priority
+function enabled_effects.token(): lifetime.emit
+  local token = lifetime.emit(nil)
 
-  token.constant = not utility.isForceEmitting(obj)
+  token.constant = true
 
   return token
 end
@@ -133,7 +130,6 @@ function enabled_effects.init(scope: { any }, effects_service: any)
       utility.cleanupScope(effectScope)
     end
 
-    utility.setEnabledCancelToken(obj, nil)
     enabledScopes[obj] = nil
   end
 
@@ -179,9 +175,7 @@ function enabled_effects.init(scope: { any }, effects_service: any)
         enabled = attr.get(obj, "Enabled", true)
       end
 
-      local canEmit = utility.isForceEmitting(obj)
-        or obj:IsDescendantOf(workspace)
-        or (obj.Parent and obj.Parent:HasTag("AllowEmitting"))
+      local canEmit = obj:IsDescendantOf(workspace) or (obj.Parent and obj.Parent:HasTag("AllowEmitting"))
 
       if enabled and not canEmit then
         return
@@ -190,17 +184,11 @@ function enabled_effects.init(scope: { any }, effects_service: any)
       if enabled then
         utility.cleanupScope(tempScope)
 
-        local cancelToken = enabled_effects.token(obj)
+        local tick = enabled_effects.ticker(obj, module, enabled_effects.token(), effects_service)
 
-        utility.setEnabledCancelToken(obj, cancelToken)
-
-        table.insert(
-          tempScope,
-          RunService.RenderStepped:Connect(enabled_effects.ticker(obj, module, cancelToken, effects_service))
-        )
+        table.insert(tempScope, RunService.RenderStepped:Connect(tick))
       else
         utility.cleanupScope(tempScope)
-        utility.setEnabledCancelToken(obj, nil)
       end
     end
 

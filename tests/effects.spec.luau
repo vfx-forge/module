@@ -1,3 +1,4 @@
+local fs = require("@lune/fs")
 local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local tween = require("@mod/tween")
@@ -516,20 +517,11 @@ harness.suite(function()
     end)
 
     test("a ConstantVFX tick's emit is marked constant", function()
-      local token = enabled_effects.token(harness.make("Part"))
+      local token = enabled_effects.token()
 
       expect(token.constant).toBe(true)
       expect(token.priority).toBe(0)
-    end)
-
-    test("an EmitDuration's forced ticks are not marked constant", function()
-      local obj = harness.make("Part")
-
-      utility.forceEmit(obj, true)
-
-      expect(enabled_effects.token(obj).constant).toBe(false)
-
-      utility.forceEmit(obj, false)
+      expect(token.clock.parent).toBe(clock.global)
     end)
   end)
 
@@ -1407,40 +1399,10 @@ harness.suite(function()
     end)
   end)
 
-  -- pattern specs: the tick shape an EmitDuration mesh waits in, not mesh
-  -- itself, which needs a cached part and only runs in Studio
-  harness.describe("an EmitDuration's ticks", function()
-    test("waiting out the ticks waits for the last piece of every tick", function()
-      local log = {}
-      local token = lifetime.emit(nil)
-
-      for i = 1, 2 do
-        lifetime.run(lifetime.effect(token, 0, nil), function(scope: lifetime.effect)
-          local outstanding = lifetime.join(scope)
-
-          lifetime.spawn(outstanding, function()
-            lifetime.wait(scope, 0.5 * i)
-          end)
-
-          lifetime.awaitJoin(outstanding)
-        end)
-      end
-
-      lifetime.run(lifetime.effect(lifetime.emit(nil), 0, nil), function()
-        utility.awaitEmitDuration(token)
-        table.insert(log, "waited")
-      end)
-
-      scheduler.frame(0.5)
-      expect(log).toEqual({})
-
-      scheduler.frame(0.5)
-      expect(log).toEqual({ "waited" })
-    end)
-
-    -- a stand-in enabled module whose every tick is counted, and its ticker
-    -- on the token an instance it forced or did not force would get
-    local function ticking(timeline: clock.Clock?)
+  harness.describe("a passive loop's ticks", function()
+    -- a stand-in enabled module whose every tick is counted, and its ticker on
+    -- a passive loop's token
+    local function ticking()
       fresh()
 
       local ticks = { count = 0 }
@@ -1451,55 +1413,13 @@ harness.suite(function()
       stand.constant = true
       registry.register(stand)
 
-      local ref = harness.make("Model")
+      local token = enabled_effects.token()
 
-      utility.forceEmit(ref, timeline ~= nil, timeline)
-
-      local token = enabled_effects.token(ref)
-
-      return ticks, token, enabled_effects.ticker(ref, stand :: any, token, effects), ref
+      return ticks, token, enabled_effects.ticker(harness.make("Model"), stand :: any, token, effects)
     end
 
-    test("an EmitDuration's ticks run on the clock of the effect that forced them", function()
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, effects)
-      local ticks, token, tick, ref = ticking(fx.clock)
-
-      expect(token.clock.parent).toBe(fx.clock)
-
-      -- the handle of the forcing emit paused: no tick, not even the first
-      clock.setPaused(emit.clock, true)
-      scheduler.frame(0)
-
-      for _ = 1, 3 do
-        tick(1)
-      end
-
-      expect(ticks.count).toBe(0)
-
-      -- resumed at half speed: the first tick at once, the next after 0.2 s of
-      -- the token's clock at the default 5 a second, so after 0.4 s of frames
-      clock.setPaused(emit.clock, false)
-      clock.setSpeed(emit.clock, 0.5)
-      scheduler.frame(0)
-
-      tick(0.1)
-      expect(ticks.count).toBe(1)
-
-      tick(0.3)
-      expect(ticks.count).toBe(1)
-
-      tick(0.11)
-      expect(ticks.count).toBe(2)
-
-      utility.forceEmit(ref, false)
-      lifetime.clear(token)
-      lifetime.clear(emit)
-      scheduler.frame(0)
-    end)
-
     test("a plain enabled instance's ticks hang from the global clock and stop while it is paused", function()
-      local ticks, token, tick = ticking(nil)
+      local ticks, token, tick = ticking()
 
       expect(token.clock.parent).toBe(clock.global)
 
@@ -1517,6 +1437,56 @@ harness.suite(function()
 
       lifetime.clear(token)
       scheduler.frame(0)
+    end)
+
+    test("the per-instance window state is gone", function()
+      local functions = {
+        "forceEmit",
+        "isForceEmitting",
+        "forcedClock",
+        "stopEmitDuration",
+        "awaitEmitDuration",
+        "setEnabledCancelToken",
+        "getEnabledCancelToken",
+      }
+
+      local words = {
+        "SpeedOverride",
+        "SpeedTweening",
+        "forceEmit",
+        "isForceEmitting",
+        "forcedClock",
+        "stopEmitDuration",
+        "awaitEmitDuration",
+        "EnabledCancelToken",
+      }
+
+      for _, name in functions do
+        expect((utility :: any)[name]).toBe(nil)
+      end
+
+      for _, name in { "getState", "setState", "clearState" } do
+        expect((attr :: any)[name]).toBe(nil)
+      end
+
+      local function scan(dir: string)
+        for _, name in fs.readDir(dir) do
+          local path = `{dir}/{name}`
+
+          if fs.isDir(path) then
+            scan(path)
+            continue
+          end
+
+          local source = fs.readFile(path)
+
+          for _, word in words do
+            expect(`{path}: {string.find(source, word, 1, true) ~= nil}`).toBe(`{path}: false`)
+          end
+        end
+      end
+
+      scan("src")
     end)
 
     test("a clear of the ticks closes every piece they hold", function()

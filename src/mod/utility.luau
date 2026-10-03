@@ -5,7 +5,6 @@ local PhysicsService = game:GetService("PhysicsService")
 
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
-local clock = require("@mod/clock")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local lifetime = require("@mod/lifetime")
@@ -206,46 +205,6 @@ function utility.onCancel(scope: lifetime.effect, callback: () -> ())
   end)
 end
 
-local ENABLED_CANCEL_TOKENS: { [Instance]: lifetime.emit } = setmetatable({}, { __mode = "k" }) :: any
-
--- each instance an EmitDuration emit forces, to the clock of the effect that
--- forces it, or true when no effect does
-local FORCE_EMIT_SET: { [Instance]: clock.Clock | boolean } = setmetatable({}, { __mode = "k" }) :: any
-
-function utility.forceEmit(obj: Instance, value: boolean, timeline: clock.Clock?)
-  FORCE_EMIT_SET[obj] = if value then timeline or true else nil :: any
-end
-
-function utility.isForceEmitting(obj: Instance): boolean
-  return FORCE_EMIT_SET[obj] ~= nil
-end
-
--- the clock of the effect forcing the instance's EmitDuration emit, which its
--- ticks run on
-function utility.forcedClock(obj: Instance): clock.Clock?
-  local forced = FORCE_EMIT_SET[obj]
-
-  return if typeof(forced) == "table" then forced else nil
-end
-
-function utility.setEnabledCancelToken(obj: Instance, token: lifetime.emit?)
-  ENABLED_CANCEL_TOKENS[obj] = token :: any
-end
-
-function utility.getEnabledCancelToken(obj: Instance): lifetime.emit?
-  return ENABLED_CANCEL_TOKENS[obj]
-end
-
-function utility.stopEmitDuration(ref: Instance)
-  local token = utility.getEnabledCancelToken(ref)
-
-  attr.trigger(ref, "Enabled", false)
-  attr.clearState(ref)
-  utility.forceEmit(ref, false)
-
-  return token
-end
-
 -- a window's tick runs on the window's clock, which already carries the
 -- window's Speed; a passive loop's tick and a plain emit run at their own
 function utility.speedFrom(scope: lifetime.effect, constant: boolean?, row: any)
@@ -254,16 +213,6 @@ function utility.speedFrom(scope: lifetime.effect, constant: boolean?, row: any)
   end
 
   lifetime.speed(scope, row)
-end
-
--- every tick is an effect of the token's emit and waits on its own pieces, so
--- the emit is pending until the last piece of the last tick ends
-function utility.awaitEmitDuration(token: lifetime.emit?)
-  if not token then
-    return
-  end
-
-  lifetime.await(token)
 end
 
 -- the module-level scopes (api.scope, the caches, texture preloads) are plain

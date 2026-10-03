@@ -27,15 +27,8 @@ type AttrHooks = {
   },
 }
 
-type RuntimeState = {
-  [Instance]: {
-    [string]: any,
-  },
-}
-
 local Cache: AttrCache = {}
 local Hooks: AttrHooks = {}
-local State: RuntimeState = {}
 
 local LastRefId = 0
 
@@ -225,28 +218,6 @@ function attr.map(obj: Instance)
   end
 
   return map
-end
-
-function attr.getState<T>(obj: Instance, key: string, default: T): T
-  local state = State[obj]
-  local value = state and state[key]
-
-  return if value ~= nil then value else default
-end
-
-function attr.setState<T>(obj: Instance, key: string, value: T)
-  local state = State[obj]
-
-  if not state then
-    state = {}
-    State[obj] = state
-  end
-
-  state[key] = value
-end
-
-function attr.clearState(obj: Instance)
-  State[obj] = nil
 end
 
 function attr.trigger<T>(obj: Instance, key: string, value: T)
