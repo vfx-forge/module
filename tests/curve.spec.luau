@@ -205,6 +205,26 @@ harness.suite(function()
       expect(straight:at(2)).toBe(1)
     end)
 
+    test("a NaN time reads as NaN from every kind of curve, never throwing", function()
+      local nan = 0 / 0
+      local read = {
+        curve.new(1, "easeOut"):at(nan),
+        curve.new(1, "linear"):at(nan),
+        curve.new(1, { vector.create(0, 0), vector.create(1, 1) }):at(nan),
+        curve
+          .new(1, function(t: number)
+            assert(t == t, "a NaN time reached the function")
+            return t
+          end)
+          :at(nan),
+        curve.sample("easeOut", nan),
+      }
+
+      for _, v in read do
+        expect(v ~= v).toBe(true)
+      end
+    end)
+
     test("linear, by name or by a row's bytes, is its own time", function()
       expect(curve.new(1, "linear"):at(0.37)).toBe(0.37)
       expect(curve.new(1, curves.linear()):at(0.37)).toBe(0.37)

@@ -50,6 +50,7 @@ export type EmissionConfig = {
   partial: number,
   surface: boolean,
   emissionDirection: Enum.NormalId,
+  shapeOptions: shape.Options,
 }
 
 function common.calculateEmissionCFrame(
@@ -66,11 +67,7 @@ function common.calculateEmissionCFrame(
   if isAttachment then
     cf = originCFrame * CFrame.new(Vector3.zero, Vector3.FromNormalId(config.emissionDirection)).Rotation
   elseif drawFunc then
-    cf = drawFunc(originCFrame, originSize, {
-      surface = config.surface,
-      partial = config.partial,
-      normal = config.emissionDirection,
-    })
+    cf = drawFunc(originCFrame, originSize, config.shapeOptions)
   else
     cf = originCFrame
   end
@@ -265,16 +262,22 @@ function common.hitboxOf(attrs: any): HitboxConfig
   }
 end
 
--- the emission parameters as the two modules' rows spell them
-function common.emissionOf(attrs: any)
+-- the emission parameters as the two modules' rows spell them, with the
+-- shape's options built once for every piece of the emit, since none of them
+-- carries a seed
+function common.emissionOf(attrs: any): EmissionConfig
+  local surface = attrs.ShapeStyle == "Surface"
+  local direction = Enum.NormalId[attrs.EmissionDirection]
+
   return {
     face = attrs.ShapeFace,
     spreadAngle = attrs.SpreadAngle,
     mirror = attrs.MirrorPaths,
     mirrorRot = attrs.MirrorRotation,
     partial = attrs.ShapePartial,
-    surface = attrs.ShapeStyle == "Surface",
-    emissionDirection = Enum.NormalId[attrs.EmissionDirection],
+    surface = surface,
+    emissionDirection = direction,
+    shapeOptions = table.freeze({ surface = surface, partial = attrs.ShapePartial, normal = direction }),
   }
 end
 

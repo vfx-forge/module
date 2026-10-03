@@ -21,19 +21,19 @@ end
 -- clock halts for good, and calls `done` then; a clear stops it with no `done`
 function tween.play(
   scope: lifetime.effect,
-  shape: curve.Curve,
+  eased: curve.Curve,
   fn: (alpha: number, deltaTime: number, elapsed: number) -> boolean?,
   follow: number?,
   done: (() -> ())?
 ): scheduler.Handle
-  local duration = shape.duration
+  local duration = eased.duration
   local elapsed = 0
   local handle: scheduler.Handle
 
   local function step(deltaTime: number)
     elapsed = math.min(elapsed + deltaTime, duration)
 
-    local more = fn(shape:at(elapsed / duration), deltaTime, elapsed)
+    local more = fn(eased:at(elapsed / duration), deltaTime, elapsed)
 
     if more == false or elapsed >= duration or scope.clock.halted then
       finish(handle, done)
@@ -50,7 +50,7 @@ function tween.play(
     return handle
   end
 
-  local more = fn(shape:at(if duration > 0 then 0 else 1), 0, 0)
+  local more = fn(eased:at(if duration > 0 then 0 else 1), 0, 0)
 
   if more == false or duration <= 0 or scope.clock.halted then
     finish(handle, done)
@@ -66,13 +66,13 @@ local function noop() end
 -- clear closes the thread with it
 function tween.wait(
   scope: lifetime.effect,
-  shape: curve.Curve,
+  eased: curve.Curve,
   fn: ((alpha: number, deltaTime: number, elapsed: number) -> boolean?)?,
   follow: number?
 )
   local ended = lifetime.join(scope)
 
-  tween.play(scope, shape, fn or noop, follow, lifetime.add(ended))
+  tween.play(scope, eased, fn or noop, follow, lifetime.add(ended))
   lifetime.awaitJoin(ended)
 end
 

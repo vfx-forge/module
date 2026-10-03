@@ -566,7 +566,21 @@ harness.suite(function()
       ["src/mod/color/sRGB.luau"] = true,
       ["tests/tween.spec.luau"] = true,
     }
-    local BRITISH = { "colour", "behaviour", "honour", "neighbour", "metre" }
+    local BRITISH = {
+      "colour",
+      "behaviour",
+      "honour",
+      "neighbour",
+      "metre",
+      "normalise",
+      "serialise",
+      "optimise",
+      "recognise",
+      "summarise",
+      "initialise",
+      "prioritise",
+      "parenthesise",
+    }
 
     test("the runtime, its tests and its guides spell the US way", function()
       local files = sources("tests", sources("src", {}))

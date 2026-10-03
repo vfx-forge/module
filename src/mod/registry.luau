@@ -47,7 +47,7 @@ function registry.clear()
   table.clear(shape)
 end
 
--- a classifier with its parenthesised parts blanked, so a relative selector
+-- a classifier with its parenthesized parts blanked, so a relative selector
 -- inside :has() or :not() never counts as a combinator of the whole
 local function flatten(classifier: string)
   local out = {}

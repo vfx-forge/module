@@ -405,6 +405,10 @@ end
 -- the value at time t: its step's cubic where that follows the curve, else the
 -- curve solved outright
 local function solve(shape: Shape, t: number): number
+  if t ~= t then
+    return t
+  end
+
   if t < 0 then
     t = 0
   elseif t > 1 then
@@ -456,6 +460,10 @@ end
 
 -- the value at t, 0 to 1 over the curve
 function Curve.at(self: Curve, t: number): number
+  if t ~= t then
+    return t
+  end
+
   local fn = self.fn
 
   if fn ~= nil then
