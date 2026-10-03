@@ -3,6 +3,7 @@ local harness = require("@tests/harness")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
 local test, expect = harness.test, harness.expect
+local row = harness.row
 
 -- a step of the effect that adds up the time it is handed
 local function counting(fx: lifetime.effect)
@@ -578,22 +579,6 @@ harness.suite(function()
     end)
   end)
   harness.describe("an authored Speed", function()
-    -- a Speed row as the reader hands it over: a ramp from `from` to `to`
-    -- over `duration`, or a constant when there is no duration
-    local function row(from: number, to: number?, duration: number?)
-      return {
-        animated = duration ~= nil,
-        duration = duration or 0,
-        at = function(elapsed: number)
-          if duration == nil or to == nil then
-            return from
-          end
-
-          return from + (to - from) * math.clamp(elapsed / duration, 0, 1)
-        end,
-      }
-    end
-
     test("a constant Speed scales the effect's steps from the call on", function()
       local emit = lifetime.emit(nil)
       local fx = lifetime.effect(emit, 0, nil)

@@ -12,6 +12,7 @@ local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
 local enabled_effects = require("@srv/enabled_effects")
 local test, expect = harness.test, harness.expect
+local row = harness.row
 
 local mesh = require("@vfx/mesh")
 local bezier = require("@vfx/bezier")
@@ -1437,139 +1438,6 @@ harness.suite(function()
       expect(log).toEqual({ "waited" })
     end)
 
-    test("a tick with no ramp written runs at its own Speed row", function()
-      local ref = harness.make("Model")
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      utility.speedFrom(fx, ref, {
-        animated = false,
-        duration = 0,
-        at = function()
-          return 2
-        end,
-      })
-
-      expect(fx.clock.speed).toBe(2)
-
-      lifetime.clear(emit)
-    end)
-
-    test("a tick follows the speed the EmitDuration's ramp writes, every frame", function()
-      local ref = harness.make("Model")
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      attr.setState(ref, "SpeedTweening", true)
-      attr.setState(ref, "SpeedOverride", 0.5)
-
-      utility.speedFrom(fx, ref, {
-        animated = false,
-        duration = 0,
-        at = function()
-          return 2
-        end,
-      })
-
-      expect(fx.clock.speed).toBe(0.5)
-
-      attr.setState(ref, "SpeedOverride", 0)
-      scheduler.frame(0)
-
-      expect(fx.clock.speed).toBe(0)
-      expect(fx.clock.halted).toBe(false)
-
-      attr.setState(ref, "SpeedTweening", nil)
-      scheduler.frame(0)
-
-      expect(fx.clock.halted).toBe(true)
-
-      attr.clearState(ref)
-      lifetime.clear(emit)
-      scheduler.frame(0)
-    end)
-
-    test("a tick keeps the last speed its ramp wrote once the state is cleared", function()
-      local ref = harness.make("Model")
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      attr.setState(ref, "SpeedTweening", true)
-      attr.setState(ref, "SpeedOverride", 0.2)
-
-      utility.speedFrom(fx, ref, {
-        animated = false,
-        duration = 0,
-        at = function()
-          return 1
-        end,
-      })
-
-      attr.clearState(ref)
-      scheduler.frame(0)
-
-      expect(fx.clock.speed).toBe(0.2)
-
-      lifetime.clear(emit)
-      scheduler.frame(0)
-    end)
-
-    test("a tick that halted stays halted once the state is cleared", function()
-      local ref = harness.make("Model")
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      attr.setState(ref, "SpeedTweening", true)
-      attr.setState(ref, "SpeedOverride", 0)
-
-      utility.speedFrom(fx, ref, {
-        animated = false,
-        duration = 0,
-        at = function()
-          return 1
-        end,
-      })
-
-      attr.setState(ref, "SpeedTweening", nil)
-      scheduler.frame(0)
-
-      expect(fx.clock.halted).toBe(true)
-
-      attr.clearState(ref)
-      scheduler.frame(0)
-
-      expect(fx.clock.halted).toBe(true)
-
-      lifetime.clear(emit)
-      scheduler.frame(0)
-    end)
-
-    test("a tick ignores a NaN speed", function()
-      local ref = harness.make("Model")
-      local emit = lifetime.emit(nil)
-      local fx = lifetime.effect(emit, 0, nil)
-
-      attr.setState(ref, "SpeedTweening", true)
-      attr.setState(ref, "SpeedOverride", 0.5)
-
-      utility.speedFrom(fx, ref, {
-        animated = false,
-        duration = 0,
-        at = function()
-          return 0 / 0
-        end,
-      })
-
-      attr.setState(ref, "SpeedOverride", 0 / 0)
-      scheduler.frame(0)
-
-      expect(fx.clock.speed).toBe(0.5)
-
-      attr.clearState(ref)
-      lifetime.clear(emit)
-      scheduler.frame(0)
-    end)
-
     -- a stand-in enabled module whose every tick is counted, and its ticker
     -- on the token an instance it forced or did not force would get
     local function ticking(timeline: clock.Clock?)
@@ -1679,10 +1547,10 @@ harness.suite(function()
 
   harness.describe("an EmitDuration window", function()
     -- a stand-in for the three modules that open windows: a plain emit opens a
-    -- window of `duration` seconds, and each tick of it is handed to `onTick`.
-    -- the instance ticks at the default 5 a second: once as the window opens,
-    -- then once a frame of 0.21
-    local function windowed(duration: number, onTick: (ctx: any) -> ())
+    -- window of `duration` seconds at `speed`, 1 when it is nil, and each tick
+    -- of it is handed to `onTick`. the instance ticks at the default 5 a
+    -- second: once as the window opens, then once a frame of 0.21
+    local function windowed(duration: number, onTick: (ctx: any) -> (), speed: any?)
       local built = fresh()
       local stand = module("windows", "Model", noop)
 
@@ -1692,7 +1560,7 @@ harness.suite(function()
           return
         end
 
-        enabled_effects.window(ctx, stand, duration)
+        enabled_effects.window(ctx, stand, duration, speed or row(1))
       end
 
       stand.constant = true
@@ -1911,7 +1779,7 @@ harness.suite(function()
           end
         end)
 
-        enabled_effects.window(ctx, stand, 10)
+        enabled_effects.window(ctx, stand, 10, row(1))
       end
 
       stand.constant = true
@@ -1931,6 +1799,123 @@ harness.suite(function()
       expect(#warnings > 0).toBe(true)
 
       built.restore()
+    end)
+
+    test("a static Speed scales the window's clock: its tick rate and its ticks", function()
+      local factors = {}
+      local ref, built = windowed(1, function(ctx: any)
+        table.insert(factors, clock.factorOf(ctx.scope.clock))
+      end, row(2))
+
+      local env = effects.emit(0, ref)
+
+      -- 0.11 of a frame is 0.22 of the window, past the 0.2 between ticks
+      for _ = 1, 4 do
+        scheduler.frame(0.11)
+      end
+
+      expect(factors).toEqual({ 2, 2, 2, 2, 2 })
+
+      env:Clear()
+      built.restore()
+    end)
+
+    test("an animated Speed moves the tick rate and the ticks in flight", function()
+      local ticks = {}
+      local ref, built = windowed(10, function(ctx: any)
+        table.insert(ticks, ctx.scope)
+        lifetime.wait(ctx.scope, 10)
+      end, row(1, 0.5, 1))
+
+      local env = effects.emit(0, ref)
+
+      -- the window's clock at 0.875, 0.75, 0.625 then 0.5 and resting there:
+      -- a tick at the open, then one each time 0.2 of the window's clock has
+      -- run, where full speed would have ticked every frame
+      for _ = 1, 7 do
+        scheduler.frame(0.25)
+      end
+
+      expect(#ticks).toBe(5)
+      expect(clock.factorOf(ticks[1].clock)).toBe(0.5)
+
+      env:Clear()
+      built.restore()
+    end)
+
+    test("a Speed that comes to rest at 0 ends the ticks still playing, then the window", function()
+      local ticks = 0
+      local ended = 0
+      local ref, built = windowed(1, function(ctx: any)
+        local scope = ctx.scope
+
+        ticks += 1
+
+        tween.timer(10, function(deltaTime: number)
+          return if scope.clock.halted then nil else deltaTime
+        end, nil, scope)
+
+        ended += 1
+      end, row(1, 0, 0.5))
+
+      local env = effects.emit(0, ref)
+
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(ticks).toBe(1)
+      expect(ended).toBe(1)
+      expect(env.Finished:getStatus()).toBe("Started")
+
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(ticks).toBe(1)
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("a window at a static Speed of 0 spawns nothing and still ends", function()
+      local ticks = 0
+      local ref, built = windowed(0.5, function()
+        ticks += 1
+      end, row(0))
+
+      local env = effects.emit(0, ref)
+
+      for _ = 1, 3 do
+        scheduler.frame(0.21)
+      end
+
+      expect(ticks).toBe(0)
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("only a window's tick leaves its own Speed row alone", function()
+      local token = lifetime.emit(nil)
+      local window = lifetime.emit(nil)
+      local plain = lifetime.emit(nil)
+
+      token.constant = true
+
+      local passiveTick = lifetime.effect(token, 0, nil)
+      local windowTick = lifetime.effect(window, 0, nil)
+      local plainEffect = lifetime.effect(plain, 0, nil)
+
+      utility.speedFrom(passiveTick, true, row(2))
+      utility.speedFrom(windowTick, true, row(2))
+      utility.speedFrom(plainEffect, false, row(2))
+
+      expect(passiveTick.clock.speed).toBe(2)
+      expect(windowTick.clock.speed).toBe(1)
+      expect(plainEffect.clock.speed).toBe(2)
+
+      lifetime.clear(token)
+      lifetime.clear(window)
+      lifetime.clear(plain)
     end)
 
     -- an untagged instance built after the registry is fresh, and the ticks its

@@ -105,7 +105,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   lifetime.wait(scope, attrs.EmitDelay)
 
   if attrs.EmitDuration > 0 and not ctx.constant then
-    enabled_effects.window(ctx, bezier, attrs.EmitDuration)
+    enabled_effects.window(ctx, bezier, attrs.EmitDuration, attrs.Speed)
     return
   end
 
@@ -135,7 +135,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
   -- every piece runs on the effect's clock, so one Speed track paces them all
-  utility.speedFrom(scope, ref, attrs.Speed)
+  utility.speedFrom(scope, ctx.constant, attrs.Speed)
 
   -- a piece counts until it finishes and its on-finish emit is counted in, and
   -- a nested emit until it ends

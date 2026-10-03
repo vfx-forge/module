@@ -10,8 +10,6 @@ local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
 
-local numeric_common = require("@mod/common/numeric")
-
 local enabled_effects = {}
 
 -- the emit every tick of an enabled instance is an effect of, never sealed: it
@@ -36,19 +34,13 @@ function enabled_effects.ticker(obj: Instance, module: registry.Module, token: l
 
   return function(deltaTime: number)
     local rate = attr.get(obj, "Rate", 5)
-    local speed = attr.getState(obj, "SpeedOverride", 1)
-
-    if typeof(speed) ~= "number" or not numeric_common.finite(speed) or speed <= 0 then
-      return
-    end
-
     local factor = clock.factorOf(token.clock)
 
     if factor <= 0 then
       return
     end
 
-    waited += deltaTime * factor * speed
+    waited += deltaTime * factor
 
     if waited <= 1 / rate then
       return
@@ -67,8 +59,9 @@ end
 -- an EmitDuration emit's window: an emit of its own under the effect's, so the
 -- handle's speed, pause, priority and clear reach it and its ticks, ticking
 -- every `1 / Rate` seconds of its clock for `duration` seconds of the
--- effect's, then waited on until its last tick has ended
-function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, duration: number)
+-- effect's, then waited on until its last tick has ended. its Speed row is
+-- its clock's, which its ticks hang from, never a tick's own
+function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, duration: number, speed: reader.Track)
   local scope = ctx.scope
   local window = lifetime.emit(scope.emit, scope.clock)
 
@@ -86,11 +79,30 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
     lifetime.seal(window)
   end)
 
+  lifetime.speed(scope, speed, window.clock)
+
   local tick = enabled_effects.ticker(ctx.ref, module, window, scope.effects)
+  local handle: scheduler.Handle
 
   -- on real time, since the ticker counts the window's clock itself, and at
-  -- depth 0, ahead of every step its ticks add
-  local handle = lifetime.hold(scope, scheduler.add("compute", tick, 0, scope, false, clock.REAL))
+  -- depth 0, ahead of every step its ticks add, so a halt reaches a tick
+  -- before the tick's own timers step on that frame
+  handle = scheduler.add("compute", function(deltaTime: number)
+    if not window.clock.halted then
+      tick(deltaTime)
+      return
+    end
+
+    handle:Disconnect()
+
+    -- the Speed came to rest at 0: what is still playing ends the way a
+    -- halted effect's timers end, its nested emits still running out
+    for _, fx in window.effects do
+      fx.clock.halted = true
+    end
+  end, 0, scope, false, clock.REAL)
+
+  lifetime.hold(scope, handle)
 
   -- the first tick as the window opens, so one shorter than a frame still
   -- spawns it

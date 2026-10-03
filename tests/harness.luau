@@ -336,6 +336,22 @@ harness.render = renderFrame
 -- Instance.new branches that must not become reachable
 harness.datatypes = datatypes
 
+-- a Speed row as the reader hands it over: a ramp from `from` to `to` over
+-- `duration`, or a constant when there is no duration
+function harness.row(from: number, to: number?, duration: number?)
+  return {
+    animated = duration ~= nil,
+    duration = duration or 0,
+    at = function(elapsed: number)
+      if duration == nil or to == nil then
+        return from
+      end
+
+      return from + (to - from) * math.clamp(elapsed / duration, 0, 1)
+    end,
+  }
+end
+
 -- stand-in for EncodingService's base64. hex is enough to prove the framing
 -- round-trips without reimplementing base64 in a test, and it lives here rather
 -- than in the one spec that first needed it because modifier_frame.configure is

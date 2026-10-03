@@ -492,14 +492,14 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   lifetime.wait(scope, attrs.EmitDelay)
 
   if attrs.EmitDuration > 0 and not ctx.constant then
-    enabled_effects.window(ctx, mesh, attrs.EmitDuration)
+    enabled_effects.window(ctx, mesh, attrs.EmitDuration, attrs.Speed)
     return
   end
 
   local range = attrs.EffectDuration
 
   -- every piece runs on the effect's clock, so one Speed track paces them all
-  utility.speedFrom(scope, ref, attrs.Speed)
+  utility.speedFrom(scope, ctx.constant, attrs.Speed)
 
   -- each piece runs on a thread the effect holds, so a clear closes it
   local outstanding = lifetime.join(scope)

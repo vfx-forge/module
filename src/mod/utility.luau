@@ -9,11 +9,9 @@ local clock = require("@mod/clock")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local lifetime = require("@mod/lifetime")
-local scheduler = require("@mod/scheduler")
 
 local path = require("@mod/common/path")
 local context_common = require("@mod/common/context")
-local numeric_common = require("@mod/common/numeric")
 
 local utility = {}
 
@@ -248,38 +246,14 @@ function utility.stopEmitDuration(ref: Instance)
   return token
 end
 
--- a tick of an EmitDuration emit runs at the speed the emit's own Speed ramp
--- has reached, read every frame while the ramp writes it, and ends once that
--- rests at 0 with the ramp done; any other emit runs at its own Speed row
-function utility.speedFrom(scope: lifetime.effect, ref: Instance, row: any)
-  if attr.getState(ref, "SpeedOverride", nil) == nil and not attr.getState(ref, "SpeedTweening", false) then
-    lifetime.speed(scope, row)
+-- a window's tick runs on the window's clock, which already carries the
+-- window's Speed; a passive loop's tick and a plain emit run at their own
+function utility.speedFrom(scope: lifetime.effect, constant: boolean?, row: any)
+  if constant and not scope.emit.constant then
     return
   end
 
-  local timeline = scope.clock
-  local first = row.at(0)
-
-  -- the last speed read stands once the emit's state is cleared, and a clock
-  -- that has halted stays halted
-  local last = if typeof(first) == "number" and numeric_common.finite(first) then math.max(first, 0) else 1
-
-  local function follow()
-    local speed = attr.getState(ref, "SpeedOverride", nil)
-
-    if typeof(speed) == "number" and numeric_common.finite(speed) then
-      last = math.max(speed, 0)
-    end
-
-    clock.setSpeed(timeline, last)
-    clock.refresh(timeline)
-
-    timeline.halted = timeline.halted or (timeline.speed <= 0 and not attr.getState(ref, "SpeedTweening", false))
-  end
-
-  follow()
-
-  lifetime.hold(scope, scheduler.add("compute", follow, 0, scope, false, timeline.parent))
+  lifetime.speed(scope, row)
 end
 
 -- every tick is an effect of the token's emit and waits on its own pieces, so

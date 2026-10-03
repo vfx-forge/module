@@ -466,7 +466,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
   lifetime.wait(scope, attrs.EmitDelay)
 
   if attrs.EmitDuration > 0 and not ctx.constant then
-    enabled_effects.window(ctx, lightning, attrs.EmitDuration)
+    enabled_effects.window(ctx, lightning, attrs.EmitDuration, attrs.Speed)
     return
   end
 
@@ -498,7 +498,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
   local hitboxParams = bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
 
   -- every bolt runs on the effect's clock, so one Speed track paces them all
-  utility.speedFrom(scope, ref, attrs.Speed)
+  utility.speedFrom(scope, ctx.constant, attrs.Speed)
 
   -- a bolt counts until it has dissipated and its on-finish emit is counted in,
   -- and a nested emit until it ends

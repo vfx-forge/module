@@ -944,13 +944,14 @@ function lifetime.wait(fx: effect, seconds: number): number
   return waited
 end
 
--- an authored Speed row as the effect's clock. its track runs on the clock
--- above the effect's, so a speed never scales itself, and is sampled ahead of
--- every step the effect adds after this call, so those see the frame's speed
--- on the frame it changes. a speed is never below zero, and one that rests at
--- or below it for good halts the effect's timers
-function lifetime.speed(fx: effect, row: any)
-  local timeline = fx.clock
+-- an authored Speed row as the effect's clock, or as `scaled`, a clock the
+-- effect holds below its own. its track runs on the clock above the one it
+-- scales, so a speed never scales itself, and is sampled ahead of every step
+-- the effect adds after this call, so those see the frame's speed on the frame
+-- it changes. a speed is never below zero, and one that rests at or below it
+-- for good halts the clock's timers
+function lifetime.speed(fx: effect, row: any, scaled: clock.Clock?)
+  local timeline = scaled or fx.clock
   local first = row.at(0)
 
   clock.setSpeed(timeline, if typeof(first) == "number" and numeric_common.finite(first) then math.max(first, 0) else 1)
