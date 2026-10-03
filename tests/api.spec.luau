@@ -11,6 +11,8 @@ local test, expect = harness.test, harness.expect
 
 local mesh = require("@vfx/mesh")
 
+local custom = require("@root/sdk/custom")
+
 -- the api registers every built-in when it first loads, so the registry is
 -- emptied first and left empty for whichever spec runs next
 local function api()
@@ -214,6 +216,7 @@ harness.suite(function()
       local stand = {
         vfx = vfx,
         seen = { passive = 0, window = 0 },
+        ticked = nil :: any,
         where = { placed = true },
         moved = {} :: { [Instance]: () -> () },
         destroyed = {} :: { [Instance]: () -> () },
@@ -267,10 +270,12 @@ harness.suite(function()
         local kind = if fx.emit.constant then "passive" else "window"
 
         stand.seen[kind] += 1
+        stand.ticked = effect
       end
 
       local ok, err = pcall(body, stand)
 
+      custom.clear()
       utility.cleanupScope(scope)
       mesh.deinit()
       registry.clear()
@@ -594,6 +599,82 @@ harness.suite(function()
 
         stand.tagged = { m }
         stand.init()
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+      end)
+    end)
+
+    -- a constant custom effect as an author writes it, and a tagged, cached
+    -- instance of it the passive loops already hold
+    local function looping(name: string): any
+      return {
+        sdk_version = 1,
+        id = "my_loop",
+        display = { name = name },
+        classifier = "Part.MyLoop",
+        constant = true,
+        emit = function() end,
+      }
+    end
+
+    local function looped(stand: any): Instance
+      local part = harness.make("Part", harness.make("Folder"))
+
+      part:AddTag("MyLoop")
+      part:AddTag(utility.ENABLED_VFX_TAG)
+      part:SetAttribute("Enabled", true)
+      attr.cache(part)
+      table.insert(stand.tagged, part)
+      enabled_effects.add(part)
+
+      return part
+    end
+
+    test("a constant custom effect registered after its instance exists starts looping", function()
+      passive(function(stand: any)
+        looped(stand)
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(0)
+        expect((custom.add("a", looping("Loop"), "ReplicatedStorage.A"))).toBe(true)
+
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+        expect(stand.ticked).toBe(registry.get("my_loop"))
+      end)
+    end)
+
+    test("a reload swaps a running loop to the new version", function()
+      passive(function(stand: any)
+        custom.add("a", looping("Loop"), "ReplicatedStorage.A")
+        looped(stand)
+        harness.render(0.21)
+
+        local first = registry.get("my_loop")
+
+        expect(stand.ticked).toBe(first)
+        expect((custom.add("a", looping("Loop 2"), "ReplicatedStorage.A"))).toBe(true)
+
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(2)
+        expect(stand.ticked).toBe(registry.get("my_loop"))
+        expect(stand.ticked ~= first).toBe(true)
+      end)
+    end)
+
+    test("removing a constant custom effect stops its loop", function()
+      passive(function(stand: any)
+        custom.add("a", looping("Loop"), "ReplicatedStorage.A")
+        looped(stand)
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(1)
+
+        custom.remove("a")
+        harness.render(0.21)
         harness.render(0.21)
 
         expect(stand.seen.passive).toBe(1)

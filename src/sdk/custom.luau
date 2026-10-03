@@ -2,6 +2,7 @@ local logger = require("@mod/logger")
 local registry = require("@mod/registry")
 
 local load = require("@root/sdk/load")
+local enabled_effects = require("@srv/enabled_effects")
 
 type Entry = { path: string, author: any, module: any }
 
@@ -70,6 +71,8 @@ function custom.add(key: any, author: any, path: string): (boolean, { string })
     unload(previous)
   end
 
+  enabled_effects.resync()
+
   return true, found
 end
 
@@ -85,6 +88,7 @@ function custom.remove(key: any)
   entries[key] = nil
   registry.unregister(entry.module)
   unload(entry)
+  enabled_effects.resync()
 end
 
 function custom.clear()

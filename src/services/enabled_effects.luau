@@ -12,10 +12,11 @@ local scheduler = require("@mod/scheduler")
 
 local enabled_effects = {}
 
--- every instance whose passive loop runs, to what the loop holds, to what
--- starts its ticks once it sits where it may run, and to the signals that
--- follow it in and out of there and see it destroyed
+-- every instance whose passive loop runs, to what the loop holds, to the
+-- module it ticks, to what starts its ticks once it sits where it may run, and
+-- to the signals that follow it in and out of there and see it destroyed
 local Loops: { [Instance]: { any } } = {}
+local Ticks: { [Instance]: registry.Module } = {}
 local Wakes: { [Instance]: () -> () } = {}
 local Moves: { [Instance]: { any } } = {}
 
@@ -149,6 +150,7 @@ local function stop(obj: Instance)
   end
 
   Loops[obj] = nil
+  Ticks[obj] = nil
   Wakes[obj] = nil
 end
 
@@ -169,6 +171,7 @@ function enabled_effects.add(obj: Instance)
   local loop = { tempScope } :: { any }
 
   Loops[obj] = loop
+  Ticks[obj] = module
 
   if Moves[obj] == nil then
     Moves[obj] = enabled_effects.moved(obj, function()
@@ -227,6 +230,41 @@ function enabled_effects.remove(obj: Instance)
   if moves then
     utility.cleanupScope(moves)
     Moves[obj] = nil
+  end
+end
+
+-- the module a loop on the instance should tick now, or nil
+local function wanted(obj: Instance): registry.Module?
+  local module = registry.of(obj)
+
+  return if module ~= nil and module.constant then module else nil
+end
+
+-- every loop restarted whose instance now classifies as another module, and
+-- every tagged instance with none started, after the registry changed under
+-- them, as a custom effect's load, reload or removal does
+function enabled_effects.resync()
+  if service == nil then
+    return
+  end
+
+  local stale = {}
+
+  for obj, module in Ticks do
+    if wanted(obj) ~= module then
+      table.insert(stale, obj)
+    end
+  end
+
+  for _, obj in CollectionService:GetTagged(utility.ENABLED_VFX_TAG) do
+    if Loops[obj] == nil and wanted(obj) ~= nil then
+      table.insert(stale, obj)
+    end
+  end
+
+  for _, obj in stale do
+    enabled_effects.remove(obj)
+    enabled_effects.add(obj)
   end
 end
 
