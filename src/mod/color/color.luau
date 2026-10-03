@@ -15,6 +15,14 @@ function color.fromOklab(lab: Vector3, unclamped: boolean?): Color3
   return Oklab.toSRGB(lab, unclamped)
 end
 
+-- whether an Oklab Vector3 is a color sRGB can hold, so a clamp would leave it
+-- where it is
+function color.inGamut(lab: Vector3): boolean
+  local linear = Oklab.toLinear(lab, true)
+
+  return linear.R >= 0 and linear.R <= 1 and linear.G >= 0 and linear.G <= 1 and linear.B >= 0 and linear.B <= 1
+end
+
 -- `t` of the way from `a` to `b`, blended in Oklab so the middle keeps the
 -- lightness of its ends
 function color.blend(a: Color3, b: Color3, t: number, unclamped: boolean?): Color3

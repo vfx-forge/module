@@ -167,17 +167,59 @@ function lerp.NumberSequence(a: NumberSequence, b: NumberSequence, t: number)
   return NumberSequence.new(finalKeypoints)
 end
 
+-- each of b's keypoints blended from a's color at its time, as
+-- color.blend(color.sequenceAt(a, time), value, t) reads it. a's keypoints go
+-- to Oklab once per call rather than twice per keypoint of b, and since b's
+-- times run forward the search for the pair either side of one does too
 function lerp.ColorSequence(a: ColorSequence, b: ColorSequence, t: number)
-  local newKeypoints = {}
+  local from = a.Keypoints
+  local into = b.Keypoints
+  local count = #from
+  local labs = table.create(count)
+  local keypoints = table.create(#into)
 
-  for _, bp in b.Keypoints do
-    table.insert(
-      newKeypoints,
-      ColorSequenceKeypoint.new(bp.Time, color.blend(color.sequenceAt(a, bp.Time), bp.Value, t))
-    )
+  for i, kp in from do
+    labs[i] = color.toOklab(kp.Value)
   end
 
-  return ColorSequence.new(newKeypoints)
+  local first = from[1].Time
+  local last = from[count].Time
+  local above = 2
+
+  for i, bp in into do
+    local time = bp.Time
+    local at: Vector3
+
+    if time <= first then
+      at = labs[1]
+    elseif time >= last then
+      at = labs[count]
+    else
+      while from[above].Time < time do
+        above += 1
+      end
+
+      local high = from[above].Time
+
+      if high == time then
+        at = labs[above]
+      else
+        local low = from[above - 1].Time
+
+        at = labs[above - 1]:Lerp(labs[above], (time - low) / (high - low))
+
+        -- sequenceAt hands its blend back as a Color3 clamped into range, so
+        -- a middle that leaves the gamut is read from where it lands
+        if not color.inGamut(at) then
+          at = color.toOklab(color.fromOklab(at))
+        end
+      end
+    end
+
+    keypoints[i] = ColorSequenceKeypoint.new(time, color.fromOklab(at:Lerp(color.toOklab(bp.Value), t)))
+  end
+
+  return ColorSequence.new(keypoints)
 end
 
 function lerp.Other(a: any, b: any, t: number)

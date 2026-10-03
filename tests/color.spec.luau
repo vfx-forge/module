@@ -44,6 +44,15 @@ harness.suite(function()
       expect(color.blend(RED, Color3.new(2, 0, 0), 1, true).R > 1).toBe(true)
     end)
 
+    test("an Oklab color is in gamut only where a clamp would leave it", function()
+      local blue = color.toOklab(BLUE)
+      local white = color.toOklab(Color3.new(1, 1, 1))
+
+      expect(color.inGamut(color.toOklab(Color3.new(0.2, 0.7, 0.4)))).toBe(true)
+      expect(color.inGamut(blue:Lerp(white, 0.5))).toBe(false)
+      expect(color.inGamut(Vector3.new(1.2, 0, 0))).toBe(false)
+    end)
+
     test("a sequence's color is its ends outside them, its keypoints on them and a blend between", function()
       local sequence = ColorSequence.new({
         ColorSequenceKeypoint.new(0, RED),
@@ -79,6 +88,35 @@ harness.suite(function()
 
         expect(keypoint.Time).toBe(far.Time)
         expect(same(keypoint.Value, color.blend(RED, far.Value, 0.5))).toBe(true)
+      end
+    end)
+
+    test("a ColorSequence reads the near sequence as color.sequenceAt does", function()
+      local white = Color3.new(1, 1, 1)
+      local a = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, RED),
+        ColorSequenceKeypoint.new(0.3, BLUE),
+        ColorSequenceKeypoint.new(0.6, white),
+        ColorSequenceKeypoint.new(1, Color3.new(0.2, 0.7, 0.4)),
+      })
+      local b = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, BLUE),
+        ColorSequenceKeypoint.new(0.15, white),
+        ColorSequenceKeypoint.new(0.3, RED),
+        ColorSequenceKeypoint.new(0.45, Color3.new(0, 1, 0)),
+        ColorSequenceKeypoint.new(0.5, BLUE),
+        ColorSequenceKeypoint.new(1, white),
+      })
+
+      for _, t in { 0, 0.35, 1 } do
+        local blended = lerp.any(a, b, t)
+
+        for i, keypoint in blended.Keypoints do
+          local far = b.Keypoints[i]
+
+          expect(keypoint.Time).toBe(far.Time)
+          expect(same(keypoint.Value, color.blend(color.sequenceAt(a, far.Time), far.Value, t))).toBe(true)
+        end
       end
     end)
 
