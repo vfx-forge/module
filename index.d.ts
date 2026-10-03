@@ -144,6 +144,58 @@ export const PausedChanged: Signal<[paused: boolean]>;
 /**
  * Initialize the Forge VFX system.
  */
+/**
+ * What ForgeVFX would write to a property or attribute, for game code to read in place of
+ * having it written. While any hook on a target is connected ForgeVFX never writes it, not
+ * even to put it back at the end. The fields change only when an effect writes, so a read at
+ * Camera priority or later sees this frame's value.
+ */
+export interface WriteHook<T> {
+  /** False after Disconnect, or once the instance is destroyed. */
+  readonly Connected: boolean;
+
+  /** Whether any emit is writing the target. */
+  readonly Active: boolean;
+
+  /** The owning emit's value, frozen while it is paused; undefined when inactive. */
+  readonly Value: T | undefined;
+
+  /**
+   * Value minus the first value of this active stretch (first:Inverse() * now for a CFrame).
+   * The type's identity when inactive. Undefined for a type with no subtraction, such as
+   * Color3, booleans, enums and sequences. On the camera's CFrame it is the camera shake,
+   * applied with cf * Offset.
+   */
+  readonly Offset: T | undefined;
+
+  /** The owning emit's priority; undefined when inactive. */
+  readonly Priority: number | undefined;
+
+  /**
+   * Give the target back: if an emit is still writing it, what the game wrote meanwhile goes
+   * back once that emit ends, and ForgeVFX writes it again from its next step.
+   */
+  Disconnect(): void;
+}
+
+/**
+ * Read what ForgeVFX would write to a property instead of having it written.
+ * hookProperty(workspace.CurrentCamera, "CFrame") hooks the camera shake: its Offset is the
+ * shake, and the camera is left alone.
+ */
+export function hookProperty<T = unknown>(
+  instance: Instance,
+  property: string,
+): WriteHook<T>;
+
+/**
+ * Read what ForgeVFX would write to an attribute instead of having it written.
+ */
+export function hookAttribute<T = unknown>(
+  instance: Instance,
+  name: string,
+): WriteHook<T>;
+
 export function init(): void;
 
 /**

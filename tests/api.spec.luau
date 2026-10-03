@@ -104,4 +104,27 @@ harness.suite(function()
       expect(getmetatable(vfx)).toBe(nil)
     end)
   end)
+
+  harness.describe("the hook functions", function()
+    test("hookProperty and hookAttribute hand back a connected hook", function()
+      local vfx = api()
+      local part = harness.make("Part")
+
+      part:SetAttribute("Glow", 2)
+
+      local transparency = vfx.hookProperty(part, "Transparency")
+      local glow = vfx.hookAttribute(part, "Glow")
+
+      expect(transparency.Connected).toBe(true)
+      expect(transparency.Active).toBe(false)
+      expect(transparency.Offset).toBe(0)
+      expect(glow.Connected).toBe(true)
+      expect(glow.Offset).toBe(0)
+
+      transparency:Disconnect()
+      glow:Disconnect()
+
+      expect(transparency.Connected).toBe(false)
+    end)
+  end)
 end)

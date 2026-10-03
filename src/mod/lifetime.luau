@@ -95,6 +95,17 @@ export type target = {
 
   owner: writer?,
   writers: { writer },
+
+  -- the first value written since the target was last let go, which a hook's
+  -- Offset counts from
+  first: any,
+
+  -- connected while game code reads the target in place of having it
+  -- written, and the identity of the target's type, which a quiet hook's
+  -- Offset reads
+  hooks: { WriteHook }?,
+  identity: any,
+  destroying: any,
 }
 
 -- one effect's claim on one target, joined at its first set
@@ -114,6 +125,17 @@ export type writer = {
 
   last: any,
   left: boolean,
+}
+
+-- what game code reads in place of a target ForgeVFX stops writing while it
+-- is connected
+export type WriteHook = {
+  Connected: boolean,
+  Active: boolean,
+  Value: any,
+  Offset: any,
+  Priority: number?,
+  Disconnect: (self: WriteHook) -> (),
 }
 
 -- keyed by the locked instance for as long as one effect holds it, and cleared
@@ -137,6 +159,9 @@ local TARGETS = setmetatable({} :: { [any]: { [string]: { [string]: target } } }
 
 -- how many writers have joined so far, which ranks the newer of two
 local joined = 0
+
+-- the target each connected hook reads
+local HOOKED = setmetatable({} :: { [WriteHook]: target }, { __mode = "k" })
 
 -- thrown through a body or a piece whose effect it cleared, or a piece it
 -- started cleared, and taken by that thread's own wrapper, so the thread ends
@@ -433,6 +458,10 @@ local function targetOf(obj: any, source: string, name: string, make: boolean): 
       written = nil,
       owner = nil,
       writers = {},
+      first = nil,
+      hooks = nil,
+      identity = nil,
+      destroying = nil,
     }
 
     names[name] = target
@@ -480,9 +509,82 @@ local function ownerOf(target: target): writer?
   return best
 end
 
--- the owner's value onto the target. a live value other than the one read
--- back last was written by somebody else, and is what goes back at the end
+-- what a type's Offset reads with nothing written over it, nil for a type with
+-- no subtraction
+local function identityOf(v: any): any
+  local kind = typeof(v)
+
+  if kind == "number" then
+    return 0
+  elseif kind == "Vector2" then
+    return Vector2.zero
+  elseif kind == "Vector3" then
+    return Vector3.zero
+  elseif kind == "UDim" then
+    return UDim.new()
+  elseif kind == "UDim2" then
+    return UDim2.new()
+  elseif kind == "CFrame" then
+    return CFrame.identity
+  end
+
+  return nil
+end
+
+-- how far `v` has moved from the first value written, in the type the hook
+-- was made for
+local function offsetOf(target: target, v: any): any
+  local identity = target.identity
+  local first = target.first
+
+  if identity == nil or first == nil or typeof(v) ~= typeof(identity) or typeof(first) ~= typeof(identity) then
+    return identity
+  end
+
+  if typeof(v) == "CFrame" then
+    return first:Inverse() * v
+  end
+
+  return v - first
+end
+
+-- the owner's value into every hook on the target
+local function publish(target: target, v: any)
+  local owner = target.owner
+  local priority = if owner then owner.fx.emit.priority else nil
+  local offset = offsetOf(target, v)
+
+  for _, hook in target.hooks :: { WriteHook } do
+    hook.Active = true
+    hook.Value = v
+    hook.Offset = offset
+    hook.Priority = priority
+  end
+end
+
+-- every hook on a target nobody writes any more
+local function quiet(target: target)
+  for _, hook in target.hooks :: { WriteHook } do
+    hook.Active = false
+    hook.Value = nil
+    hook.Offset = target.identity
+    hook.Priority = nil
+  end
+end
+
+-- the owner's value onto the target, or into its hooks while one is
+-- connected. a live value other than the one read back last was written by
+-- somebody else, and is what goes back at the end
 local function land(target: target, v: any): boolean
+  if target.first == nil then
+    target.first = v
+  end
+
+  if target.hooks ~= nil then
+    publish(target, v)
+    return true
+  end
+
   local live = read(target)
 
   if live ~= target.written then
@@ -539,6 +641,7 @@ local function join(w: writer): target
 
     target.restore = current
     target.written = current
+    target.first = nil
   end
 
   joined += 1
@@ -626,6 +729,13 @@ function lifetime.leave(w: writer)
     return
   end
 
+  target.first = nil
+
+  if target.hooks ~= nil then
+    quiet(target)
+    return
+  end
+
   local live = read(target)
 
   if live ~= target.written then
@@ -645,7 +755,15 @@ function lifetime.rank(emit: emit, priority: number)
 
   if writers then
     for _, w in writers do
-      retarget(w.target :: target)
+      local target = w.target :: target
+
+      retarget(target)
+
+      local owner = target.owner
+
+      if target.hooks ~= nil and owner ~= nil then
+        publish(target, owner.last)
+      end
     end
   end
 
@@ -670,6 +788,105 @@ function lifetime.restoreOf(obj: any, source: string, name: string): any
   end
 
   return target.restore
+end
+
+local function unhook(hook: WriteHook)
+  if not hook.Connected then
+    return
+  end
+
+  hook.Connected = false
+
+  local target = HOOKED[hook]
+
+  HOOKED[hook] = nil
+
+  local hooks = if target then target.hooks else nil
+
+  if target == nil or hooks == nil then
+    return
+  end
+
+  swapRemove(hooks, hook)
+
+  if #hooks > 0 then
+    return
+  end
+
+  target.hooks = nil
+
+  local destroying = target.destroying
+
+  if destroying ~= nil then
+    target.destroying = nil
+    destroying:Disconnect()
+  end
+
+  if #target.writers == 0 then
+    forget(target)
+    return
+  end
+
+  -- what the game wrote while it held the target goes back at the end, and
+  -- the owner writes the target again from its next set
+  local live = read(target)
+
+  target.restore = live
+  target.written = live
+end
+
+-- a destroyed instance's hooks read disconnected. an object with no such
+-- signal is not watched
+local function watchDestroying(target: target)
+  local ok, signal = pcall(readProperty, target.obj, "Destroying")
+
+  if not ok or signal == nil then
+    return
+  end
+
+  target.destroying = signal:Connect(function()
+    for _, hook in table.clone(target.hooks or {}) do
+      unhook(hook)
+    end
+  end)
+end
+
+-- game code reads the target through the hook, and ForgeVFX stops writing it
+-- until the last hook on it disconnects
+function lifetime.hook(obj: any, source: string, name: string): WriteHook
+  local target = targetOf(obj, source, name, true) :: target
+  local hooks = target.hooks
+
+  if hooks == nil then
+    hooks = {}
+    target.hooks = hooks
+    target.identity = identityOf(read(target))
+
+    watchDestroying(target)
+  end
+
+  local hook: WriteHook = {
+    Connected = true,
+    Active = false,
+    Value = nil,
+    Offset = target.identity,
+    Priority = nil,
+    Disconnect = unhook,
+  }
+
+  local owner = target.owner
+
+  if owner ~= nil and #target.writers > 0 then
+    hook.Active = true
+    hook.Value = owner.last
+    hook.Offset = offsetOf(target, owner.last)
+    hook.Priority = owner.fx.emit.priority
+  end
+
+  HOOKED[hook] = target
+  table.insert(hooks, hook)
+
+  return hook
 end
 
 -- a step of this effect in one of the scheduler's phases, stopped when the

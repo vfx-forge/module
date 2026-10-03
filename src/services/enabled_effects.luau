@@ -144,7 +144,7 @@ function enabled_effects.init(scope: { any }, effects_service: any)
       end
     end
 
-    table.insert(effectScope, attr.hook(obj, "Enabled", onEnabled))
+    table.insert(effectScope, attr.observe(obj, "Enabled", onEnabled))
 
     onEnabled()
   end

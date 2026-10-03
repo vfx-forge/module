@@ -262,7 +262,7 @@ function attr.trigger<T>(obj: Instance, key: string, value: T)
   end
 end
 
-function attr.hook<T>(obj: Instance, key: string, callback: (v: T) -> never)
+function attr.observe<T>(obj: Instance, key: string, callback: (v: T) -> never)
   local hooks = Hooks[obj]
 
   if not hooks then

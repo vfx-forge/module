@@ -92,6 +92,7 @@ local knob = require("@mod/knob")
 local clock = require("@mod/clock")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
+local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
 local attributes = require("@mod/attributes")
@@ -369,5 +370,15 @@ end
 
 api.SpeedChanged = clock.speedChanged
 api.PausedChanged = clock.pausedChanged
+
+-- the value ForgeVFX would write to a property, read in place of having it
+-- written until the hook disconnects
+function api.hookProperty(obj: Instance, property: string)
+  return lifetime.hook(obj, "property", property)
+end
+
+function api.hookAttribute(obj: Instance, name: string)
+  return lifetime.hook(obj, "attribute", name)
+end
 
 return api

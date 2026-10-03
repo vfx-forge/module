@@ -354,4 +354,181 @@ harness.suite(function()
       done(parent)
     end)
   end)
+
+  harness.describe("a hook", function()
+    test("keeps the target unwritten and takes the owner's value instead", function()
+      local emit, fx = effect()
+      local obj = instance({ Transparency = 0.25 })
+      local hook = lifetime.hook(obj, "property", "Transparency")
+
+      expect(hook.Connected).toBe(true)
+      expect(hook.Active).toBe(false)
+      expect(hook.Value).toBe(nil)
+      expect(hook.Offset).toBe(0)
+      expect(hook.Priority).toBe(nil)
+
+      local w = lifetime.write(fx, obj, "property", "Transparency")
+
+      lifetime.set(w, 0.5)
+
+      expect(obj.Transparency).toBe(0.25)
+      expect(hook.Active).toBe(true)
+      expect(hook.Value).toBe(0.5)
+      expect(hook.Offset).toBe(0)
+      expect(hook.Priority).toBe(0)
+
+      lifetime.set(w, 0.75)
+
+      expect(hook.Offset).toBe(0.25)
+
+      done(emit)
+
+      expect(obj.Transparency).toBe(0.25)
+      expect(hook.Active).toBe(false)
+      expect(hook.Value).toBe(nil)
+      expect(hook.Offset).toBe(0)
+      expect(hook.Priority).toBe(nil)
+
+      hook:Disconnect()
+    end)
+
+    test("made mid-stretch counts its Offset from the stretch's first value", function()
+      local emit, fx = effect()
+      local obj = instance({ Transparency = 0 })
+      local w = lifetime.write(fx, obj, "property", "Transparency")
+
+      lifetime.set(w, 0.5)
+      lifetime.set(w, 0.75)
+
+      local hook = lifetime.hook(obj, "property", "Transparency")
+
+      expect(hook.Active).toBe(true)
+      expect(hook.Value).toBe(0.75)
+      expect(hook.Offset).toBe(0.25)
+
+      done(emit)
+      hook:Disconnect()
+    end)
+
+    test("of a CFrame counts its Offset by inverse, and one of a Color3 has none", function()
+      local CFrame = harness.datatypes.CFrame
+      local Color3 = harness.datatypes.Color3
+      local emit, fx = effect()
+      local obj = instance({ CFrame = CFrame.new(), Color = Color3.new(0, 0, 0) })
+      local placed = lifetime.hook(obj, "property", "CFrame")
+      local tinted = lifetime.hook(obj, "property", "Color")
+
+      expect(placed.Offset).toEqual(CFrame.identity)
+      expect(tinted.Offset).toBe(nil)
+
+      local cf = lifetime.write(fx, obj, "property", "CFrame")
+      local color = lifetime.write(fx, obj, "property", "Color")
+
+      lifetime.set(cf, CFrame.new(1, 0, 0))
+      lifetime.set(cf, CFrame.new(3, 0, 0))
+      lifetime.set(color, Color3.new(1, 0, 0))
+
+      expect(placed.Offset).toEqual(CFrame.new(2, 0, 0))
+      expect(tinted.Value).toEqual(Color3.new(1, 0, 0))
+      expect(tinted.Offset).toBe(nil)
+
+      done(emit)
+      placed:Disconnect()
+      tinted:Disconnect()
+    end)
+
+    test("shared by two keeps the target hooked until both disconnect", function()
+      local emit, fx = effect()
+      local obj = instance({ Transparency = 0 })
+      local a = lifetime.hook(obj, "property", "Transparency")
+      local b = lifetime.hook(obj, "property", "Transparency")
+      local w = lifetime.write(fx, obj, "property", "Transparency")
+
+      lifetime.set(w, 0.5)
+
+      expect(a.Value).toBe(0.5)
+      expect(b.Value).toBe(0.5)
+
+      a:Disconnect()
+
+      expect(a.Connected).toBe(false)
+
+      lifetime.set(w, 0.6)
+
+      expect(obj.Transparency).toBe(0)
+      expect(b.Value).toBe(0.6)
+
+      b:Disconnect()
+      lifetime.set(w, 0.7)
+
+      expect(obj.Transparency).toBe(f32(0.7))
+
+      done(emit)
+    end)
+
+    test("Disconnect while a writer runs gives the target back, and the game's value goes back at the end", function()
+      local emit, fx = effect()
+      local obj = instance({ Transparency = 0.25 })
+      local hook = lifetime.hook(obj, "property", "Transparency")
+      local w = lifetime.write(fx, obj, "property", "Transparency")
+
+      lifetime.set(w, 0.5)
+
+      obj.Transparency = 0.9
+
+      hook:Disconnect()
+      hook:Disconnect()
+
+      lifetime.set(w, 0.6)
+
+      expect(obj.Transparency).toBe(f32(0.6))
+
+      done(emit)
+
+      expect(obj.Transparency).toBe(f32(0.9))
+    end)
+
+    test("Priority follows the owner and a rank", function()
+      local first, a = effect()
+      local second, b = effect()
+      local obj = instance({ Transparency = 0 })
+      local hook = lifetime.hook(obj, "property", "Transparency")
+      local wa = lifetime.write(a, obj, "property", "Transparency")
+      local wb = lifetime.write(b, obj, "property", "Transparency")
+
+      lifetime.set(wa, 0.2)
+      lifetime.set(wb, 0.6)
+
+      expect(hook.Priority).toBe(0)
+      expect(hook.Value).toBe(0.6)
+
+      lifetime.rank(first, 3)
+
+      expect(hook.Priority).toBe(3)
+      expect(hook.Value).toBe(0.2)
+
+      done(first)
+      done(second)
+      hook:Disconnect()
+    end)
+
+    test("a destroyed instance disconnects its hooks", function()
+      local fire: () -> () = function() end
+      local obj = instance({ Transparency = 0 })
+
+      rawset(obj, "Destroying", {
+        Connect = function(_, callback: () -> ())
+          fire = callback
+
+          return { Disconnect = function() end }
+        end,
+      })
+
+      local hook = lifetime.hook(obj, "property", "Transparency")
+
+      fire()
+
+      expect(hook.Connected).toBe(false)
+    end)
+  end)
 end)

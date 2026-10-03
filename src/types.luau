@@ -60,6 +60,8 @@ export type Api = {
 
   emit: (vfxOrScale: number | Instance, ...any) -> EmitEnv,
   emitWithDepth: (depth: number, ...Instance) -> EmitEnv,
+  hookProperty: (obj: Instance, property: string) -> lifetime.WriteHook,
+  hookAttribute: (obj: Instance, name: string) -> lifetime.WriteHook,
 }
 
 return {}
