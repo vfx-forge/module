@@ -208,7 +208,6 @@ lightning.layout = bezier_common.layout({}, {
     entries = {
       { action = "edit_path", label = "Edit Lightning" },
       { action = "toggle_paths", label = "Show Paths" },
-      { action = "toggle_constant", label = "Add Enabled Tag" },
     },
   },
 })

@@ -54,7 +54,6 @@ bezier.layout = bezier_common.layout({
     entries = {
       { action = "edit_path", label = "Edit Bezier" },
       { action = "toggle_paths", label = "Show Paths" },
-      { action = "toggle_constant", label = "Add Enabled Tag" },
     },
   },
 })

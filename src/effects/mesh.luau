@@ -156,7 +156,6 @@ mesh.layout = {
   {
     title = "Behavior",
     entries = {
-      { action = "toggle_constant", label = "Add Enabled Tag" },
       { action = "toggle_textures", label = "Load Textures" },
     },
   },

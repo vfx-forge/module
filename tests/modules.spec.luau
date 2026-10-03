@@ -173,6 +173,28 @@ harness.suite(function()
       expect(constant).toEqual({ "bezier", "lightning", "mesh" })
     end)
 
+    test("no layout offers a button for the ConstantVFX tag", function()
+      loadAll()
+
+      local function offers(entries: { any })
+        for _, entry in entries do
+          if type(entry) ~= "table" then
+            continue
+          end
+
+          if entry.action == "toggle_constant" or (entry.entries ~= nil and offers(entry.entries)) then
+            return true
+          end
+        end
+
+        return false
+      end
+
+      for _, module in registry.list() do
+        expect(`{module.id}: {offers(module.layout or {})}`).toBe(`{module.id}: false`)
+      end
+    end)
+
     test("every row the plugin shows has a label and a hint", function()
       loadAll()
 
