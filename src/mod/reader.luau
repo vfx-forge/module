@@ -62,7 +62,7 @@ reader.source = reader.defaultSource
 
 -- what apply binds a track with. the engine helper is out of this module's
 -- reach, so the dispatcher hands it in at load
-reader.bind = nil :: ((scope: any, track: mods.Track, write: (v: any) -> ()) -> ())?
+reader.bind = nil :: ((scope: any, track: Track, write: (v: any) -> ()) -> ())?
 
 -- the indexing a property row's base is read through, kept out of propertyOf so
 -- the pcall below has a function to call rather than one to build per row
@@ -510,7 +510,7 @@ wrap = function(state: State, source: string, name: string, row: knob.Knob, rest
 
     local bind = reader.bind :: any
 
-    bind(ctx.scope, inner, write)
+    bind(ctx.scope, track, write)
   end
 
   -- a piece calls the row for a track of its own: rules run again, a value
