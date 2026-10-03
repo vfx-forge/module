@@ -97,6 +97,8 @@ An effect lasts until `emit` returns and everything it started has finished: its
 
 `sdk.wait` and `sdk.await` yield, so they cannot run inside a step or a tween's callback.
 
+A descendant of `ctx.ref` that you `sdk.emit` must also be matched by `components`. An emit that reaches your instance scans its descendants and plays every effect instance it finds there except what `components` matches, so a descendant left out of it plays twice: once from that scan and once from your `sdk.emit`. Never `sdk.emit` the instance itself or one of its ancestors: the nested emit finds your instance again and plays this effect inside itself, which calls `sdk.emit` again, without end.
+
 ## Writing to instances
 
 `sdk.getWriter(ctx, obj, property)` and `sdk.getAttributeWriter(ctx, obj, name)` answer a writer with `:set(value)`. Writers hand a target over between overlapping emits by priority and put the authored value back when the last one ends. Write through a writer rather than to the instance.
