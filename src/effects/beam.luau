@@ -268,14 +268,6 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
     att1.CFrame = CFrame.new(center + scaledHalfOffset) * (cf1 - cf1.Position)
   end
 
-  -- only throwaway attachments are put back, as prepare made them under this
-  -- same condition; the authored ones belong to the game
-  if lengthScale.animated or lengthScale.at(0) ~= 1 then
-    lifetime.hold(scope, function()
-      setLengthScale(1)
-    end)
-  end
-
   -- every stepper below counts the beam's own clock, which the speed row scales
   local function step(track: reader.Track, write: (v: any) -> ())
     write(track.at(0))
