@@ -3,6 +3,7 @@ local CollectionService = game:GetService("CollectionService")
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local mods = require("@mod/mods")
+local curve = require("@mod/curve")
 local tween = require("@mod/tween")
 local logger = require("@mod/logger")
 local reader = require("@mod/reader")
@@ -375,9 +376,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     -- or not anything runs during the dwell: only a lane of the emit's own
     -- gets a stepper, or an unauthored factor would write Size every frame
     if sizeScale.has("start") or sizeScale.has("end") then
-      scaleTween = tween.fromParams(utility.linear_bezier, sizeScale.duration, function(_, deltaTime, elapsed)
-        local factor = sizeScale.at(elapsed)
-
+      scaleTween = tween.drive(scope, sizeScale, function(factor: any)
         if typeof(factor) == "Vector3" then
           local changed = factor ~= currentFactor
 
@@ -388,11 +387,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
             resized(realPart)
           end
         end
-
-        return deltaTime
       end)
-
-      lifetime.hold(scope, scaleTween)
     end
 
     if iref then
@@ -458,25 +453,28 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     -- the dwell's own elapsed when it ended, the moment the piece fires its
     -- despawn lane
     local fired = 0
+    local dwelt = 0
+    local dwell
 
     -- the dwell belongs to the effect rather than to the scheduler: its cleanup
     -- lives in the scope, so tearing the field down cancels it rather than
     -- firing an exit at a pooled part the cache has already handed on, and its
-    -- length is the counter's to decide
-    tween.after(math.huge, function(deltaTime, elapsed)
-      local target = life.at(elapsed)
+    -- length is the step's to decide
+    dwell = lifetime.step(scope, function(deltaTime: number)
+      local target = life.at(dwelt)
 
       if typeof(target) ~= "number" or target ~= target then
         target = drawn
       end
 
-      if elapsed >= target then
-        fired = elapsed
-        return nil :: any
+      if dwelt < target then
+        dwelt += deltaTime
+        return
       end
 
-      return deltaTime
-    end, function()
+      fired = dwelt
+      dwell:Disconnect()
+
       task.spawn(function()
         -- a despawn that throws still lands its piece, or the emit would wait
         -- on it until the effect is torn down
@@ -518,40 +516,28 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
           -- the wait below, which a piece's own draws could outlast. a teardown
           -- closes the body waiting on it along with the stepper
           if length > 0 then
-            local exited = lifetime.add(outstanding)
+            tween.play(scope, curve.new(length, "linear"), function(_, _, elapsed: number)
+              -- a sample that throws would throw every frame and hold the
+              -- emit until teardown, so it ends the exit instead
+              local sampled, problem = pcall(exitAt, elapsed)
 
-            lifetime.hold(
-              scope,
-              tween.fromParams(utility.linear_bezier, length, function(_, deltaTime, elapsed)
-                -- a sample that throws would throw every frame and hold the
-                -- emit until teardown, so it ends the exit instead
-                local sampled, problem = pcall(exitAt, elapsed)
+              if not sampled then
+                logger.warn(`a piece's exit stopped: {problem}`)
+                return false
+              end
 
-                if not sampled then
-                  logger.warn(`a piece's exit stopped: {problem}`)
-                  return nil
-                end
-
-                return deltaTime
-              end, nil, exited)
-            )
+              return true
+            end, nil, lifetime.add(outstanding))
           else
             exitAt(0)
           end
 
           if fade.animated then
-            lifetime.hold(
-              scope,
-              tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
-                local v = fade.at(elapsed)
-
-                if typeof(v) == "number" then
-                  part.Transparency = v
-                end
-
-                return deltaTime
-              end)
-            )
+            tween.drive(scope, fade, function(v: any)
+              if typeof(v) == "number" then
+                part.Transparency = v
+              end
+            end)
           end
 
           scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope, outstanding)
@@ -563,7 +549,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
           logger.warn(`a piece failed to despawn: {err}`)
         end
       end)
-    end, scope)
+    end)
   end
 
   lifetime.wait(scope, lifeMax + exitLength)

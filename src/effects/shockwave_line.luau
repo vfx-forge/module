@@ -3,6 +3,7 @@ local CollectionService = game:GetService("CollectionService")
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local mods = require("@mod/mods")
+local curve = require("@mod/curve")
 local tween = require("@mod/tween")
 local logger = require("@mod/logger")
 local reader = require("@mod/reader")
@@ -12,7 +13,6 @@ local registry = require("@mod/registry")
 
 local Shockwave = require("@vfx/shockwave")
 
-local Bezier = require("@obj/Bezier")
 local ObjectCache = require("@obj/ObjectCache")
 
 local rng = Random.new()
@@ -288,15 +288,11 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
   local runLength = ctx.duration :: number
 
-  -- a Speed resting at 0 for good ends every stepper, and with them the
-  -- run, rather than holding the parts out of the cache for ever. a speed
+  -- a Speed resting at 0 for good ends every tween and dwell, and with them
+  -- the run, rather than holding the parts out of the cache for ever. a speed
   -- that is merely 0 for now, as a queue reads during a leading delay, does
   -- not
   local timeline = scope.clock
-
-  local function step(deltaTime: number): number?
-    return if timeline.halted then nil else deltaTime
-  end
 
   local sync = attrs.SyncPosition
 
@@ -331,365 +327,311 @@ function line.emit(ctx: reader.Ctx, attrs: any)
   if fixedAmount > 0 then
     currentRate = fixedAmount / duration
   elseif rate.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, rate.duration, function(_, deltaTime, elapsed)
-        currentRate = rate.at(elapsed)
-        return step(deltaTime)
-      end)
-    )
+    tween.drive(scope, rate, function(value: number)
+      currentRate = value
+    end)
   end
 
   if scale.animated then
-    lifetime.hold(
-      scope,
-      tween.fromParams(utility.linear_bezier, scale.duration, function(_, deltaTime, elapsed)
-        currentScale = scale.at(elapsed)
-        return step(deltaTime)
+    tween.drive(scope, scale, function(value: number)
+      currentScale = value
+    end)
+  end
+
+  local sweep = curve.new(1, attrs.PathCurve)
+
+  -- the emission runs on the effect's clock too, so a speed knob spaces the
+  -- pieces out and shortens the line's run by the same factor
+  tween.play(scope, curve.new(duration, "linear"), function(_, deltaTime: number)
+    last += deltaTime
+
+    local threshold = 1 / currentRate
+    local max = duration * currentRate
+
+    if last < threshold or total >= max then
+      return
+    end
+
+    local ticks = last // threshold
+
+    for i = 1, ticks do
+      if total >= max then
+        continue
+      end
+
+      total += 1
+
+      local t = math.clamp(total / max, 0, 1)
+      local alpha = sweep:at(t)
+
+      if sync then
+        start = utility.getTransformedOriginExtents(origin)
+      end
+
+      local originCFrame = utility.getTransformedOriginExtents(origin)
+      local result = workspace:Raycast(
+        start.Position + start:VectorToWorldSpace(direction) * lineLength * alpha,
+        originCFrame:VectorToWorldSpace(raydir),
+        params
+      )
+
+      if not result then
+        last = 0
+        return
+      end
+
+      -- per emitted PIECE: the row is called again so a drawn size is this
+      -- piece's own
+      local drawnSize = attrs.Size().at(0)
+
+      local id = utility.getRandomId()
+
+      local part = part_cache:get(id)
+
+      local realPart = part._getReal()
+
+      utility.copyProperties(ref, realPart, utility.COPY_PART_PROPERTIES)
+      utility.copyProperties(ref, realPart, utility.COPY_EXTENDED_PART_PROPERTIES)
+
+      if #ref:GetChildren() ~= 0 then
+        local clone = ref:Clone()
+
+        for _, child in clone:GetChildren() do
+          child.Parent = realPart
+        end
+
+        clone:Destroy()
+      end
+
+      local emitOnFinish = scope.effects.prepareEmitOnFinish(realPart, scope)
+
+      lifetime.hold(scope, function()
+        if part_cache then
+          part_cache:free(id)
+        end
       end)
-    )
-  end
 
-  local pathCurve = attrs.PathCurve
+      part.Color = result.Instance.Color
+      part.Material = result.Material
+      part.Transparency = result.Instance.Transparency
 
-  local ok, points = pcall(function()
-    return utility.deserializePath(pathCurve)
-  end)
-
-  if not ok then
-    logger.error(`failed to decode bezier path data with error: {points}`)
-  end
-
-  local bezier = Bezier.new(points, 0)
-
-  lifetime.hold(
-    scope,
-    tween.fromParams(utility.linear_bezier, duration, function(_, deltaTime)
-      -- the emission runs on the effect's clock too, so a speed knob spaces the
-      -- pieces out and shortens the line's run by the same factor
-      local scaled = step(deltaTime)
-
-      if scaled == nil then
-        return nil
+      -- an opaque surface leaves the piece where the row rests
+      if part.Transparency == 0 then
+        part.Transparency = attrs.Transparency.value
       end
 
-      deltaTime = scaled
+      -- the fade a piece runs after its dwell goes from where the piece
+      -- rests, which a piece inheriting its hit surface knows only now,
+      -- to where the row ends. a framed queue names both ends and is
+      -- taken at its word
+      local fade = attrs.Transparency(part.Transparency)
 
-      last += deltaTime
+      part.Transparency = fade.at(0)
 
-      local threshold = 1 / currentRate
-      local max = duration * currentRate
+      part.Size = Vector3.zero
 
-      if last < threshold or total >= max then
-        return deltaTime
-      end
+      local angle = rng:NextNumber(rot.Min, rot.Max)
 
-      local ticks = last // threshold
+      local rx = -math.cos(angle)
+      local rz = -math.sin(angle)
 
-      for i = 1, ticks do
-        if total >= max then
-          continue
-        end
+      local dir = originCFrame:VectorToWorldSpace(Vector3.new(rx, 0, rz))
+      local right = dir:Cross(result.Normal).Unit
 
-        total += 1
+      local rotCF = CFrame.fromMatrix(result.Position, right, result.Normal)
+        * CFrame.fromOrientation(-math.atan(drawnSize.Y / drawnSize.Z), 0, 0)
 
-        local t = math.clamp(total / max, 0, 1)
-        local alpha = 1 - bezier:getEase(t).y
+      -- per PIECE: the entry and exit phases are the offset and size rows'
+      -- lanes on this piece's own clock, so one piece despawning never
+      -- moves another
+      local piece = mods.piece(line.events)
+      local offsetIn = attrs.OffsetIn(nil, nil, piece)
+      local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
 
-        if sync then
-          start = utility.getTransformedOriginExtents(origin)
-        end
+      -- where each row last put the piece, so an exit writes only what moved
+      local currentOffset = offsetIn.at(0)
+      local currentFactor = sizeIn.at(0)
 
-        local originCFrame = utility.getTransformedOriginExtents(origin)
-        local result = workspace:Raycast(
-          start.Position + start:VectorToWorldSpace(direction) * lineLength * alpha,
-          originCFrame:VectorToWorldSpace(raydir),
-          params
-        )
+      part.CFrame = CFrame.new(currentOffset) * rotCF
 
-        if not result then
-          last = 0
-          return deltaTime
-        end
+      local sizeTween
+      local offsetTween
 
-        -- per emitted PIECE: the row is called again so a drawn size is this
-        -- piece's own
-        local drawnSize = attrs.Size().at(0)
-
-        local id = utility.getRandomId()
-
-        local part = part_cache:get(id)
-
-        local realPart = part._getReal()
-
-        utility.copyProperties(ref, realPart, utility.COPY_PART_PROPERTIES)
-        utility.copyProperties(ref, realPart, utility.COPY_EXTENDED_PART_PROPERTIES)
-
-        if #ref:GetChildren() ~= 0 then
-          local clone = ref:Clone()
-
-          for _, child in clone:GetChildren() do
-            child.Parent = realPart
-          end
-
-          clone:Destroy()
-        end
-
-        local emitOnFinish = scope.effects.prepareEmitOnFinish(realPart, scope)
-
-        lifetime.hold(scope, function()
-          if part_cache then
-            part_cache:free(id)
+      -- every piece carries the despawn lane, so a track is animated whether
+      -- or not anything runs from the emit: only a row with a lane of the
+      -- emit's own gets an in-phase stepper, or an unauthored offset would
+      -- write CFrame every frame
+      if offsetIn.has("start") or offsetIn.has("end") then
+        offsetTween = tween.drive(scope, offsetIn, function(at: any)
+          -- a queue that stops resolving partway would throw here every
+          -- frame, and a stepper that throws ends the line
+          if typeof(at) == "Vector3" then
+            currentOffset = at
+            part.CFrame = CFrame.new(currentOffset) * rotCF
           end
         end)
-
-        part.Color = result.Instance.Color
-        part.Material = result.Material
-        part.Transparency = result.Instance.Transparency
-
-        -- an opaque surface leaves the piece where the row rests
-        if part.Transparency == 0 then
-          part.Transparency = attrs.Transparency.value
-        end
-
-        -- the fade a piece runs after its dwell goes from where the piece
-        -- rests, which a piece inheriting its hit surface knows only now,
-        -- to where the row ends. a framed queue names both ends and is
-        -- taken at its word
-        local fade = attrs.Transparency(part.Transparency)
-
-        part.Transparency = fade.at(0)
-
-        part.Size = Vector3.zero
-
-        local angle = rng:NextNumber(rot.Min, rot.Max)
-
-        local rx = -math.cos(angle)
-        local rz = -math.sin(angle)
-
-        local dir = originCFrame:VectorToWorldSpace(Vector3.new(rx, 0, rz))
-        local right = dir:Cross(result.Normal).Unit
-
-        local rotCF = CFrame.fromMatrix(result.Position, right, result.Normal)
-          * CFrame.fromOrientation(-math.atan(drawnSize.Y / drawnSize.Z), 0, 0)
-
-        -- per PIECE: the entry and exit phases are the offset and size rows'
-        -- lanes on this piece's own clock, so one piece despawning never
-        -- moves another
-        local piece = mods.piece(line.events)
-        local offsetIn = attrs.OffsetIn(nil, nil, piece)
-        local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
-
-        -- where each row last put the piece, so an exit writes only what moved
-        local currentOffset = offsetIn.at(0)
-        local currentFactor = sizeIn.at(0)
-
-        part.CFrame = CFrame.new(currentOffset) * rotCF
-
-        local sizeTween
-        local offsetTween
-
-        -- every piece carries the despawn lane, so a track is animated whether
-        -- or not anything runs from the emit: only a row with a lane of the
-        -- emit's own gets an in-phase stepper, or an unauthored offset would
-        -- write CFrame every frame
-        if offsetIn.has("start") or offsetIn.has("end") then
-          offsetTween = tween.fromParams(utility.linear_bezier, offsetIn.duration, function(_, deltaTime, elapsed)
-            local at = offsetIn.at(elapsed)
-
-            -- a queue that stops resolving partway would throw here every frame, and a
-            -- stepper that throws is never cleaned up
-            if typeof(at) == "Vector3" then
-              currentOffset = at
-              part.CFrame = CFrame.new(currentOffset) * rotCF
-            end
-
-            return step(deltaTime)
-          end)
-
-          lifetime.hold(scope, offsetTween)
-        end
-
-        local size = drawnSize * currentScale
-
-        part.Size = size * currentFactor
-
-        if sizeIn.has("start") or sizeIn.has("end") then
-          sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.duration, function(_, deltaTime, elapsed)
-            local factor = sizeIn.at(elapsed)
-
-            if typeof(factor) == "Vector3" then
-              currentFactor = factor
-              part.Size = size * factor
-            end
-
-            return step(deltaTime)
-          end)
-
-          lifetime.hold(scope, sizeTween)
-        end
-
-        scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
-
-        -- per PIECE, over the dwell's own ceiling rather than the line's run: a
-        -- Lifetime track is sampled on the piece's dwell clock, which never
-        -- reaches the run, and a zero there would read as fully elapsed
-        local life = attrs.Lifetime(nil, lifeMax)
-        local drawn = life.at(0)
-
-        -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
-        -- ever and the piece dwells for the life of the session
-        if typeof(drawn) ~= "number" or drawn ~= drawn then
-          drawn = rng:NextNumber(lifeMin, lifeMax)
-        end
-
-        local landed = lifetime.add(outstanding)
-
-        -- the dwell's own elapsed when it ended, the moment the piece fires its
-        -- despawn lane. kept every frame, since a speed that stops for good
-        -- ends the dwell wherever it stood
-        local fired = 0
-
-        -- the dwell belongs to the effect rather than to the scheduler: its
-        -- cleanup lives in the scope, so tearing the line down cancels it rather
-        -- than firing exit tweens at a pooled part the cache has handed on, and
-        -- its length is the counter's to decide, so a Lifetime a modifier is
-        -- moving moves a dwell that is already running
-        tween.after(math.huge, function(deltaTime, elapsed)
-          local target = life.at(elapsed)
-
-          fired = elapsed
-
-          if typeof(target) ~= "number" or target ~= target then
-            target = drawn
-          end
-
-          if elapsed >= target then
-            return nil :: any
-          end
-
-          return step(deltaTime)
-        end, function()
-          task.spawn(function()
-            -- a despawn that throws still lands its piece, or the emit would wait
-            -- on it until the effect is torn down
-            local ok, err = pcall(function()
-              if sizeTween then
-                sizeTween:Disconnect()
-              end
-
-              if offsetTween then
-                offsetTween:Disconnect()
-              end
-
-              piece:fire("despawn", fired)
-
-              local sizeReach = sizeIn.reach("despawn")
-              local offsetReach = offsetIn.reach("despawn")
-
-              -- a row whose despawn lane leaves it where it stands is written
-              -- once, where it stands, and the exit still runs as long as its
-              -- reach says
-              local sizeUntil = if sizeIn.still("despawn", fired) then 0 else sizeReach
-              local offsetUntil = if offsetIn.still("despawn", fired) then 0 else offsetReach
-
-              -- each row is sampled until its own exit lands and never after, so
-              -- a row that snaps is written once and the shorter exit stops first
-              local sizeMoving = true
-              local offsetMoving = true
-
-              local function exitAt(since: number)
-                if sizeMoving then
-                  sizeMoving = since < sizeUntil
-
-                  local factor = sizeIn.at(fired + math.min(since, sizeUntil))
-
-                  if typeof(factor) == "Vector3" and factor ~= currentFactor then
-                    currentFactor = factor
-                    part.Size = size * factor
-                  end
-                end
-
-                if offsetMoving then
-                  offsetMoving = since < offsetUntil
-
-                  local offset = offsetIn.at(fired + math.min(since, offsetUntil))
-
-                  if typeof(offset) == "Vector3" and offset ~= currentOffset then
-                    currentOffset = offset
-                    part.CFrame = CFrame.new(offset) * rotCF
-                  end
-                end
-              end
-
-              -- one stepper runs both exits over the longer of them, on the
-              -- piece's clock from the fire
-              local exitLength = math.max(sizeReach, offsetReach)
-
-              -- a despawn lane is never cut: the emit awaits every exit, however
-              -- far past the line's run it reaches. a teardown closes the body
-              -- waiting on it along with the stepper, so nothing is left waiting
-              if exitLength > 0 then
-                local exited = lifetime.add(outstanding)
-
-                lifetime.hold(
-                  scope,
-                  tween.fromParams(utility.linear_bezier, exitLength, function(_, deltaTime, elapsed)
-                    -- a sample that throws would throw every frame and hold
-                    -- the emit until teardown, so it ends the exit instead
-                    local sampled, problem = pcall(exitAt, elapsed)
-
-                    if not sampled then
-                      logger.warn(`a piece's exit stopped: {problem}`)
-                      return nil
-                    end
-
-                    return step(deltaTime)
-                  end, nil, exited)
-                )
-              else
-                exitAt(0)
-              end
-
-              if fade.animated then
-                lifetime.hold(
-                  scope,
-                  tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
-                    local v = fade.at(elapsed)
-
-                    if typeof(v) == "number" then
-                      part.Transparency = v
-                    end
-
-                    return step(deltaTime)
-                  end)
-                )
-              end
-
-              scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope, outstanding)
-            end)
-
-            landed()
-
-            if not ok then
-              logger.warn(`a piece failed to despawn: {err}`)
-            end
-          end)
-        end, scope)
       end
 
-      last %= threshold
+      local size = drawnSize * currentScale
 
-      return deltaTime
-    end, nil, nil, true, scope.depth)
-  )
+      part.Size = size * currentFactor
+
+      if sizeIn.has("start") or sizeIn.has("end") then
+        sizeTween = tween.drive(scope, sizeIn, function(factor: any)
+          if typeof(factor) == "Vector3" then
+            currentFactor = factor
+            part.Size = size * factor
+          end
+        end)
+      end
+
+      scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
+
+      -- per PIECE, over the dwell's own ceiling rather than the line's run: a
+      -- Lifetime track is sampled on the piece's dwell clock, which never
+      -- reaches the run, and a zero there would read as fully elapsed
+      local life = attrs.Lifetime(nil, lifeMax)
+      local drawn = life.at(0)
+
+      -- a NaN lifetime satisfies no comparison, so elapsed >= target is false for
+      -- ever and the piece dwells for the life of the session
+      if typeof(drawn) ~= "number" or drawn ~= drawn then
+        drawn = rng:NextNumber(lifeMin, lifeMax)
+      end
+
+      local landed = lifetime.add(outstanding)
+
+      -- the dwell's own elapsed when it ended, the moment the piece fires its
+      -- despawn lane. kept every frame, since a speed that stops for good
+      -- ends the dwell wherever it stood
+      local fired = 0
+      local dwelt = 0
+      local dwell
+
+      -- the dwell belongs to the effect rather than to the scheduler: its
+      -- cleanup lives in the scope, so tearing the line down cancels it rather
+      -- than firing exit tweens at a pooled part the cache has handed on, and
+      -- its length is the step's to decide, so a Lifetime a modifier is
+      -- moving moves a dwell that is already running
+      dwell = lifetime.step(scope, function(deltaTime: number)
+        local target = life.at(dwelt)
+
+        fired = dwelt
+
+        if typeof(target) ~= "number" or target ~= target then
+          target = drawn
+        end
+
+        if dwelt < target and not timeline.halted then
+          dwelt += deltaTime
+          return
+        end
+
+        dwell:Disconnect()
+
+        task.spawn(function()
+          -- a despawn that throws still lands its piece, or the emit would wait
+          -- on it until the effect is torn down
+          local ok, err = pcall(function()
+            if sizeTween then
+              sizeTween:Disconnect()
+            end
+
+            if offsetTween then
+              offsetTween:Disconnect()
+            end
+
+            piece:fire("despawn", fired)
+
+            local sizeReach = sizeIn.reach("despawn")
+            local offsetReach = offsetIn.reach("despawn")
+
+            -- a row whose despawn lane leaves it where it stands is written
+            -- once, where it stands, and the exit still runs as long as its
+            -- reach says
+            local sizeUntil = if sizeIn.still("despawn", fired) then 0 else sizeReach
+            local offsetUntil = if offsetIn.still("despawn", fired) then 0 else offsetReach
+
+            -- each row is sampled until its own exit lands and never after, so
+            -- a row that snaps is written once and the shorter exit stops first
+            local sizeMoving = true
+            local offsetMoving = true
+
+            local function exitAt(since: number)
+              if sizeMoving then
+                sizeMoving = since < sizeUntil
+
+                local factor = sizeIn.at(fired + math.min(since, sizeUntil))
+
+                if typeof(factor) == "Vector3" and factor ~= currentFactor then
+                  currentFactor = factor
+                  part.Size = size * factor
+                end
+              end
+
+              if offsetMoving then
+                offsetMoving = since < offsetUntil
+
+                local offset = offsetIn.at(fired + math.min(since, offsetUntil))
+
+                if typeof(offset) == "Vector3" and offset ~= currentOffset then
+                  currentOffset = offset
+                  part.CFrame = CFrame.new(offset) * rotCF
+                end
+              end
+            end
+
+            -- one stepper runs both exits over the longer of them, on the
+            -- piece's clock from the fire
+            local exitLength = math.max(sizeReach, offsetReach)
+
+            -- a despawn lane is never cut: the emit awaits every exit, however
+            -- far past the line's run it reaches. a teardown closes the body
+            -- waiting on it along with the stepper, so nothing is left waiting
+            if exitLength > 0 then
+              tween.play(scope, curve.new(exitLength, "linear"), function(_, _, elapsed: number)
+                -- a sample that throws would throw every frame and hold
+                -- the emit until teardown, so it ends the exit instead
+                local sampled, problem = pcall(exitAt, elapsed)
+
+                if not sampled then
+                  logger.warn(`a piece's exit stopped: {problem}`)
+                  return false
+                end
+
+                return true
+              end, nil, lifetime.add(outstanding))
+            else
+              exitAt(0)
+            end
+
+            if fade.animated then
+              tween.drive(scope, fade, function(v: any)
+                if typeof(v) == "number" then
+                  part.Transparency = v
+                end
+              end)
+            end
+
+            scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope, outstanding)
+          end)
+
+          landed()
+
+          if not ok then
+            logger.warn(`a piece failed to despawn: {err}`)
+          end
+        end)
+      end)
+    end
+
+    last %= threshold
+  end, scope.depth)
 
   -- the hold runs on the clock the dwells do, or a speed below one stretches
   -- them past it and the scope tears down mid dwell. the transparency exit is
   -- one of the three a dwell starts, so it counts here too
-  tween.timer(runLength, function(deltaTime)
-    return step(deltaTime)
-  end, nil, scope)
+  tween.wait(scope, curve.new(runLength, "linear"))
 
   lifetime.awaitJoin(outstanding)
 end

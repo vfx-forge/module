@@ -714,7 +714,8 @@ harness.suite(function()
 
   harness.describe("the tween core's callers", function()
     -- the effects moved onto the core so far
-    local MOVED = { "particle", "sound", "spin", "beam", "mesh" }
+    local MOVED =
+      { "spin", "beam", "mesh", "sound", "particle", "shockwave_line", "shockwave_ring", "shockwave_debris" }
 
     test("no moved effect steps through fromParams, timer or after", function()
       for _, name in MOVED do

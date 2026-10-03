@@ -3,6 +3,7 @@ local CollectionService = game:GetService("CollectionService")
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local mods = require("@mod/mods")
+local curve = require("@mod/curve")
 local tween = require("@mod/tween")
 local logger = require("@mod/logger")
 local reader = require("@mod/reader")
@@ -246,15 +247,11 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
 
   local runLength = ctx.duration :: number
 
-  -- a Speed resting at 0 for good ends every stepper, and with them the
-  -- run, rather than holding the parts out of the cache for ever. a speed
+  -- a Speed resting at 0 for good ends every tween and dwell, and with them
+  -- the run, rather than holding the parts out of the cache for ever. a speed
   -- that is merely 0 for now, as a queue reads during a leading delay, does
   -- not
   local timeline = scope.clock
-
-  local function step(deltaTime: number): number?
-    return if timeline.halted then nil else deltaTime
-  end
 
   lifetime.wait(scope, attrs.EmitDelay)
 
@@ -359,37 +356,25 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
     -- own gets an in-phase stepper, or an unauthored offset would write
     -- CFrame every frame
     if offsetIn.has("start") or offsetIn.has("end") then
-      offsetTween = tween.fromParams(utility.linear_bezier, offsetIn.duration, function(_, deltaTime, elapsed)
-        local at = offsetIn.at(elapsed)
-
+      offsetTween = tween.drive(scope, offsetIn, function(at: any)
         -- a queue that stops resolving partway would throw here every frame,
-        -- and a stepper that throws is never cleaned up
+        -- and a stepper that throws ends the ring
         if typeof(at) == "Vector3" then
           currentOffset = at
           part.CFrame = CFrame.new(currentOffset) * rotCF
         end
-
-        return step(deltaTime)
       end)
-
-      lifetime.hold(scope, offsetTween)
     end
 
     part.Size = size * currentFactor
 
     if sizeIn.has("start") or sizeIn.has("end") then
-      sizeTween = tween.fromParams(utility.linear_bezier, sizeIn.duration, function(_, deltaTime, elapsed)
-        local factor = sizeIn.at(elapsed)
-
+      sizeTween = tween.drive(scope, sizeIn, function(factor: any)
         if typeof(factor) == "Vector3" then
           currentFactor = factor
           part.Size = size * factor
         end
-
-        return step(deltaTime)
       end)
-
-      lifetime.hold(scope, sizeTween)
     end
 
     scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
@@ -412,27 +397,30 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
     -- despawn lane. kept every frame, since a speed that stops for good ends
     -- the dwell wherever it stood
     local fired = 0
+    local dwelt = 0
+    local dwell
 
     -- the dwell is part of the effect, not of the scheduler: its cleanup lives
     -- in the scope, so tearing the effect down cancels it rather than letting it
     -- fire into a part the cache has already handed to someone else, and it runs
-    -- on the effect's clock, so speed scales it. its length is the counter's to
+    -- on the effect's clock, so speed scales it. its length is the step's to
     -- decide, so a Lifetime a modifier is moving is read every frame
-    tween.after(math.huge, function(deltaTime, elapsed)
-      local target = life.at(elapsed)
+    dwell = lifetime.step(scope, function(deltaTime: number)
+      local target = life.at(dwelt)
 
-      fired = elapsed
+      fired = dwelt
 
       if typeof(target) ~= "number" or target ~= target then
         target = drawn
       end
 
-      if elapsed >= target then
-        return nil :: any
+      if dwelt < target and not timeline.halted then
+        dwelt += deltaTime
+        return
       end
 
-      return step(deltaTime)
-    end, function()
+      dwell:Disconnect()
+
       task.spawn(function()
         -- a despawn that throws still lands its piece, or the emit would wait
         -- on it until the effect is torn down
@@ -492,40 +480,28 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
           -- past the ring's run it reaches. a teardown closes the body waiting on
           -- it along with the stepper, so nothing is left waiting
           if exitLength > 0 then
-            local exited = lifetime.add(outstanding)
+            tween.play(scope, curve.new(exitLength, "linear"), function(_, _, elapsed: number)
+              -- a sample that throws would throw every frame and hold the
+              -- emit until teardown, so it ends the exit instead
+              local sampled, problem = pcall(exitAt, elapsed)
 
-            lifetime.hold(
-              scope,
-              tween.fromParams(utility.linear_bezier, exitLength, function(_, deltaTime, elapsed)
-                -- a sample that throws would throw every frame and hold the
-                -- emit until teardown, so it ends the exit instead
-                local sampled, problem = pcall(exitAt, elapsed)
+              if not sampled then
+                logger.warn(`a piece's exit stopped: {problem}`)
+                return false
+              end
 
-                if not sampled then
-                  logger.warn(`a piece's exit stopped: {problem}`)
-                  return nil
-                end
-
-                return step(deltaTime)
-              end, nil, exited)
-            )
+              return true
+            end, nil, lifetime.add(outstanding))
           else
             exitAt(0)
           end
 
           if fade.animated then
-            lifetime.hold(
-              scope,
-              tween.fromParams(utility.linear_bezier, fade.duration, function(_, deltaTime, elapsed)
-                local v = fade.at(elapsed)
-
-                if typeof(v) == "number" then
-                  part.Transparency = v
-                end
-
-                return step(deltaTime)
-              end)
-            )
+            tween.drive(scope, fade, function(v: any)
+              if typeof(v) == "number" then
+                part.Transparency = v
+              end
+            end)
           end
 
           scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope, outstanding)
@@ -537,14 +513,12 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
           logger.warn(`a piece failed to despawn: {err}`)
         end
       end)
-    end, scope)
+    end)
   end
 
   -- the hold has to run on the same clock the dwells do, or a speed below one
   -- stretches them past it and the scope tears down mid dwell
-  tween.timer(runLength, function(deltaTime)
-    return step(deltaTime)
-  end, nil, scope)
+  tween.wait(scope, curve.new(runLength, "linear"))
 
   lifetime.awaitJoin(outstanding)
 end
