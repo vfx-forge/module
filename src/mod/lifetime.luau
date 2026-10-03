@@ -827,11 +827,14 @@ local function unhook(hook: WriteHook)
     return
   end
 
-  -- what the game wrote while it held the target goes back at the end, and
-  -- the owner writes the target again from its next set
+  -- only what the game wrote while it held the target goes back at the end,
+  -- and the owner writes the target again from its next set
   local live = read(target)
 
-  target.restore = live
+  if live ~= target.written then
+    target.restore = live
+  end
+
   target.written = live
 end
 

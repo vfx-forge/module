@@ -488,6 +488,24 @@ harness.suite(function()
       expect(obj.Transparency).toBe(f32(0.9))
     end)
 
+    test("hooked mid-stretch and given back unwritten, the target still goes back to what it was", function()
+      local emit, fx = effect()
+      local obj = instance({ Transparency = 0 })
+      local w = lifetime.write(fx, obj, "property", "Transparency")
+
+      lifetime.set(w, 0.5)
+
+      local hook = lifetime.hook(obj, "property", "Transparency")
+
+      lifetime.set(w, 0.6)
+      hook:Disconnect()
+      lifetime.set(w, 0.7)
+
+      done(emit)
+
+      expect(obj.Transparency).toBe(0)
+    end)
+
     test("Priority follows the owner and a rank", function()
       local first, a = effect()
       local second, b = effect()
