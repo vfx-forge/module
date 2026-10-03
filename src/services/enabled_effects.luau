@@ -88,8 +88,8 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
   -- on real time, since the ticker counts the window's clock itself, and at
   -- depth 0, ahead of the compute steps its ticks add and after the Speed
   -- ramp. the halt watch outlives the spawning, since the ramp keeps stepping
-  -- while the last ticks play out; a timer of a tick sees the halt on its
-  -- next frame
+  -- while the last ticks play out. a wait of a tick sees the halt on the next
+  -- frame, a timer in this one
   handle = scheduler.add("compute", function(deltaTime: number)
     if not window.clock.halted then
       if spawning then

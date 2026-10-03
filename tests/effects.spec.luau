@@ -1877,11 +1877,11 @@ harness.suite(function()
     end)
 
     -- ticks that each run a timer until their clock halts
-    local function halting(counted: { number })
+    local function halting(scopes: { any })
       return function(ctx: any)
         local scope = ctx.scope
 
-        counted[1] += 1
+        table.insert(scopes, scope)
 
         tween.timer(10, function(deltaTime: number)
           return if scope.clock.halted then nil else deltaTime
@@ -1890,32 +1890,40 @@ harness.suite(function()
     end
 
     test("a Speed ramp as long as the window ends its ticks and the handle", function()
-      local counted = { 0 }
-      local ref, built = windowed(0.5, halting(counted), row(1, 0, 0.5))
+      local scopes = {}
+      local ref, built = windowed(0.5, halting(scopes), row(1, 0, 0.5))
       local env = effects.emit(0, ref)
 
       for _ = 1, 6 do
         scheduler.frame(0.25)
       end
 
-      expect(counted[1] > 0).toBe(true)
+      expect(#scopes > 0).toBe(true)
       expect(env.Finished:getStatus()).toBe("Resolved")
 
       built.restore()
     end)
 
     test("a Speed ramp that outlasts the window keeps slowing its ticks to a halt", function()
-      local counted = { 0 }
-      local ref, built = windowed(0.25, halting(counted), row(1, 0, 1))
+      local scopes = {}
+      local ref, built = windowed(0.25, halting(scopes), row(1, 0, 1))
       local env = effects.emit(0, ref)
 
       for _ = 1, 3 do
         scheduler.frame(0.25)
       end
 
+      -- spawning stopped at 0.25, and the ramp is at 0.25 of its way down
+      local factor = clock.factorOf(scopes[1].clock)
+
+      expect(factor > 0 and factor < 1).toBe(true)
       expect(env.Finished:getStatus()).toBe("Started")
 
-      for _ = 1, 4 do
+      scheduler.frame(0.25)
+
+      expect(clock.factorOf(scopes[1].clock) < factor).toBe(true)
+
+      for _ = 1, 3 do
         scheduler.frame(0.25)
       end
 
@@ -1925,8 +1933,10 @@ harness.suite(function()
     end)
 
     test("a tick still in its delay when the Speed halts does not hang the handle", function()
+      local after = 0
       local ref, built = windowed(1, function(ctx: any)
         lifetime.wait(ctx.scope, 2)
+        after += 1
       end, row(1, 0, 0.5))
 
       local env = effects.emit(0, ref)
@@ -1935,6 +1945,7 @@ harness.suite(function()
         scheduler.frame(0.25)
       end
 
+      expect(after).toBe(0)
       expect(env.Finished:getStatus()).toBe("Resolved")
 
       built.restore()

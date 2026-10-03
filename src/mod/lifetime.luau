@@ -929,10 +929,16 @@ function lifetime.wait(fx: effect, seconds: number): number
       return
     end
 
+    -- a clock halted for good never reaches `left`, so the effect ends
+    if fx.clock.halted then
+      handle:Disconnect()
+      lifetime.kill(fx)
+      return
+    end
+
     waited += deltaTime
 
-    -- a clock halted for good never reaches `left`, so the wait ends with it
-    if waited < left and not fx.clock.halted then
+    if waited < left then
       return
     end
 
