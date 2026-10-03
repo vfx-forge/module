@@ -391,7 +391,7 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
         -- rows read through the registry keep the context they were read
         -- with, so play's ctx.obj = clone below never moves their seed there,
         -- which is fine since the clone is a copy of the sound they read
-        ctx = { ref = picked, obj = picked, scope = scope, scale = ctx.scale, effect = ctx.effect, shared = ctx.shared }
+        ctx = { ref = picked, obj = picked, scope = scope, effect = ctx.effect, shared = ctx.shared }
       end
     end
   end

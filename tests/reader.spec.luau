@@ -48,7 +48,7 @@ local function module(attributes: { [string]: any }, properties: { [string]: any
 end
 
 local function ctxFor(obj: Instance)
-  return { ref = obj, obj = obj, scale = 1 }
+  return { ref = obj, obj = obj }
 end
 
 harness.suite(function()

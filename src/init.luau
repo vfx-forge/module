@@ -128,6 +128,8 @@ local api = {}
 api.scope = {}
 api.setup = false
 
+local warnedScale = false
+
 -- the built-ins register once, when the module loads
 registry.register(Beam)
 registry.register(Trail)
@@ -247,7 +249,7 @@ function api.deinit()
   end
 end
 
-local function fullEmit(scale: number, depth: number, ...: any)
+local function fullEmit(depth: number, ...: any)
   if not api.setup then
     logger.error("not initialized")
   end
@@ -255,16 +257,22 @@ local function fullEmit(scale: number, depth: number, ...: any)
   return effects.emit(depth, ...)
 end
 
-function api.emit(vfxOrScale: number | Instance, ...: any)
-  if typeof(vfxOrScale) ~= "number" then
-    return fullEmit(1, 0, vfxOrScale, ...)
-  else
-    return fullEmit(vfxOrScale, 0, ...)
+-- a leading number was the old scale argument, which never reached an effect
+function api.emit(...: any)
+  if type((...)) ~= "number" then
+    return fullEmit(0, ...)
   end
+
+  if not warnedScale then
+    warnedScale = true
+    logger.warn("the scale argument was removed from emit and is ignored, pass the instances alone")
+  end
+
+  return fullEmit(0, select(2, ...))
 end
 
 function api.emitWithDepth(depth: number, ...: Instance)
-  return fullEmit(1, depth, ...)
+  return fullEmit(depth, ...)
 end
 
 function api.cacheAttributes(obj: Instance, shallow: boolean)

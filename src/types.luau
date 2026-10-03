@@ -60,7 +60,7 @@ export type Api = {
   init: (params: any?) -> (),
   deinit: () -> (),
 
-  emit: (vfxOrScale: number | Instance, ...any) -> EmitEnv,
+  emit: (...any) -> EmitEnv,
   emitWithDepth: (depth: number, ...Instance) -> EmitEnv,
   hookProperty: (obj: Instance, property: string) -> WriteHook,
   hookAttribute: (obj: Instance, name: string) -> WriteHook,

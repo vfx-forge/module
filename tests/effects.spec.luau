@@ -1625,46 +1625,6 @@ harness.suite(function()
       built.restore()
     end)
 
-    test("a window opened at scale 2 ticks at scale 2, and a passive loop's ticks stay at 1", function()
-      local built = fresh()
-      local scales = {}
-      local stand = module("scaled", "Model", noop)
-
-      stand.emit = function(ctx: any)
-        if ctx.constant then
-          table.insert(scales, ctx.scale)
-          return
-        end
-
-        local scaled = table.clone(ctx)
-
-        scaled.scale = 2
-
-        enabled_effects.window(scaled, stand, 1, row(1))
-      end
-
-      stand.constant = true
-      registry.register(stand)
-
-      local ref = harness.make("Model")
-      local env = effects.emit(0, ref)
-
-      scheduler.frame(0.21)
-
-      expect(scales).toEqual({ 2, 2 })
-
-      table.clear(scales)
-      env:Clear()
-
-      local tick = enabled_effects.ticker(ref, stand :: any, enabled_effects.token(), effects)
-
-      tick(0)
-
-      expect(scales).toEqual({ 1 })
-
-      built.restore()
-    end)
-
     test("a window shorter than a frame still spawns its first tick", function()
       local ticks = 0
       local ref, built = windowed(0.05, function()
@@ -2018,9 +1978,9 @@ harness.suite(function()
       registry.register(effect)
       inst:SetAttribute("EmitDuration", 1)
 
-      emitters.dispatch = function(obj: any, fx: any, shared: any, legacyScale: number, ticked: any, constant: boolean?)
+      emitters.dispatch = function(obj: any, fx: any, shared: any, ticked: any, constant: boolean?)
         if not constant then
-          dispatch(obj, fx, shared, legacyScale, ticked, constant)
+          dispatch(obj, fx, shared, ticked, constant)
           return
         end
 

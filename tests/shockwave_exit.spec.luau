@@ -459,7 +459,7 @@ harness.suite(function()
         )
 
         local module = registry.get(id) :: any
-        local ctx = { ref = ref, obj = ref, scale = 1, effect = module }
+        local ctx = { ref = ref, obj = ref, effect = module }
         local attrs = reader.resolve(module, ctx)
         local piece = mods.piece(module.events)
         local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
@@ -485,7 +485,7 @@ harness.suite(function()
         ref:SetAttribute("OffsetOutDuration", 0.9)
 
         local module = registry.get(id) :: any
-        local ctx = { ref = ref, obj = ref, scale = 1, effect = module }
+        local ctx = { ref = ref, obj = ref, effect = module }
         local attrs = reader.resolve(module, ctx)
         local piece = mods.piece(module.events)
         local exit = math.max(

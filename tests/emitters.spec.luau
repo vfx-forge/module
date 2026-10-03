@@ -49,7 +49,7 @@ local function emit(root: Instance)
 
   local function dispatch(obj: Instance, effect: registry.Module?)
     lifetime.run(lifetime.effect(em, 0, nil), function(scope)
-      emitters.dispatch(obj, scope, shared, 1, effect)
+      emitters.dispatch(obj, scope, shared, effect)
     end)
   end
 
@@ -208,7 +208,7 @@ harness.suite(function()
       local em = lifetime.emit(nil)
 
       lifetime.run(lifetime.effect(em, 0, nil), function(scope)
-        emitters.dispatch(part, scope, { unc = {}, ref = {} }, 1, registry.get("piece"))
+        emitters.dispatch(part, scope, { unc = {}, ref = {} }, registry.get("piece"))
       end)
 
       lifetime.seal(em)
@@ -282,7 +282,7 @@ harness.suite(function()
       local em = lifetime.emit(nil)
 
       lifetime.run(lifetime.effect(em, 0, nil), function(scope)
-        emitters.dispatch(obj, scope, { unc = {}, ref = {} }, 1, registry.get("piece"))
+        emitters.dispatch(obj, scope, { unc = {}, ref = {} }, registry.get("piece"))
       end)
 
       lifetime.seal(em)
@@ -395,7 +395,7 @@ harness.suite(function()
         local em = lifetime.emit(nil)
 
         lifetime.run(lifetime.effect(em, 0, nil), function(scope)
-          emitters.dispatch(obj, scope, { unc = {}, ref = {} }, 1, registry.get("piece"), constant)
+          emitters.dispatch(obj, scope, { unc = {}, ref = {} }, registry.get("piece"), constant)
         end)
 
         lifetime.seal(em)

@@ -381,7 +381,7 @@ local function dispatchInto(
   end
 
   lifetime.run(fx, function(scope)
-    emitters.dispatch(obj, scope, shared, 1, effect)
+    emitters.dispatch(obj, scope, shared, effect)
   end)
 end
 

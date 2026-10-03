@@ -34,7 +34,6 @@ export type Ctx = {
   ref: Instance,
   obj: Instance,
   scope: any?,
-  scale: number,
   effect: Module?,
   duration: number?,
   shared: Shared?,

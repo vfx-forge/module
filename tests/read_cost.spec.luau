@@ -147,7 +147,7 @@ harness.suite(function()
     local old, new = against(function()
       oldRead(obj)
     end, function()
-      reader.resolve(m, { ref = obj, obj = obj, scale = 1 })
+      reader.resolve(m, { ref = obj, obj = obj })
     end)
 
     print(
@@ -196,7 +196,7 @@ harness.suite(function()
       local class = registry.subjects(module.classifier)
       local name = if class ~= nil and class[1] ~= "BasePart" then class[1] else "Part"
       local inst = Instance.new(name)
-      local ctx = { ref = inst, obj = inst, scale = 1, effect = module }
+      local ctx = { ref = inst, obj = inst, effect = module }
 
       local took = best(function()
         reader.resolve(module, ctx)

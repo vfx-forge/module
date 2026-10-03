@@ -222,22 +222,6 @@ export function emit(...instances: Instance[]): EmitResult;
 export function emit(...args: [...instances: Instance[], options: EmitOptions]): EmitResult;
 
 /**
- * Emit VFX effects with a scale multiplier.
- * @param scale Scale multiplier for the effect
- * @param instances One or more Roblox instances to emit effects from
- * @returns Result object with a Finished promise
- */
-export function emit(scale: number, ...instances: Instance[]): EmitResult;
-
-/**
- * Emit VFX effects with a scale multiplier, with options after the instances.
- * @param scale Scale multiplier for the effect
- * @param args One or more Roblox instances, then an EmitOptions table
- * @returns Result object with a Finished promise
- */
-export function emit(scale: number, ...args: [...instances: Instance[], options: EmitOptions]): EmitResult;
-
-/**
  * Emit VFX effects with a specific render depth.
  * @param depth Render priority depth for the effect
  * @param instances One or more Roblox instances to emit effects from

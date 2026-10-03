@@ -136,6 +136,40 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("emit", function()
+    test("a leading number is ignored with one warning, and the instances still emit", function()
+      local vfx = api()
+      local part = harness.make("Part")
+      local emit, setup = effects.emit, vfx.setup
+      local calls = {}
+
+      effects.emit = function(...: any)
+        table.insert(calls, { ... })
+        return {} :: any
+      end
+
+      vfx.setup = true
+
+      local warnings = harness.captureWarnings(function()
+        vfx.emit(2, part)
+        vfx.emit(2, part)
+        vfx.emit(part)
+      end)
+
+      effects.emit, vfx.setup = emit, setup
+
+      expect(#warnings).toBe(1)
+      expect(string.find(warnings[1], "scale argument was removed", 1, true) ~= nil).toBe(true)
+      expect(#calls).toBe(3)
+
+      for _, call in calls do
+        expect(#call).toBe(2)
+        expect(call[1]).toBe(0)
+        expect(call[2]).toBe(part)
+      end
+    end)
+  end)
+
   harness.describe("enable and disable", function()
     -- runs `body` against the api in a running game, with mesh registered and
     -- the passive loops started, and puts every stand-in back whether `body`
@@ -201,9 +235,9 @@ harness.suite(function()
         } :: any
       end
 
-      emitters.dispatch = function(obj: any, fx: any, shared: any, legacyScale: number, effect: any, constant: boolean?)
+      emitters.dispatch = function(obj: any, fx: any, shared: any, effect: any, constant: boolean?)
         if not constant then
-          dispatch(obj, fx, shared, legacyScale, effect, constant)
+          dispatch(obj, fx, shared, effect, constant)
           return
         end
 

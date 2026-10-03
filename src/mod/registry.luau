@@ -658,7 +658,7 @@ function registry.read(inst: Instance, module: Module?): (any, any)
     return nil, nil
   end
 
-  return reader.resolve(module, { ref = inst, obj = inst, scale = 1, effect = module })
+  return reader.resolve(module, { ref = inst, obj = inst, effect = module })
 end
 
 return registry

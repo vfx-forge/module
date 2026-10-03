@@ -180,7 +180,6 @@ end
 local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
   local ref = ctx.ref :: Model
   local scope = ctx.scope
-  local scale = ctx.scale
 
   local start = ref:FindFirstChild("Start") :: BasePart
   local goal = ref:FindFirstChild("End") :: BasePart
@@ -291,7 +290,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
     )
   end
 
-  local sizeStart, sizeEnd = start.Size * scale, goal.Size * scale
+  local sizeStart, sizeEnd = start.Size, goal.Size
 
   if sizeStart ~= sizeEnd then
     local lastSizeAlpha = -1
@@ -321,7 +320,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
   if objMesh then
     if startMesh and goalMesh then
-      local scaleStart, scaleEnd = startMesh.Scale * scale, goalMesh.Scale * scale
+      local scaleStart, scaleEnd = startMesh.Scale, goalMesh.Scale
 
       if scaleStart ~= scaleEnd then
         lifetime.hold(

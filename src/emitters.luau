@@ -357,7 +357,6 @@ function emitters.dispatch(
   obj: any,
   scope: types.scope,
   shared: reader.Shared,
-  legacyScale: number,
   effect: registry.Module?,
   constant: boolean?
 )
@@ -370,7 +369,6 @@ function emitters.dispatch(
       ref = obj,
       obj = obj,
       scope = scope,
-      scale = legacyScale,
       effect = effect,
       shared = shared,
       constant = constant,
