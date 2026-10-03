@@ -12,10 +12,12 @@ local scheduler = require("@mod/scheduler")
 
 local enabled_effects = {}
 
--- every instance whose passive loop runs, to what the loop holds, and to the
--- signal that follows it in and out of where it may run
+-- every instance whose passive loop runs, to what the loop holds, to what
+-- starts its ticks once it sits where it may run, and to the signals that
+-- follow it in and out of there and see it destroyed
 local Loops: { [Instance]: { any } } = {}
-local Moves: { [Instance]: RBXScriptConnection } = {}
+local Wakes: { [Instance]: () -> () } = {}
+local Moves: { [Instance]: { any } } = {}
 
 local service: any = nil
 
@@ -126,14 +128,15 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
   handle:Disconnect()
 end
 
--- whether the instance sits where its passive loop may run, and the signal that
--- tells it moved. a spec stands its own in, since lune has neither
+-- whether the instance sits where its passive loop may run, and the signals that
+-- tell it moved and that it is gone for good. a spec stands its own in, since
+-- lune has neither
 function enabled_effects.placed(obj: Instance)
   return obj:IsDescendantOf(workspace) or (obj.Parent ~= nil and obj.Parent:HasTag("AllowEmitting"))
 end
 
-function enabled_effects.moved(obj: Instance, callback: () -> ()): RBXScriptConnection
-  return obj.AncestryChanged:Connect(callback)
+function enabled_effects.moved(obj: Instance, callback: () -> (), destroyed: () -> ())
+  return { obj.AncestryChanged:Connect(callback), obj.Destroying:Connect(destroyed) } :: { any }
 end
 
 -- the loop taken off an instance that left where it may run; the signal that
@@ -146,6 +149,7 @@ local function stop(obj: Instance)
   end
 
   Loops[obj] = nil
+  Wakes[obj] = nil
 end
 
 -- the instance's passive loop, started once: it ticks while Enabled is true and
@@ -168,11 +172,20 @@ function enabled_effects.add(obj: Instance)
 
   if Moves[obj] == nil then
     Moves[obj] = enabled_effects.moved(obj, function()
-      if enabled_effects.placed(obj) then
-        enabled_effects.add(obj)
-      else
+      if not enabled_effects.placed(obj) then
         stop(obj)
+        return
       end
+
+      local wake = Wakes[obj]
+
+      if wake then
+        wake()
+      else
+        enabled_effects.add(obj)
+      end
+    end, function()
+      enabled_effects.remove(obj)
     end)
   end
 
@@ -181,7 +194,8 @@ function enabled_effects.add(obj: Instance)
       enabled = attr.get(obj, "Enabled", true)
     end
 
-    if enabled and not enabled_effects.placed(obj) then
+    -- already ticking, or nowhere it may tick yet
+    if enabled and (next(tempScope) ~= nil or not enabled_effects.placed(obj)) then
       return
     end
 
@@ -196,6 +210,8 @@ function enabled_effects.add(obj: Instance)
     table.insert(tempScope, RunService.RenderStepped:Connect(tick))
   end
 
+  Wakes[obj] = onEnabled
+
   table.insert(loop, attr.observe(obj, "Enabled", onEnabled))
 
   onEnabled()
@@ -209,14 +225,16 @@ function enabled_effects.remove(obj: Instance)
   local moves = Moves[obj]
 
   if moves then
-    moves:Disconnect()
+    utility.cleanupScope(moves)
     Moves[obj] = nil
   end
 end
 
 -- a lightning, bezier or mesh instance's passive loop starts and stops with the
 -- switch, tagged or not, and in Studio's edit mode it takes the tag so the
--- place saves with it. switching one off leaves the tag
+-- place saves with it. switched off, a tagged instance keeps its tag and its
+-- loop record, so Enabled set back on resumes it; an untagged one has its
+-- record removed
 function enabled_effects.switch(obj: Instance, enabled: boolean)
   attr.set(obj, "Enabled", enabled)
 
