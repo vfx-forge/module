@@ -1876,6 +1876,70 @@ harness.suite(function()
       built.restore()
     end)
 
+    -- ticks that each run a timer until their clock halts
+    local function halting(counted: { number })
+      return function(ctx: any)
+        local scope = ctx.scope
+
+        counted[1] += 1
+
+        tween.timer(10, function(deltaTime: number)
+          return if scope.clock.halted then nil else deltaTime
+        end, nil, scope)
+      end
+    end
+
+    test("a Speed ramp as long as the window ends its ticks and the handle", function()
+      local counted = { 0 }
+      local ref, built = windowed(0.5, halting(counted), row(1, 0, 0.5))
+      local env = effects.emit(0, ref)
+
+      for _ = 1, 6 do
+        scheduler.frame(0.25)
+      end
+
+      expect(counted[1] > 0).toBe(true)
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("a Speed ramp that outlasts the window keeps slowing its ticks to a halt", function()
+      local counted = { 0 }
+      local ref, built = windowed(0.25, halting(counted), row(1, 0, 1))
+      local env = effects.emit(0, ref)
+
+      for _ = 1, 3 do
+        scheduler.frame(0.25)
+      end
+
+      expect(env.Finished:getStatus()).toBe("Started")
+
+      for _ = 1, 4 do
+        scheduler.frame(0.25)
+      end
+
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("a tick still in its delay when the Speed halts does not hang the handle", function()
+      local ref, built = windowed(1, function(ctx: any)
+        lifetime.wait(ctx.scope, 2)
+      end, row(1, 0, 0.5))
+
+      local env = effects.emit(0, ref)
+
+      for _ = 1, 8 do
+        scheduler.frame(0.25)
+      end
+
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
     test("a window at a static Speed of 0 spawns nothing and still ends", function()
       local ticks = 0
       local ref, built = windowed(0.5, function()

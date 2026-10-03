@@ -931,7 +931,8 @@ function lifetime.wait(fx: effect, seconds: number): number
 
     waited += deltaTime
 
-    if waited < left then
+    -- a clock halted for good never reaches `left`, so the wait ends with it
+    if waited < left and not fx.clock.halted then
       return
     end
 

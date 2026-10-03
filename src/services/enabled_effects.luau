@@ -83,13 +83,19 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
 
   local tick = enabled_effects.ticker(ctx.ref, module, window, scope.effects)
   local handle: scheduler.Handle
+  local spawning = true
 
   -- on real time, since the ticker counts the window's clock itself, and at
-  -- depth 0, ahead of every step its ticks add, so a halt reaches a tick
-  -- before the tick's own timers step on that frame
+  -- depth 0, ahead of the compute steps its ticks add and after the Speed
+  -- ramp. the halt watch outlives the spawning, since the ramp keeps stepping
+  -- while the last ticks play out; a timer of a tick sees the halt on its
+  -- next frame
   handle = scheduler.add("compute", function(deltaTime: number)
     if not window.clock.halted then
-      tick(deltaTime)
+      if spawning then
+        tick(deltaTime)
+      end
+
       return
     end
 
@@ -110,9 +116,10 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
 
   lifetime.wait(scope, duration)
 
-  handle:Disconnect()
+  spawning = false
   lifetime.seal(window)
   lifetime.await(window)
+  handle:Disconnect()
 end
 
 function enabled_effects.init(scope: { any }, effects_service: any)
