@@ -342,17 +342,25 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
   -- the emission runs on the effect's clock too, so a speed knob spaces the
   -- pieces out and shortens the line's run by the same factor
-  tween.play(scope, curve.new(duration, "linear"), function(_, deltaTime: number)
+  tween.play(scope, curve.new(duration, "linear"), function(_, deltaTime: number, elapsed: number)
     last += deltaTime
 
     local threshold = 1 / currentRate
     local max = duration * currentRate
 
-    if last < threshold or total >= max then
+    -- a fixed amount lands whole: the closing frame emits what the summed
+    -- deltas left a float short of a tick
+    local closing = fixedAmount > 0 and elapsed >= duration
+
+    if (last < threshold and not closing) or total >= max then
       return
     end
 
     local ticks = last // threshold
+
+    if closing then
+      ticks = math.max(ticks, fixedAmount - total)
+    end
 
     for i = 1, ticks do
       if total >= max then

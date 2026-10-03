@@ -2159,4 +2159,71 @@ harness.suite(function()
       built.restore()
     end)
   end)
+
+  harness.describe("a fixed amount line's emission", function()
+    -- a line has its pieces cast one by one, and a piece a ray misses is not
+    -- made, so the rays it casts are the ticks it fired
+    local function casts(frames: number, deltaTime: number, sweep: number, amount: number): number
+      local built = fresh()
+      local line = require("@vfx/shockwave_line")
+      local rays = 0
+      local raycast = workspace.Raycast
+      local params = RaycastParams
+
+      -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+      RaycastParams = {
+        new = function()
+          return { AddToFilter = noop }
+        end,
+      }
+      workspace.Raycast = function()
+        rays += 1
+        return nil
+      end
+      workspace.Terrain = workspace.Terrain or {}
+
+      registry.register(require("@vfx/shockwave"))
+      registry.register(table.clone(line))
+      line.init({ get = noop, free = noop } :: any)
+
+      local extents = utility.getTransformedOriginExtents
+      utility.getTransformedOriginExtents = function()
+        return harness.datatypes.CFrame.identity
+      end
+
+      local origin = harness.make("Attachment", harness.make("Folder"))
+      origin:AddTag("Shockwave")
+      origin:SetAttribute("RayDirection", harness.datatypes.Vector3.new(0, -50, 0))
+
+      local lines = harness.make("Folder", origin)
+      lines.Name = "Lines"
+
+      local ref = harness.make("Part", lines)
+      ref:SetAttribute("FixedAmount", amount)
+      ref:SetAttribute("Duration", sweep)
+      ref:SetAttribute("Direction", harness.datatypes.Vector3.new(0, 0, -1))
+
+      local env = effects.emit(0, ref)
+
+      for _ = 1, frames do
+        scheduler.frame(deltaTime)
+      end
+
+      env:Clear()
+      line.deinit()
+      workspace.Raycast = raycast
+      utility.getTransformedOriginExtents = extents
+      RaycastParams = params
+      built.restore()
+
+      return rays
+    end
+
+    test("emits every piece of the amount even where the summed deltas fall short", function()
+      -- 0.3 s at sixtieths summed a float short of the third tick
+      expect(casts(30, 1 / 60, 0.3, 3)).toBe(3)
+      expect(casts(100, 1 / 120, 0.5, 7)).toBe(7)
+      expect(casts(60, 1 / 30, 1, 4)).toBe(4)
+    end)
+  end)
 end)
