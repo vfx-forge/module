@@ -468,6 +468,20 @@ harness.suite(function()
       expect(string.find(warnings[1], "a string could not be written to Transparency", 1, true) ~= nil).toBe(true)
     end)
 
+    test("a writer handle holds nothing an author can reach", function()
+      fresh()
+
+      local reached = nil
+
+      custom("sealed", function(sdk: any, ctx: any)
+        reached = next(sdk.getWriter(ctx, harness.make("Part"), "Transparency"))
+      end)
+
+      play()
+
+      expect(reached).toBe(nil)
+    end)
+
     test("speed runs the effect's time at the track's value", function()
       fresh()
 

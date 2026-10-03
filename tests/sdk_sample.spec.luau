@@ -74,6 +74,19 @@ local function tagged(tag: string): Instance
   return part
 end
 
+-- the fade's transparency a frame in, so a variant that never ran cannot pass
+local function midway(part: Instance)
+  effects.emit(0, part)
+  scheduler.frame(0.2)
+
+  local seen = (part :: any).Transparency
+
+  scheduler.frame(0.2)
+  scheduler.frame(0.2)
+
+  return seen
+end
+
 -- one emit played to its end: three frames of a half second fade
 local function timed(part: Instance)
   local started = os.clock()
@@ -143,10 +156,12 @@ harness.suite(function()
         custom.clear()
         registry.clear()
         registry.register(builtin)
+        expect(midway(builtinPart) > 0).toBe(true)
         old = math.min(old, timed(builtinPart))
 
         registry.clear()
-        custom.add("fade", fade, "fade")
+        expect((custom.add("fade", fade, "fade"))).toBe(true)
+        expect(midway(customPart) > 0).toBe(true)
         new = math.min(new, timed(customPart))
       end
 

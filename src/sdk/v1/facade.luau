@@ -37,8 +37,8 @@ local PATHS: { [any]: Bezier.Bezier } = setmetatable({}, { __mode = "k" }) :: an
 -- the writers whose refused write was already warned about
 local REFUSED: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
--- the key a writer handle keeps its writer under, which no author can spell
-local WRITER = table.freeze({})
+-- the lifetime writer behind each handle, which the handle itself never holds
+local WRITERS: { [any]: lifetime.writer } = setmetatable({}, { __mode = "k" }) :: any
 
 -- what every curve the facade makes is, told apart from any other table by it
 local CURVE = getmetatable(curve.new(1, "linear"))
@@ -337,7 +337,7 @@ local Writer = {}
 Writer.__index = Writer
 
 function Writer.set(self: any, value: any)
-  local w = self[WRITER]
+  local w = WRITERS[self]
 
   if lifetime.set(w, value) or REFUSED[self] then
     return
@@ -361,7 +361,11 @@ local function writerOf(ctx: any, obj: Instance, source: string, name: string, c
     logger.error(`sdk.{call} takes the name it writes to, got {typeof(name)}`)
   end
 
-  return table.freeze(setmetatable({ [WRITER] = lifetime.write(scope, obj, source, name) }, Writer))
+  local made = table.freeze(setmetatable({}, Writer))
+
+  WRITERS[made] = lifetime.write(scope, obj, source, name)
+
+  return made
 end
 
 function v1.getWriter(ctx: any, obj: Instance, property: string)
