@@ -4,6 +4,10 @@ local ObjectCache = require("@obj/ObjectCache")
 
 export type scope = lifetime.effect
 
+export type EmitOptions = {
+  priority: number?,
+}
+
 export type EmitEnv = {
   Finished: typeof(Promise.resolve()),
   Clear: (self: EmitEnv) -> (),
@@ -12,6 +16,8 @@ export type EmitEnv = {
   Pause: (self: EmitEnv) -> (),
   Resume: (self: EmitEnv) -> (),
   IsPaused: (self: EmitEnv) -> boolean,
+  SetPriority: (self: EmitEnv, priority: number) -> (),
+  GetPriority: (self: EmitEnv) -> number,
 }
 
 export type ApiCaches = {
@@ -22,7 +28,7 @@ export type EffectsService = {
   init: (api: Api) -> (),
   deinit: () -> (),
 
-  emit: (depth: number, ...Instance) -> EmitEnv,
+  emit: (depth: number, ...any) -> EmitEnv,
   emitNested: (part: Instance, depth: number, parentScope: scope?, join: lifetime.join?) -> (),
   emitFromFolder: (
     folder: Folder?,
@@ -52,7 +58,7 @@ export type Api = {
   init: (params: any?) -> (),
   deinit: () -> (),
 
-  emit: (vfxOrScale: number | Instance, ...Instance) -> EmitEnv,
+  emit: (vfxOrScale: number | Instance, ...any) -> EmitEnv,
   emitWithDepth: (depth: number, ...Instance) -> EmitEnv,
 }
 

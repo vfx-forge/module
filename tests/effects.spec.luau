@@ -2,6 +2,7 @@ local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local tween = require("@mod/tween")
 local curves = require("@mod/curves")
+local logger = require("@mod/logger")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
 local utility = require("@mod/utility")
@@ -351,6 +352,169 @@ harness.suite(function()
 
       env:Clear()
       built.restore()
+    end)
+  end)
+
+  harness.describe("an emit's priority", function()
+    -- a property every emit of a "writes" folder writes its own Value
+    -- attribute to, until the spec clears it
+    local function writes(target: { [string]: any })
+      return module("writes", "Folder", function(ctx: any)
+        local w = lifetime.write(ctx.scope, target, "property", "Value")
+
+        lifetime.set(w, ctx.ref:GetAttribute("Value"))
+        lifetime.wait(ctx.scope, 100)
+      end)
+    end
+
+    local function folder(v: number): Instance
+      local made = harness.make("Folder")
+      made:SetAttribute("Value", v)
+
+      return made
+    end
+
+    -- every warning logged while `fn` runs
+    local function warnings(fn: () -> ()): { string }
+      local seen = {}
+      local warn = logger.warn
+
+      logger.warn = function(...)
+        table.insert(seen, table.concat({ ... }, " "))
+      end
+
+      fn()
+
+      logger.warn = warn
+
+      return seen
+    end
+
+    test("an options table after the instances sets it, and 0 is the default", function()
+      local built = fresh()
+      registry.register(module("waits", "Folder", waiting(10)))
+
+      local plain = effects.emit(0, harness.make("Folder"))
+      local ranked = effects.emit(0, harness.make("Folder"), { priority = 5 })
+
+      expect(plain:GetPriority()).toBe(0)
+      expect(ranked:GetPriority()).toBe(5)
+
+      plain:Clear()
+      ranked:Clear()
+      built.restore()
+    end)
+
+    test("a priority that is not a finite number warns and is 0, and an unknown key warns", function()
+      local built = fresh()
+      registry.register(module("waits", "Folder", waiting(10)))
+
+      for _, bad in { 0 / 0, math.huge, "high" :: any } do
+        local env
+        local seen = warnings(function()
+          env = effects.emit(0, harness.make("Folder"), { priority = bad })
+        end)
+
+        expect(#seen).toBe(1)
+        expect(env:GetPriority()).toBe(0)
+
+        env:Clear()
+      end
+
+      local env
+      local seen = warnings(function()
+        env = effects.emit(0, harness.make("Folder"), { prority = 5 })
+      end)
+
+      expect(#seen).toBe(1)
+      expect(env:GetPriority()).toBe(0)
+
+      env:Clear()
+      built.restore()
+    end)
+
+    test("an emit of a higher priority owns a target over a newer emit", function()
+      local built = fresh()
+      local target = { Value = 0 }
+      registry.register(writes(target))
+
+      local high = effects.emit(0, folder(1), { priority = 1 })
+      local low = effects.emit(0, folder(2))
+
+      expect(target.Value).toBe(1)
+
+      high:Clear()
+
+      expect(target.Value).toBe(2)
+
+      low:Clear()
+
+      expect(target.Value).toBe(0)
+
+      built.restore()
+    end)
+
+    test("SetPriority raises an older emit over a newer one at once, and back", function()
+      local built = fresh()
+      local target = { Value = 0 }
+      registry.register(writes(target))
+
+      local older = effects.emit(0, folder(1))
+      local newer = effects.emit(0, folder(2))
+
+      expect(target.Value).toBe(2)
+
+      older:SetPriority(1)
+
+      expect(older:GetPriority()).toBe(1)
+      expect(target.Value).toBe(1)
+
+      older:SetPriority(0)
+
+      expect(target.Value).toBe(2)
+
+      older:Clear()
+      newer:Clear()
+      built.restore()
+    end)
+
+    test("SetPriority on an ended emit does nothing", function()
+      local built = fresh()
+      registry.register(module("returns", "Folder", noop))
+
+      local env = effects.emit(0, harness.make("Folder"))
+
+      env:SetPriority(4)
+
+      expect(env:GetPriority()).toBe(0)
+
+      built.restore()
+    end)
+
+    test("SetPriority with a value that is not a finite number warns and keeps the priority", function()
+      local built = fresh()
+      registry.register(module("waits", "Folder", waiting(10)))
+
+      local env = effects.emit(0, harness.make("Folder"), { priority = 2 })
+
+      for _, bad in { 0 / 0, -math.huge, "high" :: any } do
+        local seen = warnings(function()
+          env:SetPriority(bad)
+        end)
+
+        expect(#seen).toBe(1)
+        expect(env:GetPriority()).toBe(2)
+      end
+
+      env:Clear()
+      built.restore()
+    end)
+
+    test("a ConstantVFX tick's emit is marked constant", function()
+      local token = enabled_effects.token(harness.make("Part"))
+
+      expect(token.constant).toBe(true)
+      expect(token.priority).toBe(0)
     end)
   end)
 

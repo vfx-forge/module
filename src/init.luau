@@ -246,7 +246,7 @@ function api.deinit()
   end
 end
 
-local function fullEmit(scale: number, depth: number, ...: Instance)
+local function fullEmit(scale: number, depth: number, ...: any)
   if not api.setup then
     logger.error("not initialized")
   end
@@ -254,7 +254,7 @@ local function fullEmit(scale: number, depth: number, ...: Instance)
   return effects.emit(depth, ...)
 end
 
-function api.emit(vfxOrScale: number | Instance, ...: Instance)
+function api.emit(vfxOrScale: number | Instance, ...: any)
   if typeof(vfxOrScale) ~= "number" then
     return fullEmit(1, 0, vfxOrScale, ...)
   else

@@ -43,6 +43,32 @@ export interface EmitResult {
    * once the emit has finished.
    */
   IsPaused(): boolean;
+
+  /**
+   * Rank every write this emit and the emits it starts make against another emit's, from
+   * now: on a property or attribute two emits write at once, the higher priority owns it,
+   * and at one priority the newer emit does. Warns and keeps the priority unless it is a
+   * finite number. Once the emit has finished this does nothing.
+   * @param priority 0 by default; higher wins
+   */
+  SetPriority(priority: number): void;
+
+  /**
+   * The priority set with the emit's options or SetPriority, 0 by default.
+   */
+  GetPriority(): number;
+}
+
+/**
+ * Options an emit may end with, after its instances.
+ */
+export interface EmitOptions {
+  /**
+   * How this emit's writes rank against another emit's on a property or attribute both
+   * write: the higher priority owns it, and at one priority the newer emit does. 0 by
+   * default. Anything but a finite number warns and is 0.
+   */
+  priority?: number;
 }
 
 /**
@@ -137,12 +163,27 @@ export function deinit(): void;
 export function emit(...instances: Instance[]): EmitResult;
 
 /**
+ * Emit VFX effects from the provided instances, with options after them.
+ * @param args One or more Roblox instances, then an EmitOptions table
+ * @returns Result object with a Finished promise
+ */
+export function emit(...args: [...instances: Instance[], options: EmitOptions]): EmitResult;
+
+/**
  * Emit VFX effects with a scale multiplier.
  * @param scale Scale multiplier for the effect
  * @param instances One or more Roblox instances to emit effects from
  * @returns Result object with a Finished promise
  */
 export function emit(scale: number, ...instances: Instance[]): EmitResult;
+
+/**
+ * Emit VFX effects with a scale multiplier, with options after the instances.
+ * @param scale Scale multiplier for the effect
+ * @param args One or more Roblox instances, then an EmitOptions table
+ * @returns Result object with a Finished promise
+ */
+export function emit(scale: number, ...args: [...instances: Instance[], options: EmitOptions]): EmitResult;
 
 /**
  * Emit VFX effects with a specific render depth.

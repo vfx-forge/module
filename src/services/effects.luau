@@ -7,6 +7,8 @@ local registry = require("@mod/registry")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 
+local numeric_common = require("@mod/common/numeric")
+
 local Promise = require("@pkg/Promise")
 
 local effects = {}
@@ -21,6 +23,9 @@ local CONTROLLER = "controller"
 -- the key an env keeps its emit under, out of the way of its public fields
 local EMIT = table.freeze({})
 
+-- the keys an emit's options table may hold
+local OPTIONS = { priority = true }
+
 local EMPTY_ENV: types.EmitEnv = {
   Finished = Promise.resolve(),
   Clear = NOOP,
@@ -32,6 +37,10 @@ local EMPTY_ENV: types.EmitEnv = {
   Resume = NOOP,
   IsPaused = function()
     return false
+  end,
+  SetPriority = NOOP,
+  GetPriority = function()
+    return 0
   end,
 }
 
@@ -121,6 +130,27 @@ end
 
 function METHODS.IsPaused(env: any)
   return rawget(env, EMIT).clock.paused
+end
+
+-- a running emit and every emit it started, ranked again at once. a bad value
+-- would silently demote the emit, so it is refused and the priority kept
+function METHODS.SetPriority(env: any, priority: number)
+  if type(priority) ~= "number" or not numeric_common.finite(priority) then
+    logger.warn(`SetPriority takes a finite number, not {priority}`)
+    return
+  end
+
+  local emit = rawget(env, EMIT)
+
+  if emit.done then
+    return
+  end
+
+  lifetime.rank(emit, priority)
+end
+
+function METHODS.GetPriority(env: any)
+  return rawget(env, EMIT).priority
 end
 
 local ENV = {
@@ -458,15 +488,47 @@ function effects.regionOf(fx: lifetime.effect): (Region?, {}?)
   return region, key
 end
 
-function effects.emit(depth: number, ...: Instance): types.EmitEnv
+-- the priority an emit's options table asks for, every key it does not know
+-- and every priority that is not a finite number warned about
+local function priorityOf(options: { [any]: any }): number?
+  for key in options do
+    if OPTIONS[key] == nil then
+      logger.warn(`emit has no option called {key}`)
+    end
+  end
+
+  local priority = options.priority
+
+  if priority == nil then
+    return nil
+  end
+
+  if type(priority) ~= "number" or not numeric_common.finite(priority) then
+    logger.warn(`emit's priority must be a finite number, not {priority}`)
+    return nil
+  end
+
+  return priority
+end
+
+function effects.emit(depth: number, ...: any): types.EmitEnv
   if not api_ref or not api_ref.setup then
     logger.error("effects service not initialized")
     return EMPTY_ENV
   end
 
   local emit = lifetime.emit(nil)
+  local count = select("#", ...)
+  local last = if count > 0 then select(count, ...) else nil
 
-  emitInto(emit, depth, nil, "", ...)
+  -- an options table ends the instances, told apart by being a table
+  if type(last) == "table" then
+    emit.priority = priorityOf(last) or 0
+    emitInto(emit, depth, nil, "", table.unpack({ ... }, 1, count - 1))
+  else
+    emitInto(emit, depth, nil, "", ...)
+  end
+
   lifetime.seal(emit)
 
   if not emit.done then
