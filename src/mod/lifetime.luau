@@ -75,6 +75,7 @@ export type effect = {
 export type join = {
   fx: effect,
   count: number,
+  waiter: thread?,
   waiters: { thread }?,
 }
 
@@ -1122,7 +1123,7 @@ function lifetime.await(emit: emit)
 end
 
 function lifetime.join(fx: effect): join
-  return { fx = fx, count = 0, waiters = nil }
+  return { fx = fx, count = 0, waiter = nil, waiters = nil }
 end
 
 -- counts one more thing into the join and answers what counts it out. only the
@@ -1141,16 +1142,23 @@ function lifetime.add(join: join)
     counted = false
     join.count -= 1
 
-    local waiters = join.waiters
+    local waiter = join.waiter
 
-    if join.count > 0 or waiters == nil then
+    if join.count > 0 or waiter == nil then
       return
     end
 
+    local waiters = join.waiters
+
+    join.waiter = nil
     join.waiters = nil
 
-    for _, waiter in waiters do
-      table.insert(wakes, waiter)
+    table.insert(wakes, waiter)
+
+    if waiters ~= nil then
+      for _, other in waiters do
+        table.insert(wakes, other)
+      end
     end
 
     flushWakes()
@@ -1232,14 +1240,18 @@ function lifetime.awaitJoin(join: join)
     return
   end
 
-  local waiters = join.waiters
+  local running = coroutine.running()
 
-  if waiters == nil then
-    waiters = {}
-    join.waiters = waiters
+  -- the first waiter takes no list, so a join one thread awaits allocates
+  -- nothing
+  if join.waiter == nil then
+    join.waiter = running
+  elseif join.waiters == nil then
+    join.waiters = { running }
+  else
+    table.insert(join.waiters, running)
   end
 
-  table.insert(waiters, coroutine.running())
   coroutine.yield()
 end
 
