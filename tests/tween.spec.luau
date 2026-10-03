@@ -520,7 +520,7 @@ harness.suite(function()
   end)
 
   harness.describe("the tween core's callers", function()
-    local GONE = { "fromParams", "tween.timer", "tween.after", "bezier_cache", "drivePropertyTrack" }
+    local GONE = { "fromParams", "tween.timer", "tween.after", "bezier_cache", "getEase", "drivePropertyTrack" }
 
     -- every source file under `dir`, by its path
     local function sources(dir: string, into: { string })

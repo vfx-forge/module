@@ -127,6 +127,11 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   local endPoint, endT1 = bezier_common.findEndAttachments(ref)
   local points = utility.getBezierPoints(root)
 
+  -- a Points attachment with nothing under it has no path to follow
+  if #points < 2 then
+    return
+  end
+
   local rng = Random.new()
   local baseBezier = not endPoint and Bezier.new(points)
 
@@ -174,7 +179,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
       )
 
       -- create bezier
-      local pathBezier = baseBezier or bezier_common.createBezierWithEndpoint(points, cf, endPoint, endT1)
+      local pathBezier = baseBezier or bezier_common.endpointPath(points, cf, endPoint, endT1)
       local getPos = bezier_common.createPosGetter(pathBezier, points, cf, endPoint, attrs.ArcSpace)
 
       -- get part from cache

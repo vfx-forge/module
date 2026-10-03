@@ -488,6 +488,11 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
   local endPoint, endT1 = bezier_common.findEndAttachments(ref)
   local points = utility.getBezierPoints(root)
 
+  -- a Points attachment with nothing under it has no path to follow
+  if #points < 2 then
+    return
+  end
+
   local rng = Random.new()
   local baseBezier = not endPoint and Bezier.new(points)
 
@@ -535,7 +540,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         parent:IsA("Attachment")
       )
 
-      local bezier = baseBezier or bezier_common.createBezierWithEndpoint(points, cf, endPoint, endT1)
+      local bezier = baseBezier or bezier_common.endpointPath(points, cf, endPoint, endT1)
       local getPos = bezier_common.createPosGetter(bezier, points, cf, endPoint, true)
 
       -- create segment parts

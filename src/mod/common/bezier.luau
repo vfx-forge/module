@@ -203,34 +203,39 @@ function common.calculateEmissionCFrame(
   return cf
 end
 
-function common.createBezierWithEndpoint(points: { vector }, cf: CFrame, endPoint: Attachment?, endT1: Attachment?)
+-- the chain a piece flies with an end attachment, built in one table every
+-- piece shares, since a Bezier keeps a copy of its own
+local chain: { vector } = {}
+
+-- a piece's path: the authored chain moved to the piece's emission frame, its
+-- last anchor and that anchor's incoming handle on the end attachment
+function common.endpointPath(points: { vector }, cf: CFrame, endPoint: Attachment?, endT1: Attachment?): Bezier.Bezier
   if not endPoint then
     return Bezier.new(points)
   end
 
-  local pts = {}
+  local count = #points
+
+  table.clear(chain)
 
   for j, pt in points do
-    table.insert(
-      pts,
-      if j == (#points - 1)
-        then endT1 and endT1.WorldPosition or endPoint.WorldPosition
-        else if j == #points then endPoint.WorldPosition else cf * (pt - points[1])
-    )
+    chain[j] = if j == count - 1
+      then (endT1 or endPoint).WorldPosition
+      else if j == count then endPoint.WorldPosition else cf * (pt - points[1])
   end
 
-  return Bezier.new(pts)
+  return Bezier.new(chain)
 end
 
 function common.createPosGetter(
-  bezier,
+  bezier: Bezier.Bezier,
   points: { vector },
   cf: CFrame,
   endPoint: Attachment?,
   useArcSpace: boolean?
 ): (number) -> Vector3
   return function(alpha: number): Vector3
-    local p = if useArcSpace ~= false then bezier:getPositionArcSpace(alpha) else bezier:getPosition(alpha)
+    local p = if useArcSpace ~= false then bezier:atUniform(alpha) else bezier:at(alpha)
 
     if endPoint then
       return p
