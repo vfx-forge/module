@@ -2,7 +2,7 @@
 
 A custom effect is a ModuleScript tagged `VFXForgeEffect`, anywhere in the place. The game registers every tagged module when ForgeVFX initializes, and one tagged later as it is tagged. The plugin registers the same modules in its own copy, so a custom effect shows in the panel and previews like a built-in, and it reloads the module while you edit it.
 
-`sample.luau` beside this guide is a complete effect. The types are in `ReplicatedStorage.VFXForge.Effects.SDK`, which the plugin writes when you create a custom effect, and the plugin puts the new effect beside it in `ReplicatedStorage.VFXForge.Effects`.
+`sample.luau` beside this guide is a complete effect. The types are in `ReplicatedStorage.VFXForge.Effects.SDK`, which the plugin writes when you create a custom effect, and the plugin puts the new effect beside it in `ReplicatedStorage.VFXForge.Effects`. That module holds types only: requiring it answers nil, so an effect requires it for its types (`SDK.V1`, `SDK.Ctx`) and reaches the sdk through the `sdk` argument each function is handed.
 
 ## The module
 

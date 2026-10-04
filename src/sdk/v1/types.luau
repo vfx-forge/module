@@ -216,4 +216,4 @@ export type Effect = {
   template: ((sdk: V1) -> Instance)?,
 }
 
-return {}
+return nil
