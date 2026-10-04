@@ -144,7 +144,8 @@ end
 -- the effect time since the emit: counted on the emit's clock from the first
 -- call, and before it at the factor that clock has then, which is exact for an
 -- emit whose speed and pauses did not change before it was first asked. it
--- stands still once the emit is done
+-- stands still once the emit is done; first asked only after that, the clock
+-- is gone and it answers the real seconds since the emit at the global speed
 function METHODS.GetTime(env: any)
   local timer = rawget(env, TIMER)
 
@@ -155,6 +156,8 @@ function METHODS.GetTime(env: any)
   local emit = rawget(env, EMIT)
   local since = scheduler.now - rawget(env, BORN)
 
+  -- a first call from a step that runs earlier in this pass than the wait
+  -- phase's depth 0 bucket counts this frame's delta twice
   timer = { time = since * clock.factorOf(emit.clock) }
   rawset(env, TIMER, timer)
 

@@ -48,7 +48,9 @@ export interface EmitResult {
    * Seconds of effect time since the emit: scaled by SetSpeed, the global speed and any
    * controller over the emit, and still while paused. Counted exactly from the first call;
    * the time before it is counted at the speed the emit has at that call, so call it once
-   * right after emitting when the speed may change. Stands still once the emit has finished.
+   * right after emitting when the speed may change. Ask it while the emit runs: it stands
+   * still once the emit has finished, and first asked only after the emit has finished, it
+   * answers the real seconds since the emit at the global speed.
    */
   GetTime(): number;
 

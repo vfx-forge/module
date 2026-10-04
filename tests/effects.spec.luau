@@ -336,6 +336,37 @@ harness.suite(function()
       built.restore()
     end)
 
+    test(
+      "GetTime first asked once the emit has finished answers the real seconds since it, then stands still",
+      function()
+        local built = fresh()
+        local log = {}
+        registry.register(module("waits", "Folder", function(ctx: any)
+          lifetime.wait(ctx.scope, 1)
+          table.insert(log, "waited")
+        end))
+
+        local env = effects.emit(0, harness.make("Folder"))
+
+        scheduler.frame(0.5)
+        scheduler.frame(0.75)
+        scheduler.frame(0)
+
+        expect(log).toEqual({ "waited" })
+
+        scheduler.frame(0.5)
+
+        expect(env:GetTime()).toBe(1.75)
+
+        scheduler.frame(0)
+        scheduler.frame(1)
+
+        expect(env:GetTime()).toBe(1.75)
+
+        built.restore()
+      end
+    )
+
     test("refuses a speed that is not a finite number of 0 or more, naming SetSpeed", function()
       local built = fresh()
       registry.register(module("waits", "Folder", waiting(10)))
