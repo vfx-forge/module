@@ -423,5 +423,41 @@ harness.suite(function()
 
       expect(near(emitted.Transparency, 0.5)).toBe(true)
     end)
+
+    test("a custom effect's instance runs none of the old format's leftovers on it", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(module("trail", "Trail"))
+      registry.register(module("mine", "Trail.Mine"), true)
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local trail = harness.make("Trail", root)
+
+      trail:AddTag("Mine")
+      trail.Lifetime = 2
+      trail.MaxLength = 4
+
+      tweener(trail, "Lifetime", 1, 5, 1)
+
+      local random = tweener(trail, "LightEmission", 0.7, 0.7, 1)
+
+      random:AddTag("PropertyRandomizer")
+      trail.LightEmission = 0.25
+
+      framed(trail, "property", "MaxLength", {
+        { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(1) },
+      })
+
+      emit(root)
+
+      for _ = 1, 4 do
+        harness.render(0.25)
+      end
+
+      expect(trail.Lifetime).toBe(2)
+      expect(trail.MaxLength).toBe(4)
+      expect(trail.LightEmission).toBe(0.25)
+    end)
   end)
 end)

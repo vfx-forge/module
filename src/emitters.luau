@@ -383,7 +383,11 @@ function emitters.dispatch(
   effect: registry.Module?,
   constant: boolean?
 )
-  if not constant then
+  -- a custom effect's instance plays through its rows alone: a randomizer
+  -- child or a queue no row of it owns is the old format's leftover there
+  local own = effect ~= nil and registry.isCustom(effect)
+
+  if not constant and not own then
     processRandomizers(obj, scope)
   end
 
@@ -402,7 +406,7 @@ function emitters.dispatch(
       return
     end
 
-    if not constant then
+    if not constant and not own then
       emitters.applyMods(obj, scope, ctx.duration :: number, registry.owned(effect))
     end
 

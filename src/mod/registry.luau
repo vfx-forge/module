@@ -793,7 +793,9 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
     local parent = inst.Parent
     local module = if parent == root then claimant else classifierOf(hits, parent :: Instance)
 
-    if readsChild(module, inst) then
+    -- under a custom effect's instance, a legacy child its rows do not read
+    -- is the old format's leftover, which nothing plays
+    if readsChild(module, inst) or (module ~= nil and custom[module]) then
       continue
     end
 
