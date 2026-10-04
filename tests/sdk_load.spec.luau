@@ -8,6 +8,7 @@ local test, expect = harness.test, harness.expect
 
 local load = require("@root/sdk/load")
 local custom = require("@root/sdk/custom")
+local facade = require("@root/sdk/v1/facade")
 
 -- a custom effect as an author writes it, every field overridable
 local function effect(extra: { [string]: any }?)
@@ -471,6 +472,17 @@ harness.suite(function()
   end)
 
   harness.describe("what a host adds to a failure, and ending every custom effect", function()
+    -- lune refuses churn(), so garbage is made until the
+    -- collector has run a few whole cycles
+    local function churn()
+      for _ = 1, 40 do
+        local junk = {}
+
+        for i = 1, 50000 do
+          junk[i] = { i }
+        end
+      end
+    end
     local REFUSAL = "The current thread cannot call 'GetAsync' (lacking capability Network)"
 
     local function failing(id: string, message: string)
@@ -603,6 +615,77 @@ harness.suite(function()
       expect(registry.get("my_effect") ~= nil).toBe(true)
 
       builtin:Clear()
+    end)
+
+    test("an effect kept running by a hold alone is still found by kill after a collect", function()
+      fresh()
+
+      local cleaned = 0
+      local view
+
+      custom.add(
+        "a",
+        effect({
+          emit = function(sdk: any, ctx: any)
+            view = ctx
+
+            sdk.hold(ctx, function()
+              cleaned += 1
+            end)
+
+            sdk.wait(ctx, 10)
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      local mine = effects.emit(0, tagged())
+
+      scheduler.frame(0.1)
+      churn()
+
+      expect(mine.Finished:getStatus()).toBe("Started")
+      expect((pcall(view.ref.GetFullName, view.ref))).toBe(true)
+
+      custom.kill()
+
+      expect(mine.Finished:getStatus()).toBe("Resolved")
+      expect(cleaned).toBe(1)
+    end)
+
+    test("the facade lets a ctx go once its scope has ended", function()
+      fresh()
+
+      local probe = setmetatable({}, { __mode = "k" })
+
+      registry.register({
+        id = "probed",
+        display = { name = "probed" },
+        classifier = "Folder",
+        attributes = {},
+        properties = {},
+        emit = function(ctx: any, attrs: any, props: any)
+          probe[ctx] = true
+
+          facade.run(function(sdk: any, view: any)
+            sdk.hold(view, function() end)
+            sdk.wait(view, 10)
+          end, ctx, attrs, props)
+        end,
+      })
+
+      local mine = effects.emit(0, harness.make("Folder", harness.make("Folder")))
+
+      churn()
+
+      expect(next(probe) ~= nil).toBe(true)
+
+      mine:Clear()
+      mine = nil
+      scheduler.frame(0.5)
+      churn()
+
+      expect(next(probe)).toBe(nil)
     end)
   end)
 
