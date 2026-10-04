@@ -632,9 +632,9 @@ function facade.rule(fn: (...any) -> any)
   return wrapped
 end
 
--- an author's template, which a host calls with nothing and the runtime never
--- does. it is handed the sdk alone, and a failure naming the name the module's
--- source runs under names its real path instead
+-- an author's template, which a host calls and the runtime never does. it is
+-- handed the sdk alone, and a failure that names the clone it ran as names the
+-- module's path instead
 function facade.template(fn: (sdk: any) -> any, from: string?, to: string)
   return function()
     local ok, made = pcall(fn, v1)
