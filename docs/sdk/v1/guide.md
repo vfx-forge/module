@@ -98,7 +98,7 @@ end
 
 When the classifier's first alternative is a class followed by tags, as `BasePart.MyEffect`, and a selected instance is of that class, the adder adds the tags to it instead of making one, whether or not there is a template. Otherwise the adder calls your template. Without one, it makes an instance itself only for such a classifier: a Part for `BasePart`, an instance of the class for any other, carrying every tag. A class Studio cannot make is reported, and nothing is made. A classifier with more than that (a name, an attribute filter, a pseudo class such as `:has(...)`, or a parent in front of the subject) cannot be made that way, so give such an effect a template.
 
-The adder runs the template inside one undo step. If it throws, or answers anything but an Instance, the step is undone, so whatever it made is gone, and the error is shown. If the instance is not one your classifier finds, the adder keeps it and says so.
+The adder runs the template inside one undo step and gives it five seconds to return. If it throws, runs out of time, or answers anything but an Instance, the step is undone, so whatever it made is gone, and the error is shown. If the instance is not one your classifier finds, the adder keeps it and says so.
 
 ## Time
 
