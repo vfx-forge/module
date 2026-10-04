@@ -128,8 +128,11 @@ function resize.apply(obj: Instance, factor: number)
     scaleShape(obj, module, factor)
   end
 
+  -- a custom effect's instance is its own: only its rows say what scales
+  local engine = module == nil or not registry.isCustom(module)
+
   for class, units in resize.PROPERTY_UNITS do
-    if not obj:IsA(class) then
+    if not engine or not obj:IsA(class) then
       continue
     end
 

@@ -120,8 +120,9 @@ local function selectRandomSound(ref: Sound, poolTag: string): Sound?
 
   local totalWeight = 0
 
+  -- a sound a custom effect classifies is that effect's to play, never a draw
   for _, obj in sounds do
-    if not obj:IsA("Sound") then
+    if not obj:IsA("Sound") or registry.of(obj) ~= sound then
       continue
     end
 

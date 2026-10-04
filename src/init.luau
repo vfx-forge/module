@@ -319,12 +319,13 @@ function api.restoreAttributes(obj: Instance, shallow: boolean?)
   end
 end
 
+-- an emitter or beam a custom effect classifies is that effect's, switched
+-- through its row like any other
 local function setEnabled(obj: Instance, enabled: boolean)
-  if obj:IsA("ParticleEmitter") then
-    obj.Enabled = enabled
-    return
-  elseif obj:IsA("Beam") then
-    obj.Enabled = enabled
+  local module = registry.of(obj)
+
+  if module == Particle or module == Beam then
+    (obj :: any).Enabled = enabled
     return
   end
 

@@ -48,6 +48,28 @@ local function stub()
   })
 end
 
+-- an emitter a custom effect classifies, its one property row the emitter's own
+-- Lifetime
+local function customEmitter(): Instance
+  registry.clear()
+  registry.configure({ query = harness.query })
+  harness.reset()
+  registry.register({
+    id = "my_emitter",
+    display = { name = "My Emitter" },
+    classifier = "ParticleEmitter.MyEmitter",
+    attributes = {},
+    properties = { Lifetime = knob():unit("seconds") },
+    emit = noop,
+  }, true)
+
+  local obj = harness.make("ParticleEmitter", harness.make("Folder"))
+
+  obj:AddTag("MyEmitter")
+
+  return obj
+end
+
 -- the sound's own shape for a knob whose queue can sit under the property
 -- spelling, beside the legacy span of that queue as a row of its own
 local function soundLike()
@@ -180,6 +202,19 @@ harness.suite(function()
       expect(obj.Rate).toBe(20)
     end)
 
+    test("a custom effect's emitter scales by its rows alone, a shared property once", function()
+      local obj = customEmitter() :: any
+
+      obj.Lifetime = NumberRange.new(2, 4)
+      obj.Rate = 10
+
+      retime.apply(obj, 2, 0.5)
+
+      expect(obj.Lifetime.Min).toBe(1)
+      expect(obj.Lifetime.Max).toBe(2)
+      expect(obj.Rate).toBe(10)
+    end)
+
     test("batch refuses a factor that is not positive and finite", function()
       local obj = Instance.new("Part")
       obj:SetAttribute("Delay", 2)
@@ -255,6 +290,17 @@ harness.suite(function()
 
       expect(obj.Size.Keypoints[1].Value).toBe(2)
       expect(obj.Size.Keypoints[2].Value).toBe(4)
+    end)
+
+    test("a custom effect's emitter keeps the engine sizes no row of its names", function()
+      local obj = customEmitter() :: any
+
+      obj.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(1, 2) })
+
+      resize.apply(obj, 2)
+
+      expect(obj.Size.Keypoints[1].Value).toBe(1)
+      expect(obj.Size.Keypoints[2].Value).toBe(2)
     end)
 
     test("a beam's length scales its attachments, never its resting value", function()

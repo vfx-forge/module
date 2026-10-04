@@ -467,6 +467,9 @@ harness.suite(function()
 
     test("any other instance stores Enabled, a cached one in its cache", function()
       local vfx = api()
+
+      registry.register(require("@vfx/particle"))
+
       local folder = harness.make("Folder")
       local emitter = harness.make("ParticleEmitter", folder) :: ParticleEmitter
 
@@ -484,6 +487,38 @@ harness.suite(function()
 
       expect(attr.get(folder, "Enabled", true)).toBe(false)
       expect(emitter.Enabled).toBe(false)
+
+      registry.clear()
+    end)
+
+    test("an emitter a custom effect classifies keeps its own Enabled and stores the row", function()
+      local vfx = api()
+
+      registry.configure({ query = harness.query })
+      harness.reset()
+      registry.register(require("@vfx/particle"))
+      registry.register({
+        id = "my_emitter",
+        display = { name = "My Emitter" },
+        classifier = "ParticleEmitter.MyEmitter",
+        emit = function() end,
+      }, true)
+
+      local folder = harness.make("Folder")
+      local mine = harness.make("ParticleEmitter", folder) :: ParticleEmitter
+      local plain = harness.make("ParticleEmitter", folder) :: ParticleEmitter
+
+      mine:AddTag("MyEmitter")
+      mine.Enabled = false
+      plain.Enabled = false
+
+      vfx.enable(folder)
+
+      expect(mine.Enabled).toBe(false)
+      expect(attr.get(mine, "Enabled", false)).toBe(true)
+      expect(plain.Enabled).toBe(true)
+
+      registry.clear()
     end)
 
     test("an emit of a cached enabled mesh stops its passive loop", function()
