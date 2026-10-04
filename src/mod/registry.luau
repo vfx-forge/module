@@ -554,6 +554,11 @@ function registry.unregister(module: Module)
   reorder()
 end
 
+-- whether the module was registered as a custom effect's, and still is
+function registry.isCustom(module: Module): boolean
+  return custom[module] == true
+end
+
 function registry.get(id: string): Module?
   return byId[id]
 end

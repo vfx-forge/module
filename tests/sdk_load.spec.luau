@@ -819,6 +819,22 @@ harness.suite(function()
       expect((custom.add("b", effect(), "ReplicatedStorage.B"))).toBe(true)
     end)
 
+    test("isCustom is true for a custom effect's module only while it is registered", function()
+      fresh()
+      builtins()
+
+      custom.add("a", effect(), "ReplicatedStorage.A")
+
+      local module = registry.get("my_effect")
+
+      expect(registry.isCustom(module)).toBe(true)
+      expect(registry.isCustom(registry.get("beam"))).toBe(false)
+
+      custom.remove("a")
+
+      expect(registry.isCustom(module)).toBe(false)
+    end)
+
     test("an unload that throws is warned and the removal still happens", function()
       fresh()
 
