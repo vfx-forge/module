@@ -297,17 +297,6 @@ local function tagsOf(compound: string): { string }
   return out
 end
 
--- a compound naming nothing but a class claims every instance of it
-local function whole(alternative: { string }): string?
-  local subject = alternative[#alternative] or ""
-
-  if #alternative ~= 1 or string.find(subject, "[%.#%[]") then
-    return nil
-  end
-
-  return string.match(subject, "^([%a_][%w_]*)")
-end
-
 -- why the classifier could match an instance another effect plays, or nil
 function load.overlap(classifier: string, except: any?): string?
   local others = {}
@@ -337,12 +326,6 @@ function load.overlap(classifier: string, except: any?): string?
           if table.find(tags, tag) then
             return `classifier {classifier} shares the tag {tag} with {module.id}`
           end
-        end
-
-        local claimed = whole(theirs)
-
-        if claimed ~= nil and claimed == class then
-          return `classifier {classifier} overlaps {module.id}, which plays every {claimed}`
         end
       end
     end

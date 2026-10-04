@@ -208,10 +208,6 @@ harness.suite(function()
         "classifier Attachment.BezierParticle shares the tag BezierParticle with bezier",
       })
 
-      expect(refusal(effect({ classifier = "Beam.MyEffect" }))).toEqual({
-        "classifier Beam.MyEffect overlaps beam, which plays every Beam",
-      })
-
       expect(refusal(effect({ classifier = "Instance.MyEffect" }))).toEqual({
         "classifier Instance.MyEffect: Instance is too broad a class for a custom effect, name a concrete class such as BasePart",
       })
@@ -223,6 +219,19 @@ harness.suite(function()
       local module = load.assemble(effect({ classifier = "Attachment.MyEffect" }), "ReplicatedStorage.MyEffect")
 
       expect(module ~= nil).toBe(true)
+    end)
+
+    test("a classifier may name a class a built-in plays whole, as its tag is its own", function()
+      fresh()
+      builtins()
+      registry.register(require("@vfx/particle"))
+
+      for _, classifier in { "Beam.MyEffect", "ParticleEmitter.MyTag" } do
+        local module, found = load.assemble(effect({ classifier = classifier }), "ReplicatedStorage.MyEffect")
+
+        expect(found).toEqual({})
+        expect(module ~= nil).toBe(true)
+      end
     end)
 
     test("a class too broad to tell apart is refused even when no other effect is registered", function()

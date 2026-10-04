@@ -605,13 +605,82 @@ local function scanRoot(root: Instance, depth: number): Instance
   return current
 end
 
+-- a subject compound asked of the instance itself: true or false when it names
+-- nothing but a class, tags and a name, nil when it filters on more than that
+local function bare(inst: Instance, compound: string): boolean?
+  local class, rest = string.match(compound, "^([%a_][%w_]*)(.*)$")
+
+  if class == nil then
+    return nil
+  end
+
+  local matched = inst:IsA(class)
+
+  while rest ~= "" do
+    local kind, word, after = string.match(rest, "^([%.#])([%w_]+)(.*)$")
+
+    if kind == nil then
+      return nil
+    end
+
+    if kind == "." then
+      matched = matched and inst:HasTag(word)
+    else
+      matched = matched and inst.Name == word
+    end
+
+    rest = after
+  end
+
+  return matched
+end
+
+-- a custom classifier asked of an instance with no ancestor to query it from:
+-- "claims" when a lone subject compound matches it outright, "holds" when the
+-- instance carries a subject's class and every tag but the classifier cannot be
+-- decided here, so no built-in may take it either
+local function unrooted(inst: Instance, classifier: string): string?
+  local held = false
+
+  for _, alternative in registry.alternatives(classifier) do
+    local subject = alternative[#alternative] or ""
+    local matched = if #alternative == 1 then bare(inst, subject) else nil
+
+    if matched == true then
+      return "claims"
+    end
+
+    if matched == false then
+      continue
+    end
+
+    local class = string.match(subject, "^([%a_][%w_]*)")
+    local carried = class ~= nil and inst:IsA(class)
+
+    for tag in string.gmatch(subject, "%.([%w_]+)") do
+      carried = carried and inst:HasTag(tag)
+    end
+
+    held = held or carried
+  end
+
+  return if held then "holds" else nil
+end
+
 -- one instance classified: a classifier that is only a class is answered by the
 -- instance itself, at no walk and no query, and any other is run from the
 -- ancestor high enough for every combinator in it to match below the root. the
 -- first hit wins, a custom effect's ahead of a built-in's; built-ins are
--- disjoint by contract, so among them first is only ever one
+-- disjoint by contract, so among them first is only ever one. an instance a
+-- custom classifier holds but cannot decide is nobody's
 function registry.of(inst: Instance): Module?
+  local held = false
+
   for _, module in order do
+    if held and not custom[module] then
+      return nil
+    end
+
     local sole = shape[module].sole
 
     if sole ~= nil then
@@ -640,6 +709,14 @@ function registry.of(inst: Instance): Module?
     local root = ancestorAt(inst, shape[module].depth + 1)
 
     if root == nil then
+      local answer = if custom[module] then unrooted(inst, module.classifier) else nil
+
+      if answer == "claims" then
+        return module
+      end
+
+      held = held or answer == "holds"
+
       continue
     end
 
