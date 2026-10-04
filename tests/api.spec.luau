@@ -665,6 +665,45 @@ harness.suite(function()
       end)
     end)
 
+    test("a constant custom effect keeps looping after a reload on a part screen also matches", function()
+      passive(function(stand: any)
+        registry.register(require("@vfx/screen"))
+
+        local author = looping("Loop")
+
+        author.classifier = "BasePart.MyLoop"
+        custom.add("a", author, "ReplicatedStorage.A")
+
+        local part = looped(stand)
+
+        -- the attribute on the part itself, which the cache moved aside, as
+        -- attr.get's write of a default leaves it in Studio's edit mode and
+        -- where screen's classifier reads it
+        part:SetAttribute("Enabled", true)
+
+        expect(table.find(harness.query(part.Parent :: Instance, "BasePart[$Enabled=true]"), part) ~= nil).toBe(true)
+        expect(registry.of(part)).toBe(registry.get("my_loop"))
+
+        harness.render(0.21)
+
+        local first = registry.get("my_loop")
+
+        expect(stand.ticked).toBe(first)
+
+        local again = looping("Loop 2")
+
+        again.classifier = "BasePart.MyLoop"
+
+        expect((custom.add("a", again, "ReplicatedStorage.A"))).toBe(true)
+
+        harness.render(0.21)
+
+        expect(stand.seen.passive).toBe(2)
+        expect(stand.ticked).toBe(registry.get("my_loop"))
+        expect(stand.ticked ~= first).toBe(true)
+      end)
+    end)
+
     test("removing a constant custom effect stops its loop", function()
       passive(function(stand: any)
         custom.add("a", looping("Loop"), "ReplicatedStorage.A")

@@ -19,6 +19,13 @@ type Owned = { [string]: { [string]: boolean } }
 local modules: { Module } = {}
 local byId: { [string]: Module } = {}
 
+-- the order instances are classified in: every custom effect ahead of the
+-- built-ins, since a custom effect's tag is its own and an instance carrying it
+-- is that effect's even where a built-in's classifier matches too, as screen's
+-- does any part a passive loop gave Enabled
+local order: { Module } = {}
+local custom: { [Module]: boolean } = {}
+
 -- per module, computed once at register: the rows the effect drives itself. a
 -- property row's old queues lived on the attribute side too, so the applier
 -- must leave both alone
@@ -42,7 +49,9 @@ end
 
 function registry.clear()
   table.clear(modules)
+  table.clear(order)
   table.clear(byId)
+  table.clear(custom)
   table.clear(owned)
   table.clear(shape)
 end
@@ -444,7 +453,27 @@ function registry.problems(module: Module, except: Module?): { string }
   return found
 end
 
-function registry.register(module: Module)
+-- the classification order rebuilt from the display order, each custom effect
+-- first and every built-in after it in the order it already had
+local function reorder()
+  table.clear(order)
+
+  for _, module in modules do
+    if custom[module] then
+      table.insert(order, module)
+    end
+  end
+
+  for _, module in modules do
+    if not custom[module] then
+      table.insert(order, module)
+    end
+  end
+end
+
+-- `isCustom` marks a custom effect's module, which is classified ahead of
+-- every built-in
+function registry.register(module: Module, isCustom: boolean?)
   local found = registry.problems(module)
 
   if #found > 0 then
@@ -498,6 +527,12 @@ function registry.register(module: Module)
 
     return a.id < b.id
   end)
+
+  if isCustom then
+    custom[module] = true
+  end
+
+  reorder()
 end
 
 -- the module taken out of every lookup, so its id and classifier are free
@@ -514,6 +549,9 @@ function registry.unregister(module: Module)
   byId[module.id] = nil
   owned[module] = nil
   shape[module] = nil
+  custom[module] = nil
+
+  reorder()
 end
 
 function registry.get(id: string): Module?
@@ -565,9 +603,10 @@ end
 -- one instance classified: a classifier that is only a class is answered by the
 -- instance itself, at no walk and no query, and any other is run from the
 -- ancestor high enough for every combinator in it to match below the root. the
--- first hit wins; modules are disjoint by contract, so first is only ever one
+-- first hit wins, a custom effect's ahead of a built-in's; built-ins are
+-- disjoint by contract, so among them first is only ever one
 function registry.of(inst: Instance): Module?
-  for _, module in modules do
+  for _, module in order do
     local sole = shape[module].sole
 
     if sole ~= nil then
@@ -646,7 +685,8 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
   local hits: { Hit } = {}
   local taken: { [Instance]: boolean } = {}
 
-  for _, module in modules do
+  -- the first module to reach an instance takes it, in the order `of` asks
+  for _, module in order do
     for _, inst in query(scanRoot(root, shape[module].depth), module.classifier) do
       -- a query run from above the root reaches the root's siblings too, and
       -- none of them is this scan's

@@ -282,6 +282,37 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("classifying a custom effect's instance", function()
+    test("a tagged part with Enabled set is the custom effect's, not screen's, in of and scan", function()
+      fresh()
+      registry.register(require("@vfx/screen"))
+
+      local folder = harness.make("Folder", harness.make("Folder"))
+      local part = harness.make("Part", folder)
+
+      part:AddTag("MyEffect")
+      part:SetAttribute("Enabled", true)
+
+      expect(registry.of(part)).toBe(registry.get("screen"))
+      expect((custom.add("a", effect({ classifier = "BasePart.MyEffect" }), "ReplicatedStorage.A"))).toBe(true)
+
+      local mine = registry.get("my_effect")
+      local hits = registry.scan(folder)
+
+      expect(registry.of(part)).toBe(mine)
+      expect(#hits).toBe(1)
+      expect(hits[1].effect).toBe(mine)
+
+      -- the order a list shows is the display order, custom effects last
+      expect(registry.list()[2]).toBe(mine)
+
+      custom.remove("a")
+
+      expect(registry.of(part)).toBe(registry.get("screen"))
+      expect(registry.scan(folder)[1].effect).toBe(registry.get("screen"))
+    end)
+  end)
+
   harness.describe("replacing and removing a custom effect", function()
     test("a new version under the same key replaces the old, whose unload runs once", function()
       fresh()

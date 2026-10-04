@@ -78,7 +78,7 @@ function custom.add(key: any, author: any, path: string): (boolean, { string })
     registry.unregister(previous.module)
   end
 
-  registry.register(module)
+  registry.register(module, true)
 
   entries[key] = { path = path, author = author, module = module }
 
