@@ -114,6 +114,23 @@ function custom.clear()
   end
 end
 
+-- a host's sentence added to every failure a custom effect reports, as the
+-- plugin says what its sandbox refused. nil takes it away, and the game never
+-- sets one, so there a failure reads as the engine wrote it
+function custom.annotate(fn: ((message: string) -> string?)?)
+  for _, facade in load.VERSIONS do
+    facade.annotate(fn)
+  end
+end
+
+-- every custom effect still playing ended now, letting go of what it held, as
+-- when a host takes from custom effects what they could do when they started
+function custom.kill()
+  for _, facade in load.VERSIONS do
+    facade.kill()
+  end
+end
+
 -- the module `key` registered, or nil
 function custom.get(key: any): any?
   local entry = entries[key]

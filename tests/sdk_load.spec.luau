@@ -1,6 +1,7 @@
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
+local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
 local test, expect = harness.test, harness.expect
@@ -466,6 +467,142 @@ harness.suite(function()
 
       expect(#warnings).toBe(1)
       expect(string.find(warnings[1], "VFXForgeEffects.MyEffect_4:20: emit boom", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
+  harness.describe("what a host adds to a failure, and ending every custom effect", function()
+    local REFUSAL = "The current thread cannot call 'GetAsync' (lacking capability Network)"
+
+    local function failing(id: string, message: string)
+      return effect({
+        id = id,
+        classifier = `Folder.{id}`,
+        emit = function()
+          error(message)
+        end,
+      })
+    end
+
+    local function warned(id: string): string
+      local folder = harness.make("Folder", harness.make("Folder"))
+
+      folder:AddTag(id)
+
+      local warnings = harness.captureWarnings(function()
+        effects.emit(0, folder)
+      end)
+
+      expect(#warnings).toBe(1)
+
+      return warnings[1]
+    end
+
+    test(
+      "a host's sentence follows the error's first line once, and a failure it says nothing about is as it was",
+      function()
+        fresh()
+
+        local asked = 0
+
+        custom.annotate(function(message: string)
+          asked += 1
+
+          if string.find(message, "lacking capability Network", 1, true) then
+            return "Turn Network on."
+          end
+
+          return nil
+        end)
+
+        custom.add("a", failing("net", REFUSAL), "ReplicatedStorage.Net")
+        custom.add("b", failing("plain", "boom"), "ReplicatedStorage.Plain")
+
+        local net = warned("net")
+        local plain = warned("plain")
+
+        custom.annotate(nil)
+
+        local first = string.split(net, "\n")[1]
+
+        expect(string.sub(first, -#`{REFUSAL}. Turn Network on.`)).toBe(`{REFUSAL}. Turn Network on.`)
+        expect(select(2, string.gsub(net, "Turn Network on%.", ""))).toBe(1)
+        expect(string.find(plain, "boom", 1, true) ~= nil).toBe(true)
+        expect(string.find(plain, "Turn Network on", 1, true)).toBe(nil)
+        expect(asked).toBe(2)
+      end
+    )
+
+    test("with no host sentence set, a failure reads as the engine wrote it", function()
+      fresh()
+
+      custom.add("a", failing("net", REFUSAL), "ReplicatedStorage.Net")
+
+      local net = warned("net")
+
+      expect(string.find(net, REFUSAL, 1, true) ~= nil).toBe(true)
+      expect(string.find(net, `{REFUSAL}.`, 1, true)).toBe(nil)
+    end)
+
+    test("a sentence that throws leaves the failure as it was", function()
+      fresh()
+
+      custom.annotate(function()
+        error("sentence boom")
+      end)
+
+      custom.add("a", failing("net", REFUSAL), "ReplicatedStorage.Net")
+
+      local net = warned("net")
+
+      custom.annotate(nil)
+
+      expect(string.find(net, REFUSAL, 1, true) ~= nil).toBe(true)
+      expect(string.find(net, "sentence boom", 1, true)).toBe(nil)
+    end)
+
+    test("kill ends every custom effect still playing and puts back what it wrote, and leaves a built-in", function()
+      fresh()
+      registry.register({
+        id = "waits",
+        display = { name = "waits" },
+        classifier = "Configuration",
+        attributes = {},
+        properties = {},
+        emit = function(ctx: any)
+          lifetime.wait(ctx.scope, 10)
+        end,
+      })
+
+      custom.add(
+        "a",
+        effect({
+          emit = function(sdk: any, ctx: any)
+            sdk.getWriter(ctx, ctx.ref, "Name"):set("written")
+            sdk.wait(ctx, 10)
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      local folder = tagged()
+
+      folder.Name = "authored"
+
+      local mine = effects.emit(0, folder)
+      local builtin = effects.emit(0, harness.make("Configuration", harness.make("Folder")))
+
+      scheduler.frame(0.5)
+
+      expect(folder.Name).toBe("written")
+
+      custom.kill()
+
+      expect(mine.Finished:getStatus()).toBe("Resolved")
+      expect(folder.Name).toBe("authored")
+      expect(builtin.Finished:getStatus()).toBe("Started")
+      expect(registry.get("my_effect") ~= nil).toBe(true)
+
+      builtin:Clear()
     end)
   end)
 

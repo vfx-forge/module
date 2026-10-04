@@ -52,6 +52,9 @@ local CTXS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
 -- the rules already handed views, so a rule is never wrapped twice
 local RULES: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
+-- a host's sentence for a reported failure, which only the plugin sets
+local annotate: ((message: string) -> string?)? = nil
+
 -- what every curve the facade makes is, told apart from any other table by it
 local CURVE = getmetatable(curve.new(1, "linear"))
 
@@ -155,6 +158,20 @@ local function renamed(text: string, from: string, to: string)
   return table.concat(out)
 end
 
+-- the host's sentence after the failure's first line, ahead of its traceback
+local function annotated(text: string): string
+  local ok, sentence = pcall(annotate :: any, text)
+
+  if not ok or type(sentence) ~= "string" then
+    return text
+  end
+
+  local first, rest = string.match(text, "^([^\n]*)(.*)$")
+  local stop = if string.sub(first :: string, -1) == "." then " " else ". "
+
+  return `{first}{stop}{sentence}{rest}`
+end
+
 -- the failure warned about once per module and instance, and the effect ended
 local function report(ctx: any, err: any)
   local scope = ctx.scope
@@ -180,6 +197,10 @@ local function report(ctx: any, err: any)
 
     if alias ~= nil then
       text = renamed(text, alias.from, alias.to)
+    end
+
+    if annotate ~= nil then
+      text = annotated(text)
     end
 
     logger.warn(`custom effect {id} failed on {ctx.ref:GetFullName()}: {text}`)
@@ -577,6 +598,22 @@ function facade.alias(module: any, from: string, to: string)
   end
 
   ALIASES[module] = { from = from, to = to }
+end
+
+-- the sentence a host adds to every failure it reports, nil for none
+function facade.annotate(fn: ((message: string) -> string?)?)
+  annotate = fn
+end
+
+-- every custom effect still playing ended as a failure ends one
+function facade.kill()
+  for ctx in table.clone(VIEWS) do
+    local scope = ctx.scope
+
+    if type(scope) == "table" and scope.state == lifetime.RUNNING then
+      lifetime.kill(scope)
+    end
+  end
 end
 
 -- an author's rule, called by the reader with the runtime's ctx and handed

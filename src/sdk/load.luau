@@ -30,6 +30,7 @@ local OPTIONS = { "duration", "curve", "delay" }
 local load = {}
 
 load.SUPPORTED = #VERSIONS
+load.VERSIONS = table.freeze(table.clone(VERSIONS))
 
 -- how many single letter edits apart two names are
 local function distance(a: string, b: string)

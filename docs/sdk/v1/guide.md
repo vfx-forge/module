@@ -126,7 +126,17 @@ A module that fails to load, throws in `params` or breaks a rule is refused with
 The plugin reloads a custom effect when any ModuleScript inside the tagged module changes, or one is added or removed there. It copies the module into a folder of its own and requires the copy, so:
 
 - Keep helpers inside the tagged module and require them relative to `script`.
-- A module required by absolute path from elsewhere, such as `ReplicatedStorage.Shared.Util`, is not reloaded. The plugin tells you when one changes; reload the plugin to pick it up.
+- A module required by absolute path from elsewhere, such as `ReplicatedStorage.Shared.Util`, loads only if it is sandboxed itself (see below), and it is not reloaded. The plugin tells you when one changes; reload the plugin to pick it up.
 - A require that climbs out of the tagged module (`script.Parent.Shared`) does not resolve in the copy.
 
 Do no work when the module loads: no connections, loops or threads at the top level. Everything belongs in `emit`. If the module must start something, stop it in `effect.unload()`, which is called on the old version once a reload has replaced it, on a removed one, and on a version that is refused. Effects already playing finish on the version they started with.
+
+## Custom effects in Studio
+
+In Studio, VFX Forge runs custom effects in Roblox's script sandbox. A custom effect cannot upload assets, make purchases, use datastores, compile code with loadstring or require modules by asset id. It cannot use the network or load assets by id unless you turn on Network or Load Assets under Custom Effects in VFX Forge's settings.
+
+In Studio a custom effect can only require modules inside itself, or modules that are sandboxed themselves with no more capabilities than custom effects get. Keep helpers inside the effect, or sandbox a shared one yourself by turning on its Sandboxed property; that limits it in your game too, for every script that requires it.
+
+The sandbox does not stop an effect from changing your place, including your other scripts, or from using Studio's own services. In a playtest and in your game, a custom effect runs as ordinary game code with your game's full rights. Treat a custom effect like any script from a free model: add one only from someone you trust, and read it first.
+
+Turning Network or Load Assets on or off restarts every custom effect, and turning one off also ends every custom effect still playing.
