@@ -40,7 +40,7 @@ return effect
 - `id` is a name of letters, digits and underscores, unique across every effect. A built-in's id is refused. When two modules claim one id, the first registered keeps it and the other is refused, with both named.
 - `display` takes `name` and an optional `icon`.
 - `classifier` is a selector. Every alternative in it names a class and a tag of its own, as in `BasePart.MyEffect`, so no instance can be yours and another effect's at once. Tag the instances that play it with that tag. An instance carrying it is yours even where a built-in's classifier matches it too, as screen's matches any part with `Enabled` set. A classifier that shares a tag with another effect, or names a class a built-in plays whole (`Beam`, `Trail`, `ParticleEmitter`, `Sound`, `Model`), is refused. So is `Instance` or `PVInstance`, which is too broad to tell your instances apart; name a concrete class such as `BasePart`.
-- Optional fields: `components` (a selector for descendants the effect plays itself), `layout` (the panel's rows), `constant` (an Enabled loop may emit it), `params`, `duration` and `unload`.
+- Optional fields: `components` (a selector for descendants the effect plays itself), `layout` (the panel's rows), `constant` (an Enabled loop may emit it), `params`, `duration`, `unload` and `template` (see Templates).
 - Any other field is refused, so a typo like `clasifier` is caught.
 
 Every method takes `sdk` first. Never require ForgeVFX from a custom effect.
@@ -79,6 +79,26 @@ A modifier whose end already equals the row's value does nothing, and a row noth
 `constant = true` lets an instance play the effect on a loop, which is what the ConstantVFX tag and an `EmitDuration` window do. Such an emit has `ctx.constant` set to `true`, so `emit` can tell a tick of the loop from a single play. A module without `constant` is never looped.
 
 `duration(sdk, attrs, props)` answers the effect's length in seconds, which `ctx.duration` carries into `emit`. It is optional and reads as 1 when missing.
+
+## Templates
+
+`template(sdk)` makes a new instance of the effect for VFX Forge's adder, the popup its keybind opens. It answers one new Instance that your classifier finds, built however you like: its class, its tags, its attributes and its children. Leave it unparented. The adder parents it to the first selected instance, or to the workspace when nothing is selected, places it 5 studs in front of the camera and selects it. The game never calls `template`.
+
+```luau
+function effect.template(sdk)
+  local part = Instance.new("Part")
+
+  part.Anchored = true
+  part.Size = Vector3.new(2, 2, 2)
+  part:AddTag("MyEffect")
+
+  return part
+end
+```
+
+When a selected instance is already of the classifier's class, the adder tags it instead of making one. Otherwise, without a template, the adder makes an instance itself only when the classifier is a class followed by tags, as `BasePart.MyEffect`: a Part for `BasePart`, an instance of the class for any other, carrying every tag. A classifier with more than that (a name, an attribute filter, a pseudo class such as `:has(...)`, or a parent in front of the subject) cannot be made that way, so give such an effect a template.
+
+The adder runs the template inside one undo step. If it throws, or answers anything but an Instance, the step is undone, so whatever it made is gone, and the error is shown. If the instance is not one your classifier finds, the adder keeps it and says so.
 
 ## Time
 

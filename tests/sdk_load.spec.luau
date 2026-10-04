@@ -421,6 +421,123 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("an effect's template", function()
+    test("is handed the sdk alone when the host calls it, and answers what it made", function()
+      fresh()
+
+      local handed = {}
+      local made = harness.make("Folder")
+
+      local ok = custom.add(
+        "a",
+        effect({
+          template = function(...: any)
+            handed = table.pack(...)
+            return made
+          end,
+        }),
+        "ReplicatedStorage.MyEffect"
+      )
+
+      expect(ok).toBe(true)
+      expect(registry.get("my_effect").template()).toBe(made)
+      expect(handed.n).toBe(1)
+      expect(handed[1]).toBe(load.VERSIONS[1].sdk)
+    end)
+
+    test("is never called by the runtime itself", function()
+      fresh()
+
+      local calls = 0
+
+      local ok = custom.add(
+        "a",
+        effect({
+          template = function()
+            calls += 1
+            return harness.make("Folder")
+          end,
+        }),
+        "ReplicatedStorage.MyEffect"
+      )
+
+      expect(ok).toBe(true)
+
+      local env = effects.emit(0, tagged())
+
+      scheduler.frame(0.5)
+      scheduler.frame(0.5)
+
+      expect(env.Finished:getStatus()).toBe("Resolved")
+      expect(calls).toBe(0)
+    end)
+
+    test("an effect without one loads as before, with none", function()
+      fresh()
+
+      custom.add("a", effect(), "ReplicatedStorage.MyEffect")
+
+      expect(registry.get("my_effect").template).toBe(nil)
+    end)
+
+    test("one that is not a function is refused with the usual message", function()
+      fresh()
+
+      expect(refusal(effect({ template = "Part" }))).toEqual({ "template must be a function" })
+    end)
+
+    test("an engine function is refused, since the host would call it with its own rights", function()
+      fresh()
+
+      expect(refusal(effect({ template = print }))).toEqual({
+        "template must be a function of your own, not an engine function",
+      })
+    end)
+
+    test("a failure names the module's real path where it names the clone it ran as", function()
+      fresh()
+
+      local alias = "VFXForgeEffects.MyEffect_4"
+
+      custom.add(
+        "a",
+        effect({
+          template = function()
+            error(`{alias}:7: template boom, then {alias}1:3`, 0)
+          end,
+        }),
+        "ReplicatedStorage.MyEffect",
+        alias
+      )
+
+      local ok, err = pcall(registry.get("my_effect").template)
+
+      expect(ok).toBe(false)
+      expect(err).toBe(`ReplicatedStorage.MyEffect:7: template boom, then {alias}1:3`)
+    end)
+
+    test("a failure that is no string is passed on as its text", function()
+      fresh()
+
+      custom.add(
+        "a",
+        effect({
+          template = function()
+            error({}, 0)
+          end,
+        }),
+        "ReplicatedStorage.MyEffect",
+        "VFXForgeEffects.MyEffect_4"
+      )
+
+      local ok, err = pcall(registry.get("my_effect").template)
+
+      expect(ok).toBe(false)
+      expect(type(err)).toBe("string")
+      expect(string.find(err, "table: ", 1, true)).toBe(1)
+    end)
+  end)
+
   harness.describe("a failing custom effect's report", function()
     test("names the module's path where its error names the clone it ran as", function()
       fresh()

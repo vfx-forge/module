@@ -206,6 +206,8 @@ export type Effect = {
   emit: (sdk: V1, ctx: Ctx, attrs: any, props: any) -> (),
   -- called on the old version before a reload drops it
   unload: (() -> ())?,
+  -- a new instance the classifier finds, unparented, made by the plugin's adder
+  template: ((sdk: V1) -> Instance)?,
 }
 
 return {}

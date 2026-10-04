@@ -18,6 +18,7 @@ local FIELDS = {
   "duration",
   "emit",
   "unload",
+  "template",
 }
 
 -- the classes nothing narrower than the whole class can be told apart from
@@ -141,10 +142,16 @@ local function checkFields(author: any, found: { string })
     table.insert(found, "emit must be a function")
   end
 
-  for _, field in { "params", "duration", "unload" } do
+  for _, field in { "params", "duration", "unload", "template" } do
     if author[field] ~= nil and type(author[field]) ~= "function" then
       table.insert(found, `{field} must be a function`)
     end
+  end
+
+  -- a host calls the template from its own thread, so an engine function
+  -- there would run with the host's rights
+  if type(author.template) == "function" and debug.info(author.template, "s") == "[C]" then
+    table.insert(found, "template must be a function of your own, not an engine function")
   end
 end
 
@@ -373,6 +380,7 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   local run = facade.run
   local emit = author.emit
   local duration = author.duration
+  local template = author.template
 
   local layout = copy(author.layout)
 
@@ -395,6 +403,7 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
     emit = function(ctx: any, attrs: any, props: any)
       run(emit, ctx, attrs, props)
     end,
+    template = if template ~= nil then facade.template(template, alias, path) else nil,
   }
 
   -- the id is the caller's to weigh, since only it knows who holds one

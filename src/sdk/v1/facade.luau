@@ -632,6 +632,28 @@ function facade.rule(fn: (...any) -> any)
   return wrapped
 end
 
+-- an author's template, which a host calls with nothing and the runtime never
+-- does. it is handed the sdk alone, and a failure naming the name the module's
+-- source runs under names its real path instead
+function facade.template(fn: (sdk: any) -> any, from: string?, to: string)
+  return function()
+    local ok, made = pcall(fn, v1)
+
+    if ok then
+      return made
+    end
+
+    local text = tostring(made)
+
+    if from ~= nil and from ~= "" then
+      text = renamed(text, from, to)
+    end
+
+    -- the author's own failure passed on as it came, with no prefix of ours
+    error(text, 0)
+  end
+end
+
 -- the author's emit run under the facade: a throw ends the effect, warned once
 -- per module and instance, and an emit that returns keeps its effect until its
 -- tweens, its nested emits and every join it made are through

@@ -601,5 +601,7 @@ export namespace SDK {
 		): void;
 		/** Called on the old version before a reload drops it. */
 		unload?(): void;
+		/** A new instance the classifier finds, unparented, made by the plugin's adder. */
+		template?(sdk: V1): Instance;
 	}
 }
