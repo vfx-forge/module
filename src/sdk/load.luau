@@ -1,3 +1,4 @@
+local knob = require("@mod/knob")
 local curves = require("@mod/curves")
 local registry = require("@mod/registry")
 
@@ -30,6 +31,22 @@ local BROAD = { Instance = true, PVInstance = true }
 -- a knob's fields and a default modifier's options that may hold a rule
 local RULES = { "rule", "hiddenRule", "readonlyRule" }
 local OPTIONS = { "duration", "curve", "delay" }
+
+-- the value types the plugin's panel has an editor for, a curve being a
+-- string; a property row may also hold an enum item
+local EDITABLE = {
+  "number",
+  "boolean",
+  "string",
+  "NumberRange",
+  "Vector2",
+  "Vector3",
+  "UDim",
+  "UDim2",
+  "Color3",
+  "NumberSequence",
+  "ColorSequence",
+}
 
 local load = {}
 
@@ -227,6 +244,36 @@ local function paramsOf(author: any, sdk: any, found: { string }): ({ [string]: 
   return if type(attributes) == "table" then attributes else {}, if type(properties) == "table" then properties else {}
 end
 
+-- every row whose default is of a type the panel cannot edit, named. a rule
+-- row's type is what it resolves to, which nothing knows at load
+local function checkKinds(rows: { [string]: any }, source: string, found: { string })
+  local names = {}
+
+  for name, row in rows do
+    if type(name) == "string" and knob.is(row) and row.kind ~= nil then
+      table.insert(names, name)
+    end
+  end
+
+  table.sort(names)
+
+  for _, name in names do
+    local kind = rows[name].kind
+
+    if table.find(EDITABLE, kind) or (source == "properties" and kind == "EnumItem") then
+      continue
+    end
+
+    local allowed = table.concat(EDITABLE, ", ")
+    local extra = if source == "properties" then ", EnumItem" else ""
+
+    table.insert(
+      found,
+      `{source}.{name} is of type {kind}, which the panel cannot edit; a param holds one of {allowed}{extra}, or a curve`
+    )
+  end
+end
+
 -- a curve param whose default is a preset's name, or none, starts as that
 -- preset's curve, which is what the curve editor shows and the reader hands on
 local function curveDefaults(rows: { [string]: any })
@@ -384,6 +431,9 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   checkFields(author, found)
 
   local attributes, properties = paramsOf(author, facade.sdk, found)
+
+  checkKinds(attributes, "attributes", found)
+  checkKinds(properties, "properties", found)
 
   if #found > 0 then
     return nil, found

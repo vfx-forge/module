@@ -229,6 +229,71 @@ harness.suite(function()
       }))).toEqual({ "the default of B lies outside its own bounds" })
     end)
 
+    test("a param of a type the panel cannot edit is refused, naming the row", function()
+      fresh()
+
+      local allowed =
+        "number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence, ColorSequence"
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Offset = sdk.knob(CFrame.new()),
+              Look = sdk.knob(Enum.Material.Plastic),
+              Size = sdk.knob(1),
+            },
+            properties = {
+              Material = sdk.knob(Enum.Material.Plastic),
+              Pivot = sdk.knob(CFrame.new()),
+            },
+          }
+        end,
+      }))).toEqual({
+        `attributes.Look is of type EnumItem, which the panel cannot edit; a param holds one of {allowed}, or a curve`,
+        `attributes.Offset is of type CFrame, which the panel cannot edit; a param holds one of {allowed}, or a curve`,
+        `properties.Pivot is of type CFrame, which the panel cannot edit; a param holds one of {allowed}, EnumItem, or a curve`,
+      })
+    end)
+
+    test("every type the panel edits loads, a curve, a rule and a property's enum item among them", function()
+      fresh()
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = {
+                Count = sdk.knob(1),
+                On = sdk.knob(true),
+                Label = sdk.knob("a"),
+                Range = sdk.knob(NumberRange.new(0, 1)),
+                Flat = sdk.knob(Vector2.new(1, 2)),
+                Point = sdk.knob(Vector3.new(1, 2, 3)),
+                Pad = sdk.knob(UDim.new(0, 1)),
+                Box = sdk.knob(UDim2.new(0, 1, 0, 1)),
+                Tint = sdk.knob(Color3.new(1, 0, 0)),
+                Fade = sdk.knob(NumberSequence.new(0)),
+                Ramp = sdk.knob(ColorSequence.new(Color3.new(1, 1, 1))),
+                FadeCurve = sdk.knob("easeOut"):curve("easeOut"),
+                Twice = sdk.knob(function(_: any, attrs: any)
+                  return attrs.Count * 2
+                end),
+              },
+              properties = {
+                Material = sdk.knob(Enum.Material.Plastic),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.MyEffect"
+      )
+
+      expect(found).toEqual({})
+      expect(ok).toBe(true)
+    end)
+
     test("a classifier that could match another effect's instances is refused", function()
       fresh()
       builtins()
