@@ -71,9 +71,15 @@ local function scopeOf(ctx: any, name: string): lifetime.effect
   return ctx.scope
 end
 
+-- an engine function runs with the rights of whoever calls it, and the
+-- runtime would call it with its host's, so only the author's own is taken
 local function callable(fn: any, name: string)
   if type(fn) ~= "function" then
     logger.error(`sdk.{name} takes a function, got {typeof(fn)}`)
+  end
+
+  if debug.info(fn, "s") == "[C]" then
+    logger.error(`sdk.{name} takes a function of your own, not an engine function; wrap the call in one`)
   end
 end
 
@@ -239,6 +245,8 @@ local function shapeOf(given: any): any
   end
 
   if kind == "function" then
+    callable(given, "curve")
+
     return function(t: number)
       if t < 0 then
         t = 0
@@ -304,6 +312,10 @@ function v1.hold<T>(ctx: any, thing: T): T
 
   if not HOLDABLE[typeof(thing)] then
     logger.error(`sdk.hold takes an instance, a connection, a function or a thread, got {typeof(thing)}`)
+  end
+
+  if type(thing) == "function" then
+    callable(thing, "hold")
   end
 
   return lifetime.hold(scope, thing)

@@ -97,6 +97,8 @@ An effect lasts until `emit` returns and everything it started has finished: its
 
 `sdk.wait` and `sdk.await` yield, so they cannot run inside a step or a tween's callback.
 
+A function you hand the sdk to call later (to `sdk.step`, `sdk.tween`, `sdk.spawn` or `sdk.hold`, or as a curve's shape) must be one you wrote. An engine function such as `print` or a service's method is refused, since the sdk would call it with VFX Forge's rights in Studio; wrap the call in a function of your own.
+
 A descendant of `ctx.ref` that you `sdk.emit` must also be matched by `components`. An emit that reaches your instance scans its descendants and plays every effect instance it finds there except what `components` matches, so a descendant left out of it plays twice: once from that scan and once from your `sdk.emit`. Never `sdk.emit` the instance itself or one of its ancestors: the nested emit finds your instance again and plays this effect inside itself, which calls `sdk.emit` again, without end.
 
 ## Writing to instances

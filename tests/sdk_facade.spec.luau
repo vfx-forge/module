@@ -665,6 +665,68 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("engine functions as callbacks", function()
+    -- an engine function runs with the rights of whoever calls it, so the
+    -- runtime calling one for an author would run it with the host's
+    local REFUSED = "takes a function of your own, not an engine function; wrap the call in one"
+
+    test("every entry that takes a callback refuses an engine function, naming the call", function()
+      fresh()
+
+      local refusals = {}
+
+      local function refused(name: string, fn: (...any) -> any, ...: any)
+        local ok, err = pcall(fn, ...)
+
+        refusals[name] = not ok and string.find(tostring(err), `sdk.{name} {REFUSED}`, 1, true) ~= nil
+      end
+
+      custom("engine", function(sdk: any, ctx: any)
+        local join = sdk.join(ctx)
+
+        refused("step", sdk.step, ctx, print)
+        refused("tween", sdk.tween, ctx, sdk.curve(1, "linear"), math.floor)
+        refused("hold", sdk.hold, ctx, print)
+        refused("spawn", sdk.spawn, join, print, "http://127.0.0.1:1/")
+      end)
+
+      play()
+      refused("curve", sdk.curve, 1, math.floor)
+
+      expect(refusals).toEqual({ step = true, tween = true, hold = true, spawn = true, curve = true })
+    end)
+
+    test("a function of the author's own is still taken, and spawn hands it its arguments", function()
+      fresh()
+
+      local got
+      local held = false
+
+      custom("own", function(sdk: any, ctx: any)
+        local join = sdk.join(ctx)
+
+        sdk.hold(ctx, function()
+          held = true
+        end)
+
+        sdk.spawn(join, function(a: number, b: string)
+          got = { a, b }
+        end, 1, "two")
+      end)
+
+      local env = play()
+
+      expect(got).toEqual({ 1, "two" })
+      expect(ended(env)).toBe(true)
+      expect(held).toBe(true)
+      expect(sdk
+        .curve(1, function(t: number)
+          return t
+        end)
+        :at(0.25)).toBe(0.25)
+    end)
+  end)
+
   harness.describe("the facade's math", function()
     test("lerp blends any supported value", function()
       expect(sdk.lerp(0, 10, 0.25)).toBe(2.5)
