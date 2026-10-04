@@ -49,10 +49,12 @@ end
 
 -- registers what a tagged module returned under `key`, replacing what that key
 -- registered before. answers whether it took and every reason it did not; a
--- refusal leaves the earlier version registered and unloads the refused one
-function custom.add(key: any, author: any, path: string): (boolean, { string })
+-- refusal leaves the earlier version registered and unloads the refused one.
+-- `alias` is the name the module's source ran under when that is not `path`,
+-- as a plugin's hidden clone, which a failure it reports names as `path`
+function custom.add(key: any, author: any, path: string, alias: string?): (boolean, { string })
   local previous = entries[key]
-  local module, found = load.assemble(author, path, if previous ~= nil then previous.module else nil)
+  local module, found = load.assemble(author, path, if previous ~= nil then previous.module else nil, alias)
 
   if module == nil then
     discard(author, path)

@@ -278,8 +278,10 @@ end
 
 -- the effect module the runtime registers for what a tagged module returned,
 -- or nil and every reason it was refused. `path` names the module in a reason,
--- and `except` is the version it replaces, whose id and classifier are free
-function load.assemble(author: any, path: string, except: any?): (any?, { string })
+-- `except` is the version it replaces, whose id and classifier are free, and
+-- `alias` the name its source runs under when that is not `path`, which its
+-- reported failures name as `path` instead
+function load.assemble(author: any, path: string, except: any?, alias: string?): (any?, { string })
   if type(author) ~= "table" then
     return nil, { `{path} answers a {typeof(author)}, not an effect table` }
   end
@@ -344,6 +346,10 @@ function load.assemble(author: any, path: string, except: any?): (any?, { string
 
   if #found > 0 then
     return nil, found
+  end
+
+  if alias ~= nil then
+    facade.alias(module, alias, path)
   end
 
   return module, found

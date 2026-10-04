@@ -313,6 +313,56 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("a failing custom effect's report", function()
+    test("names the module's path where its error names the clone it ran as", function()
+      fresh()
+
+      local alias = "VFXForgeEffects.MyEffect_4"
+
+      custom.add(
+        "a",
+        effect({
+          emit = function()
+            error(`{alias}:20: emit boom, then {alias}1:3`, 0)
+          end,
+        }),
+        "ReplicatedStorage.MyEffect",
+        alias
+      )
+
+      local warnings = harness.captureWarnings(function()
+        effects.emit(0, tagged())
+      end)
+
+      expect(#warnings).toBe(1)
+      expect(string.find(warnings[1], "ReplicatedStorage.MyEffect:20: emit boom", 1, true) ~= nil).toBe(true)
+
+      -- another clone whose name only starts with this one's is left alone
+      expect(string.find(warnings[1], `then {alias}1:3`, 1, true) ~= nil).toBe(true)
+    end)
+
+    test("is left as it was when the module ran under its own path", function()
+      fresh()
+
+      custom.add(
+        "a",
+        effect({
+          emit = function()
+            error("VFXForgeEffects.MyEffect_4:20: emit boom", 0)
+          end,
+        }),
+        "ReplicatedStorage.MyEffect"
+      )
+
+      local warnings = harness.captureWarnings(function()
+        effects.emit(0, tagged())
+      end)
+
+      expect(#warnings).toBe(1)
+      expect(string.find(warnings[1], "VFXForgeEffects.MyEffect_4:20: emit boom", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
   harness.describe("replacing and removing a custom effect", function()
     test("a new version under the same key replaces the old, whose unload runs once", function()
       fresh()

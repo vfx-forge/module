@@ -28,6 +28,10 @@ local MADE: { [lifetime.effect]: { lifetime.join } } = setmetatable({}, { __mode
 -- per module, the instances a failure was already reported for
 local WARNED: { [any]: { [Instance]: boolean } } = setmetatable({}, { __mode = "k" }) :: any
 
+-- per module, the name its source runs under where that is not where it lives,
+-- as a plugin's hidden clone of a module edited in Studio, and that real path
+local ALIASES: { [any]: { from: string, to: string } } = setmetatable({}, { __mode = "k" }) :: any
+
 -- the threads of the pieces an author spawned, and the effect each belongs to
 local PIECES: { [thread]: lifetime.effect } = setmetatable({}, { __mode = "k" }) :: any
 
@@ -90,6 +94,31 @@ local function joinOf(scope: lifetime.effect): lifetime.join
   return join
 end
 
+-- every plain occurrence of `from` in `text` spelled `to`, but for one that
+-- runs on into a longer name, as `Fade_3` does into `Fade_31`
+local function renamed(text: string, from: string, to: string)
+  local out = {}
+  local at = 1
+
+  while true do
+    local first, last = string.find(text, from, at, true)
+
+    if first == nil then
+      break
+    end
+
+    local whole = string.find(text, "^[%w_]", last + 1) == nil
+
+    table.insert(out, string.sub(text, at, first - 1))
+    table.insert(out, if whole then to else from)
+    at = last + 1
+  end
+
+  table.insert(out, string.sub(text, at))
+
+  return table.concat(out)
+end
+
 -- the failure warned about once per module and instance, and the effect ended
 local function report(ctx: any, err: any)
   local scope = ctx.scope
@@ -110,8 +139,14 @@ local function report(ctx: any, err: any)
     seen[ctx.ref] = true
 
     local id = if module ~= nil then module.id else "?"
+    local text = tostring(err)
+    local alias = ALIASES[module]
 
-    logger.warn(`custom effect {id} failed on {ctx.ref:GetFullName()}: {tostring(err)}`)
+    if alias ~= nil then
+      text = renamed(text, alias.from, alias.to)
+    end
+
+    logger.warn(`custom effect {id} failed on {ctx.ref:GetFullName()}: {text}`)
   end
 
   lifetime.kill(scope)
@@ -488,6 +523,16 @@ table.freeze(v1)
 local facade = {}
 
 facade.sdk = v1
+
+-- a module whose source runs under the name `from` reports its failures
+-- naming `to`, the path it really lives at
+function facade.alias(module: any, from: string, to: string)
+  if from == "" then
+    return
+  end
+
+  ALIASES[module] = { from = from, to = to }
+end
 
 -- the author's emit run under the facade: a throw ends the effect, warned once
 -- per module and instance, and an emit that returns keeps its effect until its
