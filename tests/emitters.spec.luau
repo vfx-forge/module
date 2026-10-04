@@ -424,6 +424,80 @@ harness.suite(function()
       expect(near(emitted.Transparency, 0.5)).toBe(true)
     end)
 
+    -- a trail the custom effect mine classifies, mirroring `reflect`, with a
+    -- panel queue on two of its properties and on an attribute, half way
+    -- through all three once the answer is read
+    local function reflecting(reflect: any, extra: { [string]: any }?): Instance
+      local mine = module("mine", "Trail.Mine", extra)
+
+      mine.display = { name = "mine", order = 10, reflect = reflect }
+
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(mine, true)
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local trail = harness.make("Trail", root)
+
+      trail:AddTag("Mine")
+      trail.Lifetime = 2
+      trail.MaxLength = 4
+      trail:SetAttribute("Spread", 4)
+
+      local queue = {
+        { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(1) },
+      }
+
+      framed(trail, "property", "Lifetime", queue)
+      framed(trail, "property", "MaxLength", queue)
+      framed(trail, "attribute", "Spread", queue)
+
+      emit(root)
+
+      for _ = 1, 3 do
+        harness.render(0.25)
+      end
+
+      return trail
+    end
+
+    test("a custom effect reflecting all plays a panel queue on any property it does not own", function()
+      local trail = reflecting("all")
+
+      expect(near(trail.Lifetime, 0.5)).toBe(true)
+      expect(near(trail.MaxLength, 0.5)).toBe(true)
+    end)
+
+    test("a custom effect reflecting a list plays a listed property's queue and not another's", function()
+      local trail = reflecting({ "Lifetime" })
+
+      expect(near(trail.Lifetime, 0.5)).toBe(true)
+      expect(trail.MaxLength).toBe(4)
+    end)
+
+    test("a custom effect never plays an attribute's queue, whatever it reflects", function()
+      for _, reflect in { "all", { "Spread" } } :: { any } do
+        local trail = reflecting(reflect)
+
+        expect(trail:GetAttribute("Spread")).toBe(4)
+      end
+    end)
+
+    test("a custom effect reflecting nothing plays no panel queue", function()
+      local trail = reflecting(nil)
+
+      expect(trail.Lifetime).toBe(2)
+      expect(trail.MaxLength).toBe(4)
+    end)
+
+    test("a property a reflecting custom effect owns as a row is left to the row", function()
+      local trail = reflecting("all", { properties = { MaxLength = knob():mod() } })
+
+      expect(near(trail.Lifetime, 0.5)).toBe(true)
+      expect(trail.MaxLength).toBe(4)
+    end)
+
     test("a custom effect's instance runs none of the old format's leftovers on it", function()
       registry.clear()
       registry.configure({ query = harness.query })

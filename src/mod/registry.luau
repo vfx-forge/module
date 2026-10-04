@@ -16,6 +16,10 @@ export type Hit = { instance: Instance, effect: Module? }
 
 type Owned = { [string]: { [string]: boolean } }
 
+-- the engine properties a custom effect mirrors: true for every one, or the
+-- set it names
+export type Reflected = true | { [string]: boolean }
+
 local modules: { Module } = {}
 local byId: { [string]: Module } = {}
 
@@ -30,6 +34,10 @@ local custom: { [Module]: boolean } = {}
 -- property row's old queues lived on the attribute side too, so the applier
 -- must leave both alone
 local owned: { [Module]: Owned } = {}
+
+-- per custom module, computed once at register: the properties whose panel
+-- queues the applier still plays for it, nil when it mirrors none
+local reflected: { [Module]: Reflected } = {}
 
 -- what a module's classifier says about where to run it from. sole is the class
 -- of a classifier that is nothing but a class name, which an instance answers
@@ -53,6 +61,7 @@ function registry.clear()
   table.clear(byId)
   table.clear(custom)
   table.clear(owned)
+  table.clear(reflected)
   table.clear(shape)
 end
 
@@ -344,6 +353,26 @@ local function ownedOf(module: Module): Owned
   return out
 end
 
+local function reflectedOf(display: any): Reflected?
+  local reflect = display.reflect
+
+  if reflect == "all" then
+    return true
+  end
+
+  if type(reflect) ~= "table" then
+    return nil
+  end
+
+  local out = {}
+
+  for _, name in reflect do
+    out[name] = true
+  end
+
+  return table.freeze(out)
+end
+
 local function checkEvents(found: Found, id: string, events: any)
   if type(events) ~= "table" then
     fail(found, id, "events must be a list of lane names")
@@ -530,6 +559,7 @@ function registry.register(module: Module, isCustom: boolean?)
 
   if isCustom then
     custom[module] = true
+    reflected[module] = reflectedOf(module.display)
   end
 
   reorder()
@@ -550,6 +580,7 @@ function registry.unregister(module: Module)
   owned[module] = nil
   shape[module] = nil
   custom[module] = nil
+  reflected[module] = nil
 
   reorder()
 end
@@ -569,6 +600,12 @@ end
 
 function registry.owned(module: Module): Owned
   return owned[module]
+end
+
+-- the engine properties a custom effect mirrors, nil for a built-in or a
+-- custom effect that mirrors none
+function registry.reflected(module: Module): Reflected?
+  return reflected[module]
 end
 
 local function ancestorAt(inst: Instance, levels: number): Instance?

@@ -194,8 +194,15 @@ export type Effect = {
   sdk_version: number,
   -- unique across every effect
   id: string,
-  -- how the panel shows it, and the built-ins the adder groups it with, under Custom when none
-  display: { name: string, icon: string?, category: Category? },
+  -- how the panel shows it, the built-ins the adder groups it with, under Custom when none,
+  -- and the engine properties of its instance the panel mirrors like a built-in's
+  display: {
+    name: string,
+    icon: string?,
+    category: Category?,
+    -- "all", or the names of the properties mirrored; none when absent
+    reflect: ("all" | { string })?,
+  },
   -- the selector an instance must match to play it
   classifier: string,
   -- a selector for the descendants it plays itself, so nothing else does

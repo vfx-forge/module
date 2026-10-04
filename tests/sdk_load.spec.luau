@@ -150,6 +150,39 @@ harness.suite(function()
       })
     end)
 
+    test("a display reflect of all or a list is carried, the list a frozen copy", function()
+      fresh()
+
+      local all =
+        load.assemble(effect({ display = { name = "My Effect", reflect = "all" } }), "ReplicatedStorage.MyEffect")
+
+      expect(all and all.display.reflect).toBe("all")
+
+      local names = { "Color", "LightEmission" }
+      local listed =
+        load.assemble(effect({ display = { name = "My Effect", reflect = names } }), "ReplicatedStorage.MyEffect")
+      local reflect = listed and listed.display.reflect
+
+      expect(reflect).toEqual(names)
+      expect(reflect == names).toBe(false)
+      expect(table.isfrozen(reflect)).toBe(true)
+      expect(table.isfrozen(names)).toBe(false)
+
+      local none = load.assemble(effect(), "ReplicatedStorage.MyEffect")
+
+      expect(none and none.display.reflect).toBe(nil)
+    end)
+
+    test("a display reflect that is neither all nor a list of names is refused with the reason", function()
+      fresh()
+
+      local reason = 'display.reflect must be "all" or a list of property names'
+
+      for _, reflect in { "some", 3, {}, { "Color", 4 }, { "Color", "" } } :: { any } do
+        expect(refusal(effect({ display = { name = "My Effect", reflect = reflect } }))).toEqual({ reason })
+      end
+    end)
+
     test("the category type names every category the loader takes", function()
       local source = fs.readFile("src/sdk/v1/types.luau")
       local union = string.match(source, "export type Category = ([^\n]+)") :: string

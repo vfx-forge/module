@@ -93,6 +93,29 @@ local function versionOf(author: any, label: string): (number?, string?)
   return v, nil
 end
 
+-- "all", or a list of one or more names
+local function reflectable(reflect: any)
+  if reflect == "all" then
+    return true
+  end
+
+  if type(reflect) ~= "table" or #reflect == 0 then
+    return false
+  end
+
+  local count = 0
+
+  for _, name in reflect do
+    count += 1
+
+    if type(name) ~= "string" or name == "" then
+      return false
+    end
+  end
+
+  return count == #reflect
+end
+
 local function checkFields(author: any, found: { string })
   local known = {}
 
@@ -122,9 +145,13 @@ local function checkFields(author: any, found: { string })
     table.insert(found, `display.category must be one of {table.concat(CATEGORIES, ", ")}`)
   end
 
+  if type(display) == "table" and display.reflect ~= nil and not reflectable(display.reflect) then
+    table.insert(found, 'display.reflect must be "all" or a list of property names')
+  end
+
   if type(display) == "table" then
     for key in display do
-      if key ~= "name" and key ~= "icon" and key ~= "category" then
+      if key ~= "name" and key ~= "icon" and key ~= "category" and key ~= "reflect" then
         table.insert(found, `unknown display field {tostring(key)}`)
       end
     end
@@ -374,12 +401,22 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   local template = author.template
 
   local layout = copy(author.layout)
+  local reflect = author.display.reflect
+
+  if type(reflect) == "table" then
+    reflect = table.freeze(table.clone(reflect))
+  end
 
   viewedLayout(layout, facade)
 
   local module = {
     id = author.id,
-    display = { name = author.display.name, icon = author.display.icon, category = author.display.category },
+    display = {
+      name = author.display.name,
+      icon = author.display.icon,
+      category = author.display.category,
+      reflect = reflect,
+    },
     classifier = author.classifier,
     components = author.components,
     layout = layout,

@@ -325,6 +325,8 @@ export interface RegisteredEffect {
 		readonly icon?: string;
 		readonly order?: number;
 		readonly category?: SDK.Category;
+		/** The engine properties a custom effect's panel mirrors: "all", or their names. */
+		readonly reflect?: "all" | readonly string[];
 	};
 	readonly classifier: string;
 }
@@ -585,8 +587,14 @@ export namespace SDK {
 		sdk_version: 1;
 		/** Unique across every effect. */
 		id: string;
-		/** How the panel shows it, and the built-ins the adder groups it with, under Custom when none. */
-		display: { name: string; icon?: string; category?: Category };
+		/** How the panel shows it, the built-ins the adder groups it with, under Custom when none, and the engine properties of its instance the panel mirrors like a built-in's. */
+		display: {
+			name: string;
+			icon?: string;
+			category?: Category;
+			/** "all", or the names of the properties mirrored; none when absent. */
+			reflect?: "all" | string[];
+		};
 		/** The selector an instance must match to play it. */
 		classifier: string;
 		/** A selector for the descendants it plays itself. */

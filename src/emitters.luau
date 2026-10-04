@@ -304,12 +304,15 @@ end
 -- target: an instance can carry both a property and an attribute called Scale,
 -- which is the ambiguity the two prefixes exist to remove
 -- every target it drives is written through a writer, so two emits driving one
--- hand it over, and the last to end puts back what it held before
+-- hand it over, and the last to end puts back what it held before.
+-- `reflected`, a custom effect's mirrored properties, limits it to the panel
+-- queues on those: true for every property, or the set it names
 function emitters.applyMods(
   obj: Instance,
   scope: types.scope,
   duration: number,
-  owned: { [string]: { [string]: boolean } }?
+  owned: { [string]: { [string]: boolean } }?,
+  reflected: registry.Reflected?
 )
   for _, key in attr.keys(obj) do
     local source: string? = nil
@@ -323,6 +326,10 @@ function emitters.applyMods(
     end
 
     if source == nil or name == nil then
+      continue
+    end
+
+    if reflected ~= nil and (source ~= "property" or (reflected ~= true and not reflected[name :: string])) then
       continue
     end
 
@@ -384,8 +391,10 @@ function emitters.dispatch(
   constant: boolean?
 )
   -- a custom effect's instance plays through its rows alone: a randomizer
-  -- child or a queue no row of it owns is the old format's leftover there
+  -- child or a queue no row of it owns is the old format's leftover there,
+  -- save a panel queue on a property it mirrors
   local own = effect ~= nil and registry.isCustom(effect)
+  local reflected = if own then registry.reflected(effect :: registry.Module) else nil
 
   if not constant and not own then
     processRandomizers(obj, scope)
@@ -406,8 +415,8 @@ function emitters.dispatch(
       return
     end
 
-    if not constant and not own then
-      emitters.applyMods(obj, scope, ctx.duration :: number, registry.owned(effect))
+    if not constant and (not own or reflected ~= nil) then
+      emitters.applyMods(obj, scope, ctx.duration :: number, registry.owned(effect), reflected)
     end
 
     utility.try(`failed to emit {effect.id} with error: %s`, effect.emit, ctx, attrs, props)
