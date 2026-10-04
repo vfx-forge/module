@@ -36,7 +36,8 @@ local custom: { [Module]: boolean } = {}
 local owned: { [Module]: Owned } = {}
 
 -- per custom module, computed once at register: the properties whose panel
--- queues the applier still plays for it, nil when it mirrors none
+-- queues the applier still plays for it, its own property rows and whatever
+-- display.reflect names, nil when it mirrors none
 local reflected: { [Module]: Reflected } = {}
 
 -- what a module's classifier says about where to run it from. sole is the class
@@ -353,24 +354,24 @@ local function ownedOf(module: Module): Owned
   return out
 end
 
-local function reflectedOf(display: any): Reflected?
-  local reflect = display.reflect
+local function reflectedOf(module: Module): Reflected?
+  local reflect = (module.display :: any).reflect
 
   if reflect == "all" then
     return true
   end
 
-  if type(reflect) ~= "table" then
-    return nil
-  end
-
   local out = {}
 
-  for _, name in reflect do
+  for name in module.properties or {} do
     out[name] = true
   end
 
-  return table.freeze(out)
+  for _, name in if type(reflect) == "table" then reflect else {} do
+    out[name] = true
+  end
+
+  return if next(out) ~= nil then table.freeze(out) else nil
 end
 
 local function checkEvents(found: Found, id: string, events: any)
@@ -559,7 +560,7 @@ function registry.register(module: Module, isCustom: boolean?)
 
   if isCustom then
     custom[module] = true
-    reflected[module] = reflectedOf(module.display)
+    reflected[module] = reflectedOf(module)
   end
 
   reorder()

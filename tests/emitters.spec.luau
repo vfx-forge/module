@@ -491,6 +491,13 @@ harness.suite(function()
       expect(trail.MaxLength).toBe(4)
     end)
 
+    test("a custom effect's own property rows are mirrored without reflect, and their panel queues play", function()
+      local trail = reflecting(nil, { properties = { Lifetime = knob() } })
+
+      expect(near(trail.Lifetime, 0.5)).toBe(true)
+      expect(trail.MaxLength).toBe(4)
+    end)
+
     test("a property a reflecting custom effect owns as a row is left to the row", function()
       local trail = reflecting("all", { properties = { MaxLength = knob():mod() } })
 
