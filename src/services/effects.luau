@@ -6,6 +6,7 @@ local utility = require("@mod/utility")
 local registry = require("@mod/registry")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
+local scheduler = require("@mod/scheduler")
 
 local numeric_common = require("@mod/common/numeric")
 
@@ -23,6 +24,11 @@ local CONTROLLER = "controller"
 -- the key an env keeps its emit under, out of the way of its public fields
 local EMIT = table.freeze({})
 
+-- the scheduler's time when the env was made, and the effect time GetTime
+-- counts once it is first asked, each under a key of its own
+local BORN = table.freeze({})
+local TIMER = table.freeze({})
+
 -- the keys an emit's options table may hold
 local OPTIONS = { priority = true }
 
@@ -37,6 +43,9 @@ local EMPTY_ENV: types.EmitEnv = {
   Resume = NOOP,
   IsPaused = function()
     return false
+  end,
+  GetTime = function()
+    return 0
   end,
   SetPriority = NOOP,
   GetPriority = function()
@@ -132,6 +141,41 @@ function METHODS.IsPaused(env: any)
   return rawget(env, EMIT).clock.paused
 end
 
+-- the effect time since the emit: counted on the emit's clock from the first
+-- call, and before it at the factor that clock has then, which is exact for an
+-- emit whose speed and pauses did not change before it was first asked. it
+-- stands still once the emit is done
+function METHODS.GetTime(env: any)
+  local timer = rawget(env, TIMER)
+
+  if timer ~= nil then
+    return timer.time
+  end
+
+  local emit = rawget(env, EMIT)
+  local since = scheduler.now - rawget(env, BORN)
+
+  timer = { time = since * clock.factorOf(emit.clock) }
+  rawset(env, TIMER, timer)
+
+  if emit.done then
+    return timer.time
+  end
+
+  local step: scheduler.Handle
+
+  step = scheduler.add("wait", function(deltaTime: number)
+    if emit.done then
+      step:Disconnect()
+      return
+    end
+
+    timer.time += deltaTime
+  end, 0, nil, nil, emit.clock)
+
+  return timer.time
+end
+
 -- a running emit and every emit it started, ranked again at once. a bad value
 -- would silently demote the emit, so it is refused and the priority kept
 function METHODS.SetPriority(env: any, priority: number)
@@ -175,6 +219,7 @@ local ENV = {
 local function envOf(emit: lifetime.emit): types.EmitEnv
   local env = {
     [EMIT] = emit,
+    [BORN] = scheduler.now,
 
     -- a closure rather than a method, so `env.Clear()` with no self keeps
     -- working as it always has

@@ -18,6 +18,7 @@ export type EmitEnv = {
   Pause: (self: EmitEnv) -> (),
   Resume: (self: EmitEnv) -> (),
   IsPaused: (self: EmitEnv) -> boolean,
+  GetTime: (self: EmitEnv) -> number,
   SetPriority: (self: EmitEnv, priority: number) -> (),
   GetPriority: (self: EmitEnv) -> number,
 }

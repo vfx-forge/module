@@ -275,6 +275,67 @@ harness.suite(function()
       built.restore()
     end)
 
+    test(
+      "GetTime counts the emit's effect time: scaled by its speed, still while paused and once it is done",
+      function()
+        local built = fresh()
+        registry.register(module("waits", "Folder", waiting(10)))
+
+        local env = effects.emit(0, harness.make("Folder"))
+
+        expect(env:GetTime()).toBe(0)
+
+        scheduler.frame(0.5)
+
+        expect(env:GetTime()).toBe(0.5)
+
+        env:SetSpeed(2)
+        scheduler.frame(0)
+        scheduler.frame(0.25)
+
+        expect(env:GetTime()).toBe(1)
+
+        env:Pause()
+        scheduler.frame(0)
+        scheduler.frame(3)
+
+        expect(env:GetTime()).toBe(1)
+
+        env:Resume()
+        scheduler.frame(0)
+        scheduler.frame(0.25)
+
+        expect(env:GetTime()).toBe(1.5)
+
+        env:Clear()
+        scheduler.frame(0)
+        scheduler.frame(1)
+
+        expect(env:GetTime()).toBe(1.5)
+
+        built.restore()
+      end
+    )
+
+    test("GetTime first asked after some frames counts them at the emit's speed then", function()
+      local built = fresh()
+      registry.register(module("waits", "Folder", waiting(10)))
+
+      local env = effects.emit(0, harness.make("Folder"))
+
+      scheduler.frame(0.5)
+      scheduler.frame(0.25)
+
+      expect(env:GetTime()).toBe(0.75)
+
+      scheduler.frame(0.25)
+
+      expect(env:GetTime()).toBe(1)
+
+      env:Clear()
+      built.restore()
+    end)
+
     test("refuses a speed that is not a finite number of 0 or more, naming SetSpeed", function()
       local built = fresh()
       registry.register(module("waits", "Folder", waiting(10)))

@@ -45,6 +45,14 @@ export interface EmitResult {
   IsPaused(): boolean;
 
   /**
+   * Seconds of effect time since the emit: scaled by SetSpeed, the global speed and any
+   * controller over the emit, and still while paused. Counted exactly from the first call;
+   * the time before it is counted at the speed the emit has at that call, so call it once
+   * right after emitting when the speed may change. Stands still once the emit has finished.
+   */
+  GetTime(): number;
+
+  /**
    * Rank every write this emit and the emits it starts make against another emit's, from
    * now: on a property or attribute two emits write at once, the higher priority owns it,
    * and at one priority the newer emit does. Warns and keeps the priority unless it is a
