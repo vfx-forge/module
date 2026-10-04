@@ -1,3 +1,4 @@
+local fs = require("@lune/fs")
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local harness = require("@tests/harness")
@@ -139,6 +140,38 @@ harness.suite(function()
       expect(knob.ordered(1)).toBe(true)
       expect(knob.ordered(NumberRange.new(0, 1))).toBe(true)
       expect(knob.ordered(Vector3.new(0, 0, 0))).toBe(true)
+    end)
+
+    test("the sdk's unit types name exactly the units a knob takes", function()
+      local expected = {}
+
+      for unit in knob.UNITS do
+        table.insert(expected, unit)
+      end
+
+      table.sort(expected)
+
+      local source = fs.readFile("src/sdk/v1/types.luau")
+      local union = string.match(source, "export type Unit = ([^\n]+)") :: string
+      local named = {}
+
+      for unit in string.gmatch(union, '"(%w+)"') do
+        table.insert(named, unit)
+      end
+
+      table.sort(named)
+
+      local typed = string.match(fs.readFile("index.d.ts"), "export type Unit =([^;]+);") :: string
+      local declared = {}
+
+      for unit in string.gmatch(typed, '"(%w+)"') do
+        table.insert(declared, unit)
+      end
+
+      table.sort(declared)
+
+      expect(named).toEqual(expected)
+      expect(declared).toEqual(expected)
     end)
   end)
 end)

@@ -1,6 +1,12 @@
 -- a param's rule, run with the read's ctx and the other params
 export type Rule = (ctx: Ctx, attrs: any, props: any) -> any
 
+-- what a number param measures
+export type Unit = "seconds" | "perSecond" | "perSecondSquared" | "studs" | "studsPerSecond" | "studsPerSecondSquared"
+
+-- the built-ins an effect is grouped with in the adder
+export type Category = "emitters" | "meshes" | "paths" | "shockwaves" | "camera" | "motion"
+
 -- a param: one row in the panel and one value in attrs or props
 export type Knob = {
   -- the lowest value, a number or one of the value's own type
@@ -17,8 +23,8 @@ export type Knob = {
   hint: (self: Knob, text: string) -> Knob,
   -- a curve param edited in the curve editor, starting as this preset
   curve: (self: Knob, preset: string) -> Knob,
-  -- what the number measures: seconds, perSecond, perSecondSquared, studs, studsPerSecond or studsPerSecondSquared
-  unit: (self: Knob, unit: string) -> Knob,
+  -- what the number measures
+  unit: (self: Knob, unit: Unit) -> Knob,
   -- hides the row while the rule answers true
   hidden: (self: Knob, rule: Rule) -> Knob,
   -- locks the row to its default while the rule answers true
@@ -188,8 +194,8 @@ export type Effect = {
   sdk_version: number,
   -- unique across every effect
   id: string,
-  -- how the panel shows it
-  display: { name: string, icon: string? },
+  -- how the panel shows it, and the built-ins the adder groups it with, under Custom when none
+  display: { name: string, icon: string?, category: Category? },
   -- the selector an instance must match to play it
   classifier: string,
   -- a selector for the descendants it plays itself, so nothing else does

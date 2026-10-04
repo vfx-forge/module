@@ -21,6 +21,9 @@ local FIELDS = {
   "template",
 }
 
+-- the built-ins an effect may be grouped with, in the order a reason names them
+local CATEGORIES = { "emitters", "meshes", "paths", "shockwaves", "camera", "motion" }
+
 -- the classes nothing narrower than the whole class can be told apart from
 local BROAD = { Instance = true, PVInstance = true }
 
@@ -32,6 +35,7 @@ local load = {}
 
 load.SUPPORTED = #VERSIONS
 load.VERSIONS = table.freeze(table.clone(VERSIONS))
+load.CATEGORIES = table.freeze(table.clone(CATEGORIES))
 
 -- how many single letter edits apart two names are
 local function distance(a: string, b: string)
@@ -114,9 +118,13 @@ local function checkFields(author: any, found: { string })
     table.insert(found, "display.icon must be a string")
   end
 
+  if type(display) == "table" and display.category ~= nil and not table.find(CATEGORIES, display.category) then
+    table.insert(found, `display.category must be one of {table.concat(CATEGORIES, ", ")}`)
+  end
+
   if type(display) == "table" then
     for key in display do
-      if key ~= "name" and key ~= "icon" then
+      if key ~= "name" and key ~= "icon" and key ~= "category" then
         table.insert(found, `unknown display field {tostring(key)}`)
       end
     end
@@ -388,7 +396,7 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
 
   local module = {
     id = author.id,
-    display = { name = author.display.name, icon = author.display.icon },
+    display = { name = author.display.name, icon = author.display.icon, category = author.display.category },
     classifier = author.classifier,
     components = author.components,
     layout = layout,

@@ -324,6 +324,7 @@ export interface RegisteredEffect {
 		readonly name: string;
 		readonly icon?: string;
 		readonly order?: number;
+		readonly category?: SDK.Category;
 	};
 	readonly classifier: string;
 }
@@ -350,6 +351,24 @@ export namespace SDK {
 		props: Record<string, unknown>,
 	) => unknown;
 
+	/** What a number param measures. */
+	export type Unit =
+		| "seconds"
+		| "perSecond"
+		| "perSecondSquared"
+		| "studs"
+		| "studsPerSecond"
+		| "studsPerSecondSquared";
+
+	/** The built-ins an effect is grouped with in the adder. */
+	export type Category =
+		| "emitters"
+		| "meshes"
+		| "paths"
+		| "shockwaves"
+		| "camera"
+		| "motion";
+
 	/** A param: one row in the panel and one value in attrs or props. */
 	export interface Knob {
 		/** The lowest value, a number or one of the value's own type. */
@@ -367,15 +386,7 @@ export namespace SDK {
 		/** A curve param edited in the curve editor, starting as this preset. */
 		curve(preset: string): Knob;
 		/** What the number measures. */
-		unit(
-			unit:
-				| "seconds"
-				| "perSecond"
-				| "perSecondSquared"
-				| "studs"
-				| "studsPerSecond"
-				| "studsPerSecondSquared",
-		): Knob;
+		unit(unit: Unit): Knob;
 		/** Hides the row while the rule answers true. */
 		hidden(rule: Rule): Knob;
 		/** Locks the row to its default while the rule answers true. */
@@ -574,8 +585,8 @@ export namespace SDK {
 		sdk_version: 1;
 		/** Unique across every effect. */
 		id: string;
-		/** How the panel shows it. */
-		display: { name: string; icon?: string };
+		/** How the panel shows it, and the built-ins the adder groups it with, under Custom when none. */
+		display: { name: string; icon?: string; category?: Category };
 		/** The selector an instance must match to play it. */
 		classifier: string;
 		/** A selector for the descendants it plays itself. */

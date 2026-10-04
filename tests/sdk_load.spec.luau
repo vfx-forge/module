@@ -1,3 +1,4 @@
+local fs = require("@lune/fs")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
@@ -128,6 +129,37 @@ harness.suite(function()
         "classifier must be a selector string",
         "emit must be a function",
       })
+    end)
+
+    test("a display category groups the effect, and any other value is refused with the reason", function()
+      fresh()
+
+      for _, category in load.CATEGORIES do
+        local module =
+          load.assemble(effect({ display = { name = "My Effect", category = category } }), "ReplicatedStorage.MyEffect")
+
+        expect(module and module.display.category).toBe(category)
+      end
+
+      local reason = "display.category must be one of emitters, meshes, paths, shockwaves, camera, motion"
+
+      expect(refusal(effect({ display = { name = "My Effect", category = "particles" } }))).toEqual({ reason })
+      expect(refusal(effect({ display = { name = "My Effect", category = 3 } }))).toEqual({ reason })
+      expect(refusal(effect({ display = { name = "My Effect", categry = "paths" } }))).toEqual({
+        "unknown display field categry",
+      })
+    end)
+
+    test("the category type names every category the loader takes", function()
+      local source = fs.readFile("src/sdk/v1/types.luau")
+      local union = string.match(source, "export type Category = ([^\n]+)") :: string
+      local named = {}
+
+      for name in string.gmatch(union, '"(%w+)"') do
+        table.insert(named, name)
+      end
+
+      expect(named).toEqual(table.clone(load.CATEGORIES))
     end)
 
     test("params that throw, answer no table or hold no knobs are refused with the reason", function()
