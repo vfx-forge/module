@@ -23,6 +23,10 @@ local FIELDS = {
 -- the classes nothing narrower than the whole class can be told apart from
 local BROAD = { Instance = true, PVInstance = true }
 
+-- a knob's fields and a default modifier's options that may hold a rule
+local RULES = { "rule", "hiddenRule", "readonlyRule" }
+local OPTIONS = { "duration", "curve", "delay" }
+
 local load = {}
 
 load.SUPPORTED = #VERSIONS
@@ -198,6 +202,61 @@ local function curveDefaults(rows: { [string]: any })
   end
 end
 
+-- every rule of the author's handed the view of its ctx rather than the ctx.
+-- a row the registry already froze was handed it by the load that froze it
+local function viewed(rows: { [string]: any }, facade: any)
+  for _, row in rows do
+    if type(row) ~= "table" or table.isfrozen(row) then
+      continue
+    end
+
+    for _, field in RULES do
+      if type(row[field]) == "function" then
+        row[field] = facade.rule(row[field])
+      end
+    end
+
+    if type(row.modDefault) ~= "table" then
+      continue
+    end
+
+    for _, spec in row.modDefault do
+      if type(spec) ~= "table" or type(spec.opts) ~= "table" then
+        continue
+      end
+
+      if type(spec.endpoint) == "function" then
+        spec.endpoint = facade.rule(spec.endpoint)
+      end
+
+      for _, option in OPTIONS do
+        if type(spec.opts[option]) == "function" then
+          spec.opts[option] = facade.rule(spec.opts[option])
+        end
+      end
+    end
+  end
+end
+
+-- a layout group's hidden rule handed the view of its ctx, in the copy only
+local function viewedLayout(entries: any, facade: any)
+  if type(entries) ~= "table" then
+    return
+  end
+
+  for _, entry in entries do
+    if type(entry) ~= "table" then
+      continue
+    end
+
+    if type(entry.hidden) == "function" then
+      entry.hidden = facade.rule(entry.hidden)
+    end
+
+    viewedLayout(entry.entries, facade)
+  end
+end
+
 local function copy(value: any): any
   if type(value) ~= "table" then
     return value
@@ -306,18 +365,24 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
 
   curveDefaults(attributes)
   curveDefaults(properties)
+  viewed(attributes, facade)
+  viewed(properties, facade)
 
   local sdk = facade.sdk
   local run = facade.run
   local emit = author.emit
   local duration = author.duration
 
+  local layout = copy(author.layout)
+
+  viewedLayout(layout, facade)
+
   local module = {
     id = author.id,
     display = { name = author.display.name, icon = author.display.icon },
     classifier = author.classifier,
     components = author.components,
-    layout = copy(author.layout),
+    layout = layout,
     constant = author.constant,
     attributes = attributes,
     properties = properties,

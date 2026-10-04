@@ -44,6 +44,14 @@ local REFUSED: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 -- the lifetime writer behind each handle, which the handle itself never holds
 local WRITERS: { [any]: lifetime.writer } = setmetatable({}, { __mode = "k" }) :: any
 
+-- what an author is handed of each ctx, and the ctx behind each view, which
+-- never leaves the facade
+local VIEWS: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
+local CTXS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
+
+-- the rules already handed views, so a rule is never wrapped twice
+local RULES: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+
 -- what every curve the facade makes is, told apart from any other table by it
 local CURVE = getmetatable(curve.new(1, "linear"))
 
@@ -63,12 +71,34 @@ local HOLDABLE = { Instance = true, RBXScriptConnection = true, ["function"] = t
 
 local v1 = {}
 
-local function scopeOf(ctx: any, name: string): lifetime.effect
-  if type(ctx) ~= "table" or type(ctx.scope) ~= "table" then
-    logger.error(`sdk.{name} takes the ctx emit was handed as its first argument`)
+-- the typed fields of a ctx and nothing else, built once per emit and again
+-- only when the duration a read decided after it was built moves
+local function viewOf(ctx: any)
+  local view = VIEWS[ctx]
+
+  if view ~= nil and view.duration == ctx.duration then
+    return view
   end
 
-  return ctx.scope
+  view = table.freeze({ ref = ctx.ref, duration = ctx.duration, constant = ctx.constant })
+  VIEWS[ctx] = view
+  CTXS[view] = ctx
+
+  return view
+end
+
+local function ctxOf(view: any, name: string)
+  local ctx = CTXS[view]
+
+  if ctx == nil or type(ctx.scope) ~= "table" then
+    logger.error(`sdk.{name} takes the ctx your emit was handed`)
+  end
+
+  return ctx
+end
+
+local function scopeOf(view: any, name: string): lifetime.effect
+  return ctxOf(view, name).scope
 end
 
 -- an engine function runs with the rights of whoever calls it, and the
@@ -196,8 +226,8 @@ v1.mod = table.freeze({
   end,
 })
 
-function v1.wait(ctx: any, seconds: number): number
-  local scope = scopeOf(ctx, "wait")
+function v1.wait(view: any, seconds: number): number
+  local scope = scopeOf(view, "wait")
 
   yielding("wait")
 
@@ -208,8 +238,9 @@ function v1.wait(ctx: any, seconds: number): number
   return lifetime.wait(scope, seconds)
 end
 
-function v1.step(ctx: any, fn: (dt: number, elapsed: number) -> ())
-  local scope = scopeOf(ctx, "step")
+function v1.step(view: any, fn: (dt: number, elapsed: number) -> ())
+  local ctx = ctxOf(view, "step")
+  local scope = ctx.scope
 
   callable(fn, "step")
 
@@ -287,8 +318,9 @@ function v1.curve(duration: number, given: any, options: {}?)
   return table.freeze(curve.new(duration, shapeOf(given)))
 end
 
-function v1.tween(ctx: any, eased: any, fn: (alpha: number) -> ())
-  local scope = scopeOf(ctx, "tween")
+function v1.tween(view: any, eased: any, fn: (alpha: number) -> ())
+  local ctx = ctxOf(view, "tween")
+  local scope = ctx.scope
 
   if getmetatable(eased) ~= CURVE or not table.isfrozen(eased) then
     logger.error("sdk.tween plays a curve made by sdk.curve")
@@ -307,8 +339,8 @@ function v1.tween(ctx: any, eased: any, fn: (alpha: number) -> ())
   end, nil, lifetime.add(joinOf(scope)))
 end
 
-function v1.hold<T>(ctx: any, thing: T): T
-  local scope = scopeOf(ctx, "hold")
+function v1.hold<T>(view: any, thing: T): T
+  local scope = scopeOf(view, "hold")
 
   if not HOLDABLE[typeof(thing)] then
     logger.error(`sdk.hold takes an instance, a connection, a function or a thread, got {typeof(thing)}`)
@@ -321,8 +353,9 @@ function v1.hold<T>(ctx: any, thing: T): T
   return lifetime.hold(scope, thing)
 end
 
-function v1.join(ctx: any)
-  local scope = scopeOf(ctx, "join")
+function v1.join(view: any)
+  local ctx = ctxOf(view, "join")
+  local scope = ctx.scope
   local join = lifetime.join(scope)
   local token = table.freeze({})
   local made = MADE[scope]
@@ -370,8 +403,8 @@ function v1.await(token: any)
   lifetime.awaitJoin(entry.join)
 end
 
-function v1.emit(ctx: any, instance: Instance)
-  local scope = scopeOf(ctx, "emit")
+function v1.emit(view: any, instance: Instance)
+  local scope = scopeOf(view, "emit")
 
   if typeof(instance) ~= "Instance" then
     logger.error(`sdk.emit takes an instance, got {typeof(instance)}`)
@@ -397,8 +430,8 @@ end
 
 table.freeze(Writer)
 
-local function writerOf(ctx: any, obj: Instance, source: string, name: string, call: string)
-  local scope = scopeOf(ctx, call)
+local function writerOf(view: any, obj: Instance, source: string, name: string, call: string)
+  local scope = scopeOf(view, call)
 
   if typeof(obj) ~= "Instance" then
     logger.error(`sdk.{call} writes to an instance, got {typeof(obj)}`)
@@ -415,16 +448,16 @@ local function writerOf(ctx: any, obj: Instance, source: string, name: string, c
   return made
 end
 
-function v1.getWriter(ctx: any, obj: Instance, property: string)
-  return writerOf(ctx, obj, "property", property, "getWriter")
+function v1.getWriter(view: any, obj: Instance, property: string)
+  return writerOf(view, obj, "property", property, "getWriter")
 end
 
-function v1.getAttributeWriter(ctx: any, obj: Instance, name: string)
-  return writerOf(ctx, obj, "attribute", name, "getAttributeWriter")
+function v1.getAttributeWriter(view: any, obj: Instance, name: string)
+  return writerOf(view, obj, "attribute", name, "getAttributeWriter")
 end
 
-function v1.speed(ctx: any, track: any)
-  local scope = scopeOf(ctx, "speed")
+function v1.speed(view: any, track: any)
+  local scope = scopeOf(view, "speed")
 
   if type(track) ~= "table" or type(track.at) ~= "function" then
     logger.error("sdk.speed takes a Speed param's value, a knob declared with :mod()")
@@ -546,12 +579,28 @@ function facade.alias(module: any, from: string, to: string)
   ALIASES[module] = { from = from, to = to }
 end
 
+-- an author's rule, called by the reader with the runtime's ctx and handed
+-- the view of it instead
+function facade.rule(fn: (...any) -> any)
+  if RULES[fn] then
+    return fn
+  end
+
+  local wrapped = function(ctx: any, attrs: any, props: any)
+    return fn(if ctx ~= nil then viewOf(ctx) else nil, attrs, props)
+  end
+
+  RULES[wrapped] = true
+
+  return wrapped
+end
+
 -- the author's emit run under the facade: a throw ends the effect, warned once
 -- per module and instance, and an emit that returns keeps its effect until its
 -- tweens, its nested emits and every join it made are through
 function facade.run(emit: any, ctx: any, attrs: any, props: any)
   local scope = ctx.scope
-  local ok, err = xpcall(emit, trace, v1, ctx, attrs, props)
+  local ok, err = xpcall(emit, trace, v1, viewOf(ctx), attrs, props)
 
   if not ok then
     if err ~= STOP then

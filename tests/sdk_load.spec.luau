@@ -282,6 +282,112 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("the ctx a custom effect's rules are handed", function()
+    test("a rule and emit of the same emit are handed one view, never the runtime's ctx", function()
+      fresh()
+
+      local views = {}
+
+      custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = {
+                FadeTime = sdk
+                  .knob(function(ctx: any)
+                    views.default = ctx
+                    return 0.5
+                  end)
+                  :min(0),
+                Locked = sdk.knob(1):readonly(function(ctx: any)
+                  views.readonly = ctx
+                  return false
+                end),
+                Rise = sdk.knob(0):mod(sdk.mod.to(1):duration(function(ctx: any)
+                  views.mod = ctx
+                  return 0.25
+                end)),
+              },
+            }
+          end,
+          layout = {
+            {
+              title = "Fade",
+              entries = { "FadeTime", "Locked", "Rise" },
+              hidden = function(ctx: any)
+                views.layout = ctx
+                return false
+              end,
+            },
+          },
+          emit = function(sdk: any, ctx: any, attrs: any)
+            views.emit = ctx
+            sdk.wait(ctx, attrs.FadeTime)
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      local folder = tagged()
+
+      effects.emit(0, folder)
+
+      expect(views.emit.ref).toBe(folder)
+      expect(views.emit.scope).toBe(nil)
+      expect(table.isfrozen(views.emit)).toBe(true)
+      expect(views.default).toBe(views.emit)
+      expect(views.readonly).toBe(views.emit)
+      expect(views.mod).toBe(views.emit)
+
+      -- the panel reads a module's rules over a ctx of its own
+      local panel = { ref = folder, obj = folder }
+
+      registry.get("my_effect").layout[1].hidden(panel, {}, {})
+
+      expect(views.layout ~= panel).toBe(true)
+      expect(views.layout.ref).toBe(folder)
+      expect(table.isfrozen(views.layout)).toBe(true)
+    end)
+
+    test("a rule read while the duration is decided sees none, and emit sees the decided one", function()
+      fresh()
+
+      local during, seen
+
+      custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = {
+                FadeTime = sdk
+                  .knob(function(ctx: any)
+                    during = ctx
+                    return 0.5
+                  end)
+                  :min(0),
+              },
+            }
+          end,
+          duration = function(_, attrs: any)
+            return attrs.FadeTime * 4
+          end,
+          emit = function(_, ctx: any)
+            seen = ctx
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      effects.emit(0, tagged())
+
+      expect(during.duration).toBe(nil)
+      expect(seen.duration).toBe(2)
+      expect(seen.scope).toBe(nil)
+    end)
+  end)
+
   harness.describe("classifying a custom effect's instance", function()
     test("a tagged part with Enabled set is the custom effect's, not screen's, in of and scan", function()
       fresh()

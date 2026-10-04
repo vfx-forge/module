@@ -45,6 +45,8 @@ return effect
 
 Every method takes `sdk` first. Never require ForgeVFX from a custom effect.
 
+`ctx` is a frozen table of three fields: `ref`, the instance being emitted; `duration`, the effect's length in seconds; and `constant`, true when an Enabled loop emitted it. Hand the sdk the very `ctx` your emit or rule was given. A copy of it, or any other table, is refused.
+
 ## Params
 
 `params(sdk)` is called once each time the module loads and answers `attributes` and `properties`, tables of knobs by name. A knob declared with `:curve(preset)` is a curve param, edited in the curve editor; its value goes straight into `sdk.curve`. A knob declared with `:mod()` can be animated by modifiers and is read as a Track, which `sdk.speed` takes.
@@ -53,7 +55,7 @@ A knob's default can be a function instead of a value. It is a rule, and it answ
 
 ### Rules
 
-Where a knob method takes a function (`hidden`, `readonly`) and where a modifier's `duration`, `curve` and `delay` do, the function is a rule called as `rule(ctx, attrs, props)`: the emit's `ctx`, then the attributes and properties read so far. `hidden(rule)` hides the row in the panel while the rule answers `true`. `readonly(rule)` makes the row read as its default while the rule answers `true`.
+Where a knob method takes a function (`hidden`, `readonly`) and where a modifier's `duration`, `curve` and `delay` do, the function is a rule called as `rule(ctx, attrs, props)`: the emit's `ctx`, then the attributes and properties read so far. A rule that runs while `duration` is still deciding the effect's length sees `ctx.duration` as nil. `hidden(rule)` hides the row in the panel while the rule answers `true`. `readonly(rule)` makes the row read as its default while the rule answers `true`.
 
 ### Default modifiers
 

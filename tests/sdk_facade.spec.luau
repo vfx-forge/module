@@ -125,11 +125,11 @@ harness.suite(function()
       expect(mod.is(sdk.mod.to(1))).toBe(true)
     end)
 
-    test("a call without the ctx emit was handed is refused with the reason", function()
+    test("a call without the ctx the emit was handed is refused with the reason", function()
       local ok, err = pcall(sdk.wait, 5 :: any, 1)
 
       expect(ok).toBe(false)
-      expect(string.find(tostring(err), "sdk.wait takes the ctx emit was handed", 1, true) ~= nil).toBe(true)
+      expect(string.find(tostring(err), "sdk.wait takes the ctx your emit was handed", 1, true) ~= nil).toBe(true)
     end)
   end)
 
@@ -662,6 +662,116 @@ harness.suite(function()
       expect(ended(env)).toBe(true)
       expect(#warnings).toBe(1)
       expect(string.find(warnings[1], "piece boom", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
+  harness.describe("the ctx an author is handed", function()
+    -- registers an effect whose author emit is also handed the runtime's own
+    -- ctx, which no author ever sees, to try it on the facade
+    local function handed(emit: (sdk: any, view: any, ctx: any) -> ())
+      registry.register({
+        id = "viewed",
+        display = { name = "viewed" },
+        classifier = "Folder",
+        attributes = {},
+        properties = {},
+        emit = function(ctx: any, attrs: any, props: any)
+          facade.run(function(sdk: any, view: any)
+            emit(sdk, view, ctx)
+          end, ctx, attrs, props)
+        end,
+      })
+    end
+
+    test("is a frozen table of ref, duration and constant, and holds nothing of the runtime's", function()
+      fresh()
+
+      local seen
+
+      handed(function(_, view: any)
+        seen = view
+      end)
+
+      local _, folder = play()
+      local keys = {}
+
+      for key in seen do
+        table.insert(keys, key)
+      end
+
+      table.sort(keys)
+
+      expect(keys).toEqual({ "duration", "ref" })
+      expect(seen.ref).toBe(folder)
+      expect(seen.duration).toBe(1)
+      expect(seen.scope).toBe(nil)
+      expect(seen.effect).toBe(nil)
+      expect(seen.shared).toBe(nil)
+      expect(seen.obj).toBe(nil)
+      expect(getmetatable(seen)).toBe(nil)
+      expect(table.isfrozen(seen)).toBe(true)
+      expect((pcall(function()
+        seen.scope = {}
+      end))).toBe(false)
+    end)
+
+    test("carries constant when an Enabled loop emitted it", function()
+      local seen
+
+      facade.run(
+        function(_, view: any)
+          seen = view
+        end,
+        { ref = harness.make("Folder"), scope = { state = lifetime.RELEASED }, duration = 2, constant = true },
+        {},
+        {}
+      )
+
+      expect(seen.constant).toBe(true)
+      expect(seen.duration).toBe(2)
+    end)
+
+    test("every entry that takes a ctx refuses the runtime's own and a table like the view, naming the call", function()
+      fresh()
+
+      local refusals = {}
+      local expected = {}
+
+      handed(function(sdk: any, view: any, ctx: any)
+        local calls = {
+          wait = { sdk.wait, 0 },
+          step = { sdk.step, function() end },
+          tween = { sdk.tween, sdk.curve(1, "linear"), function() end },
+          hold = { sdk.hold, function() end },
+          join = { sdk.join },
+          emit = { sdk.emit, harness.make("Configuration") },
+          getWriter = { sdk.getWriter, view.ref, "Name" },
+          getAttributeWriter = { sdk.getAttributeWriter, view.ref, "A" },
+          speed = {
+            sdk.speed,
+            {
+              at = function()
+                return 1
+              end,
+            },
+          },
+        }
+
+        for name, call in calls do
+          for kind, given in { runtime = ctx, copy = { ref = view.ref, duration = view.duration } } do
+            local ok, err = pcall(call[1], given, table.unpack(call, 2))
+            local wording = string.find(tostring(err), `sdk.{name} takes the ctx your emit was handed`, 1, true)
+
+            refusals[`{name} {kind}`] = not ok and wording ~= nil
+            expected[`{name} {kind}`] = true
+          end
+        end
+      end)
+
+      play()
+
+      expect(next(expected) ~= nil).toBe(true)
+      expect(refusals).toEqual(expected)
     end)
   end)
 
