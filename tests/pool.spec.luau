@@ -463,6 +463,23 @@ harness.suite(function()
       expect(pool.started()).toBe(false)
     end)
 
+    test("a release after a stop destroys the instance where it stands", function()
+      local fake = start()
+      local part = source("Part")
+      local scene = harness.make("Model")
+      local holder = {}
+      local taken = pool.take(holder, part)
+
+      taken.Parent = scene
+      stop(fake)
+      lifetime.releasePlain(holder)
+
+      expect(taken.Parent).toBe(nil)
+      expect((pcall(function()
+        taken.Parent = scene
+      end))).toBe(false)
+    end)
+
     test("init after a stop starts empty", function()
       local fake = start()
       local part = source("Part")

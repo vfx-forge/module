@@ -717,7 +717,13 @@ finish = function(inst: Instance, record: Taken)
     mover.drop(inst :: BasePart)
   end
 
-  if known[inst] == nil or folder == nil then
+  -- nothing takes it again once the pool has stopped
+  if folder == nil then
+    inst:Destroy()
+    return
+  end
+
+  if known[inst] == nil then
     return
   end
 
