@@ -2,6 +2,7 @@ local harness = require("@tests/harness")
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
 local lifetime = require("@mod/lifetime")
+local fake_pool = require("@tests/fake_pool")
 
 local test, expect = harness.test, harness.expect
 local Color3 = harness.datatypes.Color3
@@ -17,97 +18,11 @@ local LISTS = {
   Sound = { "Volume" },
 }
 
-type Fake = {
-  engine: any,
-  folder: Instance,
-  scope: { any },
-  settled: { Instance },
-  meshes: { string },
-  made: number,
-  wrappers: { [string]: Instance },
-}
-
--- an engine with no signals: lune instances have none, so the spec fires
--- what the pool listens to itself
-local function start(): Fake
-  local fake = { settled = {}, meshes = {}, made = 0, scope = {}, wrappers = {} } :: any
-  local folder = harness.make("Folder")
-
-  -- lune hands out a fresh wrapper for an instance on every walk, so a walk
-  -- answers the first wrapper seen for each, which is what a map keyed by
-  -- instance finds in Studio
-  local function canonical(inst: Instance): Instance
-    local id = inst:GetDebugId()
-    local first = fake.wrappers[id]
-
-    if first == nil then
-      first = inst
-      fake.wrappers[id] = inst
-    end
-
-    return first
-  end
-
-  fake.folder = folder
-  fake.engine = {
-    folder = function()
-      return folder
-    end,
-    fromExisting = function(source: Instance)
-      fake.made += 1
-
-      local copy = source:Clone()
-      copy:ClearAllChildren()
-
-      return canonical(copy)
-    end,
-    applyMesh = function(_, source: Instance)
-      table.insert(fake.meshes, source.Name)
-    end,
-    properties = function(class: string)
-      return LISTS[class]
-    end,
-    watch = function(template: Instance, changed: () -> ())
-      fake.changed = fake.changed or {}
-      fake.changed[template] = changed
-
-      return {}
-    end,
-    listen = function(inst: Instance, changed: () -> ())
-      fake.dirty = fake.dirty or {}
-      fake.dirty[inst] = changed
-
-      return { Disconnect = function() end }
-    end,
-    children = function(inst: Instance)
-      local list = {}
-
-      for _, child in inst:GetChildren() do
-        table.insert(list, canonical(child))
-      end
-
-      return list
-    end,
-    destroying = function(inst: Instance, fn: () -> ())
-      fake.destroyed = fake.destroyed or {}
-      fake.destroyed[inst] = fn
-
-      return { Disconnect = function() end }
-    end,
-    settle = function(inst: Instance)
-      table.insert(fake.settled, inst)
-    end,
-  }
-
-  pool.engine = fake.engine
-  pool.init(fake.scope)
-
-  return fake
+local function start(): fake_pool.Fake
+  return fake_pool.start(LISTS)
 end
 
-local function stop(fake: Fake)
-  lifetime.releasePlain(fake.scope)
-end
+local stop = fake_pool.stop
 
 local function source(class: string): Instance
   local inst = harness.make(class)

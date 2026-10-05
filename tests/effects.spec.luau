@@ -1,7 +1,6 @@
 local fs = require("@lune/fs")
 local mods = require("@mod/mods")
 local attr = require("@mod/attributes")
-local pool = require("@srv/pool")
 local clock = require("@mod/clock")
 local curve = require("@mod/curve")
 local tween = require("@mod/tween")
@@ -16,6 +15,7 @@ local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
+local fake_pool = require("@tests/fake_pool")
 local enabled_effects = require("@srv/enabled_effects")
 local test, expect = harness.test, harness.expect
 local row = harness.row
@@ -35,77 +35,6 @@ local function noop() end
 local LISTS = {
   Part = { "Color", "Size", "Transparency" },
 }
-
-local ENGINE = pool.engine
-
--- the pool on an engine with no signals, counting every instance it makes:
--- lune instances have none, and lune hands out a fresh wrapper for an
--- instance on every walk, so a walk answers the first wrapper seen for each,
--- which is what a map keyed by instance finds in Studio
-local function startPool()
-  local fake = { made = 0, scope = {}, wrappers = {} } :: any
-  local folder = harness.make("Folder")
-
-  local function canonical(inst: Instance): Instance
-    local id = inst:GetDebugId()
-    local first = fake.wrappers[id]
-
-    if first == nil then
-      first = inst
-      fake.wrappers[id] = inst
-    end
-
-    return first
-  end
-
-  fake.folder = folder
-  fake.engine = {
-    folder = function()
-      return folder
-    end,
-    fromExisting = function(source: Instance)
-      fake.made += 1
-
-      local copy = source:Clone()
-      copy:ClearAllChildren()
-
-      return canonical(copy)
-    end,
-    applyMesh = noop,
-    properties = function(class: string)
-      return LISTS[class]
-    end,
-    watch = function()
-      return {}
-    end,
-    listen = function()
-      return { Disconnect = noop }
-    end,
-    children = function(inst: Instance)
-      local list = {}
-
-      for _, child in inst:GetChildren() do
-        table.insert(list, canonical(child))
-      end
-
-      return list
-    end,
-    destroying = function()
-      return { Disconnect = noop }
-    end,
-    settle = noop,
-  }
-
-  pool.engine = fake.engine
-  pool.init(fake.scope)
-
-  return fake
-end
-
-local function stopPool(fake: any)
-  lifetime.releasePlain(fake.scope)
-  pool.engine = ENGINE
-end
 
 -- a stand-in module, classified by class name, whose emit is the spec's own. one
 -- that takes its whole subtree emits what is under it itself, the way a screen does
@@ -2433,7 +2362,7 @@ harness.suite(function()
 
       registry.register(require("@vfx/shockwave"))
       registry.register(table.clone(line))
-      local fake = startPool()
+      local fake = fake_pool.start(LISTS)
 
       local extents = utility.getTransformedOriginExtents
       utility.getTransformedOriginExtents = function()
@@ -2467,7 +2396,7 @@ harness.suite(function()
       end
 
       env:Clear()
-      stopPool(fake)
+      fake_pool.stop(fake)
       workspace.Raycast = raycast
       utility.getTransformedOriginExtents = extents
       RaycastParams = params
