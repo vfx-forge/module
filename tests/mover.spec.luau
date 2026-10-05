@@ -131,6 +131,20 @@ harness.suite(function()
       expect(#batches).toBe(1)
     end)
 
+    test("a move made in the compute half has landed when that half returns", function()
+      mover.bulk = original
+
+      local part = harness.make("Part")
+      local step = scheduler.add("compute", function()
+        mover.move(nil, part, CFrame.new(8, 0, 0))
+      end)
+
+      scheduler.compute(1 / 60)
+      step:Disconnect()
+
+      expect(part.CFrame).toBe(CFrame.new(8, 0, 0))
+    end)
+
     harness.test("the harness's batch is put back", function()
       mover.bulk = original
       mover.clear()

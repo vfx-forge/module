@@ -56,8 +56,9 @@ local scheduler = {}
 -- module never requires it
 scheduler.failed = nil :: ((owner: any) -> ())?
 
--- run once a late pass is done: the mover's batch, so every move a pass made
--- lands in one call before the frame renders
+-- run once each half of a frame is done: the mover's batch, so every move a
+-- half made lands in one call, before the late half's readers and before the
+-- frame renders
 scheduler.after = nil :: (() -> ())?
 
 -- the real seconds every frame so far has stepped, read by an emit's handle to
@@ -320,6 +321,14 @@ function scheduler.adopt(handle: Handle, owner: any)
   end
 end
 
+local function runAfter()
+  local after = scheduler.after
+
+  if after ~= nil then
+    after()
+  end
+end
+
 -- the first half of a frame: every clock's factor for the frame, undoing
 -- what the last one left on shared targets, the waits that are due, then
 -- every step that computes a value
@@ -330,6 +339,8 @@ function scheduler.compute(deltaTime: number)
   end
 
   runPhases(COMPUTE, deltaTime)
+
+  runAfter()
 end
 
 -- the second half: the camera shake, then the screens, then whatever follows
@@ -337,11 +348,7 @@ end
 function scheduler.late(deltaTime: number)
   runPhases(LATE, deltaTime)
 
-  local after = scheduler.after
-
-  if after ~= nil then
-    after()
-  end
+  runAfter()
 end
 
 -- whether the caller is a step, or a callback a step made, on the pass's own
