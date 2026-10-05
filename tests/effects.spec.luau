@@ -2131,6 +2131,69 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("a clone of what an author made", function()
+    -- the engine's Clone, which answers nil for an instance whose Archivable
+    -- is false; lune's clones one anyway. every write is counted
+    local function authored(archivable: boolean)
+      local state = { Archivable = archivable }
+      local inst = { writes = 0 }
+
+      function inst.Clone()
+        return if state.Archivable then { Archivable = true } else nil
+      end
+
+      return setmetatable(inst, {
+        __index = state,
+        __newindex = function(_, key: string, value: any)
+          inst.writes += 1
+          state[key] = value
+        end,
+      }) :: any
+    end
+
+    test("one that is not archivable is cloned and left as it was", function()
+      local inst = authored(false)
+      local copy = utility.clone(inst)
+
+      expect(copy ~= nil).toBe(true)
+      expect(inst.Archivable).toBe(false)
+    end)
+
+    test("one that is archivable is cloned with nothing written to it", function()
+      local inst = authored(true)
+      local copy = utility.clone(inst)
+
+      expect(copy ~= nil).toBe(true)
+      expect(inst.Archivable).toBe(true)
+      expect(inst.writes).toBe(0)
+    end)
+
+    test("a beam that is not archivable plays out and is left as it was", function()
+      local built = fresh()
+      registry.register(require("@vfx/beam"))
+
+      local part = harness.make("Part")
+      local beam = harness.make("Beam", part) :: any
+
+      beam.Archivable = false
+      beam.Attachment0 = harness.make("Attachment", part)
+      beam.Attachment1 = harness.make("Attachment", part)
+      beam:SetAttribute("EffectDuration", harness.datatypes.NumberRange.new(0.5, 0.5))
+      beam:SetAttribute("LengthScale", 2)
+
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(env.Finished:getStatus()).toBe("Resolved")
+      expect(beam.Archivable).toBe(false)
+
+      built.restore()
+    end)
+  end)
+
   harness.describe("a beam", function()
     -- a beam between two attachments of one part, its rows authored as given
     local function beamOf(attributes: { [string]: any })

@@ -312,7 +312,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     utility.copyProperties(ref, realPart, utility.COPY_EXTENDED_PART_PROPERTIES)
 
     if #ref:GetChildren() ~= 0 then
-      local clone = ref:Clone()
+      local clone = utility.clone(ref)
 
       for _, child in clone:GetChildren() do
         child.Parent = realPart

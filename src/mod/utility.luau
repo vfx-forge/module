@@ -135,6 +135,21 @@ function utility.copyProperties(from: Instance, to: Instance, list: { string })
   end
 end
 
+-- the engine's Clone answers nil for an instance whose Archivable is false
+function utility.clone<T>(inst: T & Instance): T
+  if inst.Archivable then
+    return inst:Clone()
+  end
+
+  inst.Archivable = true
+
+  local clone = inst:Clone()
+
+  inst.Archivable = false
+
+  return clone
+end
+
 function utility.lerp(a: number, b: number, t: number)
   return a + (b - a) * t
 end
@@ -485,7 +500,7 @@ function utility.assembleMeshVFX(start: BasePart, scope: lifetime.effect, shared
     utility.copyProperties(start, obj, utility.COPY_PART_PROPERTIES)
     utility.copyProperties(start, obj, utility.COPY_EXTENDED_PART_PROPERTIES)
 
-    local clone = start:Clone()
+    local clone = utility.clone(start)
 
     for _, child in clone:GetChildren() do
       child.Parent = obj
@@ -499,7 +514,7 @@ function utility.assembleMeshVFX(start: BasePart, scope: lifetime.effect, shared
 
     return objAbstr
   else
-    local clone = start:Clone()
+    local clone = utility.clone(start)
     clone.Archivable = false
     clone.Locked = true
     clone.Parent = workspace.Terrain

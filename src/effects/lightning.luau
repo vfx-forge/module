@@ -452,7 +452,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
     enabled_effects.switch(ref, false)
   end
 
-  local refObj = template:Clone()
+  local refObj = utility.clone(template)
   refObj.Locked = true
 
   lifetime.hold(scope, refObj)

@@ -82,7 +82,7 @@ local function prepare(ctx: reader.Ctx): ParticleEmitter?
     return nil
   end
 
-  local clone = ref:Clone()
+  local clone = utility.clone(ref)
   clone.Archivable = false
   clone.Parent = parent
 
