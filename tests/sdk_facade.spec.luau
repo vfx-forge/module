@@ -22,18 +22,37 @@ local sdk = facade.sdk
 local function custom(
   id: string,
   emit: (sdk: any, ctx: any, attrs: any, props: any) -> (),
-  attributes: { [string]: any }?
+  attributes: { [string]: any }?,
+  properties: { [string]: any }?
 )
   registry.register({
     id = id,
     display = { name = id },
     classifier = "Folder",
     attributes = attributes or {},
-    properties = {},
+    properties = properties or {},
     emit = function(ctx: any, attrs: any, props: any)
       facade.run(emit, ctx, attrs, props)
     end,
   })
+end
+
+-- what a value an author is handed is, a Track's view told apart from the
+-- reader's own Track and from any other table
+local function kindOf(value: any)
+  local viewed = type(value) == "table" and value.reach == nil and getmetatable(value) ~= nil and table.isfrozen(value)
+
+  return if viewed then "view" else typeof(value)
+end
+
+local function walked(read: any)
+  local kinds = {}
+
+  for name, value in read do
+    kinds[name] = kindOf(value)
+  end
+
+  return kinds
 end
 
 local function fresh()
@@ -562,30 +581,47 @@ harness.suite(function()
     test("attrs and props are read only, and iterate as views", function()
       fresh()
 
-      local wrote, kinds
+      local wrote, attrKinds, propKinds
 
-      custom("readonly", function(_, _, attrs: any)
+      custom("readonly", function(_, _, attrs: any, props: any)
         wrote = pcall(function()
           attrs.Growth = 5
         end)
 
-        kinds = {}
-
-        for name, value in attrs do
-          kinds[name] = typeof(value)
-        end
-      end, { Growth = knob(2):mod(), Count = knob(3) })
+        attrKinds = walked(attrs)
+        propKinds = walked(props)
+      end, { Growth = knob(2):mod(), Count = knob(3) }, { Size = knob(1):mod() })
 
       play()
 
       expect(wrote).toBe(false)
-      expect(kinds).toEqual({ Growth = "table", Count = "number" })
+      expect(attrKinds).toEqual({ Growth = "view", Count = "number" })
+      expect(propKinds).toEqual({ Size = "view" })
+    end)
+
+    test("a copy of attrs is refused by name", function()
+      fresh()
+
+      local err
+
+      custom("copied", function(_, _, attrs: any)
+        local copy = table.clone(attrs)
+        local ok, problem = pcall(function()
+          return copy.Growth
+        end)
+
+        err = if ok then "" else tostring(problem)
+      end, { Growth = knob(2):mod() })
+
+      play()
+
+      expect(string.find(err, "attrs and props are read only windows", 1, true) ~= nil).toBe(true)
     end)
 
     test("a rule and duration see views too, never the reader's Track", function()
       fresh()
 
-      local inRule, inDuration
+      local inRule, inDuration, ruleKinds, durationKinds
       local source = {
         sdk_version = 1,
         id = "ruled",
@@ -595,33 +631,57 @@ harness.suite(function()
           return {
             attributes = {
               Growth = sdk.knob(2):mod(),
-              Shown = sdk.knob(true):readonly(function(_, attrs: any)
+              Shown = sdk.knob(true):readonly(function(_, attrs: any, props: any)
                 inRule = attrs.Growth.reach == nil and attrs.Growth:at(0) == 2
+                ruleKinds = { touched = kindOf(props.Transparency), attrs = walked(attrs), props = walked(props) }
 
                 return false
               end),
             },
+            properties = {
+              Transparency = sdk.knob(0):mod(),
+            },
           }
         end,
-        duration = function(_, attrs: any)
+        duration = function(_, attrs: any, props: any)
           inDuration = attrs.Growth.reach == nil and attrs.Growth.value == 2
+          durationKinds = {
+            Growth = kindOf(attrs.Growth),
+            Transparency = kindOf(props.Transparency),
+            attrs = walked(attrs),
+            props = walked(props),
+          }
 
           return 1
         end,
         emit = function() end,
       }
 
-      expect((require("@root/sdk/custom").add("ruled", source, "tests.ruled"))).toBe(true)
-
+      local sdk_custom = require("@root/sdk/custom")
+      local added = sdk_custom.add("ruled", source, "tests.ruled")
       local part = harness.make("Part", harness.make("Folder"))
 
       part:AddTag("Ruled")
       effects.emit(0, part)
+      sdk_custom.clear()
 
+      expect(added).toBe(true)
       expect(inRule).toBe(true)
       expect(inDuration).toBe(true)
+      expect(ruleKinds).toEqual({
+        touched = "view",
+        attrs = { Growth = "view" },
+        props = { Transparency = "view" },
+      })
 
-      require("@root/sdk/custom").clear()
+      -- the mod rows a duration pulls are provisional and never kept, so its
+      -- walk finds none
+      expect(durationKinds).toEqual({
+        Growth = "view",
+        Transparency = "view",
+        attrs = {},
+        props = {},
+      })
     end)
 
     test("speed refuses anything that is not a param's Track", function()

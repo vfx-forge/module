@@ -131,12 +131,23 @@ end
 -- each row as it resolves
 local Read = {}
 
+-- a copy of a window carries its metatable but none of the reader's table
+local function sourceOf(window: any)
+  local read = SOURCES[window]
+
+  if read == nil then
+    logger.error("attrs and props are read only windows; read them directly, do not copy them")
+  end
+
+  return read
+end
+
 function Read.__index(window: any, key: any)
-  return shown(SOURCES[window][key])
+  return shown(sourceOf(window)[key])
 end
 
 function Read.__iter(window: any)
-  local read = SOURCES[window]
+  local read = sourceOf(window)
   local key = nil
 
   return function()
