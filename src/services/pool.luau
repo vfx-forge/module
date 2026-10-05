@@ -17,6 +17,10 @@ local SKIP = { Name = true, Parent = true, Archivable = true }
 -- where an effect places a piece itself, so a take never moves it there first
 local PLACED = { CFrame = true }
 
+-- a template's motion never reaches a piece, which starts from the rest its
+-- release left it at: debris reads a piece's velocity as its launch's start
+local MOTION = { Velocity = true, RotVelocity = true, AssemblyLinearVelocity = true, AssemblyAngularVelocity = true }
+
 -- every bit of these classes' state is a serialized property, or is reset by
 -- settle; anything else under a template makes it clone fresh every emit
 local RESTORABLE = {
@@ -343,7 +347,7 @@ local function dress(inst: Instance, source: Instance)
   for _, name in listOf(source.ClassName) :: { string } do
     local value = (source :: any)[name]
 
-    if PLACED[name] or (inst :: any)[name] == value then
+    if PLACED[name] or MOTION[name] or (inst :: any)[name] == value then
       continue
     end
 

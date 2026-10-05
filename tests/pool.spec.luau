@@ -165,6 +165,29 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a part from the stack never takes its new source's velocity", function()
+      local lists = table.clone(LISTS)
+      lists.Part = { "Color", "Velocity" }
+
+      local fake = fake_pool.start(lists)
+      local still = source("Part")
+      local moving = source("Part") :: Part
+      local holder = {}
+      local taken = pool.take(holder, still) :: Part
+
+      moving.Velocity = Vector3.new(0, 30, 0)
+      lifetime.releasePlain(holder)
+
+      local again = {}
+      local reused = pool.take(again, moving) :: Part
+
+      expect(reused).toBe(taken)
+      expect(reused.Velocity).toBe(Vector3.zero)
+
+      lifetime.releasePlain(again)
+      stop(fake)
+    end)
+
     test("a released emitter is cleared and switched off", function()
       local fake = start()
       local emitter = source("ParticleEmitter")
