@@ -643,7 +643,7 @@ harness.suite(function()
       stop(fake)
     end)
 
-    test("a template a custom effect claims takes a fresh root after its first take", function()
+    test("a template a custom effect claims is copied whole from its first take", function()
       local fake = start()
       local source = template()
       local marker = harness.make("Configuration", source)
@@ -661,15 +661,18 @@ harness.suite(function()
       registry.register(custom :: any, true)
 
       local holder = {}
+      local fresh = pool.stats().fresh
       local first = pool.take(holder, source)
+
+      expect(pool.stats().fresh).toBe(fresh + 1)
+      expect(first:FindFirstChild("CustomClaimed") ~= nil).toBe(true)
 
       lifetime.releasePlain(holder)
 
-      local fresh = pool.stats().fresh
       local second = pool.take(holder, source)
 
       expect(second ~= first).toBe(true)
-      expect(pool.stats().fresh).toBe(fresh + 1)
+      expect(pool.stats().fresh).toBe(fresh + 2)
       expect(second:FindFirstChild("CustomClaimed") ~= nil).toBe(true)
 
       lifetime.releasePlain(holder)
@@ -747,7 +750,7 @@ harness.suite(function()
 
       local holder, other = {}, {}
       local copy = pool.take(holder, source)
-      local carrier = pool.take(other, scripted)
+      local carrier = fake.stable(pool.take(other, scripted))
 
       carrier.Parent = copy
       lifetime.releasePlain(holder)

@@ -128,6 +128,7 @@ local setOf: { [Instance]: Set } = {}
 local memberOf: { [Instance]: Set } = {}
 local indexOf: { [Instance]: number } = {}
 local known: { [Instance]: any } = {}
+local loose: { [Instance]: true } = setmetatable({}, { __mode = "k" }) :: any
 
 pool.engine = {
   folder = function(scope: { any })
@@ -490,6 +491,7 @@ local function fresh(holder: any, source: Instance)
     (copy :: BasePart).Anchored = true
   end
 
+  loose[copy] = true
   holdIn(holder, copy)
 
   return copy
@@ -505,7 +507,7 @@ local function rescue(inst: Instance)
     return true
   end
 
-  if taken[inst] ~= nil or storeOf[inst] ~= nil then
+  if taken[inst] ~= nil or storeOf[inst] ~= nil or loose[inst] then
     inst.Parent = folder
     return true
   end
@@ -1004,11 +1006,12 @@ local function kept(holder: any, key: Instance, source: Instance)
 
   local set = build(root, key, entry)
 
-  -- the clones stay under the root and are cleared on release, as for any
-  -- template that cannot be kept
+  -- its children were cloned one by one, so a reference between them still
+  -- names the template's; a whole clone names its own
   if set == nil then
     entry.keep = false
-    return begin(holder, root, stack, nil)
+    destroy(root)
+    return fresh(holder, source)
   end
 
   entry.keep = true
@@ -1136,7 +1139,7 @@ function pool.init(scope: { any })
     folder = nil
 
     for _, map in
-      { stacks, templates, taken, storeOf, setOf, memberOf, indexOf, known, lists, restorable, hiddenBy } :: { any }
+      { stacks, templates, taken, storeOf, setOf, memberOf, indexOf, known, loose, lists, restorable, hiddenBy } :: { any }
     do
       table.clear(map)
     end
