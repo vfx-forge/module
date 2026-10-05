@@ -26,7 +26,8 @@ export type Shape = {
   ys: { number },
   segments: number,
 
-  -- four coefficients a step of time, built by the first `at`
+  -- four coefficients a step of time, built by the first `at`, or at load
+  -- for a preset
   steps: { number }?,
 
   key: string?,
@@ -40,7 +41,8 @@ export type Curve = typeof(setmetatable({} :: { duration: number, shape: Shape?,
 
 local curve = {}
 
--- the four presets, decoded once per runtime and never let go
+-- the four presets, built whole at load and frozen through, since every
+-- effect shares them and an author's sdk.curve hands one out
 local Presets: { [string]: Shape } = {}
 
 -- every other shape by its content, in one budget of LIMIT
@@ -220,22 +222,11 @@ local function keyOf(chain: { vector }): string
   return table.concat(parts, ",")
 end
 
-local function preset(name: string): Shape
-  local shape = Presets[name]
-
-  if shape == nil then
-    shape = decode(curves.PRESETS[name])
-    Presets[name] = shape
-  end
-
-  return shape
-end
-
 local function fromPath(serialized: string): Shape
   local name = Named[serialized]
 
   if name ~= nil then
-    return preset(name)
+    return Presets[name]
   end
 
   local found = Paths[serialized]
@@ -257,7 +248,7 @@ local function shapeOf(shape: any): Shape
 
   if kind == "string" then
     if curves.PRESETS[shape] ~= nil then
-      return preset(shape)
+      return Presets[shape]
     end
 
     return fromPath(shape)
@@ -402,6 +393,20 @@ local function tabled(shape: Shape): { number }
   return steps
 end
 
+-- a shape with its table built, frozen through, so whoever holds it can change
+-- nothing another curve reads
+local function sealed(shape: Shape): Shape
+  table.freeze(shape.xs)
+  table.freeze(shape.ys)
+  table.freeze(shape.steps or tabled(shape))
+
+  return table.freeze(shape)
+end
+
+for name, serialized in curves.PRESETS do
+  Presets[name] = sealed(decode(serialized))
+end
+
 -- the value at time t: its step's cubic where that follows the curve, else the
 -- curve solved outright
 local function solve(shape: Shape, t: number): number
@@ -450,6 +455,27 @@ function curve.new(duration: number, shape: string | buffer | { vector } | (t: n
   end
 
   return setmetatable({ duration = d, shape = shapeOf(shape), fn = nil }, Curve)
+end
+
+-- a curve no holder can change: a preset's shape as every curve shares it, and
+-- any other a frozen copy of the shape it shares, which the cache behind it
+-- still writes to. for an author's curve, never for an effect's own
+function curve.frozen(duration: number, shape: string | buffer | { vector } | (t: number) -> number): Curve
+  local made = curve.new(duration, shape)
+  local shared = made.shape
+
+  if shared ~= nil and not table.isfrozen(shared) then
+    made.shape = sealed({
+      xs = table.clone(shared.xs),
+      ys = table.clone(shared.ys),
+      segments = shared.segments,
+      steps = table.clone(shared.steps or tabled(shared)),
+      key = nil,
+      used = 0,
+    })
+  end
+
+  return table.freeze(made)
 end
 
 -- a shape's value at t with no curve made, for a caller sampling a row's

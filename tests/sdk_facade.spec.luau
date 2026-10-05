@@ -1,6 +1,7 @@
 local fs = require("@lune/fs")
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
+local curve = require("@mod/curve")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
@@ -171,6 +172,43 @@ harness.suite(function()
       expect(table.isfrozen(c)).toBe(true)
       expect(math.abs(c:at(1) - 1) < 1e-6).toBe(true)
       expect(c:at(0.5) < 0.4).toBe(true)
+    end)
+
+    test(
+      "a preset's shape cannot be rewritten through an author's curve, and every built-in eases as before",
+      function()
+        local c = sdk.curve(1, "easeOut")
+        local shape = c.shape :: any
+
+        expect((pcall(function()
+          shape.xs[2] = 1
+        end))).toBe(false)
+
+        expect((pcall(function()
+          shape.steps = {}
+        end))).toBe(false)
+
+        expect(curve.new(1, "easeOut"):at(0.5)).toBe(0.87509411341477272)
+      end
+    )
+
+    test("a chain or path curve holds a frozen copy of the shape the built-ins share", function()
+      local chain = { vector.create(0, 0), vector.create(0.3, 0.05), vector.create(0.65, 0.95), vector.create(1, 1) }
+      local shared = curve.new(1, chain)
+      local c = sdk.curve(1, chain)
+      local shape = c.shape :: any
+
+      expect(shape ~= shared.shape).toBe(true)
+      expect(table.isfrozen(shape) and table.isfrozen(shape.xs) and table.isfrozen(shape.ys)).toBe(true)
+      expect(shape.steps ~= nil and table.isfrozen(shape.steps)).toBe(true)
+
+      expect((pcall(function()
+        shape.ys[2] = 1
+      end))).toBe(false)
+
+      for _, t in { 0.1, 0.3, 0.5, 0.9 } do
+        expect(c:at(t)).toBe(shared:at(t))
+      end
     end)
 
     test("reads every preset, and a curve param's value", function()

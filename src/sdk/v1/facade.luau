@@ -474,7 +474,7 @@ function v1.curve(duration: number, given: any, options: {}?)
     logger.error("sdk.curve takes no options yet")
   end
 
-  return table.freeze(curve.new(duration, shapeOf(given)))
+  return curve.frozen(duration, shapeOf(given))
 end
 
 function v1.tween(view: any, eased: any, fn: (alpha: number) -> ())

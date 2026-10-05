@@ -159,6 +159,30 @@ harness.suite(function()
       expect(curve.new(1, "easeOut"):at(0.5) > 0.6).toBe(true)
       expect(math.abs(curve.new(1, "easeInOut"):at(0.5) - 0.5) < 0.02).toBe(true)
     end)
+
+    test("a preset's shape is built whole and frozen through, so nothing can change how every effect eases", function()
+      for _, name in { "easeIn", "easeOut", "easeInOut" } do
+        local shape = curve.new(1, name).shape :: any
+
+        expect(table.isfrozen(shape)).toBe(true)
+        expect(table.isfrozen(shape.xs)).toBe(true)
+        expect(table.isfrozen(shape.ys)).toBe(true)
+        expect(shape.steps ~= nil and table.isfrozen(shape.steps)).toBe(true)
+        expect(curve.sample(name, 0.5)).toBe(curve.new(1, name):at(0.5))
+
+        expect((pcall(function()
+          shape.xs[2] = 0
+        end))).toBe(false)
+
+        expect((pcall(function()
+          shape.steps = nil
+        end))).toBe(false)
+      end
+
+      expect(curve.new(1, "easeOut"):at(0.5)).toBe(0.87509411341477272)
+      expect(curve.new(1, "easeIn"):at(0.5)).toBe(0.14526835779991185)
+      expect(curve.new(1, "easeInOut"):at(0.5)).toBe(0.51687503703148363)
+    end)
   end)
 
   harness.describe("curve:at", function()
