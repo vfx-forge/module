@@ -23,11 +23,12 @@ export type Module = {
   selected: ((ctx: any) -> ())?,
 }
 
--- the two maps a particle's ancestry clone is shared through for the life of
--- one emit, built by the dispatcher and handed to every effect of that emit
+-- the maps a particle's ancestry clone is shared through for the life of one
+-- emit, built by the dispatcher and handed to every effect of that emit
 export type Shared = {
   unc: { [Instance]: number },
   ref: { [Instance]: Instance },
+  held: { [Instance]: { any } },
 }
 
 export type Ctx = {

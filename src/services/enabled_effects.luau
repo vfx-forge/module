@@ -58,7 +58,7 @@ function enabled_effects.ticker(obj: Instance, module: registry.Module, token: l
     local emitScope = lifetime.effect(token, 0, effectsService)
 
     lifetime.run(emitScope, function(scope)
-      emitters.dispatch(obj, scope, { unc = {}, ref = {} }, module, true)
+      emitters.dispatch(obj, scope, { unc = {}, ref = {}, held = {} }, module, true)
     end)
   end
 end

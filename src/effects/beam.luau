@@ -8,6 +8,8 @@ local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
 
+local pool = require("@srv/pool")
+
 local rng = Random.new()
 
 local function always()
@@ -128,19 +130,20 @@ local function prepare(ctx: reader.Ctx, attrs: any): Beam?
     return nil
   end
 
-  local clone = utility.clone(ref)
-  clone.Archivable = false
-  clone.Parent = workspace.Terrain
+  -- the copy keeps its children, which the beam emits as its nested effects
+  local clone = pool.take(scope, ref) :: Beam
 
   -- any length other than 1 moves attachments, and only throwaway ones may
   -- move, or an overlapping emit would read the scaled ones as authored
   local lengthScale = attrs.LengthScale
 
   if lengthScale.animated or lengthScale.at(0) ~= 1 then
-    local a, b = utility.clone(att0), utility.clone(att1)
+    local a = pool.take(scope, att0, true) :: Attachment
+    local b = pool.take(scope, att1, true) :: Attachment
 
-    lifetime.hold(scope, a)
-    lifetime.hold(scope, b)
+    -- a take never poses what it hands out
+    a.CFrame = att0.CFrame
+    b.CFrame = att1.CFrame
 
     a.Name = "_ForgeTempAttachment"
     b.Name = "_ForgeTempAttachment"
@@ -154,8 +157,6 @@ local function prepare(ctx: reader.Ctx, attrs: any): Beam?
     a.Parent = att0.Parent
     b.Parent = att1.Parent
   end
-
-  lifetime.hold(scope, clone)
 
   -- the reader has already run by here, so the clone is for what this effect
   -- reads of its own below and for the plans that will read from it

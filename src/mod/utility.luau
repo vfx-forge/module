@@ -171,14 +171,6 @@ function utility.getTarget(obj: Instance): Instance?
   return parent
 end
 
-function utility.onCancel(scope: lifetime.effect, callback: () -> ())
-  lifetime.defer(scope, function(cancelled)
-    if cancelled then
-      callback()
-    end
-  end)
-end
-
 -- a window's tick runs on the window's clock, which already carries the
 -- window's Speed; a passive loop's tick and a plain emit run at their own
 function utility.speedFrom(scope: lifetime.effect, constant: boolean?, row: any)
@@ -244,7 +236,8 @@ end
 
 function utility.cloneParticleAncestry(
   particle: ParticleEmitter,
-  map: { [Instance?]: Instance }
+  map: { [Instance?]: Instance },
+  make: (obj: Instance) -> Instance
 ): (Instance?, Instance?)
   if not particle:FindFirstAncestorWhichIsA("BasePart") and not particle:FindFirstAncestorOfClass("Attachment") then
     return
@@ -275,13 +268,7 @@ function utility.cloneParticleAncestry(
       return created, if obj == particle then map[obj.Parent] else map[findAncestor(obj.Parent)] or map[obj]
     end
 
-    local clone = Instance.fromExisting(obj)
-    clone.Archivable = false
-
-    if clone:IsA("BasePart") then
-      clone.Locked = true
-    end
-
+    local clone = make(obj)
     local ancestor = clone
 
     if map then

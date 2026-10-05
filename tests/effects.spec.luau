@@ -2335,6 +2335,84 @@ harness.suite(function()
 
       built.restore()
     end)
+
+    test("a beam's copy keeps the effects nested under it, and emits them", function()
+      local built = fresh()
+      local seen = {}
+
+      registry.register(require("@vfx/beam"))
+      registry.register(module("counts", "Folder", counting(seen)))
+
+      local fake = fake_pool.start({ Beam = { "Enabled" }, Folder = {} })
+      local part = harness.make("Part")
+      local beam = harness.make("Beam", part) :: any
+      local child = harness.make("Folder", beam)
+
+      child.Name = "child"
+      beam.Attachment0 = harness.make("Attachment", part)
+      beam.Attachment1 = harness.make("Attachment", part)
+
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0.25)
+
+      expect(seen.child).toBe(0.25)
+
+      env:Clear()
+      fake_pool.stop(fake)
+      built.restore()
+    end)
+
+    test("a reused throwaway attachment starts where the authored one is", function()
+      local built = fresh()
+      local CFrame = harness.datatypes.CFrame
+      registry.register(require("@vfx/beam"))
+
+      local fake = fake_pool.start({ Beam = { "Enabled" }, Attachment = { "Visible" } })
+
+      -- a beam scaled by 2 between attachments at `z0` and `z1`, answering
+      -- where its throwaway attachments are after one frame
+      local function scaled(z0: number, z1: number): { CFrame }
+        local part = harness.make("Part")
+        local a0 = harness.make("Attachment", part)
+        local a1 = harness.make("Attachment", part)
+        local beam = harness.make("Beam", part) :: any
+
+        a0.CFrame = CFrame.new(0, 0, z0)
+        a1.CFrame = CFrame.new(0, 0, z1)
+        beam.Attachment0 = a0
+        beam.Attachment1 = a1
+        beam:SetAttribute("LengthScale", 2)
+
+        local env = effects.emit(0, beam)
+
+        scheduler.frame(0)
+
+        local found = {}
+
+        for _, inst in part:GetChildren() do
+          if inst.Name == "_ForgeTempAttachment" then
+            table.insert(found, (inst :: Attachment).CFrame)
+          end
+        end
+
+        env:Clear()
+
+        return found
+      end
+
+      scaled(100, 140)
+
+      local made = fake.made
+      local found = scaled(0, 10)
+
+      expect(fake.made).toBe(made)
+      expect(found[1]).toEqual(CFrame.new(0, 0, -5))
+      expect(found[2]).toEqual(CFrame.new(0, 0, 15))
+
+      fake_pool.stop(fake)
+      built.restore()
+    end)
   end)
 
   harness.describe("a line's emission", function()

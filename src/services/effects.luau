@@ -495,7 +495,7 @@ end
 -- a nested emit was started by, and the instance its children sit under is
 -- that effect's own; `from` tells a nested emit from an on-finish one
 local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effect?, from: string, ...: Instance)
-  local shared: reader.Shared = { unc = {}, ref = {} }
+  local shared: reader.Shared = { unc = {}, ref = {}, held = {} }
 
   local list = { ... }
   local modules: { registry.Module? } = table.create(#list)
