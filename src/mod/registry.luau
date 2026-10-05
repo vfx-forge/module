@@ -8,6 +8,10 @@ local legacy_mods = require("@mod/legacy_mods")
 
 local registry = {}
 
+-- moves whenever the set of modules changes, so a cache keyed on what claims
+-- an instance knows to drop it
+registry.version = 0
+
 export type Module = reader.Module
 
 -- an effect of nil is the old format's tween child, which drives what it
@@ -64,6 +68,8 @@ function registry.clear()
   table.clear(owned)
   table.clear(reflected)
   table.clear(shape)
+
+  registry.version += 1
 end
 
 -- a classifier with its parenthesized parts blanked, so a relative selector
@@ -564,6 +570,8 @@ function registry.register(module: Module, isCustom: boolean?)
   end
 
   reorder()
+
+  registry.version += 1
 end
 
 -- the module taken out of every lookup, so its id and classifier are free
@@ -584,6 +592,8 @@ function registry.unregister(module: Module)
   reflected[module] = nil
 
   reorder()
+
+  registry.version += 1
 end
 
 -- whether the module was registered as a custom effect's, and still is
