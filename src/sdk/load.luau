@@ -274,17 +274,27 @@ local function checkKinds(rows: { [string]: any }, source: string, found: { stri
   end
 end
 
--- a curve param whose default is a preset's name, or none, starts as that
--- preset's curve, which is what the curve editor shows and the reader hands on
+-- the preset a curve param whose default is a preset's name, or none, starts
+-- as, which is what the curve editor shows and the reader hands on
+local function presetOf(row: any): string?
+  if row.preset == nil or row.isMod then
+    return nil
+  end
+
+  local named = if row.hasDefault then row.default else row.preset
+
+  return if type(named) == "string" and curves.PRESETS[named] ~= nil then named else nil
+end
+
 local function curveDefaults(rows: { [string]: any })
   for _, row in rows do
-    if type(row) ~= "table" or row.preset == nil or row.isMod then
+    if type(row) ~= "table" then
       continue
     end
 
-    local named = if row.hasDefault then row.default else row.preset
+    local named = presetOf(row)
 
-    if type(named) == "string" and curves.PRESETS[named] ~= nil then
+    if named ~= nil then
       row.default = curves.PRESETS[named]
       row.hasDefault = true
       row.kind = "string"
@@ -292,17 +302,81 @@ local function curveDefaults(rows: { [string]: any })
   end
 end
 
--- every rule of the author's handed the view of its ctx rather than the ctx.
--- a row the registry already froze was handed it by the load that froze it
-local function viewed(rows: { [string]: any }, facade: any)
-  for _, row in rows do
-    if type(row) ~= "table" or table.isfrozen(row) then
+-- a function the facade has not yet handed the view of its ctx
+local function bare(value: any, facade: any)
+  return type(value) == "function" and facade.rule(value) ~= value
+end
+
+local function holdsBare(t: any, facade: any)
+  for _, value in next, t do
+    if bare(value, facade) then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- every frozen table load would have to change, named. a row the registry froze
+-- on an earlier load, as a module keeps at module level, holds only rules that
+-- load wrapped and passes; any other frozen one would reach the reader with the
+-- runtime's ctx, so it is refused before any of it can run
+local function checkFrozen(rows: { [string]: any }, facade: any, found: { string })
+  local names = {}
+
+  for name, row in rows do
+    if type(row) == "table" then
+      table.insert(names, name)
+    end
+  end
+
+  table.sort(names, function(a: any, b: any)
+    return tostring(a) < tostring(b)
+  end)
+
+  for _, name in names do
+    local row = rows[name]
+
+    if table.isfrozen(row) and (presetOf(row) ~= nil or holdsBare(row, facade)) then
+      table.insert(found, `a knob must come fresh from sdk.knob; {name} is frozen`)
+    end
+
+    if type(row.modDefault) ~= "table" then
       continue
     end
 
-    for _, field in RULES do
-      if type(row[field]) == "function" then
-        row[field] = facade.rule(row[field])
+    for _, spec in row.modDefault do
+      if type(spec) ~= "table" then
+        continue
+      end
+
+      local opts = spec.opts
+
+      if type(opts) ~= "table" or getmetatable(opts) ~= nil then
+        table.insert(found, `a default modifier of {name} must keep the options sdk.mod made it`)
+      elseif
+        (table.isfrozen(spec) and bare(spec.endpoint, facade))
+        or (table.isfrozen(opts) and holdsBare(opts, facade))
+      then
+        table.insert(found, `a default modifier must come fresh from sdk.mod; one of {name}'s is frozen`)
+      end
+    end
+  end
+end
+
+-- every rule of the author's handed the view of its ctx rather than the ctx.
+-- checkFrozen left no frozen table here with a rule still to wrap
+local function viewed(rows: { [string]: any }, facade: any)
+  for _, row in rows do
+    if type(row) ~= "table" then
+      continue
+    end
+
+    if not table.isfrozen(row) then
+      for _, field in RULES do
+        if type(row[field]) == "function" then
+          row[field] = facade.rule(row[field])
+        end
       end
     end
 
@@ -311,12 +385,16 @@ local function viewed(rows: { [string]: any }, facade: any)
     end
 
     for _, spec in row.modDefault do
-      if type(spec) ~= "table" or type(spec.opts) ~= "table" then
+      if type(spec) ~= "table" then
         continue
       end
 
-      if type(spec.endpoint) == "function" then
+      if not table.isfrozen(spec) and type(spec.endpoint) == "function" then
         spec.endpoint = facade.rule(spec.endpoint)
+      end
+
+      if table.isfrozen(spec.opts) then
+        continue
       end
 
       for _, option in OPTIONS do
@@ -434,6 +512,8 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
 
   checkKinds(attributes, "attributes", found)
   checkKinds(properties, "properties", found)
+  checkFrozen(attributes, facade, found)
+  checkFrozen(properties, facade, found)
 
   if #found > 0 then
     return nil, found

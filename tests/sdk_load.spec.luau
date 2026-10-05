@@ -527,6 +527,182 @@ harness.suite(function()
       expect(seen.duration).toBe(2)
       expect(seen.scope).toBe(nil)
     end)
+
+    test("a frozen knob holding a rule of its own is refused by name, before the rule can run", function()
+      fresh()
+
+      local ran = false
+
+      local function rule()
+        ran = true
+        return false
+      end
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = {
+                Rise = sdk.knob(0):mod(sdk.mod.to(1)),
+                Locked = table.freeze(sdk.knob(1):readonly(rule)),
+                Hidden = table.freeze(sdk.knob(1):hidden(rule)),
+              },
+              properties = {
+                Size = table.freeze(sdk.knob(rule)),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({
+        "a knob must come fresh from sdk.knob; Hidden is frozen",
+        "a knob must come fresh from sdk.knob; Locked is frozen",
+        "a knob must come fresh from sdk.knob; Size is frozen",
+      })
+      expect(registry.get("my_effect")).toBe(nil)
+
+      effects.emit(0, tagged())
+
+      expect(ran).toBe(false)
+    end)
+
+    test("a frozen curve knob, default modifier or options are refused by name rather than thrown on", function()
+      fresh()
+
+      local function rule()
+        return 0.25
+      end
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            local fall = sdk.mod.to(0):duration(rule)
+
+            table.freeze(fall.opts)
+
+            return {
+              attributes = {
+                Fade = table.freeze(sdk.knob("easeOut"):curve("easeOut")),
+                Rise = sdk.knob(0):mod(table.freeze(sdk.mod.to(rule))),
+                Fall = sdk.knob(1):mod(fall),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({
+        "a knob must come fresh from sdk.knob; Fade is frozen",
+        "a default modifier must come fresh from sdk.mod; one of Fall's is frozen",
+        "a default modifier must come fresh from sdk.mod; one of Rise's is frozen",
+      })
+    end)
+
+    test("a default modifier whose options are not the plain table sdk.mod made is refused by name", function()
+      fresh()
+
+      local ran = false
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            local hooked = sdk.mod.to(2)
+            local swapped = sdk.mod.to(function()
+              ran = true
+              return 1
+            end)
+
+            setmetatable(hooked.opts, {
+              __index = function(_, key: string)
+                if key == "duration" then
+                  return function()
+                    ran = true
+                    return 0.25
+                  end
+                end
+
+                return nil
+              end,
+              __newindex = function() end,
+            })
+
+            swapped.opts = "" :: any
+
+            return {
+              attributes = {
+                Rise = sdk.knob(0):mod(hooked),
+                Fall = sdk.knob(1):mod(swapped),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({
+        "a default modifier of Fall must keep the options sdk.mod made it",
+        "a default modifier of Rise must keep the options sdk.mod made it",
+      })
+
+      effects.emit(0, tagged())
+
+      expect(ran).toBe(false)
+    end)
+
+    test(
+      "a module whose knobs the registry froze on its last load loads again, its rules still handed views",
+      function()
+        fresh()
+
+        local seen = {}
+        local rows
+
+        local function params(sdk: any)
+          if rows == nil then
+            rows = {
+              attributes = {
+                Plain = table.freeze(sdk.knob(2)),
+                Fade = sdk.knob("easeOut"):curve("easeOut"),
+                Rise = sdk.knob(0):mod(sdk.mod.to(1):duration(function()
+                  return 0.25
+                end)),
+                Locked = sdk.knob(1):readonly(function(ctx: any, attrs: any)
+                  seen.ctx = ctx
+                  seen.rise = attrs.Rise
+                  return false
+                end),
+              },
+            }
+          end
+
+          return rows
+        end
+
+        expect((custom.add("a", effect({ params = params }), "ReplicatedStorage.A"))).toBe(true)
+        expect(table.isfrozen(rows.attributes.Locked)).toBe(true)
+        expect(table.isfrozen(rows.attributes.Rise.modDefault[1].opts)).toBe(true)
+
+        local ok, found = custom.add("a", effect({ params = params }), "ReplicatedStorage.A")
+
+        expect(found).toEqual({})
+        expect(ok).toBe(true)
+
+        effects.emit(0, tagged())
+
+        expect(seen.ctx.scope).toBe(nil)
+        expect(seen.rise ~= nil).toBe(true)
+        expect(seen.rise.reach).toBe(nil)
+      end
+    )
   end)
 
   harness.describe("classifying a custom effect's instance", function()
