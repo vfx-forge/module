@@ -161,6 +161,8 @@ export type V1 = {
   speed: (ctx: Ctx, track: Track) -> (),
   -- writes a param's value now, and every frame while modifiers move it
   apply: (ctx: Ctx, row: any, write: (value: any) -> ()) -> (),
+  -- logs text once per instance; the effect plays on
+  warn: (ctx: Ctx, text: string) -> (),
   -- t of the way from a to b, for any value that blends
   lerp: <T>(a: T, b: T, t: number) -> T,
   -- colors blended the way eyes see them

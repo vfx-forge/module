@@ -785,6 +785,65 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("sdk.warn", function()
+    test("warns once per text and instance, and the effect plays on", function()
+      fresh()
+
+      local after = false
+
+      custom("noted", function(sdk: any, ctx: any)
+        sdk.warn(ctx, "no target found")
+        sdk.warn(ctx, "no target found")
+        sdk.warn(ctx, "too far")
+        after = true
+      end)
+
+      local folder = harness.make("Folder")
+      local warnings = harness.captureWarnings(function()
+        effects.emit(0, folder)
+        effects.emit(0, folder)
+      end)
+
+      expect(after).toBe(true)
+      expect(#warnings).toBe(2)
+      expect(string.find(warnings[1], "custom effect noted on", 1, true) ~= nil).toBe(true)
+      expect(string.find(warnings[1], ": no target found", 1, true) ~= nil).toBe(true)
+      expect(string.find(warnings[2], ": too far", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("never silences a later failure on the same instance", function()
+      fresh()
+
+      custom("then_fails", function(sdk: any, ctx: any)
+        sdk.warn(ctx, "careful")
+        error("broke")
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        effects.emit(0, harness.make("Folder"))
+      end)
+
+      expect(#warnings).toBe(2)
+      expect(string.find(warnings[2], "broke", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("refuses a text that is not a string", function()
+      fresh()
+
+      local err
+
+      custom("bad_text", function(sdk: any, ctx: any)
+        local ok, problem = pcall(sdk.warn, ctx, 5)
+
+        err = if ok then "" else tostring(problem)
+      end)
+
+      play()
+
+      expect(string.find(err, "sdk.warn takes a string, got number", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
   harness.describe("awaiting a join", function()
     test("a piece awaits another join after the body returned, and the effect ends", function()
       fresh()

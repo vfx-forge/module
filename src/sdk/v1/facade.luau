@@ -28,6 +28,10 @@ local MADE: { [lifetime.effect]: { lifetime.join } } = setmetatable({}, { __mode
 -- per module, the instances a failure was already reported for
 local WARNED: { [any]: { [Instance]: boolean } } = setmetatable({}, { __mode = "k" }) :: any
 
+-- per module, the texts sdk.warn already logged for each instance, kept apart
+-- from WARNED so a warning never silences a failure
+local NOTED: { [any]: { [Instance]: { [string]: boolean } } } = setmetatable({}, { __mode = "k" }) :: any
+
 -- per module, the name its source runs under where that is not where it lives,
 -- as a plugin's hidden clone of a module edited in Studio, and that real path
 local ALIASES: { [any]: { from: string, to: string } } = setmetatable({}, { __mode = "k" }) :: any
@@ -621,6 +625,39 @@ function v1.apply(view: any, given: any, write: (value: any) -> ())
   end
 
   written(given)
+end
+
+function v1.warn(view: any, text: string)
+  local ctx = ctxOf(view, "warn")
+
+  if type(text) ~= "string" then
+    logger.error(`sdk.warn takes a string, got {typeof(text)}`)
+  end
+
+  local module = ctx.effect
+  local byRef = NOTED[module]
+
+  if byRef == nil then
+    byRef = setmetatable({}, { __mode = "k" }) :: any
+    NOTED[module] = byRef
+  end
+
+  local texts = byRef[ctx.ref]
+
+  if texts == nil then
+    texts = {}
+    byRef[ctx.ref] = texts
+  end
+
+  if texts[text] then
+    return
+  end
+
+  texts[text] = true
+
+  local id = if module ~= nil then module.id else "?"
+
+  logger.warn(`custom effect {id} on {ctx.ref:GetFullName()}: {text}`)
 end
 
 function v1.lerp(a: any, b: any, t: number)
