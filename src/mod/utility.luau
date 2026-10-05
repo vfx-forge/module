@@ -143,9 +143,13 @@ function utility.clone<T>(inst: T & Instance): T
 
   inst.Archivable = true
 
-  local clone = inst:Clone()
+  local ok, clone = pcall(inst.Clone, inst)
 
   inst.Archivable = false
+
+  if not ok then
+    error(clone, 0)
+  end
 
   return clone
 end

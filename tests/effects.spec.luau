@@ -2134,11 +2134,15 @@ harness.suite(function()
   harness.describe("a clone of what an author made", function()
     -- the engine's Clone, which answers nil for an instance whose Archivable
     -- is false; lune's clones one anyway. every write is counted
-    local function authored(archivable: boolean)
+    local function authored(archivable: boolean, throws: boolean?)
       local state = { Archivable = archivable }
       local inst = { writes = 0 }
 
       function inst.Clone()
+        if throws then
+          error("clone refused")
+        end
+
         return if state.Archivable then { Archivable = true } else nil
       end
 
@@ -2159,6 +2163,16 @@ harness.suite(function()
       expect(inst.Archivable).toBe(false)
     end)
 
+    test("one that is not archivable is left as it was when its clone throws", function()
+      local inst = authored(false, true)
+
+      local ok, err = pcall(utility.clone, inst)
+
+      expect(ok).toBe(false)
+      expect(string.find(tostring(err), "clone refused", 1, true) ~= nil).toBe(true)
+      expect(inst.Archivable).toBe(false)
+    end)
+
     test("one that is archivable is cloned with nothing written to it", function()
       local inst = authored(true)
       local copy = utility.clone(inst)
@@ -2168,6 +2182,8 @@ harness.suite(function()
       expect(inst.writes).toBe(0)
     end)
 
+    -- cannot fail against the original bug under lune: the mock's Clone does not
+    -- answer nil for an instance that is not archivable
     test("a beam that is not archivable plays out and is left as it was", function()
       local built = fresh()
       registry.register(require("@vfx/beam"))
