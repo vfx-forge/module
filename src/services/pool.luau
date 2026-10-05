@@ -298,6 +298,10 @@ local function forgetOne(inst: Instance)
     known[inst] = nil
   end
 
+  if inst:IsA("BasePart") then
+    mover.drop(inst :: BasePart)
+  end
+
   taken[inst] = nil
   indexOf[inst] = nil
   memberOf[inst] = nil
@@ -491,6 +495,15 @@ finish = function(inst: Instance, record: Taken)
     return
   end
 
+  -- Destroying is deferred, so one destroyed by someone else this frame is
+  -- still known, and only its locked parent tells
+  if inst.Parent == nil and not pcall(function()
+    inst.Parent = folder
+  end) then
+    forgetOne(inst)
+    return
+  end
+
   local set = record.set
 
   if set ~= nil then
@@ -611,24 +624,14 @@ function pool.stats()
 end
 
 function pool.init(scope: { any })
-  folder = pool.engine.folder(scope)
-  seen = registry.version
+  local tick: scheduler.Handle? = nil
 
-  local last = os.clock()
-
-  local tick = scheduler.add("compute", function()
-    local now = os.clock()
-
-    if now - last < EVERY then
-      return
-    end
-
-    last = now
-    pool.sweep(now)
-  end, 0, nil, true)
-
+  -- filed ahead of the folder's parent guard, which the scope then lets go
+  -- first, so destroying the folder never queues the guard's write
   table.insert(scope, function()
-    tick:Disconnect()
+    if tick ~= nil then
+      tick:Disconnect()
+    end
 
     for _, template in templates do
       for _, conn in template.watch or {} do
@@ -658,6 +661,22 @@ function pool.init(scope: { any })
       made:Destroy()
     end
   end)
+
+  folder = pool.engine.folder(scope)
+  seen = registry.version
+
+  local last = os.clock()
+
+  tick = scheduler.add("compute", function()
+    local now = os.clock()
+
+    if now - last < EVERY then
+      return
+    end
+
+    last = now
+    pool.sweep(now)
+  end, 0, nil, true)
 end
 
 return pool

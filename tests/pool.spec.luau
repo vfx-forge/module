@@ -204,6 +204,24 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a release after a destroy whose signal has not fired yet does nothing", function()
+      local fake = start()
+      local part = source("Part")
+      local holder = {}
+      local taken = pool.take(holder, part)
+
+      taken:Destroy()
+
+      expect((pcall(lifetime.releasePlain, holder))).toBe(true)
+
+      local again = {}
+
+      expect(pool.take(again, part) ~= taken).toBe(true)
+
+      lifetime.releasePlain(again)
+      stop(fake)
+    end)
+
     test("a beam from the stack takes every listed property of its new source", function()
       local fake = start()
       local one = source("Beam") :: Beam
