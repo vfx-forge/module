@@ -871,11 +871,11 @@ harness.suite(function()
           }
         end,
       }))).toEqual({
-        "the max of High must be a plain table, with no metatable",
-        "the min of Low must be a plain table, with no metatable",
+        "the max of High must be a number or a value of its type, not a table",
+        "the min of Low must be a number or a value of its type, not a table",
         "the aliases of Old must be a plain table, with no metatable",
         "the options of Picked must be a plain table, with no metatable",
-        "the endpoint of a default modifier of Rise must be a plain table, with no metatable",
+        "the endpoint of a default modifier of Rise must be a value or a rule, not a table",
       })
     end)
 
@@ -974,6 +974,28 @@ harness.suite(function()
       -- the innermost entries, then a list and a group for each level
       expect(load.assemble(effect({ layout = nested(3) }), "ReplicatedStorage.MyEffect") ~= nil).toBe(true)
       expect(refusal(effect({ layout = nested(4) }))).toEqual({ "layout must nest no deeper than 8 tables" })
+    end)
+
+    test("a table bound, a table endpoint or an alias that is no string is refused, on a frozen row too", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Low = table.freeze(sdk.knob(1):min({})),
+              High = sdk.knob(function() end):max({}),
+              Old = sdk.knob(1):aliases("Before", {} :: any),
+              Rise = sdk.knob(0):mod(table.freeze(sdk.mod.to({}))),
+            },
+          }
+        end,
+      }))).toEqual({
+        "the max of High must be a number or a value of its type, not a table",
+        "the min of Low must be a number or a value of its type, not a table",
+        "the aliases of Old must be a list of names",
+        "the endpoint of a default modifier of Rise must be a value or a rule, not a table",
+      })
     end)
 
     test("a row named by anything but a string is refused before its name is ever turned to text", function()

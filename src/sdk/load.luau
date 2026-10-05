@@ -301,10 +301,23 @@ end
 local KEPT = {
   { "names", "aliases" },
   { "choices", "options" },
-  { "lower", "min" },
-  { "upper", "max" },
   { "modDefault", "default modifiers" },
 }
+
+-- a list of names, every entry a string the reader can look a value up by
+local function named(list: any)
+  if type(list) ~= "table" then
+    return false
+  end
+
+  for _, entry in next, list do
+    if type(entry) ~= "string" then
+      return false
+    end
+  end
+
+  return true
+end
 
 -- every table a row keeps copied into it, so the author's own lists reach
 -- nothing. a row the registry froze on an earlier load already holds copies
@@ -326,16 +339,25 @@ local function rowOf(row: any, name: string, found: { string })
     end
   end
 
+  -- a bound is a number or a value of the row's own type, never a table,
+  -- which the clamp would index on every read
+  for _, field in { { "lower", "min" }, { "upper", "max" } } do
+    if typeof(rawget(row, field[1])) == "table" then
+      once(found, `the {field[2]} of {name} must be a number or a value of its type, not a table`)
+    end
+  end
+
   -- the registry walks each of these unasked, and would throw on one that is
-  -- no table rather than name it
+  -- no table rather than name it. an entry is looked up by and joined into
+  -- text, so one that is no string is refused too
   local choices = rawget(row, "choices")
   local specs = rawget(row, "modDefault")
 
-  if type(rawget(row, "names")) ~= "table" then
+  if not named(rawget(row, "names")) then
     once(found, `the aliases of {name} must be a list of names`)
   end
 
-  if choices ~= nil and type(choices) ~= "table" then
+  if choices ~= nil and not named(choices) then
     once(found, `the options of {name} must be a list of names`)
   end
 
@@ -355,8 +377,8 @@ local function rowOf(row: any, name: string, found: { string })
     local endpoint = rawget(spec, "endpoint")
     local opts = rawget(spec, "opts")
 
-    if type(endpoint) == "table" and getmetatable(endpoint) ~= nil then
-      refuse(found, `the endpoint of a default modifier of {name}`)
+    if typeof(endpoint) == "table" then
+      once(found, `the endpoint of a default modifier of {name} must be a value or a rule, not a table`)
     end
 
     -- options with a metatable, or frozen with a rule load would have to
