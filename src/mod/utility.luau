@@ -430,10 +430,10 @@ function utility.getMeshDecals(ref: Model, start: BasePart)
 
         fromToMap[from] = to
 
-        if not attr.get(v, "FlipbookEnabled", nil) then
+        if not attr.get(v, "FlipbookEnabled", nil, true) then
           table.insert(decals, v)
         else
-          local data = attr.get(v, "FlipbookTextures", nil)
+          local data = attr.get(v, "FlipbookTextures", nil, true)
 
           if data then
             flipbooks[v] = utility.deserializeFlipbook(data)

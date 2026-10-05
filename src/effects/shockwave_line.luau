@@ -426,7 +426,9 @@ function line.emit(ctx: reader.Ctx, attrs: any)
       local currentOffset = offsetIn.at(0)
       local currentFactor = sizeIn.at(0)
 
-      mover.move(scope, part, CFrame.new(currentOffset) * rotCF)
+      -- the first pose is written at once, so a reused piece never shows a
+      -- frame where its last holder let it go
+      part.CFrame = CFrame.new(currentOffset) * rotCF
 
       local sizeTween
       local offsetTween

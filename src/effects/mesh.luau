@@ -221,7 +221,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: BasePart, duration: numbe
     0
   )
 
-  local function updatePos(deltaTime: number)
+  local function pose(deltaTime: number)
     local o = sync and utility.getTransformedOriginExtents(parent) or origin
     local add = vector.sign(initRot) * currentRotSpeed * deltaTime
 
@@ -237,12 +237,16 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: BasePart, duration: numbe
 
     cf *= currentRot
 
-    mover.move(scope, obj, cf)
+    return cf
   end
 
-  updatePos(0)
+  -- the first pose is written at once, so a reused piece never shows a frame
+  -- where its last holder let it go
+  obj.CFrame = pose(0)
 
-  lifetime.step(scope, updatePos, "follow")
+  lifetime.step(scope, function(deltaTime: number)
+    mover.move(scope, obj, pose(deltaTime))
+  end, "follow")
 
   local children = lifetime.join(scope)
 
@@ -363,7 +367,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: BasePart, duration: numbe
       end
 
       if from.Color3 ~= to.Color3 then
-        local colorCurve = curve.new(duration, attr.get(from, "Color_Curve", utility.default_bezier))
+        local colorCurve = curve.new(duration, attr.get(from, "Color_Curve", utility.default_bezier, true))
 
         tween.play(scope, colorCurve, function(alpha: number)
           decal.Color3 = color.blend(from.Color3, to.Color3, alpha, true)
@@ -379,8 +383,8 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: BasePart, duration: numbe
           effectDuration = duration,
           syncDuration = attr.get(from, "SyncDuration", false, true) == true,
 
-          curve = attr.get(from, "Flipbook_Change_Curve", utility.linear_bezier),
-          duration = attr.get(from, "Flipbook_Change_Duration", duration),
+          curve = attr.get(from, "Flipbook_Change_Curve", utility.linear_bezier, true),
+          duration = attr.get(from, "Flipbook_Change_Duration", duration, true),
 
           setTexture = function(texture)
             decal.Texture = texture
