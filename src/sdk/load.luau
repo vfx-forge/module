@@ -444,7 +444,6 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   viewed(attributes, facade)
   viewed(properties, facade)
 
-  local sdk = facade.sdk
   local run = facade.run
   local emit = author.emit
   local duration = author.duration
@@ -473,11 +472,7 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
     constant = author.constant,
     attributes = attributes,
     properties = properties,
-    duration = if duration ~= nil
-      then function(_, attrs: any, props: any)
-        return duration(sdk, attrs, props)
-      end
-      else nil,
+    duration = if duration ~= nil then facade.duration(duration) else nil,
     emit = function(ctx: any, attrs: any, props: any)
       run(emit, ctx, attrs, props)
     end,

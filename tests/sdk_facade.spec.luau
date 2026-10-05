@@ -19,12 +19,16 @@ local Vector3 = harness.datatypes.Vector3
 local sdk = facade.sdk
 
 -- the internal module a custom effect becomes, its emit run under the facade
-local function custom(id: string, emit: (sdk: any, ctx: any, attrs: any, props: any) -> ())
+local function custom(
+  id: string,
+  emit: (sdk: any, ctx: any, attrs: any, props: any) -> (),
+  attributes: { [string]: any }?
+)
   registry.register({
     id = id,
     display = { name = id },
     classifier = "Folder",
-    attributes = {},
+    attributes = attributes or {},
     properties = {},
     emit = function(ctx: any, attrs: any, props: any)
       facade.run(emit, ctx, attrs, props)
@@ -482,23 +486,158 @@ harness.suite(function()
       expect(reached).toBe(nil)
     end)
 
-    test("speed runs the effect's time at the track's value", function()
+    test("speed runs the effect's time at a param's value", function()
       fresh()
 
       local seen = {}
 
-      custom("fast", function(sdk: any, ctx: any)
-        sdk.speed(ctx, row(2))
+      custom("fast", function(sdk: any, ctx: any, attrs: any)
+        sdk.speed(ctx, attrs.Speed)
         sdk.step(ctx, function(dt: number)
           table.insert(seen, dt)
         end)
         sdk.wait(ctx, 1)
-      end)
+      end, { Speed = knob(2):mod() })
 
       play()
       scheduler.frame(0.25)
 
       expect(seen).toEqual({ 0.5 })
+    end)
+  end)
+
+  harness.describe("a param's Track", function()
+    test("reaches emit as a frozen view of value, animated and duration, read with :at", function()
+      fresh()
+
+      local seen
+
+      custom("viewed", function(_, _, attrs: any)
+        local track = attrs.Growth
+
+        seen = {
+          frozen = table.isfrozen(track),
+          value = track.value,
+          animated = track.animated,
+          duration = track.duration,
+          at = track:at(0.5),
+          same = rawequal(track, attrs.Growth),
+          fields = {},
+        }
+
+        for key in track do
+          table.insert(seen.fields, key)
+        end
+
+        table.sort(seen.fields)
+      end, { Growth = knob(2):mod(mod.from(0):duration(1):curve("linear")) })
+
+      play()
+
+      expect(seen.frozen).toBe(true)
+      expect(seen.value).toBe(2)
+      expect(seen.animated).toBe(true)
+      expect(seen.duration).toBe(1)
+      expect(math.abs(seen.at - 1) < 0.2).toBe(true)
+      expect(seen.same).toBe(true)
+      expect(seen.fields).toEqual({ "animated", "duration", "value" })
+    end)
+
+    test("refuses a dot call, naming the colon call", function()
+      fresh()
+
+      local err
+
+      custom("dotted", function(_, _, attrs: any)
+        local ok, problem = pcall(attrs.Growth.at, 0.5)
+
+        err = if ok then "" else tostring(problem)
+      end, { Growth = knob(2):mod() })
+
+      play()
+
+      expect(string.find(err, "call track:at(t), not track.at(t)", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("attrs and props are read only, and iterate as views", function()
+      fresh()
+
+      local wrote, kinds
+
+      custom("readonly", function(_, _, attrs: any)
+        wrote = pcall(function()
+          attrs.Growth = 5
+        end)
+
+        kinds = {}
+
+        for name, value in attrs do
+          kinds[name] = typeof(value)
+        end
+      end, { Growth = knob(2):mod(), Count = knob(3) })
+
+      play()
+
+      expect(wrote).toBe(false)
+      expect(kinds).toEqual({ Growth = "table", Count = "number" })
+    end)
+
+    test("a rule and duration see views too, never the reader's Track", function()
+      fresh()
+
+      local inRule, inDuration
+      local source = {
+        sdk_version = 1,
+        id = "ruled",
+        display = { name = "Ruled" },
+        classifier = "BasePart.Ruled",
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Growth = sdk.knob(2):mod(),
+              Shown = sdk.knob(true):readonly(function(_, attrs: any)
+                inRule = attrs.Growth.reach == nil and attrs.Growth:at(0) == 2
+
+                return false
+              end),
+            },
+          }
+        end,
+        duration = function(_, attrs: any)
+          inDuration = attrs.Growth.reach == nil and attrs.Growth.value == 2
+
+          return 1
+        end,
+        emit = function() end,
+      }
+
+      expect((require("@root/sdk/custom").add("ruled", source, "tests.ruled"))).toBe(true)
+
+      local part = harness.make("Part", harness.make("Folder"))
+
+      part:AddTag("Ruled")
+      effects.emit(0, part)
+
+      expect(inRule).toBe(true)
+      expect(inDuration).toBe(true)
+
+      require("@root/sdk/custom").clear()
+    end)
+
+    test("speed refuses anything that is not a param's Track", function()
+      fresh()
+
+      local err
+
+      custom("raw", function(sdk: any, ctx: any)
+        local ok, problem = pcall(sdk.speed, ctx, row(2))
+
+        err = if ok then "" else tostring(problem)
+      end)
+
+      play()
+
+      expect(string.find(err, "sdk.speed takes a param declared with :mod()", 1, true) ~= nil).toBe(true)
     end)
   end)
 

@@ -52,6 +52,16 @@ local CTXS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
 -- the rules already handed views, so a rule is never wrapped twice
 local RULES: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
+-- the reader's Track behind each view an author is handed, and the view of
+-- each Track, so one Track is always one view
+local TRACKS: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
+local VIEWED: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
+
+-- the read only window an author is handed of each attrs or props table the
+-- reader filled, and the table behind each window
+local READS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
+local SOURCES: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
+
 -- a host's sentence for a reported failure, which only the plugin sets
 local annotate: ((message: string) -> string?)? = nil
 
@@ -71,6 +81,96 @@ end
 local VECTORS = { vector = true, Vector3 = true }
 
 local HOLDABLE = { Instance = true, RBXScriptConnection = true, ["function"] = true, thread = true }
+
+local Track = {}
+Track.__index = Track
+
+function Track.at(self: any, t: number)
+  local inner = TRACKS[self]
+
+  if inner == nil then
+    logger.error("call track:at(t), not track.at(t)")
+  end
+
+  return inner.at(t)
+end
+
+table.freeze(Track)
+
+-- the reader's Track, told apart from an author's table by the lane reads only
+-- it answers
+local function isTrack(value: any): boolean
+  return type(value) == "table" and type(value.at) == "function" and type(value.reach) == "function"
+end
+
+local function viewOfTrack(inner: any)
+  local view = VIEWED[inner]
+
+  if view ~= nil then
+    return view
+  end
+
+  view = table.freeze(setmetatable({
+    value = inner.value,
+    animated = inner.animated,
+    duration = inner.duration,
+  }, Track))
+
+  VIEWED[inner] = view
+  TRACKS[view] = inner
+
+  return view
+end
+
+local function shown(value: any)
+  return if isTrack(value) then viewOfTrack(value) else value
+end
+
+-- a read only window on a table the reader fills, every Track in it a view.
+-- read through on every access, so a rule called halfway through a read sees
+-- each row as it resolves
+local Read = {}
+
+function Read.__index(window: any, key: any)
+  return shown(SOURCES[window][key])
+end
+
+function Read.__iter(window: any)
+  local read = SOURCES[window]
+  local key = nil
+
+  return function()
+    local value
+
+    key, value = next(read, key)
+
+    if key == nil then
+      return nil
+    end
+
+    return key, shown(value)
+  end
+end
+
+table.freeze(Read)
+
+local function authored(read: any)
+  if type(read) ~= "table" then
+    return read
+  end
+
+  local window = READS[read]
+
+  if window ~= nil then
+    return window
+  end
+
+  window = setmetatable({}, Read)
+  SOURCES[window] = read
+  READS[read] = window
+
+  return table.freeze(window)
+end
 
 local v1 = {}
 
@@ -479,12 +579,13 @@ end
 
 function v1.speed(view: any, track: any)
   local scope = scopeOf(view, "speed")
+  local inner = TRACKS[track]
 
-  if type(track) ~= "table" or type(track.at) ~= "function" then
-    logger.error("sdk.speed takes a Speed param's value, a knob declared with :mod()")
+  if inner == nil then
+    logger.error("sdk.speed takes a param declared with :mod(), as attrs hands it")
   end
 
-  lifetime.speed(scope, track)
+  lifetime.speed(scope, inner)
 end
 
 function v1.lerp(a: any, b: any, t: number)
@@ -624,12 +725,19 @@ function facade.rule(fn: (...any) -> any)
   end
 
   local wrapped = function(ctx: any, attrs: any, props: any)
-    return fn(if ctx ~= nil then viewOf(ctx) else nil, attrs, props)
+    return fn(if ctx ~= nil then viewOf(ctx) else nil, authored(attrs), authored(props))
   end
 
   RULES[wrapped] = true
 
   return wrapped
+end
+
+-- an author's duration, called by the reader and handed the author's reads
+function facade.duration(fn: (...any) -> any)
+  return function(_, attrs: any, props: any)
+    return fn(v1, authored(attrs), authored(props))
+  end
 end
 
 -- an author's template, which a host calls and the runtime never does. it is
@@ -659,7 +767,7 @@ end
 -- tweens, its nested emits and every join it made are through
 function facade.run(emit: any, ctx: any, attrs: any, props: any)
   local scope = ctx.scope
-  local ok, err = xpcall(emit, trace, v1, viewOf(ctx), attrs, props)
+  local ok, err = xpcall(emit, trace, v1, viewOf(ctx), authored(attrs), authored(props))
 
   if not ok then
     if err ~= STOP then

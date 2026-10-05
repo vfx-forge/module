@@ -61,8 +61,8 @@ export type Track = {
   animated: boolean,
   -- seconds the modifiers run
   duration: number,
-  -- the value at a time in seconds
-  at: (elapsed: number) -> any,
+  -- the value at a time in seconds; call it as track:at(t)
+  at: (self: Track, elapsed: number) -> any,
 }
 
 -- what emit is handed about the instance it plays
@@ -157,7 +157,7 @@ export type V1 = {
   getWriter: (ctx: Ctx, obj: Instance, property: string) -> Writer,
   -- a writer for an attribute of obj
   getAttributeWriter: (ctx: Ctx, obj: Instance, name: string) -> Writer,
-  -- runs the effect's time at an animated param's value
+  -- runs the effect's time at a param declared with :mod()
   speed: (ctx: Ctx, track: Track) -> (),
   -- t of the way from a to b, for any value that blends
   lerp: <T>(a: T, b: T, t: number) -> T,
