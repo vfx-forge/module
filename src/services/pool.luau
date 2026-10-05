@@ -817,6 +817,10 @@ local function build(root: Instance, key: Instance, t: Template): Set?
     table.insert(set.conns, pool.engine.destroying(member, spoil))
   end
 
+  -- each child is cloned alone, so a reference from one into another still
+  -- names the template's
+  restore(set)
+
   setOf[root] = set
   counts.builds += 1
 

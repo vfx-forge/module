@@ -370,4 +370,50 @@ table.insert(cases, {
   end,
 })
 
+table.insert(cases, {
+  name = "a first build points a beam at its copy's attachments, not the template's",
+  run = function()
+    local template = Instance.new("Part")
+    template.Name = "BeamRoot"
+    template.Anchored = true
+
+    local from = Instance.new("Attachment")
+    from.Name = "From"
+    from.Parent = template
+
+    local to = Instance.new("Attachment")
+    to.Name = "To"
+    to.Parent = template
+
+    local beam = Instance.new("Beam")
+    beam.Name = "Ray"
+    beam.Attachment0 = from
+    beam.Attachment1 = to
+    beam.Parent = template
+
+    local ok, err = pcall(withPool, function()
+      local holder = {}
+      local copy = pool.take(holder, template)
+      local ray = copy:FindFirstChild("Ray") :: Beam
+
+      check(
+        ray.Attachment0 == copy:FindFirstChild("From"),
+        `Attachment0 is {ray.Attachment0 and ray.Attachment0:GetFullName()}`
+      )
+      check(
+        ray.Attachment1 == copy:FindFirstChild("To"),
+        `Attachment1 is {ray.Attachment1 and ray.Attachment1:GetFullName()}`
+      )
+
+      lifetime.releasePlain(holder)
+    end)
+
+    template:Destroy()
+
+    if not ok then
+      error(err, 0)
+    end
+  end,
+})
+
 return cases
