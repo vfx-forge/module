@@ -32,6 +32,10 @@ local PLACED = { CFrame = true }
 -- release left it at: debris reads a piece's velocity as its launch's start
 local MOTION = { Velocity = true, RotVelocity = true, AssemblyLinearVelocity = true, AssemblyAngularVelocity = true }
 
+-- the engine normalizes an authored rotation on write, so one slightly off
+-- never reads back equal; a CFrame this close to its twin's is the same
+local NEAR = 1e-4
+
 -- every bit of these classes' state is a serialized property, or is reset by
 -- settle; anything else under a template makes it clone fresh every emit
 local RESTORABLE = {
@@ -545,6 +549,21 @@ local function authored(set: Set, twin: Instance, name: string): any
   return value
 end
 
+local function same(a: any, b: any)
+  if a == b then
+    return true
+  end
+
+  if typeof(a) ~= "CFrame" or typeof(b) ~= "CFrame" then
+    return false
+  end
+
+  return (a.Position - b.Position).Magnitude <= NEAR
+    and (a.XVector - b.XVector).Magnitude <= NEAR
+    and (a.YVector - b.YVector).Magnitude <= NEAR
+    and (a.ZVector - b.ZVector).Magnitude <= NEAR
+end
+
 local function restore(set: Set)
   for i, member in set.members do
     local twin = set.twins[i]
@@ -552,7 +571,7 @@ local function restore(set: Set)
     for _, name in listOf(twin.ClassName) :: { string } do
       local value = authored(set, twin, name)
 
-      if (member :: any)[name] ~= value then
+      if not same((member :: any)[name], value) then
         (member :: any)[name] = value
       end
     end
@@ -996,7 +1015,7 @@ function pool.audit(): { string }
         local twin = set.twins[i]
 
         for _, name in listOf(twin.ClassName) :: { string } do
-          if hidden[`{i} {name}`] or (member :: any)[name] == authored(set, twin, name) then
+          if hidden[`{i} {name}`] or same((member :: any)[name], authored(set, twin, name)) then
             continue
           end
 

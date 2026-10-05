@@ -7,10 +7,11 @@ local registry = require("@mod/registry")
 local fake_pool = require("@tests/fake_pool")
 
 local test, expect = harness.test, harness.expect
+local CFrame = harness.datatypes.CFrame
 local Color3 = harness.datatypes.Color3
 
 local LISTS = {
-  Part = { "Color", "Size", "Transparency", "Material", "Anchored", "CanCollide", "Locked" },
+  Part = { "Color", "Size", "Transparency", "Material", "Anchored", "CanCollide", "Locked", "CFrame" },
   MeshPart = { "Color", "Size", "Transparency", "Anchored", "Locked" },
   Beam = { "Enabled", "Width0", "Attachment0" },
   ParticleEmitter = { "Enabled", "Rate", "LightEmission" },
@@ -108,6 +109,44 @@ harness.suite(function()
       expect(glow.LightEmission).toBe(0)
 
       lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a member a hair from its twin's CFrame is neither rewritten nor reported", function()
+      local fake = start()
+      local source = harness.make("Part")
+      local bit = harness.make("Part", source) :: Part
+      local holder = {}
+
+      bit.Name = "Bit"
+      bit.CFrame = CFrame.new(1, 2, 3)
+
+      -- lune has no default for a LocalTransparencyModifier, so the source sets one
+      bit.LocalTransparencyModifier = 0
+
+      local authored = bit.CFrame
+      local near = authored * CFrame.new(0, 5e-5, 0) * CFrame.Angles(5e-5, 0, 0)
+      local copy = pool.take(holder, source)
+      local member = copy:FindFirstChild("Bit") :: Part
+
+      member.CFrame = near
+
+      -- what the write left, which need not read back as written
+      local held = member.CFrame
+
+      expect(held ~= authored).toBe(true)
+
+      lifetime.releasePlain(holder)
+
+      expect(pool.audit()).toEqual({})
+      expect(member.CFrame).toBe(held)
+
+      pool.take(holder, source)
+      member.CFrame = authored * CFrame.new(0, 0.01, 0)
+      lifetime.releasePlain(holder)
+
+      expect(member.CFrame).toBe(authored)
+
       stop(fake)
     end)
 
