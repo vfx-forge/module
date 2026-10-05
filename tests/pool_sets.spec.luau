@@ -3,6 +3,7 @@ local pool = require("@srv/pool")
 local harness = require("@tests/harness")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
+local scheduler = require("@mod/scheduler")
 local fake_pool = require("@tests/fake_pool")
 
 local test, expect = harness.test, harness.expect
@@ -489,6 +490,55 @@ harness.suite(function()
       expect(aimed ~= anchor:GetDebugId()).toBe(true)
 
       lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a host that throws clears its nested emit before its kept set is filed", function()
+      local fake = start()
+      local source = template()
+      local host = lifetime.emit(nil)
+      local fx = lifetime.effect(host, 0, nil)
+      local child = lifetime.emit(host)
+      local nested = lifetime.effect(child, 1, nil)
+      local shown = {}
+      local glow: ParticleEmitter
+
+      lifetime.seal(child)
+
+      lifetime.run(fx, function(scope: lifetime.effect)
+        local copy = pool.take(scope, source)
+        local children = lifetime.join(scope)
+
+        glow = copy:FindFirstChild("Center"):FindFirstChild("Glow") :: ParticleEmitter
+
+        lifetime.step(nested, function()
+          glow.Rate = 999
+        end)
+
+        lifetime.hold(nested, function()
+          table.insert(shown, glow.Enabled)
+        end)
+
+        lifetime.include(children, child)
+
+        lifetime.step(scope, function()
+          error("host failed")
+        end)
+
+        lifetime.awaitJoin(children)
+      end)
+
+      harness.captureWarnings(function()
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+      end)
+
+      expect(child.done).toBe(true)
+      expect(shown).toEqual({ true })
+      expect(glow.Rate).toBe(20)
+      expect(glow.Enabled).toBe(false)
+
+      lifetime.clear(host)
       stop(fake)
     end)
 
