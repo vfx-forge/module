@@ -84,7 +84,8 @@ function tween.drive(
   scope: lifetime.effect,
   track: reader.Track,
   write: (v: any) -> (),
-  follow: number?
+  follow: number?,
+  done: (() -> ())?
 ): scheduler.Handle?
   if not track.animated then
     write(track.at(0))
@@ -93,7 +94,7 @@ function tween.drive(
 
   return tween.play(scope, curve.new(track.duration, "linear"), function(_, _, elapsed: number)
     write(track.at(elapsed))
-  end, follow)
+  end, follow, done)
 end
 
 return tween

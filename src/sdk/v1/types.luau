@@ -160,7 +160,7 @@ export type V1 = {
   getAttributeWriter: (ctx: Ctx, obj: Instance, name: string) -> Writer,
   -- runs the effect's time at a param declared with :mod()
   speed: (ctx: Ctx, track: Track) -> (),
-  -- writes a param's value now, and every frame while modifiers move it
+  -- writes a param's value now, and every frame while modifiers move it; the effect waits for it
   apply: (ctx: Ctx, row: any, write: (value: any) -> ()) -> (),
   -- logs text once per instance; the effect plays on
   warn: (ctx: Ctx, text: string) -> (),

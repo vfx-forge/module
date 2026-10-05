@@ -801,6 +801,50 @@ harness.suite(function()
       expect(still).toEqual({ 4 })
     end)
 
+    test("apply then return: the write reaches the row's end and the effect ends only after its span", function()
+      fresh()
+
+      local seen = {}
+
+      custom("applied", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Growth, function(value: number)
+          table.insert(seen, value)
+        end)
+      end, { Growth = knob(2):mod(mod.from(0):duration(0.5)) })
+
+      local env = play()
+
+      expect(ended(env)).toBe(false)
+
+      scheduler.frame(0.25)
+
+      expect(ended(env)).toBe(false)
+
+      scheduler.frame(0.25)
+
+      expect(seen[1]).toBe(0)
+      expect(#seen >= 3).toBe(true)
+      expect(seen[#seen]).toBe(2)
+      expect(ended(env)).toBe(true)
+    end)
+
+    test("a static row applied then returned ends the effect at once", function()
+      fresh()
+
+      local seen = {}
+
+      custom("applied_flat", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Flat, function(value: number)
+          table.insert(seen, value)
+        end)
+      end, { Flat = knob(4):mod() })
+
+      local env = play()
+
+      expect(seen).toEqual({ 4 })
+      expect(ended(env)).toBe(true)
+    end)
+
     test("refuses a table that is not a param's value", function()
       fresh()
 

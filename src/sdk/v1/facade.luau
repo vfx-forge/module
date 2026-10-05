@@ -634,8 +634,9 @@ function v1.apply(view: any, given: any, write: (value: any) -> ())
 
   local inner = TRACKS[given]
 
+  -- a row its modifiers move keeps the effect until it lands, as a tween does
   if inner ~= nil then
-    inner:apply(written)
+    inner:apply(written, if inner.animated then lifetime.add(joinOf(ctx.scope)) else nil)
     return
   end
 
