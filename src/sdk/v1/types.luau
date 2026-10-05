@@ -164,7 +164,8 @@ export type V1 = {
   apply: (ctx: Ctx, row: any, write: (value: any) -> ()) -> (),
   -- logs text once per module, instance and text; the effect plays on
   warn: (ctx: Ctx, text: string) -> (),
-  -- plays this emit alone on ctx.ref: a later emit while it plays ends at its own lock, silently
+  -- plays this emit alone on ctx.ref: a later emit while it plays ends at its own lock, silently,
+  -- though panel modifiers on a reflected property already started for it before emit ran
   lock: (ctx: Ctx) -> (),
   -- where the effect runs: "edit" in Studio's editor, "client" or "server" in a running game
   context: () -> "edit" | "client" | "server",

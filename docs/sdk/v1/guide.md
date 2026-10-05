@@ -134,7 +134,7 @@ A descendant of `ctx.ref` that you `sdk.emit` must also be matched by `component
 
 `sdk.getWriter(ctx, obj, property)` and `sdk.getAttributeWriter(ctx, obj, name)` answer a writer with `:set(value)`. Writers hand a target over between overlapping emits by priority and put the authored value back when the last one ends. Write through a writer rather than to the instance.
 
-`sdk.lock(ctx)`, called in `emit`, plays this emit alone on `ctx.ref`. An emit that reaches the instance while this one plays ends at its own `sdk.lock`, silently. Call it first in `emit`, before anything is read or written; a step, a tween's callback or a piece may not call it, and a second call by the emit that holds the lock does nothing.
+`sdk.lock(ctx)`, called in `emit`, plays this emit alone on `ctx.ref`. An emit that reaches the instance while this one plays ends at its own `sdk.lock`, silently, though the panel's modifiers on a reflected property have already started for it, since they start before `emit` runs. Call it first in `emit`, before anything is read or written; a step, a tween's callback or a piece may not call it, and a second call by the emit that holds the lock does nothing.
 
 `sdk.guiRoot(ctx)` answers the one Folder every GUI an effect makes goes in: under StarterGui in Studio's editor and under the local player's PlayerGui on a client. It is not archivable, it is made on first use, and it is refused on the server. See Where created instances go.
 
@@ -162,7 +162,7 @@ To say an effect cannot play, call `error(text)`: it is reported once per instan
 
 A shipped effect follows these.
 
-- **Params.** Put `EmitDelay` in an Emit group. Add no `Speed` row. Let the group title carry the noun and keep a row label to one word. Show about twelve rows at most. Give every seconds, studs and rate row a `:unit()`, every duration `:min(0)`, every transparency `:max(1)` and every scale a floor. Use `:mod()` for what an artist animates and plain values for structure. Hide a row that only matters under another behind it. Name no attribute row after a property the instance has. Write hints that say what changes on screen and a useful range, never an engine property path. Keep implementation tuning a local constant, not a row.
+- **Params.** Put `EmitDelay` in an Emit group. The runtime does not wait `EmitDelay` for a custom effect: wait it yourself with `sdk.wait(ctx, attrs.EmitDelay)` after `sdk.lock` and add it to `duration`, as the sample does. Add no `Speed` row. Let the group title carry the noun and keep a row label to one word. Show about twelve rows at most. Give every seconds, studs and rate row a `:unit()`, every duration `:min(0)`, every transparency `:max(1)` and every scale a floor. Use `:mod()` for what an artist animates and plain values for structure. Hide a row that only matters under another behind it. Name no attribute row after a property the instance has. Write hints that say what changes on screen and a useful range, never an engine property path. Keep implementation tuning a local constant, not a row.
 - **Where created instances go.** Put a created instance under `workspace.Terrain` with `Archivable` false, `Locked` true and `CanCollide`, `CanQuery` and `CanTouch` false, held with `sdk.hold` before it is parented:
 
   ```luau
