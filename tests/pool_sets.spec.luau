@@ -1,11 +1,13 @@
 local knob = require("@mod/knob")
 local pool = require("@srv/pool")
+local recolor = require("@mod/recolor")
 local harness = require("@tests/harness")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local fake_pool = require("@tests/fake_pool")
 
 local test, expect = harness.test, harness.expect
+local Color3 = harness.datatypes.Color3
 
 local LISTS = {
   Part = { "Color", "Size", "Transparency", "Material", "Anchored", "CanCollide", "Locked" },
@@ -16,6 +18,7 @@ local LISTS = {
   Folder = {},
   Sound = { "Volume", "Playing" },
   Configuration = {},
+  PointLight = { "Color", "Enabled" },
 }
 
 -- the pool's copies are clones harness.query never sees, and its pool holds
@@ -195,6 +198,30 @@ harness.suite(function()
       fake.changed[source]()
 
       expect(pool.take(holder, source) ~= copy).toBe(true)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a recolor reaches a take in the same frame", function()
+      local fake = start()
+      local source = harness.make("Part") :: Part
+      local light = harness.make("PointLight", source) :: PointLight
+      local holder = {}
+
+      light.Name = "Glow"
+      light.Color = Color3.new(1, 1, 1)
+
+      pool.take(holder, source)
+      lifetime.releasePlain(holder)
+
+      recolor(Color3.new(1, 0, 0), "replace", source)
+
+      local copy = pool.take(holder, source)
+      local glow = copy:FindFirstChild("Glow") :: PointLight
+
+      expect(glow.Color).toBe(light.Color)
+      expect(pool.stats().builds).toBe(2)
 
       lifetime.releasePlain(holder)
       stop(fake)

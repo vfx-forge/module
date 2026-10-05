@@ -963,6 +963,18 @@ function pool.sweep(now: number)
   end
 end
 
+-- an edit made through the module's own api drops the sets of every template
+-- it reaches at once, where a template's watch hears of it only a frame later
+function pool.touch(inst: Instance)
+  for _, t in templates do
+    local template = t.template
+
+    if template == inst or template:IsDescendantOf(inst) or inst:IsDescendantOf(template) then
+      stale(t)
+    end
+  end
+end
+
 function pool.kept(inst: Instance): boolean
   return memberOf[inst] ~= nil
 end

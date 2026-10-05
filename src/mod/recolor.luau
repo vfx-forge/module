@@ -1,6 +1,8 @@
 local attr = require("@mod/attributes")
 local registry = require("@mod/registry")
 
+local pool = require("@srv/pool")
+
 local colorProps = {
   Single = {
     Color3 = {
@@ -173,6 +175,8 @@ local function recolor(color: Color3, mode: "replace" | "multiply", ...: Instanc
       recolorObj(desc, color, mode, false)
       recolorRows(desc, color, mode)
     end
+
+    pool.touch(instance)
   end
 end
 
