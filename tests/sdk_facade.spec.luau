@@ -976,6 +976,33 @@ harness.suite(function()
       expect(played).toBe(2)
     end)
 
+    test("a second lock from the emit that holds it plays on", function()
+      fresh()
+
+      local played = 0
+
+      custom("locked_twice", function(sdk: any, ctx: any)
+        sdk.lock(ctx)
+        sdk.lock(ctx)
+        played += 1
+        sdk.wait(ctx, 1)
+      end)
+
+      local env
+      local warnings = harness.captureWarnings(function()
+        env = play()
+      end)
+
+      expect(played).toBe(1)
+      expect(#warnings).toBe(0)
+      expect(ended(env)).toBe(false)
+
+      scheduler.frame(0.6)
+      scheduler.frame(0.6)
+
+      expect(ended(env)).toBe(true)
+    end)
+
     test("refuses a call from a step", function()
       fresh()
 

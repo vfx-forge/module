@@ -43,6 +43,9 @@ local WARNED: { [any]: { [Instance]: boolean } } = setmetatable({}, { __mode = "
 -- from WARNED so a warning never silences a failure
 local NOTED: { [any]: { [Instance]: { [string]: boolean } } } = setmetatable({}, { __mode = "k" }) :: any
 
+-- the effects whose emit already holds its instance's lock
+local LOCKED: { [lifetime.effect]: boolean } = setmetatable({}, { __mode = "k" }) :: any
+
 -- per module, the name its source runs under where that is not where it lives,
 -- as a plugin's hidden clone of a module edited in Studio, and that real path
 local ALIASES: { [any]: { from: string, to: string } } = setmetatable({}, { __mode = "k" }) :: any
@@ -689,10 +692,16 @@ function v1.lock(view: any)
     logger.error("sdk.lock runs in emit only, not in a step, a tween's callback or a piece")
   end
 
+  if LOCKED[scope] then
+    return
+  end
+
   -- another emit plays this instance: this one ends here, silently
   if lifetime.lock(scope, ctx.ref) then
     error(STOP, 0)
   end
+
+  LOCKED[scope] = true
 end
 
 function v1.context(): string
