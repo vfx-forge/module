@@ -665,12 +665,14 @@ local function begin(holder: any, inst: Instance, s: Store, set: Set?): Instance
   return inst
 end
 
-local function single(holder: any, source: Instance): Instance
-  if not canRestore(source) then
+-- stored under the key, a nested piece's authored twin, but dressed from the
+-- source itself, so its references name the copy it was taken from
+local function single(holder: any, key: Instance, source: Instance): Instance
+  if not canRestore(key) then
     return fresh(holder, source)
   end
 
-  local s = stackOf(source)
+  local s = stackOf(key)
 
   if s == nil then
     return fresh(holder, source)
@@ -895,11 +897,11 @@ local function build(root: Instance, key: Instance, t: Template): Set?
   return set
 end
 
-local function kept(holder: any, key: Instance): Instance
+local function kept(holder: any, key: Instance, source: Instance): Instance
   -- a clone of a class the pool cannot restore, or of a mesh no stack holds,
   -- carries its children already
   if not canRestore(key) or (key.ClassName == "MeshPart" and pool.engine.mesh(key) == nil) then
-    return fresh(holder, key)
+    return fresh(holder, source)
   end
 
   local t = templates[key]
@@ -912,7 +914,7 @@ local function kept(holder: any, key: Instance): Instance
   end
 
   if t.keep == false then
-    local inst = single(holder, key)
+    local inst = single(holder, key, source)
 
     for _, child in key:GetChildren() do
       local copy = utility.clone(child)
@@ -939,7 +941,7 @@ local function kept(holder: any, key: Instance): Instance
     storeOf[root] = nil
     counts.reuses += 1
 
-    dress(root, key)
+    dress(root, source)
     unhide(set)
 
     return begin(holder, root, t, set)
@@ -958,7 +960,7 @@ local function kept(holder: any, key: Instance): Instance
     track(root)
   end
 
-  dress(root, key)
+  dress(root, source)
 
   local set = build(root, key, t)
 
@@ -990,10 +992,10 @@ function pool.take(holder: any, source: Instance, alone: boolean?): Instance
   local key = twinOf(source)
 
   if alone or #key:GetChildren() == 0 then
-    return single(holder, key)
+    return single(holder, key, source)
   end
 
-  return kept(holder, key)
+  return kept(holder, key, source)
 end
 
 -- the once a second tick: each store keeps the larger of its floor and the

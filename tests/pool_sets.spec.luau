@@ -463,6 +463,35 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a beam taken from a kept copy points at the copy's attachment", function()
+      local fake = start()
+      local outer = harness.make("Part")
+      local anchor = harness.make("Attachment", outer)
+      local link = harness.make("Beam", outer) :: Beam
+
+      anchor.Name = "Anchor"
+      link.Name = "Link"
+      link.Attachment0 = anchor
+
+      local holder = {}
+      local copy = pool.take(holder, outer)
+      local member = fake.stable(copy:FindFirstChild("Link") :: Instance) :: Beam
+      local own = copy:FindFirstChild("Anchor") :: Attachment
+
+      -- lune answers a reference with a wrapper no map is keyed by, so the
+      -- member is pointed at its copy's attachment as a build does in Studio
+      member.Attachment0 = own
+
+      local clone = pool.take(holder, member) :: Beam
+      local aimed = (clone.Attachment0 :: Attachment):GetDebugId()
+
+      expect(aimed).toBe(own:GetDebugId())
+      expect(aimed ~= anchor:GetDebugId()).toBe(true)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
     test("a template with a script clones fresh every emit", function()
       local fake = start()
       local source = template()
