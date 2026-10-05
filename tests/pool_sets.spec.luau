@@ -103,6 +103,32 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a child that is not archivable is left out of a kept copy", function()
+      local fake = start()
+      local source = template()
+      local hidden = harness.make("Attachment", source)
+      local holder = {}
+
+      hidden.Name = "Hidden"
+      hidden.Archivable = false
+
+      local copy = pool.take(holder, source)
+      local glow = copy:FindFirstChild("Center"):FindFirstChild("Glow") :: ParticleEmitter
+
+      expect(copy:FindFirstChild("Hidden")).toBe(nil)
+      expect(pool.stats().builds).toBe(1)
+
+      glow.Rate = 999
+      lifetime.releasePlain(holder)
+
+      expect(pool.audit()).toEqual({})
+      expect(pool.take(holder, source)).toBe(copy)
+      expect(glow.Rate).toBe(20)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
     test("what an effect wrote on a copy is put back from its twin", function()
       local fake = start()
       local source = template()

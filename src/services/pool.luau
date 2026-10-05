@@ -529,7 +529,14 @@ end
 -- when the two part ways
 local function pair(set: Set, copy: Instance, twin: Instance): boolean
   local copies = pool.engine.children(copy)
-  local twins = pool.engine.children(twin)
+  local twins = {}
+
+  -- a clone leaves out a child that is not archivable
+  for _, child in pool.engine.children(twin) do
+    if child.Archivable then
+      table.insert(twins, child)
+    end
+  end
 
   if #copies ~= #twins then
     return false
@@ -836,13 +843,9 @@ end
 
 local function build(root: Instance, key: Instance, t: Template): Set?
   for _, child in key:GetChildren() do
-    local copy = utility.clone(child)
-
-    if copy == nil then
-      return nil
+    if child.Archivable then
+      child:Clone().Parent = root
     end
-
-    copy.Parent = root
   end
 
   local set: Set = {
