@@ -149,6 +149,12 @@ harness.suite(function()
       expect(mod.is(sdk.mod.to(1))).toBe(true)
     end)
 
+    test("the classes behind a knob, a mod spec and a curve are frozen, as every effect's share them", function()
+      expect(table.isfrozen(getmetatable(sdk.knob(1)))).toBe(true)
+      expect(table.isfrozen(getmetatable(sdk.mod.to(1)))).toBe(true)
+      expect(table.isfrozen(getmetatable(sdk.curve(1, "linear")))).toBe(true)
+    end)
+
     test("a call without the ctx the emit was handed is refused with the reason", function()
       local ok, err = pcall(sdk.wait, 5 :: any, 1)
 

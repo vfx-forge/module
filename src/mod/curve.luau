@@ -473,4 +473,7 @@ function Curve.at(self: Curve, t: number): number
   return solve(self.shape :: Shape, t)
 end
 
+-- shared by every effect's curves, and an author's sdk.curve hands it out
+table.freeze(Curve)
+
 return curve

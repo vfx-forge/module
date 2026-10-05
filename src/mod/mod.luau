@@ -55,6 +55,9 @@ function Spec.lane(self: Spec, name: string): Spec
   return self
 end
 
+-- shared by every effect's default modifiers, and an author's sdk.mod hands it out
+table.freeze(Spec)
+
 local function pick(x: any, ctx: any, attrs: any, props: any)
   if type(x) == "function" then
     return x(ctx, attrs, props)
