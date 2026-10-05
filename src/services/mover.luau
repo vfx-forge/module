@@ -19,24 +19,27 @@ end
 function mover.move(scope: any?, part: BasePart, cframe: CFrame)
   local holder = holders[part]
 
-  if holder ~= nil and holder ~= scope then
-    return
-  end
-
-  if typeof(part) ~= "Instance" or not part:IsA("BasePart") then
-    logger.warn(`only a BasePart can be moved, not {typeof(part)}`)
+  -- only the pool assigns a holder, and only to a part
+  if holder == nil then
+    if typeof(part) ~= "Instance" or not part:IsA("BasePart") then
+      logger.warn(`only a BasePart can be moved, not {typeof(part)}`)
+      return
+    end
+  elseif holder ~= scope then
     return
   end
 
   pending[part] = cframe
 end
 
-function mover.cframe(part: BasePart): CFrame
+function mover.cframe(part: BasePart)
   return pending[part] or part.CFrame
 end
 
+-- a move made while the part had no holder belongs to nobody it now has
 function mover.assign(part: BasePart, holder: any)
   holders[part] = holder
+  pending[part] = nil
 end
 
 function mover.drop(part: BasePart)

@@ -79,6 +79,21 @@ harness.suite(function()
       expect(#batches).toBe(0)
     end)
 
+    test("a move made after a release never lands on the next holder", function()
+      local batches = capture()
+      local part = harness.make("Part")
+      local first, second = {}, {}
+
+      mover.assign(part, first)
+      mover.drop(part)
+      mover.move(first, part, CFrame.new(4, 0, 0))
+      mover.assign(part, second)
+      mover.flush()
+
+      expect(#batches).toBe(0)
+      mover.clear()
+    end)
+
     test("cframe answers the pending write, else the part's own", function()
       capture()
       local part = harness.make("Part")
