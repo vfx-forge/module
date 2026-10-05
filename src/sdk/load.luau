@@ -201,10 +201,12 @@ local function checkFields(author: any, found: { string })
     end
   end
 
-  -- a host calls the template from its own thread, so an engine function
-  -- there would run with the host's rights
-  if type(author.template) == "function" and debug.info(author.template, "s") == "[C]" then
-    table.insert(found, "template must be a function of your own, not an engine function")
+  -- a host calls the template and the unload from its own thread, so an
+  -- engine function there would run with the host's rights
+  for _, field in { "template", "unload" } do
+    if type(author[field]) == "function" and debug.info(author[field], "s") == "[C]" then
+      table.insert(found, `{field} must be a function of your own, not an engine function`)
+    end
   end
 end
 
@@ -762,11 +764,13 @@ function load.overlap(classifier: string, except: any?): string?
 end
 
 -- the effect module the runtime registers for what a tagged module returned,
--- or nil and every reason it was refused. `path` names the module in a reason,
--- `except` is the version it replaces, whose id and classifier are free, and
--- `alias` the name its source runs under when that is not `path`, which its
--- reported failures name as `path` instead
-function load.assemble(author: any, path: string, except: any?, alias: string?): (any?, { string })
+-- or nil and every reason it was refused, and the unload it held when load
+-- read it, which the caller calls in place of reading the author's table
+-- again, refused or not. `path` names the module in a reason, `except` is the
+-- version it replaces, whose id and classifier are free, and `alias` the name
+-- its source runs under when that is not `path`, which its reported failures
+-- name as `path` instead
+function load.assemble(author: any, path: string, except: any?, alias: string?): (any?, { string }, (() -> ())?)
   if type(author) ~= "table" then
     return nil, { `{path} answers a {typeof(author)}, not an effect table` }
   end
@@ -779,15 +783,21 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
 
   author = snapshot(author, found)
 
+  local unload = author.unload
+
+  if type(unload) ~= "function" or debug.info(unload, "s") == "[C]" then
+    unload = nil
+  end
+
   if #found > 0 then
-    return nil, found
+    return nil, found, unload
   end
 
   local label = if type(author.id) == "string" then author.id else path
   local version, refusal = versionOf(author, label)
 
   if version == nil then
-    return nil, { refusal :: string }
+    return nil, { refusal :: string }, unload
   end
 
   local facade = VERSIONS[version]
@@ -802,7 +812,7 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   checkFrozen(properties, facade, found)
 
   if #found > 0 then
-    return nil, found
+    return nil, found, unload
   end
 
   curveDefaults(attributes)
@@ -859,14 +869,14 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   end
 
   if #found > 0 then
-    return nil, found
+    return nil, found, unload
   end
 
   if alias ~= nil then
     facade.alias(module, alias, path)
   end
 
-  return module, found
+  return module, found, unload
 end
 
 return load

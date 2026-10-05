@@ -1506,6 +1506,60 @@ harness.suite(function()
   end)
 
   harness.describe("replacing and removing a custom effect", function()
+    test("an engine function as unload is refused, since the host would call it with its own rights", function()
+      fresh()
+
+      expect(refusal(effect({ unload = print }))).toEqual({
+        "unload must be a function of your own, not an engine function",
+      })
+    end)
+
+    test("a refused module with a metatable is never read through it on the host's thread", function()
+      fresh()
+
+      local touched = false
+      local author = setmetatable(effect(), {
+        __index = function()
+          touched = true
+          return nil
+        end,
+      })
+
+      expect((custom.add("a", author, "ReplicatedStorage.A"))).toBe(false)
+      expect(touched).toBe(false)
+    end)
+
+    test("the unload called is the one the module held when it loaded, refused or removed", function()
+      fresh()
+
+      local called = {}
+
+      local function swapping(name: string, extra: { [string]: any }?)
+        local author = effect(extra)
+
+        author.unload = function()
+          table.insert(called, name)
+        end
+
+        author.params = function(sdk: any)
+          author.unload = function()
+            table.insert(called, `{name} swapped`)
+          end
+
+          return { attributes = { FadeTime = sdk.knob(0.5) } }
+        end
+
+        return author
+      end
+
+      expect((custom.add("a", swapping("kept"), "ReplicatedStorage.A"))).toBe(true)
+      expect((custom.add("b", swapping("refused", { emit = 4 }), "ReplicatedStorage.B"))).toBe(false)
+
+      custom.remove("a")
+
+      expect(called).toEqual({ "refused", "kept" })
+    end)
+
     test("a new version under the same key replaces the old, whose unload runs once", function()
       fresh()
 
