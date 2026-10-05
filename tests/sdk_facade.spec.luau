@@ -1140,6 +1140,37 @@ harness.suite(function()
         ours:Destroy()
       end)
     end)
+
+    test("lets go of its root once something makes it archivable", function()
+      withInstances(function()
+        fresh()
+
+        local earlier
+
+        custom("gui_root_kept", function(sdk: any, ctx: any)
+          earlier = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        earlier.Archivable = true
+
+        local root
+
+        fresh()
+        custom("gui_root_after", function(sdk: any, ctx: any)
+          root = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        expect(root ~= earlier).toBe(true)
+        expect(root.Archivable).toBe(false)
+
+        earlier:Destroy()
+        root:Destroy()
+      end)
+    end)
   end)
 
   harness.describe("awaiting a join", function()

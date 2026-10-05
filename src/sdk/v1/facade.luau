@@ -738,7 +738,7 @@ function v1.guiRoot(view: any): Instance
   local parent = guiParent()
   local root = guiRoot
 
-  if root ~= nil and root.Parent == parent then
+  if root ~= nil and root.Parent == parent and root.Name == GUI_ROOT and not root.Archivable then
     return root
   end
 
