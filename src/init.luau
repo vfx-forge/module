@@ -212,7 +212,6 @@ function api.init(params: params?)
   Sound.init()
   CameraShake.init()
 
-  Mesh.init(api.caches.shared_part)
   Bezier.init(api.caches.shared_part)
   Lightning.init(api.caches.shared_part)
   ShockwaveDebris.init()
@@ -241,7 +240,6 @@ function api.deinit()
 
   mover.clear()
 
-  Mesh.deinit()
   Sound.deinit()
   Bezier.deinit()
   Lightning.deinit()

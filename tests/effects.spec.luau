@@ -2421,4 +2421,67 @@ harness.suite(function()
       expect(pieces(60, 1 / 60, { Duration = 0.5, Rate = 10 })).toBe(5)
     end)
   end)
+
+  harness.describe("a mesh's pieces", function()
+    -- a mesh whose start is a MeshPart, emitted twice on the pool, and the
+    -- piece each emit holds a frame in
+    local function emitTwice()
+      local built = fresh()
+      local CFrame = harness.datatypes.CFrame
+
+      registry.register(require("@vfx/mesh"))
+      local fake = fake_pool.start({ MeshPart = LISTS.Part })
+
+      local extents = utility.getTransformedOriginExtents
+      utility.getTransformedOriginExtents = function()
+        return CFrame.new(0, 5, 0)
+      end
+
+      local model = harness.make("Model", harness.make("Folder"))
+      local start = harness.make("MeshPart", model)
+      local goal = harness.make("MeshPart", model)
+
+      start.Name = "Start"
+      goal.Name = "End"
+
+      -- lune holds no default for a MeshPart's mesh
+      start.MeshId = "rbxassetid://1"
+      goal.MeshId = "rbxassetid://1"
+
+      local seen = {}
+
+      for _ = 1, 2 do
+        local env = effects.emit(0, model)
+
+        scheduler.frame(0.1)
+
+        local pieces = fake.folder:GetChildren()
+
+        table.insert(seen, {
+          count = #pieces,
+          id = pieces[1]:GetDebugId(),
+          cframe = pieces[1].CFrame,
+          tagged = pieces[1]:HasTag(utility.CLEANUP_TAG),
+        })
+
+        env:Clear()
+      end
+
+      fake_pool.stop(fake)
+      utility.getTransformedOriginExtents = extents
+      built.restore()
+
+      return seen, fake.made
+    end
+
+    test("a MeshPart piece is the pool's, moved by the mover, and comes back for the next emit", function()
+      local seen, made = emitTwice()
+
+      expect(made).toBe(1)
+      expect(seen[1].count).toBe(1)
+      expect(seen[2].id).toBe(seen[1].id)
+      expect(seen[1].cframe.Position).toEqual(harness.datatypes.Vector3.new(0, 5, 0))
+      expect(seen[1].tagged).toBe(false)
+    end)
+  end)
 end)

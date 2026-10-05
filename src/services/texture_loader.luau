@@ -1,15 +1,11 @@
 local CollectionService = game:GetService("CollectionService")
 
-local ObjectCache = require("@obj/ObjectCache")
-
 local utility = require("@mod/utility")
 local flipbook_common = require("@mod/common/flipbook")
 
 local texture_loader = {}
 
 function texture_loader.init(scope: { any })
-  local template = Instance.new("Decal")
-
   local parent = Instance.new("Part")
   parent.Name = "DO_NOT_REMOVE_ForgeTextureCache"
   parent.Transparency = 1
@@ -23,14 +19,38 @@ function texture_loader.init(scope: { any })
 
   utility.protectParent(scope, parent)
 
-  local texture_cache = ObjectCache.new(template, parent, {
-    size = 120 * 3,
-    on_free = function(item)
-      item.value.Texture = ""
-    end,
-  })
-
+  local decals: { [string]: { decal: Decal, count: number } } = {}
   local preloadScopes = {}
+
+  local function acquire(texture: string)
+    local entry = decals[texture]
+
+    if entry == nil then
+      local decal = Instance.new("Decal")
+      decal.Texture = texture
+      decal.Parent = parent
+
+      entry = { decal = decal, count = 0 }
+      decals[texture] = entry
+    end
+
+    entry.count += 1
+  end
+
+  local function release(texture: string)
+    local entry = decals[texture]
+
+    if entry == nil then
+      return
+    end
+
+    entry.count -= 1
+
+    if entry.count <= 0 then
+      entry.decal:Destroy()
+      decals[texture] = nil
+    end
+  end
 
   local function createLoader(
     ref: Instance,
@@ -50,11 +70,10 @@ function texture_loader.init(scope: { any })
           return
         end
 
-        local d = texture_cache:get(tex)
-        d.Texture = tex
+        acquire(tex)
 
         table.insert(snapshotScope, function()
-          texture_cache:free(tex)
+          release(tex)
         end)
       end
 
@@ -153,22 +172,32 @@ function texture_loader.init(scope: { any })
     loadTextures(ref)
   end
 
-  CollectionService:GetInstanceAddedSignal(utility.TEXTURE_LOAD_TAG):Connect(loadTextures)
-  CollectionService:GetInstanceRemovedSignal(utility.TEXTURE_LOAD_TAG):Connect(function(ref)
-    local loadScope = preloadScopes[ref]
+  table.insert(scope, CollectionService:GetInstanceAddedSignal(utility.TEXTURE_LOAD_TAG):Connect(loadTextures))
+  table.insert(
+    scope,
+    CollectionService:GetInstanceRemovedSignal(utility.TEXTURE_LOAD_TAG):Connect(function(ref)
+      local loadScope = preloadScopes[ref]
 
-    if loadScope then
-      utility.cleanupScope(loadScope)
-      preloadScopes[ref] = nil
-    end
-  end)
+      if loadScope then
+        utility.cleanupScope(loadScope)
+        preloadScopes[ref] = nil
+      end
+    end)
+  )
 
   table.insert(scope, function()
-    texture_cache:destroy()
+    for _, entry in decals do
+      entry.decal:Destroy()
+    end
+
+    table.clear(decals)
 
     for _, loadScope in preloadScopes do
       utility.cleanupScope(loadScope)
     end
+
+    table.clear(preloadScopes)
+    parent:Destroy()
   end)
 end
 
