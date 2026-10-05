@@ -308,7 +308,22 @@ local function rowOf(row: any, name: string, found: { string })
     end
   end
 
+  -- the registry walks each of these unasked, and would throw on one that is
+  -- no table rather than name it
+  local choices = rawget(row, "choices")
   local specs = rawget(row, "modDefault")
+
+  if type(rawget(row, "names")) ~= "table" then
+    once(found, `the aliases of {name} must be a list of names`)
+  end
+
+  if choices ~= nil and type(choices) ~= "table" then
+    once(found, `the options of {name} must be a list of names`)
+  end
+
+  if specs ~= nil and type(specs) ~= "table" then
+    once(found, `the default modifiers of {name} must be a list of sdk.mod specs`)
+  end
 
   if type(specs) ~= "table" or getmetatable(specs) ~= nil then
     return
@@ -518,8 +533,9 @@ local function checkFrozen(rows: { [string]: any }, facade: any, found: { string
       continue
     end
 
+    -- one that is no spec at all is the registry's to name
     for _, spec in row.modDefault do
-      if type(spec) ~= "table" then
+      if not mod.is(spec) then
         continue
       end
 
@@ -558,7 +574,7 @@ local function viewed(rows: { [string]: any }, facade: any)
     end
 
     for _, spec in row.modDefault do
-      if type(spec) ~= "table" then
+      if not mod.is(spec) then
         continue
       end
 

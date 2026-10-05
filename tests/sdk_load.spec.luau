@@ -879,6 +879,55 @@ harness.suite(function()
       })
     end)
 
+    test("a default modifier that is no mod spec is refused with the registry's reason", function()
+      fresh()
+
+      local found = refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Rise = sdk.knob(0):mod({} :: any),
+              Fall = sdk.knob(1):mod({ opts = "", endpoint = 0 } :: any),
+            },
+          }
+        end,
+      }))
+
+      -- in the order the registry walks the rows, which keeps none
+      table.sort(found)
+
+      expect(found).toEqual({
+        "a default modifier of Fall is not a mod spec",
+        "a default modifier of Rise is not a mod spec",
+      })
+    end)
+
+    test("a knob's list that is no table is refused by name rather than thrown on", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          local old = sdk.knob(1)
+          local rise = sdk.knob(0):mod()
+
+          old.names = nil
+          rise.modDefault = 5
+
+          return {
+            attributes = {
+              Old = old,
+              Picked = sdk.knob("a"):options("a" :: any),
+              Rise = rise,
+            },
+          }
+        end,
+      }))).toEqual({
+        "the aliases of Old must be a list of names",
+        "the options of Picked must be a list of names",
+        "the default modifiers of Rise must be a list of sdk.mod specs",
+      })
+    end)
+
     test("a row named by anything but a string is refused before its name is ever turned to text", function()
       fresh()
 
