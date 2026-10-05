@@ -168,6 +168,8 @@ export type V1 = {
   lock: (ctx: Ctx) -> (),
   -- where the effect runs: "edit" in Studio's editor, "client" or "server" in a running game
   context: () -> "edit" | "client" | "server",
+  -- the folder every gui the effect makes goes in: StarterGui's in the editor, the local PlayerGui's on a client; refused on the server
+  guiRoot: (ctx: Ctx) -> Folder,
   -- t of the way from a to b, for any value that blends
   lerp: <T>(a: T, b: T, t: number) -> T,
   -- colors blended the way eyes see them

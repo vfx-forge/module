@@ -184,8 +184,14 @@ do
     return signal
   end
 
+  -- a real instance, so what a spec parents under StarterGui stays there
+  local starterGui = roblox.Instance.new("Folder")
+
+  starterGui.Name = "StarterGui"
+
   local services: { [string]: any } = {
     CollectionService = tags,
+    StarterGui = starterGui,
   }
 
   game = {

@@ -4,6 +4,7 @@ local knob = require("@mod/knob")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
+local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
@@ -951,6 +952,86 @@ harness.suite(function()
       scheduler.frame(0.25)
 
       expect(string.find(err, "sdk.lock runs in emit only", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
+  harness.describe("sdk.guiRoot", function()
+    -- lune has no Instance global, so the folder is made through the seam a
+    -- spec stands a real one in for
+    local function withInstances(body: () -> ())
+      local create = adapters.create
+
+      adapters.create = function(class: string)
+        return harness.datatypes.Instance.new(class)
+      end
+
+      local ok, err = pcall(body)
+
+      adapters.create = create
+
+      assert(ok, err)
+    end
+
+    test("answers one non-archivable folder under StarterGui in the editor, made again once destroyed", function()
+      withInstances(function()
+        fresh()
+
+        local first, second
+
+        custom("gui_root", function(sdk: any, ctx: any)
+          first = sdk.guiRoot(ctx)
+          second = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        local starter = game:GetService("StarterGui")
+
+        expect(first).toBe(second)
+        expect(first.Name).toBe("VFXForgeGui")
+        expect(first.ClassName).toBe("Folder")
+        expect(first.Archivable).toBe(false)
+        expect(first.Parent).toBe(starter)
+
+        first:Destroy()
+
+        local third
+
+        fresh()
+        custom("gui_root_again", function(sdk: any, ctx: any)
+          third = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        expect(third ~= first).toBe(true)
+        expect(third.Parent).toBe(starter)
+      end)
+    end)
+
+    test("never takes a user's archivable folder of the same name", function()
+      withInstances(function()
+        fresh()
+
+        local starter = game:GetService("StarterGui")
+        local theirs = harness.make("Folder", starter)
+
+        theirs.Name = "VFXForgeGui"
+
+        local root
+
+        custom("gui_root_theirs", function(sdk: any, ctx: any)
+          root = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        expect(root ~= theirs).toBe(true)
+        expect(root.Archivable).toBe(false)
+
+        theirs:Destroy()
+        root:Destroy()
+      end)
     end)
   end)
 

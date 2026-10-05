@@ -1,4 +1,6 @@
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
 
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
@@ -8,6 +10,7 @@ local shape = require("@mod/shape")
 local tween = require("@mod/tween")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
+local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
 
@@ -20,6 +23,9 @@ local NAN_VECTOR = vector.create(NAN, NAN, NAN)
 
 -- an author's pass by name, as the scheduler's phase
 local PASSES = { early = "compute", late = "screen" }
+
+-- the folder every custom effect's guis live in, by name
+local GUI_ROOT = "VFXForgeGui"
 
 -- thrown through an effect's own thread once a callback of it has failed, so
 -- the author's code after the failing call never runs on an effect that is gone
@@ -73,6 +79,9 @@ local SOURCES: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
 
 -- a host's sentence for a reported failure, which only the plugin sets
 local annotate: ((message: string) -> string?)? = nil
+
+-- the gui root last made or found, made again once it leaves its parent
+local guiRoot: Instance? = nil
 
 -- what every curve the facade makes is, told apart from any other table by it
 local CURVE = getmetatable(curve.new(1, "linear"))
@@ -691,6 +700,59 @@ function v1.context(): string
   end
 
   return if RunService:IsClient() then "client" else "server"
+end
+
+-- the parent the gui root belongs under in this context, refusing the server
+local function guiParent(): Instance
+  if not RunService:IsRunning() then
+    return StarterGui
+  end
+
+  if not RunService:IsClient() then
+    logger.error("sdk.guiRoot runs in the editor or on a client; check sdk.context() first")
+  end
+
+  local player = Players.LocalPlayer
+  local gui = if player ~= nil then player:FindFirstChildOfClass("PlayerGui") else nil
+
+  if gui == nil then
+    logger.error("sdk.guiRoot found no PlayerGui; the local player has not loaded yet")
+  end
+
+  return gui :: Instance
+end
+
+function v1.guiRoot(view: any): Instance
+  ctxOf(view, "guiRoot")
+
+  local parent = guiParent()
+  local root = guiRoot
+
+  if root ~= nil and root.Parent == parent then
+    return root
+  end
+
+  root = nil
+
+  for _, child in parent:GetChildren() do
+    if child.Name == GUI_ROOT and child:IsA("Folder") and not child.Archivable then
+      root = child
+      break
+    end
+  end
+
+  if root == nil then
+    local made = adapters.create("Folder")
+
+    made.Name = GUI_ROOT
+    made.Archivable = false
+    made.Parent = parent
+    root = made
+  end
+
+  guiRoot = root
+
+  return root :: Instance
 end
 
 function v1.lerp(a: any, b: any, t: number)
