@@ -1,3 +1,4 @@
+local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local curves = require("@mod/curves")
 local registry = require("@mod/registry")
@@ -207,6 +208,179 @@ local function checkFields(author: any, found: { string })
   end
 end
 
+-- a table of the author's, read raw into one the author never holds
+local function copied(t: { [any]: any }): { [any]: any }
+  local out = {}
+
+  for k, v in next, t do
+    out[k] = v
+  end
+
+  return out
+end
+
+-- a reason added once, however many tables gave it
+local function once(found: { string }, reason: string)
+  if not table.find(found, reason) then
+    table.insert(found, reason)
+  end
+end
+
+local function refuse(found: { string }, label: string)
+  once(found, `{label} must be a plain table, with no metatable`)
+end
+
+-- a layout as plain tables the author never holds, nil once one carried a
+-- metatable
+local function layoutOf(value: any, found: { string }): any
+  if type(value) ~= "table" then
+    return value
+  end
+
+  if getmetatable(value) ~= nil then
+    once(found, "layout must be plain tables, with no metatable")
+    return nil
+  end
+
+  local out = {}
+
+  for k, v in next, value do
+    out[k] = layoutOf(v, found)
+  end
+
+  return out
+end
+
+-- the effect table, its display and its layout as tables the runtime owns,
+-- read raw before params runs, so nothing the author's code does after can
+-- change what was checked. a table carrying a metatable could answer one read
+-- differently from the next, or iterate to more than was checked, so one is
+-- refused by name
+local function snapshot(author: any, found: { string }): any
+  local out = copied(author)
+  local display = out.display
+
+  if type(display) == "table" and getmetatable(display) ~= nil then
+    refuse(found, "display")
+  elseif type(display) == "table" then
+    display = copied(display)
+    out.display = display
+
+    if type(display.reflect) == "table" and getmetatable(display.reflect) ~= nil then
+      refuse(found, "display.reflect")
+    elseif type(display.reflect) == "table" then
+      display.reflect = copied(display.reflect)
+    end
+  end
+
+  out.layout = layoutOf(out.layout, found)
+
+  return out
+end
+
+-- the fields of a knob, and what a reason calls each, that may hold a table
+-- the reader or the registry walks or indexes once the effect is registered
+local KEPT = {
+  { "names", "aliases" },
+  { "choices", "options" },
+  { "lower", "min" },
+  { "upper", "max" },
+  { "modDefault", "default modifiers" },
+}
+
+-- every table a row keeps copied into it, so the author's own lists reach
+-- nothing. a row the registry froze on an earlier load already holds copies
+local function rowOf(row: any, name: string, found: { string })
+  local fresh = not table.isfrozen(row)
+
+  for _, field in KEPT do
+    local key, label = field[1], field[2]
+    local value = rawget(row, key)
+
+    if type(value) ~= "table" then
+      continue
+    end
+
+    if getmetatable(value) ~= nil then
+      refuse(found, `the {label} of {name}`)
+    elseif fresh then
+      row[key] = copied(value)
+    end
+  end
+
+  local specs = rawget(row, "modDefault")
+
+  if type(specs) ~= "table" or getmetatable(specs) ~= nil then
+    return
+  end
+
+  for _, spec in next, specs do
+    if not mod.is(spec) then
+      continue
+    end
+
+    local endpoint = rawget(spec, "endpoint")
+    local opts = rawget(spec, "opts")
+
+    if type(endpoint) == "table" and getmetatable(endpoint) ~= nil then
+      refuse(found, `the endpoint of a default modifier of {name}`)
+    end
+
+    -- options with a metatable, or frozen with a rule load would have to
+    -- wrap, are checkFrozen's to name
+    if
+      type(opts) == "table"
+      and getmetatable(opts) == nil
+      and not table.isfrozen(opts)
+      and not table.isfrozen(spec)
+    then
+      spec.opts = copied(opts)
+    end
+  end
+end
+
+-- the rows params answered as a map the runtime owns, by name
+local function rowsOf(given: any, label: string, found: { string }): { [string]: any }
+  if given == nil then
+    return {}
+  end
+
+  if type(given) ~= "table" then
+    table.insert(found, `{label} must be a table of knobs`)
+    return {}
+  end
+
+  if getmetatable(given) ~= nil then
+    refuse(found, label)
+    return {}
+  end
+
+  local rows = {}
+  local names = {}
+
+  -- a name that is no string is never turned to text, which could run a
+  -- metamethod of the author's in the middle of the load
+  for name, row in next, given do
+    if type(name) ~= "string" then
+      once(found, `{label} names a row by a {typeof(name)}, not a string`)
+      continue
+    end
+
+    rows[name] = row
+    table.insert(names, name)
+  end
+
+  table.sort(names)
+
+  for _, name in names do
+    if knob.is(rows[name]) then
+      rowOf(rows[name], name, found)
+    end
+  end
+
+  return rows
+end
+
 -- the attributes and properties params answered, each empty when it could
 -- not be used and every reason added to `found`
 local function paramsOf(author: any, sdk: any, found: { string }): ({ [string]: any }, { [string]: any })
@@ -226,22 +400,21 @@ local function paramsOf(author: any, sdk: any, found: { string }): ({ [string]: 
     return {}, {}
   end
 
-  for key in params do
+  if getmetatable(params) ~= nil then
+    table.insert(found, "params must answer a plain table, with no metatable")
+    return {}, {}
+  end
+
+  for key in next, params do
     if key ~= "attributes" and key ~= "properties" then
-      table.insert(found, `params answers {tostring(key)}, which is neither attributes nor properties`)
+      table.insert(
+        found,
+        `params answers {if type(key) == "string" then key else typeof(key)}, which is neither attributes nor properties`
+      )
     end
   end
 
-  local attributes = params.attributes or {}
-  local properties = params.properties or {}
-
-  for name, list in { attributes = attributes, properties = properties } do
-    if type(list) ~= "table" then
-      table.insert(found, `params.{name} must be a table of knobs`)
-    end
-  end
-
-  return if type(attributes) == "table" then attributes else {}, if type(properties) == "table" then properties else {}
+  return rowsOf(params.attributes, "params.attributes", found), rowsOf(params.properties, "params.properties", found)
 end
 
 -- every row whose default is of a type the panel cannot edit, named. a rule
@@ -425,20 +598,6 @@ local function viewedLayout(entries: any, facade: any)
   end
 end
 
-local function copy(value: any): any
-  if type(value) ~= "table" then
-    return value
-  end
-
-  local out = {}
-
-  for k, v in value do
-    out[k] = copy(v)
-  end
-
-  return out
-end
-
 local function tagsOf(compound: string): { string }
   local out = {}
 
@@ -496,6 +655,18 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
     return nil, { `{path} answers a {typeof(author)}, not an effect table` }
   end
 
+  if getmetatable(author) ~= nil then
+    return nil, { `{path} answers a table with a metatable, not a plain effect table` }
+  end
+
+  local found = {}
+
+  author = snapshot(author, found)
+
+  if #found > 0 then
+    return nil, found
+  end
+
   local label = if type(author.id) == "string" then author.id else path
   local version, refusal = versionOf(author, label)
 
@@ -504,7 +675,6 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   end
 
   local facade = VERSIONS[version]
-  local found = {}
 
   checkFields(author, found)
 
@@ -529,11 +699,11 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   local duration = author.duration
   local template = author.template
 
-  local layout = copy(author.layout)
+  local layout = author.layout
   local reflect = author.display.reflect
 
   if type(reflect) == "table" then
-    reflect = table.freeze(table.clone(reflect))
+    reflect = table.freeze(reflect)
   end
 
   viewedLayout(layout, facade)

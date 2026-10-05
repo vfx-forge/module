@@ -703,6 +703,220 @@ harness.suite(function()
         expect(seen.rise.reach).toBe(nil)
       end
     )
+
+    test("attributes that answer a row through __index are refused, and the rule behind it never runs", function()
+      fresh()
+
+      local ran = false
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = setmetatable({ FadeTime = sdk.knob(1) }, {
+                __index = function(_, key: string)
+                  if key ~= "Evil" then
+                    return nil
+                  end
+
+                  return sdk.knob(1):readonly(function()
+                    ran = true
+                    return false
+                  end)
+                end,
+              }),
+            }
+          end,
+          duration = function(_, attrs: any)
+            return if attrs.Evil ~= nil then 1 else 2
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({ "params.attributes must be a plain table, with no metatable" })
+
+      effects.emit(0, tagged())
+
+      expect(ran).toBe(false)
+    end)
+
+    test("a default modifier list that iterates through __iter is refused before anything walks it", function()
+      fresh()
+
+      local armed = false
+      local ran = false
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            local rise = sdk.knob(0):mod(sdk.mod.to(1))
+            local evil = sdk.mod.to(function()
+              ran = true
+              return 1
+            end)
+
+            rise.modDefault = setmetatable(rise.modDefault, {
+              __iter = function(list: any)
+                return next, if armed then { evil } else list
+              end,
+            })
+
+            return { attributes = { Rise = rise } }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      armed = true
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({ "the default modifiers of Rise must be a plain table, with no metatable" })
+
+      effects.emit(0, tagged())
+
+      expect(ran).toBe(false)
+    end)
+
+    test("the author's attributes changed after the add change nothing the reader sees", function()
+      fresh()
+
+      local seen
+      local attributes
+
+      local ok = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            attributes = { FadeTime = sdk.knob(0.5) }
+
+            return { attributes = attributes }
+          end,
+          emit = function(_, _, attrs: any)
+            seen = { fade = attrs.FadeTime, extra = attrs.Extra }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(true)
+      expect(table.isfrozen(attributes)).toBe(false)
+
+      attributes.FadeTime = nil
+      attributes.Extra = facade.sdk.knob(3)
+
+      local module = registry.get("my_effect")
+
+      expect(module.attributes.Extra).toBe(nil)
+      expect(module.attributes.FadeTime ~= nil).toBe(true)
+
+      effects.emit(0, tagged())
+
+      expect(seen.fade).toBe(0.5)
+      expect(seen.extra).toBe(nil)
+    end)
+
+    test("every table the runtime keeps is refused by name when it carries a metatable", function()
+      fresh()
+
+      local hidden = setmetatable({}, { __metatable = false })
+
+      expect(refusal(setmetatable(effect(), {}))).toEqual({
+        "ReplicatedStorage.MyEffect answers a table with a metatable, not a plain effect table",
+      })
+
+      expect(refusal(effect({ display = setmetatable({ name = "My Effect" }, { __metatable = false }) }))).toEqual({
+        "display must be a plain table, with no metatable",
+      })
+
+      expect(refusal(effect({ display = { name = "My Effect", reflect = setmetatable({ "Color" }, {}) } }))).toEqual({
+        "display.reflect must be a plain table, with no metatable",
+      })
+
+      expect(refusal(effect({ layout = { setmetatable({ title = "Fade", entries = { "FadeTime" } }, {}) } }))).toEqual({
+        "layout must be plain tables, with no metatable",
+      })
+
+      expect(refusal(effect({
+        params = function()
+          return setmetatable({}, {})
+        end,
+      }))).toEqual({ "params must answer a plain table, with no metatable" })
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            properties = setmetatable({ Transparency = sdk.knob(0) }, hidden),
+          }
+        end,
+      }))).toEqual({ "params.properties must be a plain table, with no metatable" })
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          local old = sdk.knob(1):aliases("Old")
+
+          setmetatable(old.names, {})
+
+          return {
+            attributes = {
+              Old = old,
+              Picked = sdk.knob("a"):options(setmetatable({ "a", "b" }, {})),
+              Low = sdk.knob(function() end):min(setmetatable({}, {})),
+              High = sdk.knob(function() end):max(setmetatable({}, {})),
+              Rise = sdk.knob(0):mod(sdk.mod.to(setmetatable({}, {}))),
+            },
+          }
+        end,
+      }))).toEqual({
+        "the max of High must be a plain table, with no metatable",
+        "the min of Low must be a plain table, with no metatable",
+        "the aliases of Old must be a plain table, with no metatable",
+        "the options of Picked must be a plain table, with no metatable",
+        "the endpoint of a default modifier of Rise must be a plain table, with no metatable",
+      })
+    end)
+
+    test("a row named by anything but a string is refused before its name is ever turned to text", function()
+      fresh()
+
+      local named = false
+      local key = setmetatable({}, {
+        __tostring = function()
+          named = true
+          return "Key"
+        end,
+      })
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return { attributes = { [key] = sdk.knob(1), FadeTime = sdk.knob(0.5) } }
+        end,
+      }))).toEqual({ "params.attributes names a row by a table, not a string" })
+
+      expect(named).toBe(false)
+    end)
+
+    test("the effect table and its display are read once, so params cannot change them after the check", function()
+      fresh()
+
+      local author = effect({ display = { name = "My Effect" } })
+
+      author.params = function(sdk: any)
+        author.display.reflect = setmetatable({ "Color" }, {})
+        author.display.name = 4
+
+        return { attributes = { FadeTime = sdk.knob(0.5) } }
+      end
+
+      local module = load.assemble(author, "ReplicatedStorage.MyEffect")
+
+      expect(module ~= nil).toBe(true)
+      expect(module.display.name).toBe("My Effect")
+      expect(module.display.reflect).toBe(nil)
+    end)
   end)
 
   harness.describe("classifying a custom effect's instance", function()
