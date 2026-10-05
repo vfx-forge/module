@@ -113,7 +113,6 @@ local ShockwaveDebris = require("@vfx/shockwave_debris")
 
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
-local caches = require("@srv/caches")
 local effects = require("@srv/effects")
 local texture_loader = require("@srv/texture_loader")
 local enabled_effects = require("@srv/enabled_effects")
@@ -196,8 +195,6 @@ function api.init(params: params?)
 
   scheduler.start()
 
-  api.caches = caches.init(api.scope)
-
   pool.init(api.scope)
 
   shared.vfx = api
@@ -211,9 +208,6 @@ function api.init(params: params?)
   -- init effects
   Sound.init()
   CameraShake.init()
-
-  Bezier.init(api.caches.shared_part)
-  Lightning.init(api.caches.shared_part)
   ShockwaveDebris.init()
 end
 
@@ -232,8 +226,8 @@ function api.deinit()
     return
   end
 
-  -- the live emits are cleared first, while the caches their parts go back to
-  -- still stand
+  -- the live emits are cleared first, while the pool their parts go back to
+  -- still stands
   effects.deinit()
 
   utility.cleanupScope(api.scope)
@@ -241,8 +235,6 @@ function api.deinit()
   mover.clear()
 
   Sound.deinit()
-  Bezier.deinit()
-  Lightning.deinit()
   CameraShake.deinit()
   ShockwaveDebris.deinit()
 

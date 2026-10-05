@@ -9,10 +9,12 @@ local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local bezier_common = require("@mod/common/bezier")
+
+local pool = require("@srv/pool")
+local mover = require("@srv/mover")
 local enabled_effects = require("@srv/enabled_effects")
 
 local Bezier = require("@obj/Bezier")
-local ObjectCache = require("@obj/ObjectCache")
 
 local function linear()
   return utility.linear_bezier
@@ -218,16 +220,6 @@ function lightning.duration(_, attrs: any)
   return attrs.Duration.Max
 end
 
-local part_cache: ObjectCache.ObjectCache?
-
-function lightning.init(cache)
-  part_cache = cache
-end
-
-function lightning.deinit()
-  part_cache = nil
-end
-
 local function createSegmentStates(count: number)
   local states = {}
 
@@ -237,6 +229,7 @@ local function createSegmentStates(count: number)
       birth = nil,
       birthElapsed = nil,
       wasVisible = false,
+      placed = false,
     }
   end
 
@@ -442,7 +435,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
   local root = ref:FindFirstChild("Points")
   local template = ref:FindFirstChildOfClass("Part")
 
-  if not root or not root:IsA("Attachment") or not part_cache or not template then
+  if not root or not root:IsA("Attachment") or not template then
     return
   end
 
@@ -547,7 +540,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
       -- create segment parts
       local segmentRealParts = table.create(attrs.Segments)
-      local segmentCacheIds = table.create(attrs.Segments)
 
       local segmentState = createSegmentStates(attrs.Segments)
 
@@ -559,11 +551,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           start = (j - 1) * invSegments,
           finish = j * invSegments,
         }
-      end
-
-      if not part_cache then
-        landed()
-        return
       end
 
       -- create a highlight container if needed. a highlight is built when the
@@ -579,6 +566,11 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         container.Name = "LightningContainer"
         container.Parent = workspace.Terrain
         containerModel = container
+
+        -- held ahead of the segments, so they go back to the pool before it goes
+        lifetime.hold(scope, function()
+          container:Destroy()
+        end)
 
         local hl = Instance.new("Highlight")
         hl.Adornee = container
@@ -620,12 +612,8 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
 
       -- create segment parts
       for j = 1, attrs.Segments do
-        local cacheId = utility.getRandomId()
-
-        local objAbstr = part_cache:get(cacheId)
-        local obj = objAbstr._getReal()
-
-        utility.copyProperties(refObj, obj, utility.COPY_PART_PROPERTIES)
+        local nested = shouldEmitNested(j)
+        local obj = pool.take(scope, template, not nested) :: BasePart
 
         obj.Size = Vector3.new(initWidth, initWidth, 1)
 
@@ -638,24 +626,21 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
           obj.Parent = containerModel
         end
 
-        if shouldEmitNested(j) then
-          local clone = refObj:Clone()
+        if nested then
+          -- the bolt emits its one EmitOnFinish from refObj, so a segment's own
+          -- copy is set aside where its nested emit does not reach it
+          scope.effects.prepareEmitOnFinish(obj, scope)
 
-          for _, child in clone:GetChildren() do
-            child.Parent = obj
-
-            if attrs.NestedEffectMode == "Head" then
+          if attrs.NestedEffectMode == "Head" then
+            for _, child in obj:GetChildren() do
               table.insert(nestedEffectChildren, child)
             end
           end
-
-          clone:Destroy()
 
           table.insert(nestedSegments, j)
         end
 
         segmentRealParts[j] = obj
-        segmentCacheIds[j] = cacheId
       end
 
       -- for Head mode, reparent children to segment 1 initially
@@ -667,19 +652,6 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
         end
         currentNestedParentIndex = 1
       end
-
-      -- cleanup
-      lifetime.hold(scope, function()
-        if part_cache then
-          for j = 1, attrs.Segments do
-            part_cache:free(segmentCacheIds[j])
-          end
-
-          if containerModel then
-            containerModel:Destroy()
-          end
-        end
-      end)
 
       local effectContainer = containerModel or refObj
 
@@ -918,8 +890,18 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
               local length = (clampedP2 - clampedP1).Magnitude
 
               if length > 0.001 then
+                local cframe = CFrame.lookAt(midpoint, clampedP2)
+
                 segment.Size = Vector3.new(useWidth, useWidth, length)
-                segment.CFrame = CFrame.lookAt(midpoint, clampedP2)
+
+                -- a taken part stands where its last holder left it, so its
+                -- first pose is written at once and only later ones are moved
+                if state.placed then
+                  mover.move(scope, segment, cframe)
+                else
+                  segment.CFrame = cframe
+                  state.placed = true
+                end
               end
             end
           end

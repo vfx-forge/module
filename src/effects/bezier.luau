@@ -6,10 +6,12 @@ local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local bezier_common = require("@mod/common/bezier")
+
+local pool = require("@srv/pool")
+local mover = require("@srv/mover")
 local enabled_effects = require("@srv/enabled_effects")
 
 local Bezier = require("@obj/Bezier")
-local ObjectCache = require("@obj/ObjectCache")
 
 local bezier = {}
 
@@ -64,23 +66,13 @@ function bezier.duration(_, attrs: any)
   return attrs.Duration.Max
 end
 
-local part_cache: ObjectCache.ObjectCache?
-
-function bezier.init(cache)
-  part_cache = cache
-end
-
-function bezier.deinit()
-  part_cache = nil
-end
-
 function bezier.emit(ctx: reader.Ctx, attrs: any)
   local ref = ctx.ref :: Attachment
   local scope = ctx.scope
   local root = ref:FindFirstChild("Points")
   local template = ref:FindFirstChildOfClass("Part")
 
-  if not root or not root:IsA("Attachment") or not part_cache or not template then
+  if not root or not root:IsA("Attachment") or not template then
     return
   end
 
@@ -89,11 +81,6 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
   if attrs.Enabled and not ctx.constant then
     enabled_effects.switch(ref, false)
   end
-
-  local refObj = utility.clone(template)
-  refObj.Locked = true
-
-  lifetime.hold(scope, refObj)
 
   local styled = attrs.ShapeStyle == "Volume" or attrs.ShapeStyle == "Surface"
   local drawFunc = if styled then bezier_common.SHAPES[attrs.Shape] else nil
@@ -183,40 +170,13 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
       local pathBezier = baseBezier or bezier_common.endpointPath(points, cf, endPoint, endT1)
       local getPos = bezier_common.createPosGetter(pathBezier, points, cf, endPoint, attrs.ArcSpace)
 
-      -- get part from cache
-      local cacheId = utility.getRandomId()
+      local obj = pool.take(scope, template) :: BasePart
 
-      if not part_cache then
-        landed()
-        return
-      end
-
-      local objAbstr = part_cache:get(cacheId)
-      objAbstr.CFrame = CFrame.new(getPos(0))
-
-      local obj = objAbstr._getReal()
-
-      utility.copyProperties(refObj, obj, utility.COPY_PART_PROPERTIES)
-      utility.copyProperties(refObj, obj, utility.COPY_EXTENDED_PART_PROPERTIES)
-
-      -- clone children from reference
-      do
-        local clone = refObj:Clone()
-        for _, child in clone:GetChildren() do
-          child.Parent = obj
-        end
-        clone:Destroy()
-      end
+      obj.CFrame = CFrame.new(getPos(0))
 
       local emitOnFinish = scope.effects.prepareEmitOnFinish(obj, scope)
 
       scope.effects.emitNested(obj, scope.depth + 1, scope, outstanding)
-
-      lifetime.hold(scope, function()
-        if part_cache then
-          part_cache:free(cacheId)
-        end
-      end)
 
       -- animation state
       local lastPos = Vector3.zero
@@ -237,10 +197,10 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
 
         if attrs.SyncPosition then
           local initOrigin = utility.getTransformedOriginExtents(parent)
-          local initPartPos = objAbstr.CFrame
+          local initPartPos = mover.cframe(obj)
 
           lifetime.step(scope, function()
-            objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * initOrigin:ToObjectSpace(initPartPos)
+            mover.move(scope, obj, utility.getTransformedOriginExtents(parent) * initOrigin:ToObjectSpace(initPartPos))
           end, "follow")
         end
 
@@ -280,7 +240,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
             end
           end
 
-          local add = initRot:Sign() * currentRotSpeed * utility.DEG_TO_RAD * deltaTime
+          local add = vector.sign(initRot) * currentRotSpeed * utility.DEG_TO_RAD * deltaTime
           currentRot *= CFrame.fromOrientation(add.x, add.y, add.z)
 
           -- save current cframe before applying rotation
@@ -288,9 +248,9 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
           newCF *= currentRot
 
           if attrs.SyncPosition then
-            objAbstr.CFrame = utility.getTransformedOriginExtents(parent) * originCFrame:ToObjectSpace(newCF)
+            mover.move(scope, obj, utility.getTransformedOriginExtents(parent) * originCFrame:ToObjectSpace(newCF))
           else
-            objAbstr.CFrame = newCF
+            mover.move(scope, obj, newCF)
           end
 
           if deltaTime > 0 then
@@ -331,17 +291,25 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
 
           lastVelocity = dir * attrs.ProjectileSpeed
 
-          local projectileOrigin = obj.Position
+          local projectileOrigin = mover.cframe(obj).Position
           local originCFrameAtProjectileInit = utility.getTransformedOriginExtents(parent)
 
           -- this runs inside the main tween's step, which must not yield
           task.spawn(function()
             tween.wait(scope, curve.new(projectileLifetime, "linear"), function(_, _, elapsed: number)
               if attrs.SyncPosition then
-                objAbstr.CFrame = utility.getTransformedOriginExtents(parent)
-                  * originCFrameAtProjectileInit:ToObjectSpace(CFrame.new(projectileOrigin + lastVelocity * elapsed))
+                mover.move(
+                  scope,
+                  obj,
+                  utility.getTransformedOriginExtents(parent)
+                    * originCFrameAtProjectileInit:ToObjectSpace(CFrame.new(projectileOrigin + lastVelocity * elapsed))
+                )
               else
-                objAbstr.CFrame = CFrame.new(projectileOrigin + lastVelocity * elapsed) * obj.CFrame.Rotation
+                mover.move(
+                  scope,
+                  obj,
+                  CFrame.new(projectileOrigin + lastVelocity * elapsed) * mover.cframe(obj).Rotation
+                )
               end
 
               if shapecast() then

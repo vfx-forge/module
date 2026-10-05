@@ -68,38 +68,6 @@ utility.COPY_SPECIALMESH_PROPERTIES = {
   "VertexColor",
 }
 
-utility.COPY_PART_PROPERTIES = {
-  "CastShadow",
-
-  "Color",
-
-  "Material",
-  "MaterialVariant",
-  "Reflectance",
-
-  "Shape",
-
-  "FrontSurface",
-  "BackSurface",
-  "LeftSurface",
-  "RightSurface",
-  "TopSurface",
-  "BottomSurface",
-}
-
-utility.COPY_EXTENDED_PART_PROPERTIES = {
-  "Size",
-  "Transparency",
-
-  "CustomPhysicalProperties",
-
-  "CanCollide",
-  "CanQuery",
-  "CanTouch",
-
-  "CollisionGroup",
-}
-
 function utility.setCollisionGroups(groups)
   local rules = {}
 
@@ -119,19 +87,6 @@ function utility.setCollisionGroups(groups)
 
       PhysicsService:CollisionGroupSetCollidable(name, group, collidable)
     end
-  end
-end
-
-local last_id = 0
-
-function utility.getRandomId()
-  last_id += 1
-  return tostring(last_id)
-end
-
-function utility.copyProperties(from: Instance, to: Instance, list: { string })
-  for _, k in list do
-    to[k] = from[k]
   end
 end
 
@@ -234,8 +189,8 @@ function utility.speedFrom(scope: lifetime.effect, constant: boolean?, row: any)
   lifetime.speed(scope, row)
 end
 
--- the module-level scopes (api.scope, the caches, texture preloads) are plain
--- tables; every emit and effect is a lifetime record now
+-- the module-level scopes (api.scope, texture preloads) are plain tables;
+-- every emit and effect is a lifetime record now
 function utility.cleanupScope(scope: { [any]: any }, syncFunctions: boolean?)
   for _, v in scope do
     local t = typeof(v)
