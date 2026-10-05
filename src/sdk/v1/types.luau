@@ -162,7 +162,7 @@ export type V1 = {
   speed: (ctx: Ctx, track: Track) -> (),
   -- writes a param's value now, and every frame while modifiers move it; the effect waits for it
   apply: (ctx: Ctx, row: any, write: (value: any) -> ()) -> (),
-  -- logs text once per instance; the effect plays on
+  -- logs text once per module, instance and text; the effect plays on
   warn: (ctx: Ctx, text: string) -> (),
   -- plays this emit alone on ctx.ref: a later emit while it plays ends at its own lock, silently
   lock: (ctx: Ctx) -> (),

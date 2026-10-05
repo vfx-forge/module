@@ -704,7 +704,7 @@ function v1.lock(view: any)
   LOCKED[scope] = true
 end
 
-function v1.context(): string
+function v1.context()
   if not RunService:IsRunning() then
     return "edit"
   end
