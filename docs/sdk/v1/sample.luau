@@ -14,7 +14,8 @@ function effect.params(sdk)
   return {
     attributes = {
       EmitDelay = sdk.knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the pulse starts."),
-      FadeTime = sdk.knob(0.5)
+      FadeTime = sdk
+        .knob(0.5)
         :min(0)
         :unit("seconds")
         :label("Fade")
@@ -22,7 +23,8 @@ function effect.params(sdk)
       FadeCurve = sdk.knob("easeOut"):curve("easeOut"):label("Curve"):hint("How the fade eases."),
       Growth = sdk.knob(2):min(0):label("Growth"):hint("Times its size the part grows to; 1 to 4."),
       EndColor = sdk.knob(Color3.new(1, 1, 1)):label("Color"):hint("The color the part fades to."),
-      Shine = sdk.knob(0)
+      Shine = sdk
+        .knob(0)
         :min(0)
         :max(1)
         :mod(sdk.mod.to(0.6):duration(0.2))
@@ -37,6 +39,7 @@ function effect.duration(_, attrs)
 end
 
 function effect.emit(sdk, ctx, attrs)
+  sdk.lock(ctx)
   sdk.wait(ctx, attrs.EmitDelay)
 
   local part = ctx.ref

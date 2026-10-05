@@ -154,6 +154,28 @@ harness.suite(function()
 
       expect(env.Finished:getStatus()).toBe("Resolved")
     end)
+    test("plays alone on its part, so a second emit while it plays ends at once", function()
+      fresh()
+      custom.add("sample", sample, "docs.sdk.v1.sample")
+
+      local part = pulse()
+      local first = effects.emit(0, part)
+
+      scheduler.frame(0.25)
+
+      local grown = part.Size
+      local second = effects.emit(0, part)
+
+      scheduler.frame(0)
+
+      expect(second.Finished:getStatus()).toBe("Resolved")
+      expect(part.Size).toBe(grown)
+
+      scheduler.frame(0.25)
+
+      expect(first.Finished:getStatus()).toBe("Resolved")
+      expect(part.Size).toBe(Vector3.new(2, 2, 2))
+    end)
   end)
 
   harness.describe("the cost of a custom effect", function()
