@@ -43,6 +43,7 @@ return effect
 - `classifier` is a selector. Every alternative in it names a class and a tag of its own, as in `BasePart.MyEffect`, so no instance can be yours and another effect's at once. Tag the instances that play it with that tag. An instance carrying it is yours even where a built-in's classifier matches it too, as screen's matches any part with `Enabled` set. A classifier may name a class a built-in plays, as in `ParticleEmitter.MyEffect`: an instance carrying your tag is your effect's alone and the built-in never touches it, so your effect plays it itself (for an emitter, its own `Emit` calls), and modifiers or old tween children a built-in left on it play nothing, save the modifiers on a property it reflects. A classifier that shares a tag with another effect is refused. So is `Instance` or `PVInstance`, which is too broad to tell your instances apart; name a concrete class such as `BasePart`.
 - Optional fields: `components` (a selector for descendants the effect plays itself), `layout` (the panel's rows), `constant` (an Enabled loop may emit it), `params`, `duration`, `unload` and `template` (see Templates).
 - Any other field is refused, so a typo like `clasifier` is caught.
+- The module table, `display`, `layout`, the table `params` answers and its `attributes` and `properties` are read once, when the module loads, and kept as plain copies. Give them no metatable: one on any of them, or on a param's modifier list, is refused. Make every param with `sdk.knob`, and never freeze a knob table yourself. `unload` must be a function of your own, not an engine function such as `print`.
 
 Every method takes `sdk` first. Never require ForgeVFX from a custom effect.
 
@@ -77,7 +78,7 @@ A modifier whose end already equals the row's value does nothing, and a row noth
 
 ## Layout, components and constant
 
-`layout` lists what the panel shows, in order. An entry is a row name (a string naming one of your params), or a group, `{ title = "Pulse", entries = { ... } }`, which holds more entries and may take a `hidden` rule. Every name must be a param, or the module is refused.
+`layout` lists what the panel shows, in order. An entry is a row name (a string naming one of your params), or a group, `{ title = "Pulse", entries = { ... } }`, which holds more entries and may take a `hidden` rule. Every name must be a param, or the module is refused. A layout may not use the same table twice or nest more than eight tables deep.
 
 `components` is a selector for descendants of the instance that this effect plays itself. Anything it matches below an instance of this effect is not played as an effect of its own. Leave it out when the effect owns no descendants.
 
