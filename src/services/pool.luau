@@ -43,6 +43,16 @@ local RESTORABLE = {
   "WeldConstraint",
 }
 
+-- what a free copy is hidden by, and so what a take puts back from its twin; a
+-- free part must not collide, be queried, be touched or be selected either
+local HIDES = {
+  part = { LocalTransparencyModifier = 1, CanCollide = false, CanQuery = false, CanTouch = false, Locked = true },
+  face = { Transparency = 1 },
+  gui = { Visible = false },
+  sound = { Playing = false },
+  enabled = { Enabled = false },
+}
+
 type Store = {
   free: { Instance },
   used: number,
@@ -227,27 +237,30 @@ local function canRestore(inst: Instance): boolean
   return verdict
 end
 
--- what a free copy is hidden by, and so what a take puts back from its twin
-local function hideOf(inst: Instance): (string?, any)
+local function hideOf(inst: Instance): { [string]: any }?
   if inst:IsA("BasePart") then
-    return "LocalTransparencyModifier", 1
+    return HIDES.part
   end
 
   if inst:IsA("FaceInstance") then
-    return "Transparency", 1
+    return HIDES.face
   end
 
   if inst:IsA("GuiObject") then
-    return "Visible", false
+    return HIDES.gui
+  end
+
+  if inst:IsA("Sound") then
+    return HIDES.sound
   end
 
   for _, class in { "Beam", "Light", "Trail", "Highlight", "SurfaceGui", "BillboardGui", "ParticleEmitter" } do
     if inst:IsA(class) then
-      return "Enabled", false
+      return HIDES.enabled
     end
   end
 
-  return nil, nil
+  return nil
 end
 
 local function store(floor: number): Store
@@ -401,13 +414,42 @@ local function rescue(inst: Instance): boolean
   return false
 end
 
-local function gather(inst: Instance, into: { Instance }): { Instance }
+-- everything under a set's root the pool owns elsewhere is sent home and never
+-- walked into; answers how many of the set's own members it passed, or nil at
+-- an instance the pool does not own when strict
+local function sendHome(set: Set, inst: Instance, strict: boolean): number?
+  local count = 0
+
   for _, child in pool.engine.children(inst) do
-    table.insert(into, child)
-    gather(child, into)
+    if memberOf[child] == set then
+      count += 1
+    elseif rescue(child) then
+      continue
+    elseif strict then
+      return nil
+    end
+
+    local below = sendHome(set, child, strict)
+
+    if below == nil then
+      return nil
+    end
+
+    count += below
   end
 
-  return into
+  return count
+end
+
+-- a set that cannot be filed, destroyed without what other holders still use
+local function discard(root: Instance)
+  local set = setOf[root]
+
+  if set ~= nil then
+    sendHome(set, root, false)
+  end
+
+  destroy(root)
 end
 
 -- the copy walked against its template in step, children in order; false
@@ -590,7 +632,7 @@ finish = function(inst: Instance, record: Taken)
 
   if set ~= nil then
     if not putBack(set) then
-      destroy(inst)
+      discard(inst)
       return
     end
   else
@@ -599,19 +641,17 @@ finish = function(inst: Instance, record: Taken)
         child:Destroy()
       end
     end
-
-    pool.engine.settle(inst, nil)
-    strip(inst)
-
-    local name, value = hideOf(inst)
-
-    if name ~= nil and not inst:IsA("BasePart") then
-      (inst :: any)[name] = value
-    end
   end
+
+  pool.engine.settle(inst, nil)
+  strip(inst)
 
   if inst:IsA("BasePart") then
     inert(inst :: BasePart)
+  else
+    for name, value in hideOf(inst) or {} do
+      (inst :: any)[name] = value
+    end
   end
 
   if inst.Parent ~= folder then
@@ -639,17 +679,7 @@ putBack = function(set: Set): boolean
     end
   end
 
-  local count = 0
-
-  for _, desc in gather(set.root, {}) do
-    if memberOf[desc] == set then
-      count += 1
-    elseif not rescue(desc) then
-      return false
-    end
-  end
-
-  if count ~= #set.members then
+  if sendHome(set, set.root, true) ~= #set.members then
     return false
   end
 
@@ -752,9 +782,7 @@ local function build(root: Instance, key: Instance, t: Template): Set?
     memberOf[member] = set
     indexOf[member] = i
 
-    local name, value = hideOf(member)
-
-    if name ~= nil then
+    for name, value in hideOf(member) or {} do
       table.insert(set.hides, { index = i, name = name, value = value })
     end
 
@@ -800,6 +828,12 @@ local function kept(holder: any, key: Instance): Instance
   end
 
   local root = table.remove(t.free)
+
+  -- a member destroyed or written while free spoils its set before any take
+  while root ~= nil and setOf[root].dirty do
+    discard(root)
+    root = table.remove(t.free)
+  end
 
   if root ~= nil then
     local set = setOf[root]
@@ -899,14 +933,14 @@ function pool.audit(): { string }
       local hidden = {}
 
       for _, entry in set.hides do
-        hidden[entry.index] = entry.name
+        hidden[`{entry.index} {entry.name}`] = true
       end
 
       for i, member in set.members do
         local twin = set.twins[i]
 
         for _, name in listOf(twin.ClassName) :: { string } do
-          if hidden[i] == name or (member :: any)[name] == authored(set, twin, name) then
+          if hidden[`{i} {name}`] or (member :: any)[name] == authored(set, twin, name) then
             continue
           end
 

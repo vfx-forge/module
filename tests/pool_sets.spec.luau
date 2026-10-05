@@ -13,7 +13,7 @@ local LISTS = {
   ParticleEmitter = { "Enabled", "Rate", "LightEmission" },
   Attachment = { "Visible" },
   Folder = {},
-  Sound = { "Volume" },
+  Sound = { "Volume", "Playing" },
   Configuration = {},
 }
 
@@ -419,6 +419,145 @@ harness.suite(function()
 
       lifetime.releasePlain(holder)
       expect(pool.take(holder, source)).toBe(copy)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a kept root is hidden and settled while free, and shown again on a take", function()
+      local fake = start()
+      local beam = harness.make("Beam") :: Beam
+      beam.Enabled = true
+      harness.make("Configuration", beam)
+
+      local holder = {}
+      local copy = pool.take(holder, beam) :: Beam
+
+      expect(pool.stats().builds).toBe(1)
+      lifetime.releasePlain(holder)
+
+      expect(copy.Enabled).toBe(false)
+      expect(table.find(fake.settled, copy) ~= nil).toBe(true)
+      expect(pool.take(holder, beam)).toBe(copy)
+      expect(copy.Enabled).toBe(true)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("what another holder uses is sent home before a spoiled set is destroyed", function()
+      local fake = start()
+      local source = template()
+      local bare = harness.make("Part")
+      local holder, other = {}, {}
+      local copy = pool.take(holder, source)
+      local plain = pool.take(other, bare, true)
+
+      plain.Parent = copy
+      fake.changed[source]()
+      lifetime.releasePlain(holder)
+
+      expect(plain.Parent).toBe(fake.folder)
+      expect(pool.take(holder, source) ~= copy).toBe(true)
+
+      lifetime.releasePlain(holder)
+      lifetime.releasePlain(other)
+      stop(fake)
+    end)
+
+    test("a take sent home from under a set is never walked into", function()
+      local fake = start()
+      local source = template()
+      local scripted = harness.make("Part")
+      harness.make("Script", scripted)
+
+      local holder, other = {}, {}
+      local copy = pool.take(holder, source)
+      local carrier = pool.take(other, scripted)
+
+      carrier.Parent = copy
+      lifetime.releasePlain(holder)
+
+      expect(carrier.Parent).toBe(fake.folder)
+      expect(carrier:FindFirstChildOfClass("Script") ~= nil).toBe(true)
+      expect(pool.take(holder, source)).toBe(copy)
+
+      lifetime.releasePlain(holder)
+      lifetime.releasePlain(other)
+      stop(fake)
+    end)
+
+    test("a free part member cannot collide, be queried, be touched or be selected", function()
+      local fake = start()
+      local outer = harness.make("Part")
+      local shard = harness.make("Part", outer) :: Part
+      shard.Name = "Shard"
+      shard.CanCollide = true
+      shard.Locked = false
+
+      -- lune has no default for a LocalTransparencyModifier, so the source sets one
+      shard.LocalTransparencyModifier = 0
+
+      local holder = {}
+      local copy = pool.take(holder, outer)
+      local member = copy:FindFirstChild("Shard") :: Part
+
+      lifetime.releasePlain(holder)
+
+      expect(member.CanCollide).toBe(false)
+      expect(member.CanQuery).toBe(false)
+      expect(member.CanTouch).toBe(false)
+      expect(member.Locked).toBe(true)
+      expect(member.LocalTransparencyModifier).toBe(1)
+      expect(pool.audit()).toEqual({})
+
+      pool.take(holder, outer)
+
+      expect(member.CanCollide).toBe(true)
+      expect(member.CanQuery).toBe(true)
+      expect(member.CanTouch).toBe(true)
+      expect(member.Locked).toBe(false)
+      expect(member.LocalTransparencyModifier).toBe(0)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a sound member authored playing is quiet while free and plays again on a take", function()
+      local fake = start()
+      local outer = harness.make("Part")
+      local hum = harness.make("Sound", outer) :: Sound
+      hum.Name = "Hum"
+      hum.Playing = true
+
+      local holder = {}
+      local copy = pool.take(holder, outer)
+      local member = copy:FindFirstChild("Hum") :: Sound
+
+      lifetime.releasePlain(holder)
+
+      expect(member.Playing).toBe(false)
+
+      pool.take(holder, outer)
+
+      expect(member.Playing).toBe(true)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a free set spoiled while it waits is not handed out", function()
+      local fake = start()
+      local source = template()
+      local holder = {}
+      local copy = pool.take(holder, source)
+      local glow = fake.stable(copy:FindFirstChild("Center"):FindFirstChild("Glow") :: Instance)
+
+      lifetime.releasePlain(holder)
+      fake.dirty[glow]()
+
+      expect(pool.take(holder, source) ~= copy).toBe(true)
+      expect(pool.stats().builds).toBe(2)
 
       lifetime.releasePlain(holder)
       stop(fake)
