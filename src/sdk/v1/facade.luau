@@ -599,6 +599,30 @@ function v1.speed(view: any, track: any)
   lifetime.speed(scope, inner)
 end
 
+function v1.apply(view: any, given: any, write: (value: any) -> ())
+  local ctx = ctxOf(view, "apply")
+
+  callable(write, "apply")
+
+  local function written(value: any)
+    guarded(ctx, write, value)
+  end
+
+  local inner = TRACKS[given]
+
+  if inner ~= nil then
+    inner:apply(written)
+    return
+  end
+
+  -- no row's value is a Lua table, so one that is no view is a mistake
+  if type(given) == "table" then
+    logger.error("sdk.apply takes a param's value, as attrs hands it")
+  end
+
+  written(given)
+end
+
 function v1.lerp(a: any, b: any, t: number)
   return lerp.any(a, b, t)
 end

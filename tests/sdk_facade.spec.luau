@@ -701,6 +701,90 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("sdk.apply", function()
+    test("writes a plain value once", function()
+      fresh()
+
+      local seen = {}
+
+      custom("plain", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Count, function(value: number)
+          table.insert(seen, value)
+        end)
+        sdk.wait(ctx, 0.5)
+      end, { Count = knob(3) })
+
+      play()
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(seen).toEqual({ 3 })
+    end)
+
+    test("writes an animated row at once and every frame it runs, and a static one once", function()
+      fresh()
+
+      local moving, still = {}, {}
+
+      custom("animated", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Growth, function(value: number)
+          table.insert(moving, value)
+        end)
+        sdk.apply(ctx, attrs.Flat, function(value: number)
+          table.insert(still, value)
+        end)
+        sdk.wait(ctx, 1)
+      end, { Growth = knob(2):mod(mod.from(0):duration(0.5)), Flat = knob(4):mod() })
+
+      play()
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(moving[1]).toBe(0)
+      expect(#moving >= 3).toBe(true)
+      expect(moving[#moving]).toBe(2)
+      expect(still).toEqual({ 4 })
+    end)
+
+    test("refuses a table that is not a param's value", function()
+      fresh()
+
+      local err
+
+      custom("apply_raw", function(sdk: any, ctx: any)
+        local ok, problem = pcall(sdk.apply, ctx, row(2), function() end)
+
+        err = if ok then "" else tostring(problem)
+      end)
+
+      play()
+
+      expect(string.find(err, "sdk.apply takes a param's value", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a write that throws is warned once and ends the effect", function()
+      fresh()
+
+      custom("throws", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Growth, function()
+          error("bad write")
+        end)
+        sdk.wait(ctx, 1)
+      end, { Growth = knob(2):mod(mod.from(0):duration(0.5)) })
+
+      local env
+      local warnings = harness.captureWarnings(function()
+        env = play()
+        scheduler.frame(0.25)
+      end)
+
+      expect(#warnings).toBe(1)
+      expect(string.find(warnings[1], "bad write", 1, true) ~= nil).toBe(true)
+      expect(ended(env)).toBe(true)
+    end)
+  end)
+
   harness.describe("awaiting a join", function()
     test("a piece awaits another join after the body returned, and the effect ends", function()
       fresh()
@@ -997,12 +1081,13 @@ harness.suite(function()
         refused("tween", sdk.tween, ctx, sdk.curve(1, "linear"), math.floor)
         refused("hold", sdk.hold, ctx, print)
         refused("spawn", sdk.spawn, join, print, "http://127.0.0.1:1/")
+        refused("apply", sdk.apply, ctx, 1, print)
       end)
 
       play()
       refused("curve", sdk.curve, 1, math.floor)
 
-      expect(refusals).toEqual({ step = true, tween = true, hold = true, spawn = true, curve = true })
+      expect(refusals).toEqual({ step = true, tween = true, hold = true, spawn = true, apply = true, curve = true })
     end)
 
     test("a function of the author's own is still taken, and spawn hands it its arguments", function()

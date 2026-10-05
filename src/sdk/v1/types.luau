@@ -159,6 +159,8 @@ export type V1 = {
   getAttributeWriter: (ctx: Ctx, obj: Instance, name: string) -> Writer,
   -- runs the effect's time at a param declared with :mod()
   speed: (ctx: Ctx, track: Track) -> (),
+  -- writes a param's value now, and every frame while modifiers move it
+  apply: (ctx: Ctx, row: any, write: (value: any) -> ()) -> (),
   -- t of the way from a to b, for any value that blends
   lerp: <T>(a: T, b: T, t: number) -> T,
   -- colors blended the way eyes see them
