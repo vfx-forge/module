@@ -141,10 +141,6 @@ local function prepare(ctx: reader.Ctx, attrs: any): Beam?
     local a = pool.take(scope, att0, true) :: Attachment
     local b = pool.take(scope, att1, true) :: Attachment
 
-    -- a take never poses what it hands out
-    a.CFrame = att0.CFrame
-    b.CFrame = att1.CFrame
-
     a.Name = "_ForgeTempAttachment"
     b.Name = "_ForgeTempAttachment"
 
@@ -322,7 +318,7 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   tween.wait(scope, curve.new(math.max(duration, flipbookDuration), "linear"))
 
   if emitOnFinish then
-    scope.effects.emitOnFinish(emitOnFinish, obj.Parent or workspace.Terrain, scope.depth + 1, scope, children)
+    scope.effects.emitOnFinish(emitOnFinish, workspace.Terrain, scope.depth + 1, scope, children)
   end
 
   lifetime.awaitJoin(children)

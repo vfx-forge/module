@@ -14,7 +14,8 @@ local FOLDER = "DO_NOT_REMOVE_ForgeSharedPartCache"
 -- its own of
 local SKIP = { Name = true, Parent = true, Archivable = true }
 
--- where an effect places a piece itself, so a take never moves it there first
+-- where an effect places a part itself, so a take never moves it there first;
+-- an attachment's CFrame is its offset from its parent, which a take copies
 local PLACED = { CFrame = true }
 
 -- a template's motion never reaches a piece, which starts from the rest its
@@ -53,7 +54,7 @@ local HIDES = {
   part = { LocalTransparencyModifier = 1, CanCollide = false, CanQuery = false, CanTouch = false, Locked = true },
   face = { Transparency = 1 },
   gui = { Visible = false },
-  sound = { Playing = false },
+  sound = { Playing = false, PlayOnRemove = false },
   enabled = { Enabled = false },
 }
 
@@ -344,10 +345,12 @@ local function dress(inst: Instance, source: Instance)
     pool.engine.applyMesh(inst, source)
   end
 
+  local isPart = inst:IsA("BasePart")
+
   for _, name in listOf(source.ClassName) :: { string } do
     local value = (source :: any)[name]
 
-    if PLACED[name] or MOTION[name] or (inst :: any)[name] == value then
+    if (isPart and PLACED[name]) or MOTION[name] or (inst :: any)[name] == value then
       continue
     end
 
@@ -356,7 +359,7 @@ local function dress(inst: Instance, source: Instance)
 
   inst.Name = source.Name
 
-  if inst:IsA("BasePart") then
+  if isPart then
     local part = inst :: BasePart
     part.Anchored = true
     part.Locked = true

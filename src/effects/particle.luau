@@ -83,10 +83,9 @@ local function prepare(ctx: reader.Ctx): ParticleEmitter?
   local parent, ancestor = utility.cloneParticleAncestry(ref, shared.ref, function(obj: Instance)
     local link = pool.take(links, obj, true)
 
-    -- a take never poses what it hands out, and a link sits where its source
-    -- does
-    if link:IsA("BasePart") or link:IsA("Attachment") then
-      (link :: any).CFrame = (obj :: any).CFrame
+    -- a take never places a part, and a link sits where its source does
+    if link:IsA("BasePart") then
+      (link :: BasePart).CFrame = (obj :: BasePart).CFrame
     end
 
     return link
@@ -121,6 +120,14 @@ local function prepare(ctx: reader.Ctx): ParticleEmitter?
     shared.unc[ancestor] -= 1
 
     if shared.unc[ancestor] <= 0 then
+      -- every link of the ancestor sits under it until it is released, and a
+      -- released one may already be another holder's
+      for source, link in shared.ref do
+        if link == ancestor or link:IsDescendantOf(ancestor) then
+          shared.ref[source] = nil
+        end
+      end
+
       lifetime.releasePlain(shared.held[ancestor])
       shared.held[ancestor] = nil
     end

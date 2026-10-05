@@ -2368,7 +2368,7 @@ harness.suite(function()
       local CFrame = harness.datatypes.CFrame
       registry.register(require("@vfx/beam"))
 
-      local fake = fake_pool.start({ Beam = { "Enabled" }, Attachment = { "Visible" } })
+      local fake = fake_pool.start({ Beam = { "Enabled" }, Attachment = { "Visible", "CFrame" } })
 
       -- a beam scaled by 2 between attachments at `z0` and `z1`, answering
       -- where its throwaway attachments are after one frame

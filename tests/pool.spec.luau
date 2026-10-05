@@ -188,6 +188,66 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("an attachment from the stack takes its new source's offset, a part never its CFrame", function()
+      local lists = table.clone(LISTS)
+      lists.Attachment = { "Visible", "CFrame" }
+      lists.Part = { "Color", "CFrame" }
+
+      local fake = fake_pool.start(lists)
+      local CFrame = harness.datatypes.CFrame
+      local first = source("Attachment") :: Attachment
+      local second = source("Attachment") :: Attachment
+      local still = source("Part") :: Part
+      local moved = source("Part") :: Part
+
+      first.CFrame = CFrame.new(0, 0, 5)
+      second.CFrame = CFrame.new(0, 3, 0)
+      moved.CFrame = CFrame.new(10, 0, 0)
+
+      local holder = {}
+      local attachment = pool.take(holder, first) :: Attachment
+      local part = pool.take(holder, still) :: Part
+
+      lifetime.releasePlain(holder)
+
+      local again = {}
+
+      expect(pool.take(again, second)).toBe(attachment)
+      expect(pool.take(again, moved)).toBe(part)
+      expect(attachment.CFrame).toEqual(CFrame.new(0, 3, 0))
+      expect(part.CFrame).toEqual(CFrame.identity)
+
+      lifetime.releasePlain(again)
+      stop(fake)
+    end)
+
+    test("a free sound never plays on removal, and its next take does if authored to", function()
+      local lists = table.clone(LISTS)
+      lists.Sound = { "Volume", "PlayOnRemove" }
+
+      local fake = fake_pool.start(lists)
+      local sound = source("Sound") :: Sound
+      local holder = {}
+
+      sound.PlayOnRemove = true
+
+      local taken = pool.take(holder, sound) :: Sound
+
+      expect(taken.PlayOnRemove).toBe(true)
+
+      lifetime.releasePlain(holder)
+
+      expect(taken.PlayOnRemove).toBe(false)
+
+      local again = {}
+
+      expect(pool.take(again, sound)).toBe(taken)
+      expect(taken.PlayOnRemove).toBe(true)
+
+      lifetime.releasePlain(again)
+      stop(fake)
+    end)
+
     test("a released emitter is cleared and switched off", function()
       local fake = start()
       local emitter = source("ParticleEmitter")
