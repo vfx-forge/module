@@ -32,6 +32,9 @@ local PLACED = { CFrame = true }
 -- release left it at: debris reads a piece's velocity as its launch's start
 local MOTION = { Velocity = true, RotVelocity = true, AssemblyLinearVelocity = true, AssemblyAngularVelocity = true }
 
+-- what a MeshPart's mesh is built from, which only a copy of its own carries
+local MESH = { "MeshId", "RenderFidelity", "CollisionFidelity" }
+
 -- the engine normalizes an authored rotation on write, so one slightly off
 -- never reads back equal; a CFrame this close to its twin's is the same
 local NEAR = 1e-4
@@ -200,6 +203,14 @@ pool.engine = {
     for _, desc in template:GetDescendants() do
       table.insert(conns, desc.Changed:Connect(changed))
       table.insert(conns, desc.AttributeChanged:Connect(changed))
+    end
+
+    -- a take dresses the root from its template, but never gives it another
+    -- mesh, so a new mesh needs a new root
+    if template.ClassName == "MeshPart" then
+      for _, name in MESH do
+        table.insert(conns, template:GetPropertyChangedSignal(name):Connect(changed))
+      end
     end
 
     return conns

@@ -328,6 +328,72 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a new mesh on a kept template's root takes a new root", function()
+      local fake = start()
+      local source = harness.make("MeshPart") :: MeshPart
+      local holder = {}
+
+      -- lune has no default for a MeshId, so the source sets one
+      source.MeshId = "rbxassetid://1"
+      harness.make("Attachment", source).Name = "Tip"
+
+      local first = pool.take(holder, source)
+
+      lifetime.releasePlain(holder)
+
+      source.MeshId = "rbxassetid://2"
+      fake.changed[source]()
+
+      local second = pool.take(holder, source) :: MeshPart
+
+      expect(second ~= first).toBe(true)
+      expect(second.MeshId).toBe("rbxassetid://2")
+      expect(pool.stats().builds).toBe(2)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("the engine's watch hears a MeshPart template's mesh change", function()
+      local wired = {}
+      local heard = 0
+
+      local function signal(name: string)
+        return {
+          Connect = function(_, fn: () -> ())
+            wired[name] = fn
+
+            return { Disconnect = function() end }
+          end,
+        }
+      end
+
+      -- the engine's own watch, on a stand-in with the signals it connects
+      local template = {
+        ClassName = "MeshPart",
+        DescendantAdded = signal("DescendantAdded"),
+        DescendantRemoving = signal("DescendantRemoving"),
+        AncestryChanged = signal("AncestryChanged"),
+        GetDescendants = function()
+          return {}
+        end,
+        GetPropertyChangedSignal = function(_, name: string)
+          return signal(name)
+        end,
+      }
+
+      pool.engine.watch(template :: any, function()
+        heard += 1
+      end)
+
+      for _, name in { "MeshId", "RenderFidelity", "CollisionFidelity" } do
+        expect(wired[name] ~= nil).toBe(true)
+        wired[name]()
+      end
+
+      expect(heard).toBe(3)
+    end)
+
     test("a set taken before an edit is destroyed on release", function()
       local fake = start()
       local source = template()
