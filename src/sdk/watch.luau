@@ -54,7 +54,16 @@ local function add(host: Host, inst: Instance)
     return
   end
 
-  local took, found = custom.add(inst, value, path)
+  -- a load that throws rather than refusing is one module's failure, and
+  -- never stops the modules after it or the init that started the watch. an
+  -- error that is no string is named by its type, since turning the author's
+  -- value to text could run a metamethod of theirs
+  local added, took, found = pcall(custom.add, inst, value, path)
+
+  if not added then
+    logger.warn(`custom effect {path} failed to load: {if type(took) == "string" then took else typeof(took)}`)
+    return
+  end
 
   if not took then
     logger.warn(`custom effect {path} was refused: {table.concat(found, "; ")}`)

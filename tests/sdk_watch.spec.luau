@@ -146,6 +146,44 @@ harness.suite(function()
       )
     end)
 
+    test("a module whose load throws is warned, and the modules after it still register", function()
+      fresh()
+
+      local stand = host()
+      local bad, good = module("Bad"), module("Good")
+      local add = custom.add
+
+      stand.values[bad] = effect("bad", "Bad")
+      stand.values[good] = effect("good", "Good")
+      table.insert(stand.tagged, bad)
+      table.insert(stand.tagged, good)
+
+      -- a load that throws where it should have refused, as one once did on
+      -- a layout that held itself
+      custom.add = function(key: any, ...: any)
+        if key == bad then
+          error("stack overflow")
+        end
+
+        return add(key, ...)
+      end
+
+      local started, warnings
+
+      warnings = harness.captureWarnings(function()
+        started = pcall(watch.start, stand.host)
+      end)
+
+      custom.add = add
+
+      expect(started).toBe(true)
+      expect(registry.get("good") ~= nil).toBe(true)
+      expect(registry.get("bad")).toBe(nil)
+      expect(#warnings).toBe(1)
+      expect(string.find(warnings[1], "custom effect Bad failed to load", 1, true) ~= nil).toBe(true)
+      expect(string.find(warnings[1], "stack overflow", 1, true) ~= nil).toBe(true)
+    end)
+
     test("stop unregisters every custom effect and stops listening", function()
       fresh()
 
