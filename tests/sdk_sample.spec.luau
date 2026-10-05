@@ -154,6 +154,7 @@ harness.suite(function()
 
       expect(env.Finished:getStatus()).toBe("Resolved")
     end)
+
     test("plays alone on its part, so a second emit while it plays ends at once", function()
       fresh()
       custom.add("sample", sample, "docs.sdk.v1.sample")

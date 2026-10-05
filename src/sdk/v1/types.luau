@@ -55,7 +55,7 @@ export type Params = {
 
 -- an animated param's value
 export type Track = {
-  -- the value at the start
+  -- the param's own value, the one the panel holds, which its modifiers run from or to; its value at a time is at(t)
   value: any,
   -- false when no modifier moves it
   animated: boolean,

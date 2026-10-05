@@ -13,7 +13,12 @@ effect.layout = {
 function effect.params(sdk)
   return {
     attributes = {
-      EmitDelay = sdk.knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the pulse starts."),
+      EmitDelay = sdk
+        .knob(0)
+        :min(0)
+        :unit("seconds")
+        :label("Delay")
+        :hint("Seconds before the pulse starts; 0 to 1 suits most hits."),
       FadeTime = sdk
         .knob(0.5)
         :min(0)
@@ -29,7 +34,7 @@ function effect.params(sdk)
         :max(1)
         :mod(sdk.mod.to(0.6):duration(0.2))
         :label("Shine")
-        :hint("How much the part reflects; a modifier makes it flash."),
+        :hint("How much the part reflects, 0 to 1; by default it rises to 0.6 in 0.2 seconds and holds."),
     },
   }
 end

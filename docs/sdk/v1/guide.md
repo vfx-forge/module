@@ -50,7 +50,7 @@ Every method takes `sdk` first. Never require ForgeVFX from a custom effect.
 
 ## Params
 
-`params(sdk)` is called once each time the module loads and answers `attributes` and `properties`, tables of knobs by name. A knob declared with `:curve(preset)` is a curve param, edited in the curve editor; its value goes straight into `sdk.curve`. A knob declared with `:mod()` can be animated by modifiers and is read as a Track: `track.value` is its value at the start, `track.animated` is false when no modifier moves it, `track.duration` is how long its modifiers run when `animated` is true (ignore it when `animated` is false), and `track:at(t)` is its value `t` seconds in. Call it with a colon; `track.at(t)` is refused. `sdk.apply` and `sdk.speed` take a Track. `attrs` and `props` are read only.
+`params(sdk)` is called once each time the module loads and answers `attributes` and `properties`, tables of knobs by name. A knob declared with `:curve(preset)` is a curve param, edited in the curve editor; its value goes straight into `sdk.curve`. A knob declared with `:mod()` can be animated by modifiers and is read as a Track: `track.value` is the param's own value, the one the panel holds, which its modifiers run from or to; its value at a time is `track:at(t)`; `track.animated` is false when no modifier moves it, `track.duration` is how long its modifiers run when `animated` is true (ignore it when `animated` is false), and `track:at(t)` is its value `t` seconds in. Call it with a colon; `track.at(t)` is refused. `sdk.speed` takes a Track; `sdk.apply` takes any param. `attrs` and `props` are read only.
 
 Walk `attrs` and `props` with `for name, value in attrs`, never `pairs`, which sees nothing on them. Never copy them: a copy made with `table.clone` refuses every read. In a rule or in `duration`, read a row by name, since a walk there sees only the rows read so far. A param declared with `:mod()` that `duration` reads is not kept, so a walk in `duration` never finds it, and its `:at(t)` there is not the one `emit` sees: read its `value`.
 
@@ -112,6 +112,7 @@ All time is effect time: scaled by the effect's speed and stopped while it is pa
 - `sdk.wait(ctx, seconds)` waits.
 - `sdk.step(ctx, fn, pass)` calls `fn(dt, elapsed)` every frame while the effect runs, and answers a function that stops it. `pass` is `"early"` (the default) or `"late"`. A late step runs after the camera has moved and shaken, so use it for anything placed against the camera. A step is still called while the effect is paused, with `dt` 0.
 - `sdk.apply(ctx, row, write)` calls `write` with a param's value at once, and again every frame while its modifiers move it. A param without `:mod()` is written once. While modifiers move the param, the effect runs until they finish, as it does for a tween.
+- `sdk.speed(ctx, track)` runs the effect's clock at a `:mod()` param's value, following its modifiers as they move it: at 2 every step, tween, wait, applied param and nested emit of the effect plays twice as fast, and a value below 0 counts as 0. The param's own modifiers run on unscaled time, so it never speeds itself up. Once it comes to rest at 0, tweens end where they stand and a pending `sdk.wait` ends the effect, so nothing after it runs.
 - `sdk.curve(duration, shape)` is a curve over `duration` seconds. `shape` is a preset (`linear`, `easeIn`, `easeOut`, `easeInOut`), a curve param's value, a chain of vectors or a function of time. `curve:at(t)` answers its value for `t` from 0 to 1.
 - `sdk.tween(ctx, curve, fn)` plays a curve, calling `fn(alpha)` once at the start and then once a frame.
 
@@ -149,7 +150,7 @@ The game's discovery starts in `ForgeVFX.init`. A host that registers and reload
 
 ## Errors
 
-A module that fails to load, throws in `params` or breaks a rule is refused with every reason named, and in the plugin the version before it stays registered. An `emit`, step, tween callback or piece that throws is warned about once per instance, and its effect ends and lets go of what it held.
+A module that fails to load, throws in `params` or breaks a rule is refused with every reason named, and in the plugin the version before it stays registered. An `emit`, step, tween callback, `sdk.apply` write or piece that throws is warned about once per instance, and its effect ends and lets go of what it held.
 
 To say an effect cannot play, call `error(text)`: it is reported once per instance and the effect ends. To say something went wrong that the effect recovers from, call `sdk.warn(ctx, text)`: it is logged once per instance and text, and the effect plays on. Give `sdk.warn` a fixed sentence with no changing number in it, since every distinct text is logged and kept.
 
@@ -176,7 +177,7 @@ A shipped effect follows these.
   part.Parent = workspace.Terrain
   ```
 
-  Never put one at the `workspace` root, in a named folder, or directly in `StarterGui` or `PlayerGui`; a GUI goes in `sdk.guiRoot(ctx)`. A clone you made is yours to write directly; the played instance goes through writers. Never clone from an instance a writer has written: clone first, write second, and expect a second emit while the first plays (or call `sdk.lock`).
+  Never put one at the `workspace` root, in a folder of your own, or directly in `StarterGui` or `PlayerGui`; a GUI goes in `sdk.guiRoot(ctx)`. A clone you made is yours to write directly; the played instance goes through writers. Never clone from an instance a writer has written: clone first, write second, and expect a second emit while the first plays (or call `sdk.lock`).
 
   A ViewportFrame does not render in a SurfaceGui parented to a part (measured in Studio's editor on 2026-10-05). Put every GUI an effect makes in `sdk.guiRoot(ctx)`: a SurfaceGui or BillboardGui there with its `Adornee` set to the part, a ScreenGui there with `ResetOnSpawn` false. Hold a GUI made for one emit with `sdk.hold`; a container every emit shares is found by name in the root or made there, and stays for the session. Nothing in the root is saved with the place or copied to players. On the server there is no root: check `sdk.context()` first.
 - **components.** Declare `components = "Instance"` when the instance owns descendants the effect plays, hides or copies.
