@@ -913,18 +913,9 @@ local function kept(holder: any, key: Instance, source: Instance): Instance
     templates[key] = t
   end
 
+  -- a whole clone, so references between its children name each other
   if t.keep == false then
-    local inst = single(holder, key, source)
-
-    for _, child in key:GetChildren() do
-      local copy = utility.clone(child)
-
-      if copy ~= nil then
-        copy.Parent = inst
-      end
-    end
-
-    return inst
+    return fresh(holder, source)
   end
 
   local root = table.remove(t.free)

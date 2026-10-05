@@ -592,6 +592,40 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a template a custom effect claims takes a fresh root after its first take", function()
+      local fake = start()
+      local source = template()
+      local marker = harness.make("Configuration", source)
+      marker.Name = "CustomClaimed"
+
+      local custom = {
+        id = "pool_probe",
+        display = { name = "pool_probe", icon = "pool_probe", order = 10 },
+        classifier = "Configuration#CustomClaimed",
+        attributes = { EmitDelay = knob(0):min(0) },
+        properties = {},
+        emit = function() end,
+      }
+
+      registry.register(custom :: any, true)
+
+      local holder = {}
+      local first = pool.take(holder, source)
+
+      lifetime.releasePlain(holder)
+
+      local fresh = pool.stats().fresh
+      local second = pool.take(holder, source)
+
+      expect(second ~= first).toBe(true)
+      expect(pool.stats().fresh).toBe(fresh + 1)
+      expect(second:FindFirstChild("CustomClaimed") ~= nil).toBe(true)
+
+      lifetime.releasePlain(holder)
+      registry.unregister(custom :: any)
+      stop(fake)
+    end)
+
     test("members another set left under a part go home before its release", function()
       local fake = start()
       local source = template()
