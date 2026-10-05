@@ -14,6 +14,16 @@ local FOLDER = "DO_NOT_REMOVE_ForgeSharedPartCache"
 -- its own of
 local SKIP = { Name = true, Parent = true, Archivable = true }
 
+-- a part's look the engine saves under a name no script may write, by the
+-- name a script writes it under
+local SAVED_AS = {
+  size = "Size",
+  shape = "Shape",
+  style = "Style",
+  Color3uint8 = "Color",
+  MaterialVariantSerialized = "MaterialVariant",
+}
+
 -- where an effect places a part itself, so a take never moves it there first;
 -- an attachment's CFrame is its offset from its parent, which a take copies
 local PLACED = { CFrame = true }
@@ -142,9 +152,15 @@ pool.engine = {
     local list = {}
 
     for _, property in found do
+      local name = property.Name
       local permits = property.Permits
 
-      if not property.Serialized or SKIP[property.Name] or permits == nil then
+      if not property.Serialized or SKIP[name] or permits == nil then
+        continue
+      end
+
+      if SAVED_AS[name] ~= nil and permits.Write == nil then
+        table.insert(list, SAVED_AS[name])
         continue
       end
 
@@ -152,12 +168,14 @@ pool.engine = {
         continue
       end
 
-      -- an empty set of capabilities is a write any script may make
-      if tostring(permits.Write) ~= "" then
+      -- no capability, or Basic, which every script outside a sandbox holds
+      local write = tostring(permits.Write)
+
+      if write ~= "" and write ~= "Basic" then
         continue
       end
 
-      table.insert(list, property.Name)
+      table.insert(list, name)
     end
 
     return list
