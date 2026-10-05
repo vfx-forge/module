@@ -167,7 +167,8 @@ pool.engine = {
     return inst.AttributeChanged:Connect(changed)
   end,
 
-  -- the walk a release clears, so a test host can answer the wrappers it holds
+  -- every walk of a copy or its template, so a test host can answer the
+  -- wrappers it holds
   children = function(inst: Instance): { Instance }
     return inst:GetChildren()
   end,
@@ -400,6 +401,87 @@ local function rescue(inst: Instance): boolean
   return false
 end
 
+local function gather(inst: Instance, into: { Instance }): { Instance }
+  for _, child in pool.engine.children(inst) do
+    table.insert(into, child)
+    gather(child, into)
+  end
+
+  return into
+end
+
+-- the copy walked against its template in step, children in order; false
+-- when the two part ways
+local function pair(set: Set, copy: Instance, twin: Instance): boolean
+  local copies = pool.engine.children(copy)
+  local twins = pool.engine.children(twin)
+
+  if #copies ~= #twins then
+    return false
+  end
+
+  for i, child in copies do
+    local other = twins[i]
+
+    if child.ClassName ~= other.ClassName or child.Name ~= other.Name then
+      return false
+    end
+
+    table.insert(set.members, child)
+    table.insert(set.twins, other)
+    table.insert(set.parents, copy)
+
+    if not pair(set, child, other) then
+      return false
+    end
+  end
+
+  return true
+end
+
+local function claimed(inst: Instance): boolean
+  local module = registry.of(inst)
+
+  return module ~= nil and registry.isCustom(module)
+end
+
+-- a twin's value, a reference into the template turned into its copy
+local function authored(set: Set, twin: Instance, name: string): any
+  local value = (twin :: any)[name]
+
+  if typeof(value) == "Instance" then
+    return set.map[value] or value
+  end
+
+  return value
+end
+
+local function restore(set: Set)
+  for i, member in set.members do
+    local twin = set.twins[i]
+
+    for _, name in listOf(twin.ClassName) :: { string } do
+      local value = authored(set, twin, name)
+
+      if (member :: any)[name] ~= value then
+        (member :: any)[name] = value
+      end
+    end
+  end
+end
+
+local function hide(set: Set)
+  for _, entry in set.hides do
+    (set.members[entry.index] :: any)[entry.name] = entry.value
+  end
+end
+
+local function unhide(set: Set)
+  for _, entry in set.hides do
+    (set.members[entry.index] :: any)[entry.name] = (set.twins[entry.index] :: any)[entry.name]
+  end
+end
+
 local function trim(s: Store)
   local cap = math.max(s.floor, s.peak, s.previous)
 
@@ -542,12 +624,77 @@ finish = function(inst: Instance, record: Taken)
   trim(s)
 end
 
-putBack = function(_: Set): boolean
-  return false
+putBack = function(set: Set): boolean
+  if set.dirty or set.generation ~= set.key.generation then
+    return false
+  end
+
+  for i, member in set.members do
+    local parent = set.parents[i]
+
+    if member.Parent ~= parent and not pcall(function()
+      member.Parent = parent
+    end) then
+      return false
+    end
+  end
+
+  local count = 0
+
+  for _, desc in gather(set.root, {}) do
+    if memberOf[desc] == set then
+      count += 1
+    elseif not rescue(desc) then
+      return false
+    end
+  end
+
+  if count ~= #set.members then
+    return false
+  end
+
+  for i, member in set.members do
+    pool.engine.settle(member, set.twins[i])
+  end
+
+  restore(set)
+  hide(set)
+
+  return true
+end
+
+-- a template that changed: its free sets go, and a set still in use is
+-- destroyed on release, since its generation no longer matches
+local function stale(t: Template)
+  local free = t.free
+
+  t.generation += 1
+  t.keep = nil
+  t.free = {}
+
+  for _, root in free do
+    destroy(root)
+  end
+
+  for _, conn in t.watch or {} do
+    conn:Disconnect()
+  end
+
+  t.watch = nil
 end
 
 local function refresh()
   seen = registry.version
+
+  for _, t in templates do
+    stale(t)
+  end
+end
+
+local function watchOf(t: Template)
+  t.watch = pool.engine.watch(t.template, function()
+    stale(t)
+  end)
 end
 
 -- a member of a kept copy answers its authored twin, so nested pieces share
@@ -562,23 +709,146 @@ local function twinOf(source: Instance): Instance
   return source
 end
 
+local function build(root: Instance, key: Instance, t: Template): Set?
+  for _, child in key:GetChildren() do
+    local copy = utility.clone(child)
+
+    if copy == nil then
+      return nil
+    end
+
+    copy.Parent = root
+  end
+
+  local set: Set = {
+    root = root,
+    key = t,
+    generation = t.generation,
+    members = {},
+    twins = {},
+    parents = {},
+    map = {},
+    hides = {},
+    conns = {},
+    dirty = false,
+  }
+
+  if not pair(set, root, key) then
+    return nil
+  end
+
+  for _, member in set.members do
+    if not canRestore(member) or claimed(member) then
+      return nil
+    end
+  end
+
+  local function spoil()
+    set.dirty = true
+  end
+
+  for i, member in set.members do
+    set.map[set.twins[i]] = member
+    memberOf[member] = set
+    indexOf[member] = i
+
+    local name, value = hideOf(member)
+
+    if name ~= nil then
+      table.insert(set.hides, { index = i, name = name, value = value })
+    end
+
+    -- an attribute written on a member, or a member destroyed, during the
+    -- emit breaks its set
+    table.insert(set.conns, pool.engine.listen(member, spoil))
+    table.insert(set.conns, pool.engine.destroying(member, spoil))
+  end
+
+  setOf[root] = set
+  counts.builds += 1
+
+  return set
+end
+
 local function kept(holder: any, key: Instance): Instance
   -- a clone of a class the pool cannot restore carries its children already
   if not canRestore(key) then
     return fresh(holder, key)
   end
 
-  local inst = single(holder, key)
+  local t = templates[key]
 
-  for _, child in key:GetChildren() do
-    local copy = utility.clone(child)
-
-    if copy ~= nil then
-      copy.Parent = inst
-    end
+  if t == nil then
+    t = store(0) :: any
+    t.template = key
+    t.generation = 0
+    templates[key] = t
   end
 
-  return inst
+  if t.keep == false then
+    local inst = single(holder, key)
+
+    for _, child in key:GetChildren() do
+      local copy = utility.clone(child)
+
+      if copy ~= nil then
+        copy.Parent = inst
+      end
+    end
+
+    return inst
+  end
+
+  local root = table.remove(t.free)
+
+  if root ~= nil then
+    local set = setOf[root]
+
+    storeOf[root] = nil
+    counts.reuses += 1
+
+    dress(root, key)
+    unhide(set)
+
+    return begin(holder, root, t, set)
+  end
+
+  local s = stacks[key.ClassName]
+
+  if s == nil then
+    s = store(FLOOR)
+    stacks[key.ClassName] = s
+  end
+
+  root = table.remove(s.free)
+
+  if root ~= nil then
+    storeOf[root] = nil
+  else
+    root = pool.engine.fromExisting(key)
+    counts.made += 1
+    strip(root)
+    track(root)
+  end
+
+  dress(root, key)
+
+  local set = build(root, key, t)
+
+  -- the clones stay under the root and are cleared on release, as for any
+  -- template that cannot be kept
+  if set == nil then
+    t.keep = false
+    return begin(holder, root, s, nil)
+  end
+
+  t.keep = true
+
+  if t.watch == nil then
+    watchOf(t)
+  end
+
+  return begin(holder, root, t, set)
 end
 
 function pool.take(holder: any, source: Instance, alone: boolean?): Instance
@@ -617,6 +887,36 @@ end
 
 function pool.kept(inst: Instance): boolean
   return memberOf[inst] ~= nil
+end
+
+-- every free set's members against their twins, one line per difference
+function pool.audit(): { string }
+  local found = {}
+
+  for _, t in templates do
+    for _, root in t.free do
+      local set = setOf[root]
+      local hidden = {}
+
+      for _, entry in set.hides do
+        hidden[entry.index] = entry.name
+      end
+
+      for i, member in set.members do
+        local twin = set.twins[i]
+
+        for _, name in listOf(twin.ClassName) :: { string } do
+          if hidden[i] == name or (member :: any)[name] == authored(set, twin, name) then
+            continue
+          end
+
+          table.insert(found, `{t.template:GetFullName()} {member.Name}.{name}`)
+        end
+      end
+    end
+  end
+
+  return found
 end
 
 function pool.stats()
