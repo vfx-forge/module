@@ -1,6 +1,5 @@
 local knob = require("@mod/knob")
 local pool = require("@srv/pool")
-local recolor = require("@mod/recolor")
 local harness = require("@tests/harness")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
@@ -9,12 +8,13 @@ local fake_pool = require("@tests/fake_pool")
 local test, expect = harness.test, harness.expect
 local CFrame = harness.datatypes.CFrame
 local Color3 = harness.datatypes.Color3
+local NumberSequence = harness.datatypes.NumberSequence
 
 local LISTS = {
   Part = { "Color", "Size", "Transparency", "Material", "Anchored", "CanCollide", "Locked", "CFrame" },
   MeshPart = { "Color", "Size", "Transparency", "Anchored", "Locked" },
   Beam = { "Enabled", "Width0", "Attachment0" },
-  ParticleEmitter = { "Enabled", "Rate", "LightEmission" },
+  ParticleEmitter = { "Enabled", "Rate", "LightEmission", "Size" },
   Attachment = { "Visible" },
   Folder = {},
   Sound = { "Volume", "Playing" },
@@ -39,6 +39,18 @@ local function claimedQuery(root: Instance, selector: string): { Instance }
   end
 
   return found
+end
+
+-- the api registers every built-in when it first loads, so the registry is
+-- emptied around the require, as the api spec does
+local function api()
+  registry.clear()
+
+  local loaded = require("@root")
+
+  registry.clear()
+
+  return loaded :: any
 end
 
 local function start(): fake_pool.Fake
@@ -242,7 +254,9 @@ harness.suite(function()
       stop(fake)
     end)
 
-    test("a recolor reaches a take in the same frame", function()
+    test("a recolor through the api reaches a take in the same frame", function()
+      -- loaded before the first take, since clearing the registry drops every set
+      local vfx = api()
       local fake = start()
       local source = harness.make("Part") :: Part
       local light = harness.make("PointLight", source) :: PointLight
@@ -254,12 +268,60 @@ harness.suite(function()
       pool.take(holder, source)
       lifetime.releasePlain(holder)
 
-      recolor(Color3.new(1, 0, 0), "replace", source)
+      vfx.recolor(Color3.new(1, 0, 0), "replace", source)
 
       local copy = pool.take(holder, source)
       local glow = copy:FindFirstChild("Glow") :: PointLight
 
       expect(glow.Color).toBe(light.Color)
+      expect(pool.stats().builds).toBe(2)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a retime through the api reaches a take in the same frame", function()
+      -- loaded before the first take, since clearing the registry drops every set
+      local vfx = api()
+      local fake = start()
+      local source, emitter = template()
+      local holder = {}
+
+      pool.take(holder, source)
+      lifetime.releasePlain(holder)
+
+      vfx.retime(2, source)
+
+      local copy = pool.take(holder, source)
+      local glow = copy:FindFirstChild("Center"):FindFirstChild("Glow") :: ParticleEmitter
+
+      expect(emitter.Rate ~= 20).toBe(true)
+      expect(glow.Rate).toBe(emitter.Rate)
+      expect(pool.stats().builds).toBe(2)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a resize through the api reaches a take in the same frame", function()
+      -- loaded before the first take, since clearing the registry drops every set
+      local vfx = api()
+      local fake = start()
+      local source, emitter = template()
+      local holder = {}
+
+      emitter.Size = NumberSequence.new(1)
+
+      pool.take(holder, source)
+      lifetime.releasePlain(holder)
+
+      vfx.resize(2, source)
+
+      local copy = pool.take(holder, source)
+      local glow = copy:FindFirstChild("Center"):FindFirstChild("Glow") :: ParticleEmitter
+
+      expect(emitter.Size).toBe(NumberSequence.new(2))
+      expect(glow.Size).toBe(emitter.Size)
       expect(pool.stats().builds).toBe(2)
 
       lifetime.releasePlain(holder)

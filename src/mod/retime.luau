@@ -4,8 +4,6 @@ local utility = require("@mod/utility")
 local registry = require("@mod/registry")
 local numeric_common = require("@mod/common/numeric")
 
-local pool = require("@srv/pool")
-
 local retime = {}
 
 -- how a unit scales when time runs `factor` times faster: a span shrinks, a
@@ -192,8 +190,6 @@ function retime.batch(factor: number, ...: Instance)
     for _, desc in instance:GetDescendants() do
       retime.apply(desc, factor, invFactor)
     end
-
-    pool.touch(instance)
   end
 end
 

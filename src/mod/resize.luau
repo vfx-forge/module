@@ -3,8 +3,6 @@ local retime = require("@mod/retime")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
 
-local pool = require("@srv/pool")
-
 local resize = {}
 
 -- a length scales, and so does anything measured in lengths per time
@@ -155,8 +153,6 @@ function resize.batch(factor: number, ...: Instance)
     for _, desc in instance:GetDescendants() do
       resize.apply(desc, factor)
     end
-
-    pool.touch(instance)
   end
 end
 
