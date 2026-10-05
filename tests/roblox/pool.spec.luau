@@ -5,7 +5,7 @@ local lifetime = require("@mod/lifetime")
 local TEXTURE = "rbxasset://textures/particles/sparkles_main.dds"
 local OTHER_TEXTURE = "rbxasset://textures/particles/fire_main.dds"
 local SOUND = "rbxasset://sounds/electronicpingshort.wav"
-local OTHER_SOUND = "rbxasset://sounds/swoosh.wav"
+local OTHER_SOUND = "rbxasset://sounds/button.wav"
 
 -- what the pool keeps of a part on purpose: an effect places it, a piece never
 -- carries its template's motion, and a copy is always anchored and locked
