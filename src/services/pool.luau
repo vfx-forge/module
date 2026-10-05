@@ -514,12 +514,28 @@ local function sendHome(set: Set, inst: Instance, strict: boolean): number?
   return count
 end
 
+-- a member an effect carried out of the root, as a beam does its on-finish
+-- emits, or a folder it detached
+local function carried(set: Set, root: Instance, member: Instance)
+  if member:IsDescendantOf(root) then
+    return
+  end
+
+  sendHome(set, member, false)
+  member:Destroy()
+end
+
 -- a set that cannot be filed, destroyed without what other holders still use
 local function discard(root: Instance)
   local set = setOf[root]
 
   if set ~= nil then
     sendHome(set, root, false)
+
+    -- a member destroyed already, or one with a locked parent, may refuse it
+    for _, member in set.members do
+      pcall(carried, set, root, member)
+    end
   end
 
   destroy(root)

@@ -266,6 +266,31 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a spoiled set destroys the members an effect carried out of its root", function()
+      local fake = start()
+      local source = template()
+      local scene = harness.make("Model")
+      local holder = {}
+      local copy = pool.take(holder, source)
+      local center = copy:FindFirstChild("Center") :: Attachment
+      local finish = copy:FindFirstChild("EmitOnFinish") :: Folder
+      local burst = finish:FindFirstChild("Burst") :: Instance
+
+      center.Parent = scene
+      finish.Parent = nil
+      fake.changed[source]()
+      lifetime.releasePlain(holder)
+
+      for _, member in { center, finish, burst } do
+        expect(member.Parent).toBe(nil)
+        expect((pcall(function()
+          member.Parent = scene
+        end))).toBe(false)
+      end
+
+      stop(fake)
+    end)
+
     test("an edit to the template drops its free sets", function()
       local fake = start()
       local source = template()
