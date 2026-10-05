@@ -163,6 +163,8 @@ export type V1 = {
   apply: (ctx: Ctx, row: any, write: (value: any) -> ()) -> (),
   -- logs text once per instance; the effect plays on
   warn: (ctx: Ctx, text: string) -> (),
+  -- plays this emit alone on ctx.ref: a later emit while it plays ends at its own lock, silently
+  lock: (ctx: Ctx) -> (),
   -- t of the way from a to b, for any value that blends
   lerp: <T>(a: T, b: T, t: number) -> T,
   -- colors blended the way eyes see them

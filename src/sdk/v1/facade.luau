@@ -660,6 +660,20 @@ function v1.warn(view: any, text: string)
   logger.warn(`custom effect {id} on {ctx.ref:GetFullName()}: {text}`)
 end
 
+function v1.lock(view: any)
+  local ctx = ctxOf(view, "lock")
+  local scope = ctx.scope
+
+  if coroutine.running() ~= scope.thread then
+    logger.error("sdk.lock runs in emit only, not in a step, a tween's callback or a piece")
+  end
+
+  -- another emit plays this instance: this one ends here, silently
+  if lifetime.lock(scope, ctx.ref) then
+    error(STOP, 0)
+  end
+end
+
 function v1.lerp(a: any, b: any, t: number)
   return lerp.any(a, b, t)
 end

@@ -844,6 +844,63 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("sdk.lock", function()
+    test("a second emit on the instance ends silently and the first plays on", function()
+      fresh()
+
+      local played = 0
+
+      custom("locked", function(sdk: any, ctx: any)
+        sdk.lock(ctx)
+        played += 1
+        sdk.wait(ctx, 1)
+      end)
+
+      local folder = harness.make("Folder")
+      local first, second
+      local warnings = harness.captureWarnings(function()
+        first = effects.emit(0, folder)
+        second = effects.emit(0, folder)
+      end)
+
+      expect(played).toBe(1)
+      expect(#warnings).toBe(0)
+      expect(ended(second)).toBe(true)
+      expect(ended(first)).toBe(false)
+
+      scheduler.frame(0.6)
+      scheduler.frame(0.6)
+
+      expect(ended(first)).toBe(true)
+
+      effects.emit(0, folder)
+
+      expect(played).toBe(2)
+    end)
+
+    test("refuses a call from a step", function()
+      fresh()
+
+      local err
+
+      custom("lock_step", function(sdk: any, ctx: any)
+        sdk.step(ctx, function()
+          if err == nil then
+            local ok, problem = pcall(sdk.lock, ctx)
+
+            err = if ok then "" else tostring(problem)
+          end
+        end)
+        sdk.wait(ctx, 0.5)
+      end)
+
+      play()
+      scheduler.frame(0.25)
+
+      expect(string.find(err, "sdk.lock runs in emit only", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
   harness.describe("awaiting a join", function()
     test("a piece awaits another join after the body returned, and the effect ends", function()
       fresh()
