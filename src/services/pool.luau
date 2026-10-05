@@ -75,6 +75,8 @@ local HIDES = {
   enabled = { Enabled = false },
 }
 
+local ENABLED = { "Beam", "Light", "Trail", "Highlight", "SurfaceGui", "BillboardGui", "ParticleEmitter" }
+
 type Store = {
   free: { Instance },
   used: number,
@@ -115,6 +117,7 @@ local counts = { builds = 0, reuses = 0, fresh = 0, made = 0 }
 
 local lists: { [string]: { string } | false } = {}
 local restorable: { [string]: boolean } = {}
+local hiddenBy: { [string]: { [string]: any } | false } = {}
 
 local stacks: { [string]: Store } = {}
 local templates: { [Instance]: Template } = {}
@@ -127,7 +130,7 @@ local indexOf: { [Instance]: number } = {}
 local known: { [Instance]: any } = {}
 
 pool.engine = {
-  folder = function(scope: { any }): Instance
+  folder = function(scope: { any })
     local made = Instance.new("Folder")
     made.Name = FOLDER
     made.Archivable = false
@@ -138,7 +141,7 @@ pool.engine = {
     return made
   end,
 
-  fromExisting = function(source: Instance): Instance
+  fromExisting = function(source: Instance)
     return Instance.fromExisting(source)
   end,
 
@@ -198,7 +201,7 @@ pool.engine = {
     return list
   end,
 
-  watch = function(template: Instance, changed: () -> ()): { any }
+  watch = function(template: Instance, changed: () -> ())
     local conns = {
       template.DescendantAdded:Connect(changed),
       template.DescendantRemoving:Connect(changed),
@@ -221,17 +224,17 @@ pool.engine = {
     return conns
   end,
 
-  listen = function(inst: Instance, changed: () -> ()): any
+  listen = function(inst: Instance, changed: () -> ())
     return inst.AttributeChanged:Connect(changed)
   end,
 
   -- every walk of a copy or its template, so a test host can answer the
   -- wrappers it holds
-  children = function(inst: Instance): { Instance }
+  children = function(inst: Instance)
     return inst:GetChildren()
   end,
 
-  destroying = function(inst: Instance, fn: () -> ()): any
+  destroying = function(inst: Instance, fn: () -> ())
     return inst.Destroying:Connect(fn)
   end,
 
@@ -263,7 +266,7 @@ local function listOf(class: string): { string }?
   return if list == false then nil else list
 end
 
-local function canRestore(inst: Instance): boolean
+local function canRestore(inst: Instance)
   local class = inst.ClassName
   local verdict = restorable[class]
 
@@ -286,29 +289,33 @@ local function canRestore(inst: Instance): boolean
 end
 
 local function hideOf(inst: Instance): { [string]: any }?
-  if inst:IsA("BasePart") then
-    return HIDES.part
-  end
+  local class = inst.ClassName
+  local found = hiddenBy[class]
 
-  if inst:IsA("FaceInstance") then
-    return HIDES.face
-  end
+  if found == nil then
+    found = false
 
-  if inst:IsA("GuiObject") then
-    return HIDES.gui
-  end
-
-  if inst:IsA("Sound") then
-    return HIDES.sound
-  end
-
-  for _, class in { "Beam", "Light", "Trail", "Highlight", "SurfaceGui", "BillboardGui", "ParticleEmitter" } do
-    if inst:IsA(class) then
-      return HIDES.enabled
+    if inst:IsA("BasePart") then
+      found = HIDES.part
+    elseif inst:IsA("FaceInstance") then
+      found = HIDES.face
+    elseif inst:IsA("GuiObject") then
+      found = HIDES.gui
+    elseif inst:IsA("Sound") then
+      found = HIDES.sound
+    else
+      for _, name in ENABLED do
+        if inst:IsA(name) then
+          found = HIDES.enabled
+          break
+        end
+      end
     end
+
+    hiddenBy[class] = found
   end
 
-  return nil
+  return if found == false then nil else found
 end
 
 local function store(floor: number): Store
@@ -331,15 +338,15 @@ local function stackOf(source: Instance): Store?
     key = `{key}|{named}`
   end
 
-  local s = stacks[key]
+  local stack = stacks[key]
 
-  if s == nil then
-    s = store(if mesh then 0 else FLOOR)
-    s.key = if mesh then key else nil
-    stacks[key] = s
+  if stack == nil then
+    stack = store(if mesh then 0 else FLOOR)
+    stack.key = if mesh then key else nil
+    stacks[key] = stack
   end
 
-  return s
+  return stack
 end
 
 local function strip(inst: Instance)
@@ -368,13 +375,13 @@ local function forgetOne(inst: Instance)
     setOf[inst] = nil
   end
 
-  local s = storeOf[inst]
+  local stack = storeOf[inst]
 
-  if s ~= nil then
-    local index = table.find(s.free, inst)
+  if stack ~= nil then
+    local index = table.find(stack.free, inst)
 
     if index ~= nil then
-      table.remove(s.free, index)
+      table.remove(stack.free, index)
     end
 
     storeOf[inst] = nil
@@ -431,13 +438,15 @@ local function dress(inst: Instance, source: Instance)
   local isPart = inst:IsA("BasePart")
 
   for _, name in listOf(source.ClassName) :: { string } do
-    local value = (source :: any)[name]
-
-    if (isPart and PLACED[name]) or MOTION[name] or (inst :: any)[name] == value then
+    if (isPart and PLACED[name]) or MOTION[name] then
       continue
     end
 
-    (inst :: any)[name] = value
+    local value = (source :: any)[name]
+
+    if (inst :: any)[name] ~= value then
+      (inst :: any)[name] = value
+    end
   end
 
   inst.Name = source.Name
@@ -468,7 +477,7 @@ local function holdIn(holder: any, value: any)
   end
 end
 
-local function fresh(holder: any, source: Instance): Instance
+local function fresh(holder: any, source: Instance)
   local copy = utility.clone(source)
 
   counts.fresh += 1
@@ -488,7 +497,7 @@ end
 
 -- a member goes back where its set put it, anything else the pool owns to the
 -- folder, so clearing a released instance's children never destroys either
-local function rescue(inst: Instance): boolean
+local function rescue(inst: Instance)
   local set = memberOf[inst]
 
   if set ~= nil then
@@ -560,7 +569,7 @@ end
 
 -- the copy walked against its template in step, children in order; false
 -- when the two part ways
-local function pair(set: Set, copy: Instance, twin: Instance): boolean
+local function pair(set: Set, copy: Instance, twin: Instance)
   local copies = pool.engine.children(copy)
   local twins = {}
 
@@ -594,14 +603,14 @@ local function pair(set: Set, copy: Instance, twin: Instance): boolean
   return true
 end
 
-local function claimed(inst: Instance): boolean
+local function claimed(inst: Instance)
   local module = registry.of(inst)
 
   return module ~= nil and registry.isCustom(module)
 end
 
 -- a twin's value, a reference into the template turned into its copy
-local function authored(set: Set, twin: Instance, name: string): any
+local function authored(set: Set, twin: Instance, name: string)
   local value = (twin :: any)[name]
 
   if typeof(value) == "Instance" then
@@ -654,43 +663,43 @@ local function unhide(set: Set)
   end
 end
 
-local function trim(s: Store)
-  local cap = math.max(s.floor, s.peak, s.previous)
+local function trim(stack: Store)
+  local cap = math.max(stack.floor, stack.peak, stack.previous)
 
-  while #s.free > cap do
-    destroy(table.remove(s.free) :: Instance)
+  while #stack.free > cap do
+    destroy(table.remove(stack.free) :: Instance)
   end
 
-  if s.key ~= nil and s.used == 0 and #s.free == 0 then
-    stacks[s.key] = nil
+  if stack.key ~= nil and stack.used == 0 and #stack.free == 0 then
+    stacks[stack.key] = nil
     return
   end
 
-  local t = s :: Template
+  local entry = stack :: Template
 
-  if t.template == nil or s.used > 0 or #s.free > 0 then
+  if entry.template == nil or stack.used > 0 or #stack.free > 0 then
     return
   end
 
-  for _, conn in t.watch or {} do
+  for _, conn in entry.watch or {} do
     conn:Disconnect()
   end
 
-  t.watch = nil
-  templates[t.template] = nil
+  entry.watch = nil
+  templates[entry.template] = nil
 end
 
 local finish: (inst: Instance, record: Taken) -> ()
 local putBack: (set: Set) -> boolean
 
-local function begin(holder: any, inst: Instance, s: Store, set: Set?): Instance
-  s.used += 1
+local function begin(holder: any, inst: Instance, stack: Store, set: Set?)
+  stack.used += 1
 
-  if s.used > s.peak then
-    s.peak = s.used
+  if stack.used > stack.peak then
+    stack.peak = stack.used
   end
 
-  local record: Taken = { holder = holder, store = s, set = set, released = false }
+  local record: Taken = { holder = holder, store = stack, set = set, released = false }
 
   taken[inst] = record
 
@@ -707,18 +716,18 @@ end
 
 -- stored under the key, a nested piece's authored twin, but dressed from the
 -- source itself, so its references name the copy it was taken from
-local function single(holder: any, key: Instance, source: Instance): Instance
+local function single(holder: any, key: Instance, source: Instance)
   if not canRestore(key) then
     return fresh(holder, source)
   end
 
-  local s = stackOf(key)
+  local stack = stackOf(key)
 
-  if s == nil then
+  if stack == nil then
     return fresh(holder, source)
   end
 
-  local inst = table.remove(s.free)
+  local inst = table.remove(stack.free)
 
   if inst == nil then
     inst = copyOf(source)
@@ -729,7 +738,7 @@ local function single(holder: any, key: Instance, source: Instance): Instance
 
   dress(inst, source)
 
-  return begin(holder, inst, s, nil)
+  return begin(holder, inst, stack, nil)
 end
 
 finish = function(inst: Instance, record: Taken)
@@ -740,8 +749,8 @@ finish = function(inst: Instance, record: Taken)
   record.released = true
   taken[inst] = nil
 
-  local s = record.store
-  s.used -= 1
+  local stack = record.store
+  stack.used -= 1
 
   if inst:IsA("BasePart") then
     mover.drop(inst :: BasePart)
@@ -796,13 +805,13 @@ finish = function(inst: Instance, record: Taken)
     inst.Parent = folder
   end
 
-  table.insert(s.free, inst)
-  storeOf[inst] = s
+  table.insert(stack.free, inst)
+  storeOf[inst] = stack
 
-  trim(s)
+  trim(stack)
 end
 
-putBack = function(set: Set): boolean
+putBack = function(set: Set)
   if set.dirty or set.generation ~= set.key.generation then
     return false
   end
@@ -833,41 +842,41 @@ end
 
 -- a template that changed: its free sets go, and a set still in use is
 -- destroyed on release, since its generation no longer matches
-local function stale(t: Template)
-  local free = t.free
+local function stale(entry: Template)
+  local free = entry.free
 
-  t.generation += 1
-  t.keep = nil
-  t.free = {}
+  entry.generation += 1
+  entry.keep = nil
+  entry.free = {}
 
   for _, root in free do
     destroy(root)
   end
 
-  for _, conn in t.watch or {} do
+  for _, conn in entry.watch or {} do
     conn:Disconnect()
   end
 
-  t.watch = nil
+  entry.watch = nil
 end
 
 local function refresh()
   seen = registry.version
 
-  for _, t in templates do
-    stale(t)
+  for _, entry in templates do
+    stale(entry)
   end
 end
 
-local function watchOf(t: Template)
-  t.watch = pool.engine.watch(t.template, function()
-    stale(t)
+local function watchOf(entry: Template)
+  entry.watch = pool.engine.watch(entry.template, function()
+    stale(entry)
   end)
 end
 
 -- a member of a kept copy answers its authored twin, so nested pieces share
 -- the template's stores rather than one per copy
-local function twinOf(source: Instance): Instance
+local function twinOf(source: Instance)
   local set = memberOf[source]
 
   if set ~= nil then
@@ -877,7 +886,7 @@ local function twinOf(source: Instance): Instance
   return source
 end
 
-local function build(root: Instance, key: Instance, t: Template): Set?
+local function build(root: Instance, key: Instance, entry: Template): Set?
   for _, child in key:GetChildren() do
     if child.Archivable then
       child:Clone().Parent = root
@@ -886,8 +895,8 @@ local function build(root: Instance, key: Instance, t: Template): Set?
 
   local set: Set = {
     root = root,
-    key = t,
-    generation = t.generation,
+    key = entry,
+    generation = entry.generation,
     members = {},
     twins = {},
     parents = {},
@@ -936,33 +945,32 @@ local function build(root: Instance, key: Instance, t: Template): Set?
   return set
 end
 
-local function kept(holder: any, key: Instance, source: Instance): Instance
-  -- a clone of a class the pool cannot restore, or of a mesh no stack holds,
-  -- carries its children already
-  if not canRestore(key) or (key.ClassName == "MeshPart" and pool.engine.mesh(key) == nil) then
+local function kept(holder: any, key: Instance, source: Instance)
+  -- a clone of a class the pool cannot restore carries its children already
+  if not canRestore(key) then
     return fresh(holder, source)
   end
 
-  local t = templates[key]
+  local entry = templates[key]
 
-  if t == nil then
-    t = store(0) :: any
-    t.template = key
-    t.generation = 0
-    templates[key] = t
+  if entry == nil then
+    entry = store(0) :: any
+    entry.template = key
+    entry.generation = 0
+    templates[key] = entry
   end
 
   -- a whole clone, so references between its children name each other
-  if t.keep == false then
+  if entry.keep == false then
     return fresh(holder, source)
   end
 
-  local root = table.remove(t.free)
+  local root = table.remove(entry.free)
 
   -- a member destroyed or written while free spoils its set before any take
   while root ~= nil and setOf[root].dirty do
     discard(root)
-    root = table.remove(t.free)
+    root = table.remove(entry.free)
   end
 
   if root ~= nil then
@@ -974,12 +982,17 @@ local function kept(holder: any, key: Instance, source: Instance): Instance
     dress(root, source)
     unhide(set)
 
-    return begin(holder, root, t, set)
+    return begin(holder, root, entry, set)
   end
 
-  local s = stackOf(key) :: Store
+  local stack = stackOf(key)
 
-  root = table.remove(s.free)
+  -- a mesh no key can name has no stack, and is copied whole as well
+  if stack == nil then
+    return fresh(holder, source)
+  end
+
+  root = table.remove(stack.free)
 
   if root ~= nil then
     storeOf[root] = nil
@@ -989,25 +1002,25 @@ local function kept(holder: any, key: Instance, source: Instance): Instance
 
   dress(root, source)
 
-  local set = build(root, key, t)
+  local set = build(root, key, entry)
 
   -- the clones stay under the root and are cleared on release, as for any
   -- template that cannot be kept
   if set == nil then
-    t.keep = false
-    return begin(holder, root, s, nil)
+    entry.keep = false
+    return begin(holder, root, stack, nil)
   end
 
-  t.keep = true
+  entry.keep = true
 
-  if t.watch == nil then
-    watchOf(t)
+  if entry.watch == nil then
+    watchOf(entry)
   end
 
-  return begin(holder, root, t, set)
+  return begin(holder, root, entry, set)
 end
 
-function pool.take(holder: any, source: Instance, alone: boolean?): Instance
+function pool.take(holder: any, source: Instance, alone: boolean?)
   if folder == nil then
     return fresh(holder, source)
   end
@@ -1029,14 +1042,14 @@ end
 -- peak in use over the last two buckets
 function pool.sweep(now: number)
   for _, map in { stacks, templates } :: { { [any]: Store } } do
-    for _, s in map do
-      if now - s.turned >= BUCKET then
-        s.previous = s.peak
-        s.peak = s.used
-        s.turned = now
+    for _, stack in map do
+      if now - stack.turned >= BUCKET then
+        stack.previous = stack.peak
+        stack.peak = stack.used
+        stack.turned = now
       end
 
-      trim(s)
+      trim(stack)
     end
   end
 end
@@ -1044,25 +1057,25 @@ end
 -- an edit made through the module's own api drops the sets of every template
 -- it reaches at once, where a template's watch hears of it only a frame later
 function pool.touch(inst: Instance)
-  for _, t in templates do
-    local template = t.template
+  for _, entry in templates do
+    local template = entry.template
 
     if template == inst or template:IsDescendantOf(inst) or inst:IsDescendantOf(template) then
-      stale(t)
+      stale(entry)
     end
   end
 end
 
-function pool.kept(inst: Instance): boolean
+function pool.kept(inst: Instance)
   return memberOf[inst] ~= nil
 end
 
 -- every free set's members against their twins, one line per difference
-function pool.audit(): { string }
+function pool.audit()
   local found = {}
 
-  for _, t in templates do
-    for _, root in t.free do
+  for _, entry in templates do
+    for _, root in entry.free do
       local set = setOf[root]
       local hidden = {}
 
@@ -1078,7 +1091,7 @@ function pool.audit(): { string }
             continue
           end
 
-          table.insert(found, `{t.template:GetFullName()} {member.Name}.{name}`)
+          table.insert(found, `{entry.template:GetFullName()} {member.Name}.{name}`)
         end
       end
     end
@@ -1122,7 +1135,9 @@ function pool.init(scope: { any })
 
     folder = nil
 
-    for _, map in { stacks, templates, taken, storeOf, setOf, memberOf, indexOf, known, lists, restorable } :: { any } do
+    for _, map in
+      { stacks, templates, taken, storeOf, setOf, memberOf, indexOf, known, lists, restorable, hiddenBy } :: { any }
+    do
       table.clear(map)
     end
 
