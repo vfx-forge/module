@@ -83,6 +83,9 @@ local function differ(value: any, name: string, spares: { [string]: { Instance }
 end
 
 local function withPool(body: () -> ())
+  -- an init here would replace the folder and maps of a pool the runtime uses
+  check(not pool.started(), "the pool is already running; run this spec on a copy that is not inited")
+
   local scope = {}
   pool.init(scope)
 
@@ -352,6 +355,7 @@ table.insert(cases, {
 
       check(#found == 0, `audit: {table.concat(found, "; ")}`)
       check(copyModel:GetScale() == model:GetScale(), `copy scale {copyModel:GetScale()}`)
+      check(copyModel.WorldPivot == model.WorldPivot, `copy pivot {copyModel.WorldPivot}`)
       check(copyEmitter.Enabled == false, "a free set's emitter is enabled")
 
       local again = {}

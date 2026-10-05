@@ -451,6 +451,18 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("the pool says whether it is started", function()
+      expect(pool.started()).toBe(false)
+
+      local fake = start()
+
+      expect(pool.started()).toBe(true)
+
+      stop(fake)
+
+      expect(pool.started()).toBe(false)
+    end)
+
     test("init after a stop starts empty", function()
       local fake = start()
       local part = source("Part")

@@ -1062,6 +1062,11 @@ function pool.stats()
   return table.clone(counts)
 end
 
+-- whether init has run and nothing has stopped it since
+function pool.started()
+  return folder ~= nil
+end
+
 function pool.init(scope: { any })
   local tick: scheduler.Handle? = nil
 
