@@ -50,7 +50,9 @@ Every method takes `sdk` first. Never require ForgeVFX from a custom effect.
 
 ## Params
 
-`params(sdk)` is called once each time the module loads and answers `attributes` and `properties`, tables of knobs by name. A knob declared with `:curve(preset)` is a curve param, edited in the curve editor; its value goes straight into `sdk.curve`. A knob declared with `:mod()` can be animated by modifiers and is read as a Track, which `sdk.speed` takes.
+`params(sdk)` is called once each time the module loads and answers `attributes` and `properties`, tables of knobs by name. A knob declared with `:curve(preset)` is a curve param, edited in the curve editor; its value goes straight into `sdk.curve`. A knob declared with `:mod()` can be animated by modifiers and is read as a Track: `track.value` is its value at the start, `track.animated` is false when no modifier moves it, `track.duration` is how long its modifiers run, and `track:at(t)` is its value `t` seconds in. Call it with a colon; `track.at(t)` is refused. `sdk.apply` and `sdk.speed` take a Track. `attrs` and `props` are read only.
+
+Walk `attrs` and `props` with `for name, value in attrs`, never `pairs`, which sees nothing on them. Never copy them: a copy made with `table.clone` refuses every read. In a rule or in `duration`, read a row by name, since a walk there sees only the rows read so far. A param declared with `:mod()` that `duration` reads is not kept, so a walk in `duration` never finds it, and its `:at(t)` there is not the one `emit` sees: read its `value`.
 
 A knob's default is a number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence or ColorSequence, or a curve; a knob under `properties` may also default to an EnumItem. A default of any other type is refused, naming the param, since the panel has no editor for it.
 
@@ -71,7 +73,7 @@ Opacity = sdk.knob(1):mod(
 )
 ```
 
-A modifier whose end already equals the row's value does nothing, and a row nothing animates reads as a plain value.
+A modifier whose end already equals the row's value does nothing, and a row nothing animates reads as a Track with `animated` false.
 
 ## Layout, components and constant
 
@@ -101,18 +103,19 @@ end
 
 When the classifier's first alternative is a class followed by tags, as `BasePart.MyEffect`, and a selected instance is of that class, the adder adds the tags to it instead of making one, whether or not there is a template. Otherwise the adder calls your template. Without one, it makes an instance itself only for such a classifier: a Part for `BasePart`, an instance of the class for any other, carrying every tag. A class Studio cannot make is reported, and nothing is made. A classifier with more than that (a name, an attribute filter, a pseudo class such as `:has(...)`, or a parent in front of the subject) cannot be made that way, so give such an effect a template.
 
-The adder runs the template inside one undo step and gives it five seconds to return. If it throws, runs out of time, or answers anything but an Instance, the step is undone, so whatever it made is gone, and the error is shown. If the instance is not one your classifier finds, the adder keeps it and says so.
+The adder runs the template inside one undo step and gives it five seconds to return. If it throws, runs out of time, or answers anything but an Instance, the step is undone, so whatever it made is gone, and the error is shown. If the instance is not one your classifier finds, the adder keeps it and says so. The instance may not be or hold a script (a Script, LocalScript or ModuleScript): the adder refuses it and makes nothing.
 
 ## Time
 
 All time is effect time: scaled by the effect's speed and stopped while it is paused.
 
 - `sdk.wait(ctx, seconds)` waits.
-- `sdk.step(ctx, fn)` calls `fn(dt, elapsed)` every frame while the effect runs, and answers a function that stops it.
+- `sdk.step(ctx, fn, pass)` calls `fn(dt, elapsed)` every frame while the effect runs, and answers a function that stops it. `pass` is `"early"` (the default) or `"late"`. A late step runs after the camera has moved and shaken, so use it for anything placed against the camera. A step is still called while the effect is paused, with `dt` 0.
+- `sdk.apply(ctx, row, write)` calls `write` with a param's value at once, and again every frame while its modifiers move it. A param without `:mod()` is written once. While modifiers move the param, the effect runs until they finish, as it does for a tween.
 - `sdk.curve(duration, shape)` is a curve over `duration` seconds. `shape` is a preset (`linear`, `easeIn`, `easeOut`, `easeInOut`), a curve param's value, a chain of vectors or a function of time. `curve:at(t)` answers its value for `t` from 0 to 1.
 - `sdk.tween(ctx, curve, fn)` plays a curve, calling `fn(alpha)` once at the start and then once a frame.
 
-An effect lasts until `emit` returns and everything it started has finished: its tweens, its nested emits and every piece of every join. A step does not keep an effect alive; wait for as long as it should run.
+An effect lasts until `emit` returns and everything it started has finished: its tweens, the params it applies, its nested emits and every piece of every join. A step does not keep an effect alive; wait for as long as it should run.
 
 ## Pieces, nested emits and cleanup
 
@@ -122,13 +125,17 @@ An effect lasts until `emit` returns and everything it started has finished: its
 
 `sdk.wait` and `sdk.await` yield, so they cannot run inside a step or a tween's callback.
 
-A function you hand the sdk to call later (to `sdk.step`, `sdk.tween`, `sdk.spawn` or `sdk.hold`, or as a curve's shape) must be one you wrote. An engine function such as `print` or a service's method is refused, since the sdk would call it with VFX Forge's rights in Studio; wrap the call in a function of your own.
+A function you hand the sdk to call later (to `sdk.step`, `sdk.tween`, `sdk.apply`, `sdk.spawn` or `sdk.hold`, or as a curve's shape) must be one you wrote. An engine function such as `print` or a service's method is refused, since the sdk would call it with VFX Forge's rights in Studio; wrap the call in a function of your own.
 
 A descendant of `ctx.ref` that you `sdk.emit` must also be matched by `components`. An emit that reaches your instance scans its descendants and plays every effect instance it finds there except what `components` matches, so a descendant left out of it plays twice: once from that scan and once from your `sdk.emit`. Never `sdk.emit` the instance itself or one of its ancestors: the nested emit finds your instance again and plays this effect inside itself, which calls `sdk.emit` again, without end.
 
 ## Writing to instances
 
 `sdk.getWriter(ctx, obj, property)` and `sdk.getAttributeWriter(ctx, obj, name)` answer a writer with `:set(value)`. Writers hand a target over between overlapping emits by priority and put the authored value back when the last one ends. Write through a writer rather than to the instance.
+
+`sdk.lock(ctx)`, called in `emit`, plays this emit alone on `ctx.ref`. An emit that reaches the instance while this one plays ends at its own `sdk.lock`, silently. Call it first in `emit`, before anything is read or written; a step, a tween's callback or a piece may not call it, and a second call by the emit that holds the lock does nothing.
+
+`sdk.guiRoot(ctx)` answers the one Folder every GUI an effect makes goes in: under StarterGui in Studio's editor and under the local player's PlayerGui on a client. It is not archivable, it is made on first use, and it is refused on the server. See Where created instances go.
 
 ## Math
 
@@ -143,6 +150,43 @@ The game's discovery starts in `ForgeVFX.init`. A host that registers and reload
 ## Errors
 
 A module that fails to load, throws in `params` or breaks a rule is refused with every reason named, and in the plugin the version before it stays registered. An `emit`, step, tween callback or piece that throws is warned about once per instance, and its effect ends and lets go of what it held.
+
+To say an effect cannot play, call `error(text)`: it is reported once per instance and the effect ends. To say something went wrong that the effect recovers from, call `sdk.warn(ctx, text)`: it is logged once per instance and text, and the effect plays on. Give `sdk.warn` a fixed sentence with no changing number in it, since every distinct text is logged and kept.
+
+## Where it runs
+
+`sdk.context()` answers `"edit"` in Studio's editor, and `"client"` or `"server"` in a running game.
+
+## Production rules
+
+A shipped effect follows these.
+
+- **Params.** Put `EmitDelay` in an Emit group. Add no `Speed` row. Let the group title carry the noun and keep a row label to one word. Show about twelve rows at most. Give every seconds, studs and rate row a `:unit()`, every duration `:min(0)`, every transparency `:max(1)` and every scale a floor. Use `:mod()` for what an artist animates and plain values for structure. Hide a row that only matters under another behind it. Name no attribute row after a property the instance has. Write hints that say what changes on screen and a useful range, never an engine property path. Keep implementation tuning a local constant, not a row.
+- **Where created instances go.** Put a created instance under `workspace.Terrain` with `Archivable` false, `Locked` true and `CanCollide`, `CanQuery` and `CanTouch` false, held with `sdk.hold` before it is parented:
+
+  ```luau
+  local part = sdk.hold(ctx, Instance.new("Part"))
+
+  part.Archivable = false
+  part.Locked = true
+  part.Anchored = true
+  part.CanCollide = false
+  part.CanQuery = false
+  part.CanTouch = false
+  part.Parent = workspace.Terrain
+  ```
+
+  Never put one at the `workspace` root, in a named folder, or directly in `StarterGui` or `PlayerGui`; a GUI goes in `sdk.guiRoot(ctx)`. A clone you made is yours to write directly; the played instance goes through writers. Never clone from an instance a writer has written: clone first, write second, and expect a second emit while the first plays (or call `sdk.lock`).
+
+  A ViewportFrame does not render in a SurfaceGui parented to a part (measured in Studio's editor on 2026-10-05). Put every GUI an effect makes in `sdk.guiRoot(ctx)`: a SurfaceGui or BillboardGui there with its `Adornee` set to the part, a ScreenGui there with `ResetOnSpawn` false. Hold a GUI made for one emit with `sdk.hold`; a container every emit shares is found by name in the root or made there, and stays for the session. Nothing in the root is saved with the place or copied to players. On the server there is no root: check `sdk.context()` first.
+- **components.** Declare `components = "Instance"` when the instance owns descendants the effect plays, hides or copies.
+- **Time.** Keep time with `sdk.step`, `sdk.tween`, `sdk.wait` and `sdk.apply` only. Never use `RunService`, `BindToRenderStep`, `Heartbeat`, `RenderStepped`, `task.wait`, `task.delay`, `task.spawn` or `os.clock`. Use the late pass for anything placed against the camera. Expect a step to keep being called while paused, with `dt` 0. Never multiply by a speed or keep a second clock. The effect stops every step when it ends; use the function `sdk.step` answers only to end one early.
+- **Errors.** When the effect cannot play, call `error(text)`. When it recovers, call `sdk.warn(ctx, text)`. Put no `pcall` around an sdk call.
+- **Context.** Return at once from a render only effect when `sdk.context()` is `"server"`. Read no `Players.LocalPlayer` in an effect that must work in the editor.
+- **State.** Keep no module level state but constants and one `Random.new()`; anything else is wrong after a live reload.
+- **Performance.** Return early when nothing changed, cull by distance, and make one raycast or spatial query per emit rather than per frame. Pool what is spawned in bursts. Mind the budgets: 31 Highlights at once, EditableMesh memory, and the Load Assets permission for meshes by id.
+- **Measure, date, record.** An effect that rests on an engine quirk says in a comment what was measured and when, or it does not ship.
+- **Module shape.** Write no header comment and no section dividers. Write comments as lowercase fragments at the line they explain.
 
 ## Live reload in Studio
 

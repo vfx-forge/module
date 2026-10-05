@@ -32,6 +32,7 @@ local function pulse(): Part
   part.Transparency = 0
   part.Size = Vector3.new(2, 2, 2)
   part.Color = Color3.new(0, 0, 0)
+  part.Reflectance = 0
 
   return part
 end
@@ -118,6 +119,7 @@ harness.suite(function()
       expect(part.Transparency > 0.5 and part.Transparency < 1).toBe(true)
       expect(part.Size.X > 2 and part.Size.X < 4).toBe(true)
       expect(part.Color.R > 0).toBe(true)
+      expect(part.Reflectance > 0).toBe(true)
 
       scheduler.frame(0.25)
 
@@ -125,19 +127,30 @@ harness.suite(function()
       expect(part.Transparency).toBe(0)
       expect(part.Size).toBe(Vector3.new(2, 2, 2))
       expect(part.Color).toBe(Color3.new(0, 0, 0))
+      expect(part.Reflectance).toBe(0)
     end)
 
-    test("its Speed runs the pulse's clock", function()
+    test("waits its delay before it touches the part", function()
       fresh()
       custom.add("sample", sample, "docs.sdk.v1.sample")
 
       local part = pulse()
 
-      part:SetAttribute("Speed", 2)
+      part:SetAttribute("EmitDelay", 0.5)
 
       local env = effects.emit(0, part)
 
       scheduler.frame(0.25)
+
+      expect(part.Transparency).toBe(0)
+      expect(part.Size).toBe(Vector3.new(2, 2, 2))
+
+      -- the frame the delay runs out in plays the fade's first step
+      scheduler.frame(0.25)
+
+      expect(part.Transparency > 0 and part.Transparency < 1).toBe(true)
+
+      scheduler.frame(0.5)
 
       expect(env.Finished:getStatus()).toBe("Resolved")
     end)
