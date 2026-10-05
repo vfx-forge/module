@@ -10,6 +10,8 @@ local scheduler = require("@mod/scheduler")
 
 local numeric_common = require("@mod/common/numeric")
 
+local pool = require("@srv/pool")
+
 local Promise = require("@pkg/Promise")
 
 local effects = {}
@@ -591,7 +593,12 @@ function effects.prepareEmitFolder(obj: Instance, folderName: string, scope: typ
 
   if folder and folder:IsA("Folder") then
     folder.Parent = nil
-    lifetime.hold(scope, folder)
+
+    -- a kept copy's folder goes back to its set when the piece is released
+    if not pool.kept(folder) then
+      lifetime.hold(scope, folder)
+    end
+
     return folder
   end
 

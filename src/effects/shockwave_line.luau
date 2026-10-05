@@ -13,7 +13,8 @@ local registry = require("@mod/registry")
 
 local Shockwave = require("@vfx/shockwave")
 
-local ObjectCache = require("@obj/ObjectCache")
+local pool = require("@srv/pool")
+local mover = require("@srv/mover")
 
 local rng = Random.new()
 
@@ -232,16 +233,6 @@ function line.duration(_, attrs: any)
     + math.max(attrs.ShrinkDuration, attrs.OffsetOutDuration, attrs.TransparencyDuration)
 end
 
-local part_cache: ObjectCache.ObjectCache?
-
-function line.init(cache)
-  part_cache = cache
-end
-
-function line.deinit()
-  part_cache = nil
-end
-
 -- the raycast parameters every piece effect builds from the origin's rows
 local function paramsOf(origin: any): (RaycastParams, Vector3)
   local params = RaycastParams.new()
@@ -263,7 +254,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
   local scope = ctx.scope
   local origin = utility.findFirstClassWithTag(ref, "Attachment", utility.SHOCKWAVE_TAG)
 
-  if not part_cache or not origin then
+  if not origin then
     return
   end
 
@@ -289,7 +280,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
   local runLength = ctx.duration :: number
 
   -- a Speed resting at 0 for good ends every tween and dwell, and with them
-  -- the run, rather than holding the parts out of the cache for ever. a speed
+  -- the run, rather than holding the parts out of the pool for ever. a speed
   -- that is merely 0 for now, as a queue reads during a leading delay, does
   -- not
   local timeline = scope.clock
@@ -390,32 +381,9 @@ function line.emit(ctx: reader.Ctx, attrs: any)
       -- piece's own
       local drawnSize = attrs.Size().at(0)
 
-      local id = utility.getRandomId()
+      local part = pool.take(scope, ref) :: BasePart
 
-      local part = part_cache:get(id)
-
-      local realPart = part._getReal()
-
-      utility.copyProperties(ref, realPart, utility.COPY_PART_PROPERTIES)
-      utility.copyProperties(ref, realPart, utility.COPY_EXTENDED_PART_PROPERTIES)
-
-      if #ref:GetChildren() ~= 0 then
-        local clone = utility.clone(ref)
-
-        for _, child in clone:GetChildren() do
-          child.Parent = realPart
-        end
-
-        clone:Destroy()
-      end
-
-      local emitOnFinish = scope.effects.prepareEmitOnFinish(realPart, scope)
-
-      lifetime.hold(scope, function()
-        if part_cache then
-          part_cache:free(id)
-        end
-      end)
+      local emitOnFinish = scope.effects.prepareEmitOnFinish(part, scope)
 
       part.Color = result.Instance.Color
       part.Material = result.Material
@@ -458,7 +426,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
       local currentOffset = offsetIn.at(0)
       local currentFactor = sizeIn.at(0)
 
-      part.CFrame = CFrame.new(currentOffset) * rotCF
+      mover.move(scope, part, CFrame.new(currentOffset) * rotCF)
 
       local sizeTween
       local offsetTween
@@ -473,7 +441,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
           -- frame, and a stepper that throws ends the line
           if typeof(at) == "Vector3" then
             currentOffset = at
-            part.CFrame = CFrame.new(currentOffset) * rotCF
+            mover.move(scope, part, CFrame.new(currentOffset) * rotCF)
           end
         end)
       end
@@ -491,7 +459,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
         end)
       end
 
-      scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
+      scope.effects.emitNested(part, scope.depth + 1, scope, outstanding)
 
       -- per PIECE, over the dwell's own ceiling rather than the line's run: a
       -- Lifetime track is sampled on the piece's dwell clock, which never
@@ -516,7 +484,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
       -- the dwell belongs to the effect rather than to the scheduler: its
       -- cleanup lives in the scope, so tearing the line down cancels it rather
-      -- than firing exit tweens at a pooled part the cache has handed on, and
+      -- than firing exit tweens at a part the pool has handed on, and
       -- its length is the step's to decide, so a Lifetime a modifier is
       -- moving moves a dwell that is already running
       dwell = lifetime.step(scope, function(deltaTime: number)
@@ -582,7 +550,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
                 if typeof(offset) == "Vector3" and offset ~= currentOffset then
                   currentOffset = offset
-                  part.CFrame = CFrame.new(offset) * rotCF
+                  mover.move(scope, part, CFrame.new(offset) * rotCF)
                 end
               end
             end
@@ -619,7 +587,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
               end)
             end
 
-            scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope, outstanding)
+            scope.effects.emitOnFinish(emitOnFinish, part, scope.depth + 1, scope, outstanding)
           end)
 
           landed()

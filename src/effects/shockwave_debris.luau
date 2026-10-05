@@ -15,7 +15,7 @@ local scheduler = require("@mod/scheduler")
 
 local Shockwave = require("@vfx/shockwave")
 
-local ObjectCache = require("@obj/ObjectCache")
+local pool = require("@srv/pool")
 
 local rng = Random.new()
 
@@ -151,15 +151,12 @@ end
 
 local physicsParts = {}
 
-local part_cache: ObjectCache.ObjectCache?
 local physicsStepper: scheduler.Handle?
 
-function debris.init(cache)
+function debris.init()
   if physicsStepper then
     return
   end
-
-  part_cache = cache
 
   if utility.PLUGIN_CONTEXT then
     physicsStepper = scheduler.add("compute", function(deltaTime: number)
@@ -202,8 +199,6 @@ function debris.deinit()
     physicsStepper = nil
   end
 
-  part_cache = nil
-
   for _, part in physicsParts do
     part:Destroy()
   end
@@ -216,7 +211,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
   local scope = ctx.scope
   local origin = utility.findFirstClassWithTag(ref, "Attachment", utility.SHOCKWAVE_TAG)
 
-  if not part_cache or not origin then
+  if not origin then
     return
   end
 
@@ -302,33 +297,16 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
   for _ = 1, count do
     local iref = #partData ~= 0 and partData[rng:NextInteger(1, #partData)]
 
-    local id = utility.getRandomId()
+    local part = pool.take(scope, ref) :: BasePart
 
-    local part = part_cache:get(id)
-
-    local realPart = part._getReal() :: BasePart
-
-    utility.copyProperties(ref, realPart, utility.COPY_PART_PROPERTIES)
-    utility.copyProperties(ref, realPart, utility.COPY_EXTENDED_PART_PROPERTIES)
-
-    if #ref:GetChildren() ~= 0 then
-      local clone = utility.clone(ref)
-
-      for _, child in clone:GetChildren() do
-        child.Parent = realPart
-      end
-
-      clone:Destroy()
-    end
-
-    local emitOnFinish = scope.effects.prepareEmitOnFinish(realPart, scope)
-    local emitOnImpact = scope.effects.prepareEmitFolder(realPart, "EmitOnImpact", scope)
+    local emitOnFinish = scope.effects.prepareEmitOnFinish(part, scope)
+    local emitOnImpact = scope.effects.prepareEmitFolder(part, "EmitOnImpact", scope)
 
     if emitOnImpact and #emitOnImpact:GetChildren() > 0 then
       local conn
-      conn = realPart.Touched:Connect(function(hit)
+      conn = part.Touched:Connect(function(hit)
         if
-          (not rayIgnoreCanCollide and not hit:CanCollideWith(realPart)) -- ignore parts we can't collide with if they can be ignored
+          (not rayIgnoreCanCollide and not hit:CanCollideWith(part)) -- ignore parts we can't collide with if they can be ignored
           or hit:IsDescendantOf(workspace.Terrain) -- ignore all debris parts/other effects
           or (rayFilterType == "Exclude" and hit:HasTag(rayFilterTag)) -- ignore all excluded tags
         then
@@ -337,7 +315,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
         conn:Disconnect()
 
-        scope.effects.emitFromFolder(emitOnImpact, realPart, scope.depth + 1, scope, outstanding)
+        scope.effects.emitFromFolder(emitOnImpact, part, scope.depth + 1, scope, outstanding)
       end)
 
       lifetime.hold(scope, function()
@@ -384,7 +362,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
           part.Size = size * factor
 
           if changed then
-            resized(realPart)
+            resized(part)
           end
         end
       end)
@@ -406,18 +384,14 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     part.Transparency = fade.at(0)
 
     lifetime.hold(scope, function()
-      local index = table.find(physicsParts, realPart)
+      local index = table.find(physicsParts, part)
 
       if index then
         table.remove(physicsParts, index)
       end
-
-      if part_cache then
-        part_cache:free(id)
-      end
     end)
 
-    table.insert(physicsParts, realPart)
+    table.insert(physicsParts, part)
 
     part.AssemblyLinearVelocity = originCFrame:VectorToWorldSpace(part.AssemblyLinearVelocity)
 
@@ -433,9 +407,9 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
     local spin = part.AssemblyMass * rng:NextUnitVector() * rng:NextNumber(angmag.Min, angmag.Max)
 
-    launch(realPart, impulse, spin)
+    launch(part, impulse, spin)
 
-    scope.effects.emitNested(realPart, scope.depth + 1, scope, outstanding)
+    scope.effects.emitNested(part, scope.depth + 1, scope, outstanding)
 
     -- a piece's own dwell, drawn from the row's range, sampled on the piece's
     -- clock so a modifier moving the row moves a dwell already running
@@ -458,7 +432,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
     -- the dwell belongs to the effect rather than to the scheduler: its cleanup
     -- lives in the scope, so tearing the field down cancels it rather than
-    -- firing an exit at a pooled part the cache has already handed on, and its
+    -- firing an exit at a part the pool has already handed on, and its
     -- length is the step's to decide
     dwell = lifetime.step(scope, function(deltaTime: number)
       local target = life.at(dwelt)
@@ -508,7 +482,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
             if typeof(factor) == "Vector3" and factor ~= currentFactor then
               currentFactor = factor
               part.Size = size * factor
-              resized(realPart)
+              resized(part)
             end
           end
 
@@ -540,7 +514,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
             end)
           end
 
-          scope.effects.emitOnFinish(emitOnFinish, realPart, scope.depth + 1, scope, outstanding)
+          scope.effects.emitOnFinish(emitOnFinish, part, scope.depth + 1, scope, outstanding)
         end)
 
         landed()

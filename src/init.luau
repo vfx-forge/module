@@ -111,6 +111,8 @@ local ShockwaveRing = require("@vfx/shockwave_ring")
 local ShockwaveLine = require("@vfx/shockwave_line")
 local ShockwaveDebris = require("@vfx/shockwave_debris")
 
+local pool = require("@srv/pool")
+local mover = require("@srv/mover")
 local caches = require("@srv/caches")
 local effects = require("@srv/effects")
 local texture_loader = require("@srv/texture_loader")
@@ -196,6 +198,8 @@ function api.init(params: params?)
 
   api.caches = caches.init(api.scope)
 
+  pool.init(api.scope)
+
   shared.vfx = api
 
   -- init services
@@ -211,9 +215,7 @@ function api.init(params: params?)
   Mesh.init(api.caches.shared_part)
   Bezier.init(api.caches.shared_part)
   Lightning.init(api.caches.shared_part)
-  ShockwaveRing.init(api.caches.shared_part)
-  ShockwaveLine.init(api.caches.shared_part)
-  ShockwaveDebris.init(api.caches.shared_part)
+  ShockwaveDebris.init()
 end
 
 function api.deinit()
@@ -237,13 +239,13 @@ function api.deinit()
 
   utility.cleanupScope(api.scope)
 
+  mover.clear()
+
   Mesh.deinit()
   Sound.deinit()
   Bezier.deinit()
   Lightning.deinit()
   CameraShake.deinit()
-  ShockwaveRing.deinit()
-  ShockwaveLine.deinit()
   ShockwaveDebris.deinit()
 
   -- after the shake has put the camera back, and before the plugin unloads, so
