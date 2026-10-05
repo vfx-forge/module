@@ -137,8 +137,9 @@ export type V1 = {
   },
   -- waits seconds of effect time, and answers the seconds waited
   wait: (ctx: Ctx, seconds: number) -> number,
-  -- calls fn every frame with the frame's seconds and the seconds since the step began, and answers a function that stops it
-  step: (ctx: Ctx, fn: (dt: number, elapsed: number) -> ()) -> () -> (),
+  -- calls fn every frame with the frame's seconds and the seconds since the step began, and answers a function that stops it.
+  -- pass "late" runs it after the camera has moved, for anything placed against the camera
+  step: (ctx: Ctx, fn: (dt: number, elapsed: number) -> (), pass: ("early" | "late")?) -> () -> (),
   -- a curve running for duration seconds
   curve: (duration: number, shape: CurveShape, options: {}?) -> Curve,
   -- plays the curve on effect time, calling fn with each value; the effect waits for it
@@ -165,6 +166,8 @@ export type V1 = {
   warn: (ctx: Ctx, text: string) -> (),
   -- plays this emit alone on ctx.ref: a later emit while it plays ends at its own lock, silently
   lock: (ctx: Ctx) -> (),
+  -- where the effect runs: "edit" in Studio's editor, "client" or "server" in a running game
+  context: () -> "edit" | "client" | "server",
   -- t of the way from a to b, for any value that blends
   lerp: <T>(a: T, b: T, t: number) -> T,
   -- colors blended the way eyes see them

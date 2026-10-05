@@ -307,6 +307,59 @@ harness.suite(function()
       expect(ended(env)).toBe(true)
     end)
 
+    test("a late step runs after every early step of the frame, and a bad pass is refused", function()
+      fresh()
+
+      local order = {}
+      local err
+
+      custom("passes", function(sdk: any, ctx: any)
+        sdk.step(ctx, function()
+          table.insert(order, "late")
+        end, "late")
+        sdk.step(ctx, function()
+          table.insert(order, "early")
+        end)
+
+        local ok, problem = pcall(sdk.step, ctx, function() end, "middle")
+
+        err = if ok then "" else tostring(problem)
+        sdk.wait(ctx, 0.5)
+      end)
+
+      play()
+      scheduler.frame(0.25)
+
+      expect(order).toEqual({ "early", "late" })
+      expect(string.find(err, 'sdk.step\'s pass is "early" or "late", got middle', 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a step is still called while its effect is paused, with no time passing", function()
+      fresh()
+
+      local seen = {}
+
+      custom("paused_step", function(sdk: any, ctx: any)
+        sdk.step(ctx, function(dt: number)
+          table.insert(seen, dt)
+        end)
+        sdk.wait(ctx, 1)
+      end)
+
+      local env = play()
+
+      env:Pause()
+      scheduler.frame(0.25)
+      env:Resume()
+      scheduler.frame(0.25)
+
+      expect(seen).toEqual({ 0, 0.25 })
+    end)
+
+    test("context answers edit outside a running game", function()
+      expect(sdk.context()).toBe("edit")
+    end)
+
     test("wait answers the time waited, and refuses to run inside a step", function()
       fresh()
 

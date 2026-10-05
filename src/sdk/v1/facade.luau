@@ -1,3 +1,5 @@
+local RunService = game:GetService("RunService")
+
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local lerp = require("@mod/lerp")
@@ -15,6 +17,9 @@ local Bezier = require("@obj/Bezier")
 
 local NAN = 0 / 0
 local NAN_VECTOR = vector.create(NAN, NAN, NAN)
+
+-- an author's pass by name, as the scheduler's phase
+local PASSES = { early = "compute", late = "screen" }
 
 -- thrown through an effect's own thread once a callback of it has failed, so
 -- the author's code after the failing call never runs on an effect that is gone
@@ -374,18 +379,24 @@ function v1.wait(view: any, seconds: number): number
   return lifetime.wait(scope, seconds)
 end
 
-function v1.step(view: any, fn: (dt: number, elapsed: number) -> ())
+function v1.step(view: any, fn: (dt: number, elapsed: number) -> (), pass: string?)
   local ctx = ctxOf(view, "step")
   local scope = ctx.scope
 
   callable(fn, "step")
+
+  local phase = PASSES[if pass == nil then "early" else pass]
+
+  if phase == nil then
+    logger.error(`sdk.step's pass is "early" or "late", got {tostring(pass)}`)
+  end
 
   local elapsed = 0
 
   local handle = lifetime.step(scope, function(deltaTime: number)
     elapsed += deltaTime
     guarded(ctx, fn, deltaTime, elapsed)
-  end)
+  end, phase)
 
   return function()
     handle:Disconnect()
@@ -672,6 +683,14 @@ function v1.lock(view: any)
   if lifetime.lock(scope, ctx.ref) then
     error(STOP, 0)
   end
+end
+
+function v1.context(): string
+  if not RunService:IsRunning() then
+    return "edit"
+  end
+
+  return if RunService:IsClient() then "client" else "server"
 end
 
 function v1.lerp(a: any, b: any, t: number)
