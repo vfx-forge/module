@@ -998,6 +998,57 @@ harness.suite(function()
       })
     end)
 
+    test("a knob's own fields are checked by type, so no reason ever turns an author's table to text", function()
+      fresh()
+
+      local told = false
+      local loud = setmetatable({}, {
+        __tostring = function()
+          told = true
+          return "loud"
+        end,
+      })
+
+      local found = refusal(effect({
+        params = function(sdk: any)
+          local kind = sdk.knob(1)
+          local order = sdk.knob(1)
+
+          kind.default = loud
+          order.order = loud
+
+          return {
+            attributes = {
+              Label = sdk.knob(1):label(loud),
+              Hint = sdk.knob(1):hint(loud),
+              Unit = sdk.knob(1):unit(loud),
+              Curve = sdk.knob():curve(loud),
+              Kind = kind,
+              Order = order,
+              Lane = sdk.knob(0):mod(sdk.mod.to(1):lane(loud)),
+              Eased = sdk.knob(0):mod(sdk.mod.to(1):curve(loud)),
+              Timed = sdk.knob(0):mod(sdk.mod.to(1):duration(loud)),
+              Waits = sdk.knob(0):mod(sdk.mod.to(1):delay(loud)),
+            },
+          }
+        end,
+      }))
+
+      expect(found).toEqual({
+        "the curve of Curve must be a preset's name",
+        "the curve of a default modifier of Eased must be a preset's name, a curve param's value or a rule",
+        "the hint of Hint must be a string",
+        "Kind must keep the fields sdk.knob made it",
+        "the label of Label must be a string",
+        "the lane of a default modifier of Lane must be a string",
+        "Order must keep the fields sdk.knob made it",
+        "the duration of a default modifier of Timed must be a number or a rule",
+        "the unit of Unit must be a string",
+        "the delay of a default modifier of Waits must be a number or a rule",
+      })
+      expect(told).toBe(false)
+    end)
+
     test("a row named by anything but a string is refused before its name is ever turned to text", function()
       fresh()
 

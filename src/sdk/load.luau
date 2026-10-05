@@ -319,10 +319,68 @@ local function named(list: any)
   return true
 end
 
+-- a knob's text fields, and what a reason calls each
+local TEXTS = { { "title", "label" }, { "details", "hint" }, { "units", "unit" } }
+
+-- what each option of a default modifier may hold, by the type of its value
+local NUMBERS = { number = true, ["function"] = true }
+local CURVES = { string = true, buffer = true, ["function"] = true }
+
+-- every field the registry or a reason reads off a knob or its modifiers,
+-- checked by type, so no reason ever turns an author's table to text. the
+-- fields only sdk.knob sets must agree as it set them: a kind that names
+-- its default's type, or neither when it has none
+local function fieldsOf(row: any, name: string, found: { string })
+  for _, field in TEXTS do
+    local value = rawget(row, field[1])
+
+    if value ~= nil and type(value) ~= "string" then
+      once(found, `the {field[2]} of {name} must be a string`)
+    end
+  end
+
+  local preset = rawget(row, "preset")
+
+  if preset ~= nil and type(preset) ~= "string" then
+    once(found, `the curve of {name} must be a preset's name`)
+  end
+
+  local default = rawget(row, "default")
+  local kind = rawget(row, "kind")
+  local has = rawget(row, "hasDefault")
+  local agrees = if has == true then kind == knob.kindOf(default) else has == false and default == nil and kind == nil
+
+  if not agrees or type(rawget(row, "order")) ~= "number" or type(rawget(row, "isMod")) ~= "boolean" then
+    once(found, `{name} must keep the fields sdk.knob made it`)
+  end
+end
+
+local function optionsOf(opts: any, name: string, found: { string })
+  if type(opts) ~= "table" or getmetatable(opts) ~= nil then
+    return
+  end
+
+  for _, option in { "duration", "delay" } do
+    if opts[option] ~= nil and not NUMBERS[type(opts[option])] then
+      once(found, `the {option} of a default modifier of {name} must be a number or a rule`)
+    end
+  end
+
+  if opts.curve ~= nil and not CURVES[type(opts.curve)] then
+    once(found, `the curve of a default modifier of {name} must be a preset's name, a curve param's value or a rule`)
+  end
+
+  if opts.lane ~= nil and type(opts.lane) ~= "string" then
+    once(found, `the lane of a default modifier of {name} must be a string`)
+  end
+end
+
 -- every table a row keeps copied into it, so the author's own lists reach
 -- nothing. a row the registry froze on an earlier load already holds copies
 local function rowOf(row: any, name: string, found: { string })
   local fresh = not table.isfrozen(row)
+
+  fieldsOf(row, name, found)
 
   for _, field in KEPT do
     local key, label = field[1], field[2]
@@ -376,6 +434,8 @@ local function rowOf(row: any, name: string, found: { string })
 
     local endpoint = rawget(spec, "endpoint")
     local opts = rawget(spec, "opts")
+
+    optionsOf(opts, name, found)
 
     if typeof(endpoint) == "table" then
       once(found, `the endpoint of a default modifier of {name} must be a value or a rule, not a table`)
@@ -478,7 +538,7 @@ local function checkKinds(rows: { [string]: any }, source: string, found: { stri
   local names = {}
 
   for name, row in rows do
-    if type(name) == "string" and knob.is(row) and row.kind ~= nil then
+    if type(name) == "string" and knob.is(row) and type(row.kind) == "string" then
       table.insert(names, name)
     end
   end
