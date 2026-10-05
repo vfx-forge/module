@@ -33,7 +33,7 @@ local PLACED = { CFrame = true }
 local MOTION = { Velocity = true, RotVelocity = true, AssemblyLinearVelocity = true, AssemblyAngularVelocity = true }
 
 -- what a MeshPart's mesh is built from, which only a copy of its own carries
-local MESH = { "MeshId", "RenderFidelity", "CollisionFidelity" }
+local MESH = { "MeshId", "MeshContent", "RenderFidelity", "CollisionFidelity" }
 
 -- the engine normalizes an authored rotation on write, so one slightly off
 -- never reads back equal; a CFrame this close to its twin's is the same

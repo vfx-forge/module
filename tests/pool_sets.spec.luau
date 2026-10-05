@@ -413,12 +413,12 @@ harness.suite(function()
         heard += 1
       end)
 
-      for _, name in { "MeshId", "RenderFidelity", "CollisionFidelity" } do
+      for _, name in { "MeshId", "MeshContent", "RenderFidelity", "CollisionFidelity" } do
         expect(wired[name] ~= nil).toBe(true)
         wired[name]()
       end
 
-      expect(heard).toBe(3)
+      expect(heard).toBe(4)
     end)
 
     test("a set taken before an edit is destroyed on release", function()
