@@ -240,6 +240,13 @@ do
         return table.clone(cameraAttributes)
       end,
     },
+
+    -- the mover's batch: lune has no engine, so each CFrame is written
+    BulkMoveTo = function(_, parts: { any }, cframes: { any })
+      for i, part in parts do
+        part.CFrame = cframes[i]
+      end
+    end,
   }
 end
 
