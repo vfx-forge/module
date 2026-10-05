@@ -54,9 +54,12 @@ function fake_pool.start(lists: { [string]: { string } }): Fake
 
       return canonical(copy)
     end,
-    -- lune knows no CollisionFidelity, and a mesh is all a spec tells apart
+    -- lune knows no CollisionFidelity or MeshContent, so a mesh is all a spec
+    -- tells apart, and a spec's empty one stands for content no key can name
     mesh = function(part: Instance)
-      return (part :: MeshPart).MeshId
+      local id = (part :: MeshPart).MeshId
+
+      return if id == "" then nil else id
     end,
     properties = function(class: string)
       return lists[class]

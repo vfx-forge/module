@@ -144,8 +144,13 @@ pool.engine = {
 
   -- a MeshPart's mesh and what the engine builds of it; a part serves only its
   -- own, since a first ApplyMesh of a mesh stalls for hundreds of milliseconds
-  mesh = function(part: Instance): string
+  mesh = function(part: Instance): string?
     local mesh = part :: MeshPart
+
+    -- an EditableMesh or other object content has no id a key could name
+    if mesh.MeshId == "" and mesh.MeshContent.SourceType ~= Enum.ContentSourceType.None then
+      return nil
+    end
 
     return `{mesh.MeshId}|{mesh.RenderFidelity.Name}|{mesh.CollisionFidelity.Name}`
   end,
@@ -311,13 +316,19 @@ local function store(floor: number): Store
 end
 
 -- one stack a class, but one a mesh for a MeshPart, kept only while its recent
--- peak asks
-local function stackOf(source: Instance): Store
+-- peak asks; nil for a mesh no key can name, which is copied fresh
+local function stackOf(source: Instance): Store?
   local key = source.ClassName
-  local mesh = source:IsA("MeshPart")
+  local mesh = key == "MeshPart"
 
   if mesh then
-    key = `{key}|{pool.engine.mesh(source)}`
+    local named = pool.engine.mesh(source)
+
+    if named == nil then
+      return nil
+    end
+
+    key = `{key}|{named}`
   end
 
   local s = stacks[key]
@@ -582,7 +593,9 @@ local function restore(set: Set)
     for _, name in listOf(twin.ClassName) :: { string } do
       local value = authored(set, twin, name)
 
-      if not same((member :: any)[name], value) then
+      local current = (member :: any)[name]
+
+      if current ~= value and not same(current, value) then
         (member :: any)[name] = value
       end
     end
@@ -658,6 +671,11 @@ local function single(holder: any, source: Instance): Instance
   end
 
   local s = stackOf(source)
+
+  if s == nil then
+    return fresh(holder, source)
+  end
+
   local inst = table.remove(s.free)
 
   if inst == nil then
@@ -878,8 +896,9 @@ local function build(root: Instance, key: Instance, t: Template): Set?
 end
 
 local function kept(holder: any, key: Instance): Instance
-  -- a clone of a class the pool cannot restore carries its children already
-  if not canRestore(key) then
+  -- a clone of a class the pool cannot restore, or of a mesh no stack holds,
+  -- carries its children already
+  if not canRestore(key) or (key.ClassName == "MeshPart" and pool.engine.mesh(key) == nil) then
     return fresh(holder, key)
   end
 
@@ -926,7 +945,7 @@ local function kept(holder: any, key: Instance): Instance
     return begin(holder, root, t, set)
   end
 
-  local s = stackOf(key)
+  local s = stackOf(key) :: Store
 
   root = table.remove(s.free)
 

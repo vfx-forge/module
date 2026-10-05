@@ -310,6 +310,27 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a MeshPart whose mesh no key can name is copied fresh every take", function()
+      local fake = start()
+      local shaped = source("MeshPart") :: MeshPart
+      local holder = {}
+
+      shaped.MeshId = ""
+
+      local first = pool.take(holder, shaped)
+
+      lifetime.releasePlain(holder)
+
+      local second = pool.take(holder, shaped)
+
+      expect(second ~= first).toBe(true)
+      expect(fake.made).toBe(0)
+      expect(pool.stats().fresh).toBe(2)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
     test("a mesh's stack keeps nothing past its recent peak", function()
       local fake = start()
       local sword = source("MeshPart") :: MeshPart
