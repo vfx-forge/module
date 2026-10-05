@@ -27,7 +27,7 @@ Those two vendored files are the only ones left carrying `--!strict`, and only b
 
 **`pkg/` is third-party in its entirety** (`Z`, `tiniest`, `Promise.luau`, `Shake.luau`). Read it to understand an API you are calling; never cite it as precedent, never reformat it, and keep stylua off it.
 
-**Read these instead.** They are canonical: `src/mod/recolor.luau`, `src/effects/shockwave_ring.luau`, `src/effects/spin.luau`, `src/obj/ObjectCache.luau`, `src/types.luau`, `src/mod/tween.luau`.
+**Read these instead.** They are canonical: `src/mod/recolor.luau`, `src/effects/shockwave_ring.luau`, `src/effects/spin.luau`, `src/types.luau`, `src/mod/tween.luau`.
 
 ## Module skeleton
 
@@ -147,7 +147,7 @@ Start-before-End, base/start/end, `.Name` first, numbered pairs, the order an ef
 
 Three tiers:
 
-- **snake_case**: file names, module/file identity, persistent object internals (`excess_lifetime`, `item_map`), and args carrying a module identity (`shared_part_cache`)
+- **snake_case**: file names, module/file identity, persistent object internals (`excess_lifetime`, `item_map`, measured when ObjectCache existed, removed 2026-10), and args carrying a module identity (`effects_service`)
 - **camelCase**: locals, params, functions, transient config fields
 - **PascalCase**: class modules with a metatable (`obj/Bezier.luau`), exported types, public API surface (`Finished`, `Clear`), module-level mutable state tables (`local Cache = {}`)
 
