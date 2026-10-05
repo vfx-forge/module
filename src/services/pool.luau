@@ -410,6 +410,23 @@ local function track(inst: Instance)
   inst.Parent = folder
 end
 
+-- a new copy, at the rest a released one is left at
+local function copyOf(source: Instance)
+  local inst = pool.engine.fromExisting(source)
+
+  counts.made += 1
+  strip(inst)
+  track(inst)
+
+  if inst:IsA("BasePart") then
+    local part = inst :: BasePart
+    part.AssemblyLinearVelocity = Vector3.zero
+    part.AssemblyAngularVelocity = Vector3.zero
+  end
+
+  return inst
+end
+
 local function dress(inst: Instance, source: Instance)
   local isPart = inst:IsA("BasePart")
 
@@ -704,10 +721,7 @@ local function single(holder: any, key: Instance, source: Instance): Instance
   local inst = table.remove(s.free)
 
   if inst == nil then
-    inst = pool.engine.fromExisting(source)
-    counts.made += 1
-    strip(inst)
-    track(inst)
+    inst = copyOf(source)
   else
     storeOf[inst] = nil
     counts.reuses += 1
@@ -970,10 +984,7 @@ local function kept(holder: any, key: Instance, source: Instance): Instance
   if root ~= nil then
     storeOf[root] = nil
   else
-    root = pool.engine.fromExisting(key)
-    counts.made += 1
-    strip(root)
-    track(root)
+    root = copyOf(key)
   end
 
   dress(root, source)

@@ -188,6 +188,24 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a new part starts at rest whatever its source's velocity", function()
+      local fake = start()
+      local moving = source("Part") :: Part
+      local holder = {}
+
+      moving.AssemblyLinearVelocity = Vector3.new(0, 30, 0)
+      moving.AssemblyAngularVelocity = Vector3.new(1, 0, 0)
+
+      local taken = pool.take(holder, moving) :: Part
+
+      expect(fake.made).toBe(1)
+      expect(taken.AssemblyLinearVelocity).toBe(Vector3.zero)
+      expect(taken.AssemblyAngularVelocity).toBe(Vector3.zero)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
     test("an attachment from the stack takes its new source's offset, a part never its CFrame", function()
       local lists = table.clone(LISTS)
       lists.Attachment = { "Visible", "CFrame" }
