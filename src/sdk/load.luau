@@ -230,22 +230,40 @@ local function refuse(found: { string }, label: string)
   once(found, `{label} must be a plain table, with no metatable`)
 end
 
+-- how many tables deep a layout may nest: a group inside a group inside a
+-- group, the deepest a built-in's needs being six
+local LAYOUT_DEPTH = 8
+
 -- a layout as plain tables the author never holds, nil once one carried a
--- metatable
-local function layoutOf(value: any, found: { string }): any
+-- metatable, sat deeper than LAYOUT_DEPTH or was met a second time. a table
+-- met twice is refused rather than copied again, which a cycle would never
+-- end and a table shared down each level would make cost twice per level
+local function layoutOf(value: any, found: { string }, seen: { [any]: boolean }, depth: number): any
   if type(value) ~= "table" then
     return value
   end
+
+  if seen[value] then
+    once(found, "layout must not hold one table twice")
+    return nil
+  end
+
+  seen[value] = true
 
   if getmetatable(value) ~= nil then
     once(found, "layout must be plain tables, with no metatable")
     return nil
   end
 
+  if depth > LAYOUT_DEPTH then
+    once(found, `layout must nest no deeper than {LAYOUT_DEPTH} tables`)
+    return nil
+  end
+
   local out = {}
 
   for k, v in next, value do
-    out[k] = layoutOf(v, found)
+    out[k] = layoutOf(v, found, seen, depth + 1)
   end
 
   return out
@@ -273,7 +291,7 @@ local function snapshot(author: any, found: { string }): any
     end
   end
 
-  out.layout = layoutOf(out.layout, found)
+  out.layout = layoutOf(out.layout, found, {}, 1)
 
   return out
 end

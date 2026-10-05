@@ -928,6 +928,54 @@ harness.suite(function()
       })
     end)
 
+    test("a layout holding one table twice is refused at once, a cycle among them", function()
+      fresh()
+
+      local group = { title = "Fade", entries = { "FadeTime" } }
+
+      table.insert(group.entries, group)
+
+      expect(refusal(effect({ layout = { group } }))).toEqual({ "layout must not hold one table twice" })
+
+      local shared = { "FadeTime" }
+
+      expect(refusal(effect({
+        layout = { { title = "A", entries = shared }, { title = "B", entries = shared } },
+      }))).toEqual({ "layout must not hold one table twice" })
+
+      -- each level holding the next twice, which a copy walks once per path
+      local deep: any = { "FadeTime" }
+
+      for _ = 1, 24 do
+        deep = { title = "Fade", entries = { deep, deep } }
+      end
+
+      local started = os.clock()
+
+      local found = refusal(effect({ layout = { deep } }))
+
+      expect(table.find(found, "layout must not hold one table twice") ~= nil).toBe(true)
+      expect(os.clock() - started < 0.01).toBe(true)
+    end)
+
+    test("a layout nested deeper than eight tables is refused, and one of seven loads", function()
+      fresh()
+
+      local function nested(groups: number)
+        local entries: any = { "FadeTime" }
+
+        for _ = 1, groups do
+          entries = { { title = "Fade", entries = entries } }
+        end
+
+        return entries
+      end
+
+      -- the innermost entries, then a list and a group for each level
+      expect(load.assemble(effect({ layout = nested(3) }), "ReplicatedStorage.MyEffect") ~= nil).toBe(true)
+      expect(refusal(effect({ layout = nested(4) }))).toEqual({ "layout must nest no deeper than 8 tables" })
+    end)
+
     test("a row named by anything but a string is refused before its name is ever turned to text", function()
       fresh()
 
