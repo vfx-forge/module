@@ -1077,6 +1077,8 @@ harness.suite(function()
 
         expect(third ~= first).toBe(true)
         expect(third.Parent).toBe(starter)
+
+        third:Destroy()
       end)
     end)
 
@@ -1102,6 +1104,40 @@ harness.suite(function()
 
         theirs:Destroy()
         root:Destroy()
+      end)
+    end)
+
+    test("takes a non-archivable folder of the name already under StarterGui", function()
+      withInstances(function()
+        fresh()
+
+        local earlier
+
+        custom("gui_root_earlier", function(sdk: any, ctx: any)
+          earlier = sdk.guiRoot(ctx)
+        end)
+
+        play()
+        earlier:Destroy()
+
+        local starter = game:GetService("StarterGui")
+        local ours = harness.make("Folder", starter)
+
+        ours.Name = "VFXForgeGui"
+        ours.Archivable = false
+
+        local root
+
+        fresh()
+        custom("gui_root_ours", function(sdk: any, ctx: any)
+          root = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        expect(root).toBe(ours)
+
+        ours:Destroy()
       end)
     end)
   end)
