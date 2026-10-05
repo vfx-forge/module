@@ -75,6 +75,7 @@ type Store = {
   previous: number,
   turned: number,
   floor: number,
+  key: string?,
 }
 
 type Template = Store & {
@@ -134,8 +135,12 @@ pool.engine = {
     return Instance.fromExisting(source)
   end,
 
-  applyMesh = function(part: Instance, source: Instance)
-    (part :: MeshPart):ApplyMesh(source :: MeshPart)
+  -- a MeshPart's mesh and what the engine builds of it; a part serves only its
+  -- own, since a first ApplyMesh of a mesh stalls for hundreds of milliseconds
+  mesh = function(part: Instance): string
+    local mesh = part :: MeshPart
+
+    return `{mesh.MeshId}|{mesh.RenderFidelity.Name}|{mesh.CollisionFidelity.Name}`
   end,
 
   -- every property a clone carries and any script may write; nil for a class
@@ -290,6 +295,27 @@ local function store(floor: number): Store
   return { free = {}, used = 0, peak = 0, previous = 0, turned = os.clock(), floor = floor }
 end
 
+-- one stack a class, but one a mesh for a MeshPart, kept only while its recent
+-- peak asks
+local function stackOf(source: Instance): Store
+  local key = source.ClassName
+  local mesh = source:IsA("MeshPart")
+
+  if mesh then
+    key = `{key}|{pool.engine.mesh(source)}`
+  end
+
+  local s = stacks[key]
+
+  if s == nil then
+    s = store(if mesh then 0 else FLOOR)
+    s.key = if mesh then key else nil
+    stacks[key] = s
+  end
+
+  return s
+end
+
 local function strip(inst: Instance)
   for _, tag in inst:GetTags() do
     inst:RemoveTag(tag)
@@ -359,10 +385,6 @@ local function track(inst: Instance)
 end
 
 local function dress(inst: Instance, source: Instance)
-  if inst:IsA("MeshPart") and (inst :: MeshPart).MeshId ~= (source :: MeshPart).MeshId then
-    pool.engine.applyMesh(inst, source)
-  end
-
   local isPart = inst:IsA("BasePart")
 
   for _, name in listOf(source.ClassName) :: { string } do
@@ -556,6 +578,11 @@ local function trim(s: Store)
     destroy(table.remove(s.free) :: Instance)
   end
 
+  if s.key ~= nil and s.used == 0 and #s.free == 0 then
+    stacks[s.key] = nil
+    return
+  end
+
   local t = s :: Template
 
   if t.template == nil or s.used > 0 or #s.free > 0 then
@@ -600,14 +627,7 @@ local function single(holder: any, source: Instance): Instance
     return fresh(holder, source)
   end
 
-  local class = source.ClassName
-  local s = stacks[class]
-
-  if s == nil then
-    s = store(FLOOR)
-    stacks[class] = s
-  end
-
+  local s = stackOf(source)
   local inst = table.remove(s.free)
 
   if inst == nil then
@@ -876,12 +896,7 @@ local function kept(holder: any, key: Instance): Instance
     return begin(holder, root, t, set)
   end
 
-  local s = stacks[key.ClassName]
-
-  if s == nil then
-    s = store(FLOOR)
-    stacks[key.ClassName] = s
-  end
+  local s = stackOf(key)
 
   root = table.remove(s.free)
 

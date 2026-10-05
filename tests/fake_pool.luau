@@ -7,7 +7,6 @@ export type Fake = {
   folder: Instance,
   scope: { any },
   settled: { Instance },
-  meshes: { string },
   made: number,
   wrappers: { [string]: Instance },
   stable: (inst: Instance) -> Instance,
@@ -23,7 +22,7 @@ local fake_pool = {}
 -- the pool on an engine with no signals, which a spec fires itself, answering
 -- each class with the properties `lists` names for it
 function fake_pool.start(lists: { [string]: { string } }): Fake
-  local fake = { settled = {}, meshes = {}, made = 0, scope = {}, wrappers = {} } :: any
+  local fake = { settled = {}, made = 0, scope = {}, wrappers = {} } :: any
   local folder = harness.make("Folder")
 
   -- lune hands out a fresh wrapper for an instance on every walk, so a walk
@@ -55,8 +54,9 @@ function fake_pool.start(lists: { [string]: { string } }): Fake
 
       return canonical(copy)
     end,
-    applyMesh = function(_, source: Instance)
-      table.insert(fake.meshes, source.Name)
+    -- lune knows no CollisionFidelity, and a mesh is all a spec tells apart
+    mesh = function(part: Instance)
+      return (part :: MeshPart).MeshId
     end,
     properties = function(class: string)
       return lists[class]

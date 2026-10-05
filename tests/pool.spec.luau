@@ -282,21 +282,54 @@ harness.suite(function()
       stop(fake)
     end)
 
-    test("a MeshPart takes its mesh only when it changes", function()
+    test("a MeshPart comes back only for its own mesh", function()
       local fake = start()
       local sword = source("MeshPart") :: MeshPart
-      sword.Name = "Sword"
+      local axe = source("MeshPart") :: MeshPart
 
-      -- lune has no default for a MeshId, so the source sets one
+      -- lune has no default for a MeshId, so the sources set one
       sword.MeshId = "rbxassetid://1"
+      axe.MeshId = "rbxassetid://2"
 
       local holder = {}
+      local first = pool.take(holder, sword)
 
+      lifetime.releasePlain(holder)
+
+      local other = pool.take(holder, axe)
+
+      expect(other ~= first).toBe(true)
+      expect(fake.made).toBe(2)
+
+      lifetime.releasePlain(holder)
+
+      expect(pool.take(holder, sword)).toBe(first)
+      expect(fake.made).toBe(2)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a mesh's stack keeps nothing past its recent peak", function()
+      local fake = start()
+      local sword = source("MeshPart") :: MeshPart
+      local holder = {}
+
+      sword.MeshId = "rbxassetid://1"
       pool.take(holder, sword)
       lifetime.releasePlain(holder)
+
+      pool.sweep(1e9)
+
+      expect(#fake.folder:GetChildren()).toBe(1)
+
+      pool.sweep(2e9)
+
+      expect(#fake.folder:GetChildren()).toBe(0)
+
       pool.take(holder, sword)
 
-      expect(#fake.meshes).toBe(0)
+      expect(fake.made).toBe(2)
 
       lifetime.releasePlain(holder)
       stop(fake)
