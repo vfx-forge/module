@@ -609,9 +609,7 @@ local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any):
     reach = math.max(reach, span)
   end
 
-  local function at(elapsed: number, own: any?, since: number?)
-    return valueAt(set, piece, span, elapsed, if own ~= nil then own else rest, since, nil)
-  end
+  local at: (elapsed: number, own: any?, since: number?) -> any
 
   -- a row of one lane is that lane's from the moment it fires, over where the
   -- row rests, since no other lane can own it or lie under it: the same answer
@@ -635,6 +633,10 @@ local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any):
       end
 
       return played(lane, piece, span, elapsed, firedAt(lane, piece) :: number, held)
+    end
+  else
+    at = function(elapsed: number, own: any?, since: number?)
+      return valueAt(set, piece, span, elapsed, if own ~= nil then own else rest, since, nil)
     end
   end
 
