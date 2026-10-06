@@ -179,6 +179,25 @@ harness.suite(function()
       expect(seen).toBe(CFrame.new(0, 5, 0))
     end)
 
+    test("a compute step one depth deeper reads the move its parent made that frame", function()
+      mover.bulk = original
+
+      local part = harness.make("Part")
+      local seen
+      local lead = scheduler.add("compute", function()
+        mover.move(nil, part, CFrame.new(0, 6, 0))
+      end, 0)
+      local follower = scheduler.add("compute", function()
+        seen = part.CFrame
+      end, 1)
+
+      scheduler.compute(1 / 60)
+      lead:Disconnect()
+      follower:Disconnect()
+
+      expect(seen).toBe(CFrame.new(0, 6, 0))
+    end)
+
     harness.test("the harness's batch is put back", function()
       mover.bulk = original
       mover.clear()
