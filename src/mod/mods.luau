@@ -284,7 +284,6 @@ local function samplerOf(
 
   local ctx: modifiers.Ctx = {
     duration = duration,
-    base = base,
     draws = rolled.draws,
     picks = rolled.picks,
     offsets = offsets,
@@ -294,6 +293,7 @@ local function samplerOf(
     envelope = rolled.envelope,
   }
 
+  local steps = modifiers.compile(queue, ctx)
   local scheduledFor = left
 
   -- a lane fired over a running row begins from the value under it rather than
@@ -301,17 +301,16 @@ local function samplerOf(
   -- a lane that fires late tells the sampler the time the effect has left, and
   -- only a queue with some other kind naming no duration has anything to redo then
   local function sample(elapsed: number, own: any?, left: number?)
-    ctx.base = if own ~= nil then own else base
-
     if openEnded and left ~= nil and left == left and left ~= scheduledFor then
       local placed, _, _, runs = modifiers.schedule(queue, rolled.picks, lent, rolled.env, left)
 
       scheduledFor = left
       ctx.offsets = placed
       ctx.lengths = runs
+      modifiers.place(steps, ctx, placed, runs)
     end
 
-    return modifiers.evaluate(queue, elapsed, ctx)
+    return modifiers.sample(steps, ctx, elapsed, if own ~= nil then own else base)
   end
 
   return sample, lead
