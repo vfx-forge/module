@@ -9,8 +9,11 @@ local utility = require("@mod/utility")
 local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
+local scheduler = require("@mod/scheduler")
 
 local timing_common = require("@mod/common/timing")
+
+local pool = require("@srv/pool")
 
 local rng = Random.new()
 
@@ -101,6 +104,7 @@ end
 local WIDGET_ID = "VFXForgeSoundPlayer"
 
 local soundWidget: DockWidgetPluginGui?
+local emitterTemplate: Part?
 
 local function clearClones(widget: DockWidgetPluginGui)
   for _, child in widget:GetChildren() do
@@ -156,37 +160,23 @@ local function selectRandomSound(ref: Sound, poolTag: string): Sound?
   return validSounds[rng:NextInteger(1, #validSounds)]
 end
 
-local function createSoundClone(ref: Sound, sourceSound: Sound, scope: lifetime.effect): (Sound, Part?)
-  local clone = utility.clone(sourceSound)
-
-  for _, tag in clone:GetTags() do
-    clone:RemoveTag(tag)
-  end
+-- each copy is held by `held`, which the clone's thread lets go once it ends
+local function createSoundClone(ref: Sound, sourceSound: Sound, held: { any }): (Sound, Part?)
+  local clone = pool.take(held, sourceSound) :: Sound
 
   local parent = ref:FindFirstAncestorWhichIsA("BasePart")
 
   local partClone
 
   if utility.PLUGIN_CONTEXT then
-    if parent then
-      partClone = Instance.new("Part")
-
-      partClone.Name = "SoundEmitter"
-      partClone.Anchored = true
-      partClone.CanCollide = false
-      partClone.CanQuery = false
-      partClone.CanTouch = false
-      partClone.Transparency = 1
-      partClone.Size = Vector3.one
+    if parent and emitterTemplate then
+      partClone = pool.take(held, emitterTemplate, true) :: Part
       partClone.CFrame = parent.CFrame
       partClone.Parent = soundWidget
 
       clone.Parent = partClone
-
-      lifetime.hold(scope, partClone)
     else
       clone.Parent = soundWidget
-      lifetime.hold(scope, clone)
     end
   else
     if parent then
@@ -194,8 +184,6 @@ local function createSoundClone(ref: Sound, sourceSound: Sound, scope: lifetime.
     else
       clone.Parent = workspace.Terrain
     end
-
-    lifetime.hold(scope, clone)
   end
 
   return clone, partClone
@@ -236,6 +224,10 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
   local setPlayback = nil :: ((speed: number) -> ())?
   local releasePlayback = nil :: (() -> ())?
 
+  -- what writes the clone every frame, cut when this returns, since the clone
+  -- goes back to the pool then and may serve another effect
+  local writers: { scheduler.Handle } = {}
+
   -- a row sampled on the sound's own time, its first value at once and then
   -- one a frame until that time reaches the row's end
   local function heard(row: reader.Track, write: (v: any) -> ())
@@ -256,6 +248,8 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
         handle:Disconnect()
       end
     end)
+
+    table.insert(writers, handle)
   end
 
   heard(volume, function(v: any)
@@ -288,11 +282,14 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     local parent = ref:FindFirstAncestorWhichIsA("BasePart")
 
     if parent then
-      lifetime.step(scope, function()
-        if partClone.Parent then
-          partClone.CFrame = parent.CFrame
-        end
-      end, "follow")
+      table.insert(
+        writers,
+        lifetime.step(scope, function()
+          if partClone.Parent then
+            partClone.CFrame = parent.CFrame
+          end
+        end, "follow")
+      )
     end
   end
 
@@ -331,12 +328,27 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
     releasePlayback()
     setPlayback = nil
   end
+
+  for _, handle in writers do
+    handle:Disconnect()
+  end
 end
 
 function sound.init()
   if not utility.PLUGIN_CONTEXT then
     return
   end
+
+  local template = Instance.new("Part")
+  template.Name = "SoundEmitter"
+  template.Anchored = true
+  template.CanCollide = false
+  template.CanQuery = false
+  template.CanTouch = false
+  template.Transparency = 1
+  template.Size = Vector3.one
+
+  emitterTemplate = template
 
   local plugin = script:FindFirstAncestorOfClass("Plugin")
 
@@ -375,6 +387,12 @@ function sound.deinit()
     clearClones(soundWidget)
 
     soundWidget = nil
+  end
+
+  if emitterTemplate then
+    emitterTemplate:Destroy()
+
+    emitterTemplate = nil
   end
 end
 
@@ -435,15 +453,12 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
 
     for r = 1, repeatCount do
       lifetime.spawn(clones, function()
-        local clone, partClone = createSoundClone(ref, sourceSound, scope)
+        local held = lifetime.hold(scope, {})
+        local clone, partClone = createSoundClone(ref, sourceSound, held)
 
         play(ctx, props, clone, partClone, emitDuration)
 
-        if partClone then
-          partClone:Destroy()
-        else
-          clone:Destroy()
-        end
+        lifetime.releasePlain(held)
       end)
 
       if r < repeatCount and repeatInterval.Max > 0 then

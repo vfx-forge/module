@@ -4,17 +4,17 @@ local registry = require("@mod/registry")
 local load = require("@root/sdk/load")
 local enabled_effects = require("@srv/enabled_effects")
 
-type Entry = { path: string, author: any, module: any }
+type Entry = { path: string, author: any, module: any, unload: (() -> ())? }
 
 -- what each tagged module registered, by the key its watcher names it with
 local entries: { [any]: Entry } = {}
 
 local custom = {}
 
-local function unload(author: any, path: string)
-  local fn = if type(author) == "table" then author.unload else nil
-
-  if type(fn) ~= "function" then
+-- the unload load read off the module, never read off the author's table
+-- again, whose metatable could otherwise run on the host's thread
+local function unload(fn: (() -> ())?, path: string)
+  if fn == nil then
     return
   end
 
@@ -27,14 +27,14 @@ end
 
 -- a version that ran its top level but was not registered is unloaded, unless
 -- the very table is one that is registered, as a cached require answers
-local function discard(author: any, path: string)
+local function discard(author: any, path: string, fn: (() -> ())?)
   for _, entry in entries do
-    if entry.author == author then
+    if rawequal(entry.author, author) then
       return
     end
   end
 
-  unload(author, path)
+  unload(fn, path)
 end
 
 local function holderOf(module: any): Entry?
@@ -54,10 +54,10 @@ end
 -- as a plugin's hidden clone, which a failure it reports names as `path`
 function custom.add(key: any, author: any, path: string, alias: string?): (boolean, { string })
   local previous = entries[key]
-  local module, found = load.assemble(author, path, if previous ~= nil then previous.module else nil, alias)
+  local module, found, fn = load.assemble(author, path, if previous ~= nil then previous.module else nil, alias)
 
   if module == nil then
-    discard(author, path)
+    discard(author, path, fn)
     return false, found
   end
 
@@ -66,7 +66,7 @@ function custom.add(key: any, author: any, path: string, alias: string?): (boole
   if holder ~= nil and (previous == nil or holder ~= previous.module) then
     local other = holderOf(holder)
 
-    discard(author, path)
+    discard(author, path, fn)
 
     return false,
       {
@@ -82,10 +82,10 @@ function custom.add(key: any, author: any, path: string, alias: string?): (boole
 
   registry.register(module, true)
 
-  entries[key] = { path = path, author = author, module = module }
+  entries[key] = { path = path, author = author, module = module, unload = fn }
 
   if previous ~= nil then
-    unload(previous.author, previous.path)
+    unload(previous.unload, previous.path)
   end
 
   enabled_effects.resync()
@@ -104,7 +104,7 @@ function custom.remove(key: any)
 
   entries[key] = nil
   registry.unregister(entry.module)
-  unload(entry.author, entry.path)
+  unload(entry.unload, entry.path)
   enabled_effects.resync()
 end
 

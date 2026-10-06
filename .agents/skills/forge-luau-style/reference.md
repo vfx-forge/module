@@ -69,7 +69,7 @@ Semantic orders that win over length: Start before End, base/start/end, numbered
 
 Where no semantic order exists, length ascending reappears (the row locals at the head of `ring.emit`).
 
-`utility.COPY_PART_PROPERTIES` is alphabetical, not length sorted, and that is correct.
+`utility.COPY_PART_PROPERTIES` was alphabetical, not length sorted, and that was correct (measured when the part cache existed, removed 2026-10).
 
 ## 2. Blank lines and density
 
@@ -103,7 +103,8 @@ end
 Order: `game:GetService` locals, then lowercase local modules, then PascalCase modules. Each group blank-line separated, each internally length-ascending by identifier.
 
 ```luau
--- src/effects/shockwave_ring.luau, the head of the file
+-- src/effects/shockwave_ring.luau, the head of the file as measured when
+-- ObjectCache existed (removed 2026-10)
 local CollectionService = game:GetService("CollectionService")
 
 local mod = require("@mod/mod")
@@ -135,14 +136,14 @@ Known counter-examples: `src/effects/sound.luau` and `src/services/texture_loade
 
 | Tier | Used for | Examples |
 |---|---|---|
-| snake_case | file names, module identity, persistent object internals, args carrying module identity | `camera_shake.luau`, `excess_lifetime`, `item_map`, `shared_part_cache`, `part_cache` |
+| snake_case | file names, module identity, persistent object internals, args carrying module identity | `camera_shake.luau`; measured when ObjectCache and the part cache existed (removed 2026-10): `excess_lifetime`, `item_map`, `shared_part_cache`, `part_cache` |
 | camelCase | locals, params, functions, transient config fields | `multiplyChannel`, `collisionGroup`, `spreadAngle`, `effectDuration` |
-| PascalCase | class modules with metatables, exported types, public API fields, module-level mutable state | `ObjectCache.luau`, `Bezier.luau`, `HitboxConfig`, `Finished`, `Clear`, `local Cache = {}` |
-| UPPER_CASE | constants | `RECYCLE_INTERVAL`, `EASE_LUT_SIZE`, `IS_SERVER`, `LOCKS` |
+| PascalCase | class modules with metatables, exported types, public API fields, module-level mutable state | `Bezier.luau`, `HitboxConfig`, `Finished`, `Clear`, `local Cache = {}`; measured when it existed (removed 2026-10): `ObjectCache.luau` |
+| UPPER_CASE | constants | `EASE_LUT_SIZE`, `IS_SERVER`, `LOCKS`; measured when ObjectCache existed (removed 2026-10): `RECYCLE_INTERVAL` |
 
 **Corrections to older prose docs:**
 
-- "Table fields: snake_case" is **contradicted**. camelCase leads 23 to 11. snake_case is reserved for long-lived object internals (`ObjectCache.luau`'s `item_map`, `excess_lifetime`); public API fields are PascalCase (`types.luau`).
+- "Table fields: snake_case" is **contradicted**. camelCase leads 23 to 11. snake_case is reserved for long-lived object internals (`ObjectCache.luau`'s `item_map`, `excess_lifetime`, measured when ObjectCache existed, removed 2026-10); public API fields are PascalCase (`types.luau`).
 - "PascalCase.luau for UI components" is **mis-stated**. This package has no UI. PascalCase means a class module with an `__index` metatable.
 - "Types: PascalCase for objects, snake_case for other types" **half-holds**. Exported types and named record/config shapes are PascalCase regardless of being plain data (`AttrCache`, `EnabledEffectConfig`). Only tiny private aliases and `scope` stay lowercase.
 - "Table functions: camelCase" holds, with one survivor of the old dispatch table: `emitters.legacy_child`, named for the thing it drives rather than for an action. `emitters.applyMods` and `emitters.dispatch` are the rule.
@@ -213,7 +214,7 @@ Canonical files use exactly four, and most files use none:
 
 ## 9. Comments
 
-**Comment rarely.** Five canonical files carry none at all: `types.luau`, `logger.luau`, `ObjectCache.luau` (289 lines), `texture_loader.luau` (175) and `common/flipbook.luau`. The rest run from about 1% to 11%, and the densest are the dispatcher and the shockwave pieces, where every comment says why a phase runs at all rather than what a line does. A comment earns its place by saying what the code cannot.
+**Comment rarely.** Five canonical files carried none at all when measured: `types.luau`, `logger.luau`, `ObjectCache.luau` (289 lines, removed 2026-10), `texture_loader.luau` (175) and `common/flipbook.luau`. The rest run from about 1% to 11%, and the densest are the dispatcher and the shockwave pieces, where every comment says why a phase runs at all rather than what a line does. A comment earns its place by saying what the code cannot.
 
 **No canonical file has a header or module doc comment.**
 

@@ -56,6 +56,11 @@ local scheduler = {}
 -- module never requires it
 scheduler.failed = nil :: ((owner: any) -> ())?
 
+-- run after each depth of a phase and once each half of a frame is done: the
+-- mover's batch, so the moves a depth made land in one call before a deeper
+-- follower reads them, and before the frame renders
+scheduler.after = nil :: (() -> ())?
+
 -- the real seconds every frame so far has stepped, read by an emit's handle to
 -- count the time before it first asked for its own
 scheduler.now = 0
@@ -225,6 +230,14 @@ local function runBucket(list: { Step }, deltaTime: number)
   end
 end
 
+local function runAfter()
+  local after = scheduler.after
+
+  if after ~= nil then
+    after()
+  end
+end
+
 local function runPhases(phases: { string }, deltaTime: number)
   if passing then
     logger.warn("a frame of the scheduler started inside a pass, so it was skipped")
@@ -240,6 +253,9 @@ local function runPhases(phases: { string }, deltaTime: number)
       local depth = depths[i]
 
       runBucket(slot.buckets[depth], deltaTime)
+
+      -- a deeper follower reads where this depth moved its parts
+      runAfter()
 
       -- a depth added while this one ran may have moved it along
       i = (table.find(depths, depth) :: number) + 1
@@ -326,12 +342,16 @@ function scheduler.compute(deltaTime: number)
   end
 
   runPhases(COMPUTE, deltaTime)
+
+  runAfter()
 end
 
 -- the second half: the camera shake, then the screens, then whatever follows
 -- a parent, shallowest first
 function scheduler.late(deltaTime: number)
   runPhases(LATE, deltaTime)
+
+  runAfter()
 end
 
 -- whether the caller is a step, or a callback a step made, on the pass's own

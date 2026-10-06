@@ -236,7 +236,6 @@ harness.suite(function()
       registry.configure({ query = harness.query })
       harness.reset()
       registry.register(mesh)
-      mesh.init({})
       effects.init({ setup = true } :: any)
       enabled_effects.init(scope, effects)
       scheduler.start()
@@ -277,7 +276,6 @@ harness.suite(function()
 
       custom.clear()
       utility.cleanupScope(scope)
-      mesh.deinit()
       registry.clear()
 
       runService.IsRunning, tags.GetTagged = isRunning, getTagged

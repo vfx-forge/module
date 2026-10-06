@@ -1,3 +1,7 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local StarterGui = game:GetService("StarterGui")
+
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local lerp = require("@mod/lerp")
@@ -6,6 +10,7 @@ local shape = require("@mod/shape")
 local tween = require("@mod/tween")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
+local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
 
@@ -15,6 +20,12 @@ local Bezier = require("@obj/Bezier")
 
 local NAN = 0 / 0
 local NAN_VECTOR = vector.create(NAN, NAN, NAN)
+
+-- an author's pass by name, as the scheduler's phase
+local PASSES = { early = "compute", late = "screen" }
+
+-- the folder every custom effect's guis live in, by name
+local GUI_ROOT = "VFXForgeGui"
 
 -- thrown through an effect's own thread once a callback of it has failed, so
 -- the author's code after the failing call never runs on an effect that is gone
@@ -27,6 +38,13 @@ local MADE: { [lifetime.effect]: { lifetime.join } } = setmetatable({}, { __mode
 
 -- per module, the instances a failure was already reported for
 local WARNED: { [any]: { [Instance]: boolean } } = setmetatable({}, { __mode = "k" }) :: any
+
+-- per module, the texts sdk.warn already logged for each instance, kept apart
+-- from WARNED so a warning never silences a failure
+local NOTED: { [any]: { [Instance]: { [string]: boolean } } } = setmetatable({}, { __mode = "k" }) :: any
+
+-- the effects whose emit already holds its instance's lock
+local LOCKED: { [lifetime.effect]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
 -- per module, the name its source runs under where that is not where it lives,
 -- as a plugin's hidden clone of a module edited in Studio, and that real path
@@ -52,8 +70,21 @@ local CTXS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
 -- the rules already handed views, so a rule is never wrapped twice
 local RULES: { [any]: boolean } = setmetatable({}, { __mode = "k" }) :: any
 
+-- the reader's Track behind each view an author is handed, and the view of
+-- each Track, so one Track is always one view
+local TRACKS: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
+local VIEWED: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
+
+-- the read only window an author is handed of each attrs or props table the
+-- reader filled, and the table behind each window
+local READS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
+local SOURCES: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
+
 -- a host's sentence for a reported failure, which only the plugin sets
 local annotate: ((message: string) -> string?)? = nil
+
+-- the gui root last made or found, made again once it leaves its parent
+local guiRoot: Instance? = nil
 
 -- what every curve the facade makes is, told apart from any other table by it
 local CURVE = getmetatable(curve.new(1, "linear"))
@@ -71,6 +102,107 @@ end
 local VECTORS = { vector = true, Vector3 = true }
 
 local HOLDABLE = { Instance = true, RBXScriptConnection = true, ["function"] = true, thread = true }
+
+local Track = {}
+Track.__index = Track
+
+function Track.at(self: any, t: number)
+  local inner = TRACKS[self]
+
+  if inner == nil then
+    logger.error("call track:at(t), not track.at(t)")
+  end
+
+  return inner.at(t)
+end
+
+table.freeze(Track)
+
+-- the reader's Track, told apart from an author's table by the lane reads only
+-- it answers
+local function isTrack(value: any): boolean
+  return type(value) == "table" and type(value.at) == "function" and type(value.reach) == "function"
+end
+
+local function viewOfTrack(inner: any)
+  local view = VIEWED[inner]
+
+  if view ~= nil then
+    return view
+  end
+
+  view = table.freeze(setmetatable({
+    value = inner.value,
+    animated = inner.animated,
+    duration = inner.duration,
+  }, Track))
+
+  VIEWED[inner] = view
+  TRACKS[view] = inner
+
+  return view
+end
+
+local function shown(value: any)
+  return if isTrack(value) then viewOfTrack(value) else value
+end
+
+-- a read only window on a table the reader fills, every Track in it a view.
+-- read through on every access, so a rule called halfway through a read sees
+-- each row as it resolves
+local Read = {}
+
+-- a copy of a window carries its metatable but none of the reader's table
+local function sourceOf(window: any)
+  local read = SOURCES[window]
+
+  if read == nil then
+    logger.error("attrs and props are read only windows; read them directly, do not copy them")
+  end
+
+  return read
+end
+
+function Read.__index(window: any, key: any)
+  return shown(sourceOf(window)[key])
+end
+
+function Read.__iter(window: any)
+  local read = sourceOf(window)
+  local key = nil
+
+  return function()
+    local value
+
+    key, value = next(read, key)
+
+    if key == nil then
+      return nil
+    end
+
+    return key, shown(value)
+  end
+end
+
+table.freeze(Read)
+
+local function authored(read: any)
+  if type(read) ~= "table" then
+    return read
+  end
+
+  local window = READS[read]
+
+  if window ~= nil then
+    return window
+  end
+
+  window = setmetatable({}, Read)
+  SOURCES[window] = read
+  READS[read] = window
+
+  return table.freeze(window)
+end
 
 local v1 = {}
 
@@ -259,18 +391,24 @@ function v1.wait(view: any, seconds: number): number
   return lifetime.wait(scope, seconds)
 end
 
-function v1.step(view: any, fn: (dt: number, elapsed: number) -> ())
+function v1.step(view: any, fn: (dt: number, elapsed: number) -> (), pass: string?)
   local ctx = ctxOf(view, "step")
   local scope = ctx.scope
 
   callable(fn, "step")
+
+  local phase = PASSES[if pass == nil then "early" else pass]
+
+  if phase == nil then
+    logger.error(`sdk.step's pass is "early" or "late", got {tostring(pass)}`)
+  end
 
   local elapsed = 0
 
   local handle = lifetime.step(scope, function(deltaTime: number)
     elapsed += deltaTime
     guarded(ctx, fn, deltaTime, elapsed)
-  end)
+  end, phase)
 
   return function()
     handle:Disconnect()
@@ -336,7 +474,7 @@ function v1.curve(duration: number, given: any, options: {}?)
     logger.error("sdk.curve takes no options yet")
   end
 
-  return table.freeze(curve.new(duration, shapeOf(given)))
+  return curve.frozen(duration, shapeOf(given))
 end
 
 function v1.tween(view: any, eased: any, fn: (alpha: number) -> ())
@@ -479,12 +617,152 @@ end
 
 function v1.speed(view: any, track: any)
   local scope = scopeOf(view, "speed")
+  local inner = TRACKS[track]
 
-  if type(track) ~= "table" or type(track.at) ~= "function" then
-    logger.error("sdk.speed takes a Speed param's value, a knob declared with :mod()")
+  if inner == nil then
+    logger.error("sdk.speed takes a param declared with :mod(), as attrs hands it")
   end
 
-  lifetime.speed(scope, track)
+  lifetime.speed(scope, inner)
+end
+
+function v1.apply(view: any, given: any, write: (value: any) -> ())
+  local ctx = ctxOf(view, "apply")
+
+  callable(write, "apply")
+
+  local function written(value: any)
+    guarded(ctx, write, value)
+  end
+
+  local inner = TRACKS[given]
+
+  -- a row its modifiers move keeps the effect until it lands, as a tween does
+  if inner ~= nil then
+    inner:apply(written, if inner.animated then lifetime.add(joinOf(ctx.scope)) else nil)
+    return
+  end
+
+  -- no row's value is a Lua table, so one that is no view is a mistake
+  if type(given) == "table" then
+    logger.error("sdk.apply takes a param's value, as attrs hands it")
+  end
+
+  written(given)
+end
+
+function v1.warn(view: any, text: string)
+  local ctx = ctxOf(view, "warn")
+
+  if type(text) ~= "string" then
+    logger.error(`sdk.warn takes a string, got {typeof(text)}`)
+  end
+
+  local module = ctx.effect
+  local byRef = NOTED[module]
+
+  if byRef == nil then
+    byRef = setmetatable({}, { __mode = "k" }) :: any
+    NOTED[module] = byRef
+  end
+
+  local texts = byRef[ctx.ref]
+
+  if texts == nil then
+    texts = {}
+    byRef[ctx.ref] = texts
+  end
+
+  if texts[text] then
+    return
+  end
+
+  texts[text] = true
+
+  local id = if module ~= nil then module.id else "?"
+
+  logger.warn(`custom effect {id} on {ctx.ref:GetFullName()}: {text}`)
+end
+
+function v1.lock(view: any)
+  local ctx = ctxOf(view, "lock")
+  local scope = ctx.scope
+
+  if coroutine.running() ~= scope.thread then
+    logger.error("sdk.lock runs in emit only, not in a step, a tween's callback or a piece")
+  end
+
+  if LOCKED[scope] then
+    return
+  end
+
+  -- another emit plays this instance: this one ends here, silently
+  if lifetime.lock(scope, ctx.ref) then
+    error(STOP, 0)
+  end
+
+  LOCKED[scope] = true
+end
+
+function v1.context()
+  if not RunService:IsRunning() then
+    return "edit"
+  end
+
+  return if RunService:IsClient() then "client" else "server"
+end
+
+-- the parent the gui root belongs under in this context, refusing the server
+local function guiParent(): Instance
+  if not RunService:IsRunning() then
+    return StarterGui
+  end
+
+  if not RunService:IsClient() then
+    logger.error("sdk.guiRoot runs in the editor or on a client; check sdk.context() first")
+  end
+
+  local player = Players.LocalPlayer
+  local gui = if player ~= nil then player:FindFirstChildOfClass("PlayerGui") else nil
+
+  if gui == nil then
+    logger.error("sdk.guiRoot found no PlayerGui; the local player has not loaded yet")
+  end
+
+  return gui :: Instance
+end
+
+function v1.guiRoot(view: any): Instance
+  ctxOf(view, "guiRoot")
+
+  local parent = guiParent()
+  local root = guiRoot
+
+  if root ~= nil and root.Parent == parent and root.Name == GUI_ROOT and not root.Archivable then
+    return root
+  end
+
+  root = nil
+
+  for _, child in parent:GetChildren() do
+    if child.Name == GUI_ROOT and child:IsA("Folder") and not child.Archivable then
+      root = child
+      break
+    end
+  end
+
+  if root == nil then
+    local made = adapters.create("Folder")
+
+    made.Name = GUI_ROOT
+    made.Archivable = false
+    made.Parent = parent
+    root = made
+  end
+
+  guiRoot = root
+
+  return root :: Instance
 end
 
 function v1.lerp(a: any, b: any, t: number)
@@ -624,12 +902,19 @@ function facade.rule(fn: (...any) -> any)
   end
 
   local wrapped = function(ctx: any, attrs: any, props: any)
-    return fn(if ctx ~= nil then viewOf(ctx) else nil, attrs, props)
+    return fn(if ctx ~= nil then viewOf(ctx) else nil, authored(attrs), authored(props))
   end
 
   RULES[wrapped] = true
 
   return wrapped
+end
+
+-- an author's duration, called by the reader and handed the author's reads
+function facade.duration(fn: (...any) -> any)
+  return function(_, attrs: any, props: any)
+    return fn(v1, authored(attrs), authored(props))
+  end
 end
 
 -- an author's template, which a host calls and the runtime never does. it is
@@ -659,7 +944,7 @@ end
 -- tweens, its nested emits and every join it made are through
 function facade.run(emit: any, ctx: any, attrs: any, props: any)
   local scope = ctx.scope
-  local ok, err = xpcall(emit, trace, v1, viewOf(ctx), attrs, props)
+  local ok, err = xpcall(emit, trace, v1, viewOf(ctx), authored(attrs), authored(props))
 
   if not ok then
     if err ~= STOP then

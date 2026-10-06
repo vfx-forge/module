@@ -1180,6 +1180,14 @@ function lifetime.include(join: join, emit: emit)
   else
     emit.joins = { done }
   end
+
+  -- filed after whatever the emit runs on, so an effect that ends early clears
+  -- the emit before it lets go of the parts and kept copies under it
+  lifetime.hold(join.fx, function()
+    if not emit.done then
+      lifetime.clear(emit)
+    end
+  end)
 end
 
 -- a piece on a thread of its own, held by the effect so a clear closes it, and

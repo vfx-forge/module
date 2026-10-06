@@ -1,3 +1,4 @@
+local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local curves = require("@mod/curves")
 local registry = require("@mod/registry")
@@ -200,11 +201,301 @@ local function checkFields(author: any, found: { string })
     end
   end
 
-  -- a host calls the template from its own thread, so an engine function
-  -- there would run with the host's rights
-  if type(author.template) == "function" and debug.info(author.template, "s") == "[C]" then
-    table.insert(found, "template must be a function of your own, not an engine function")
+  -- a host calls the template and the unload from its own thread, so an
+  -- engine function there would run with the host's rights
+  for _, field in { "template", "unload" } do
+    if type(author[field]) == "function" and debug.info(author[field], "s") == "[C]" then
+      table.insert(found, `{field} must be a function of your own, not an engine function`)
+    end
   end
+end
+
+-- a table of the author's, read raw into one the author never holds
+local function copied(t: { [any]: any }): { [any]: any }
+  local out = {}
+
+  for k, v in next, t do
+    out[k] = v
+  end
+
+  return out
+end
+
+-- a reason added once, however many tables gave it
+local function once(found: { string }, reason: string)
+  if not table.find(found, reason) then
+    table.insert(found, reason)
+  end
+end
+
+local function refuse(found: { string }, label: string)
+  once(found, `{label} must be a plain table, with no metatable`)
+end
+
+-- how many tables deep a layout may nest: a group inside a group inside a
+-- group, the deepest a built-in's needs being six
+local LAYOUT_DEPTH = 8
+
+-- a layout as plain tables the author never holds, nil once one carried a
+-- metatable, sat deeper than LAYOUT_DEPTH or was met a second time. a table
+-- met twice is refused rather than copied again, which a cycle would never
+-- end and a table shared down each level would make cost twice per level
+local function layoutOf(value: any, found: { string }, seen: { [any]: boolean }, depth: number): any
+  if type(value) ~= "table" then
+    return value
+  end
+
+  if seen[value] then
+    once(found, "layout must not hold one table twice")
+    return nil
+  end
+
+  seen[value] = true
+
+  if getmetatable(value) ~= nil then
+    once(found, "layout must be plain tables, with no metatable")
+    return nil
+  end
+
+  if depth > LAYOUT_DEPTH then
+    once(found, `layout must nest no deeper than {LAYOUT_DEPTH} tables`)
+    return nil
+  end
+
+  local out = {}
+
+  for k, v in next, value do
+    out[k] = layoutOf(v, found, seen, depth + 1)
+  end
+
+  return out
+end
+
+-- the effect table, its display and its layout as tables the runtime owns,
+-- read raw before params runs, so nothing the author's code does after can
+-- change what was checked. a table carrying a metatable could answer one read
+-- differently from the next, or iterate to more than was checked, so one is
+-- refused by name
+local function snapshot(author: any, found: { string }): any
+  local out = copied(author)
+  local display = out.display
+
+  if type(display) == "table" and getmetatable(display) ~= nil then
+    refuse(found, "display")
+  elseif type(display) == "table" then
+    display = copied(display)
+    out.display = display
+
+    if type(display.reflect) == "table" and getmetatable(display.reflect) ~= nil then
+      refuse(found, "display.reflect")
+    elseif type(display.reflect) == "table" then
+      display.reflect = copied(display.reflect)
+    end
+  end
+
+  out.layout = layoutOf(out.layout, found, {}, 1)
+
+  return out
+end
+
+-- the fields of a knob, and what a reason calls each, that may hold a table
+-- the reader or the registry walks or indexes once the effect is registered
+local KEPT = {
+  { "names", "aliases" },
+  { "choices", "options" },
+  { "modDefault", "default modifiers" },
+}
+
+-- a list of names, every entry a string the reader can look a value up by
+local function named(list: any)
+  if type(list) ~= "table" then
+    return false
+  end
+
+  for _, entry in next, list do
+    if type(entry) ~= "string" then
+      return false
+    end
+  end
+
+  return true
+end
+
+-- a knob's text fields, and what a reason calls each
+local TEXTS = { { "title", "label" }, { "details", "hint" }, { "units", "unit" } }
+
+-- what each option of a default modifier may hold, by the type of its value
+local NUMBERS = { number = true, ["function"] = true }
+local CURVES = { string = true, buffer = true, ["function"] = true }
+
+-- every field the registry or a reason reads off a knob or its modifiers,
+-- checked by type, so no reason ever turns an author's table to text. the
+-- fields only sdk.knob sets must agree as it set them: a kind that names
+-- its default's type, or neither when it has none
+local function fieldsOf(row: any, name: string, found: { string })
+  for _, field in TEXTS do
+    local value = rawget(row, field[1])
+
+    if value ~= nil and type(value) ~= "string" then
+      once(found, `the {field[2]} of {name} must be a string`)
+    end
+  end
+
+  local preset = rawget(row, "preset")
+
+  if preset ~= nil and type(preset) ~= "string" then
+    once(found, `the curve of {name} must be a preset's name`)
+  end
+
+  local default = rawget(row, "default")
+  local kind = rawget(row, "kind")
+  local has = rawget(row, "hasDefault")
+  local agrees = if has == true then kind == knob.kindOf(default) else has == false and default == nil and kind == nil
+
+  if not agrees or type(rawget(row, "order")) ~= "number" or type(rawget(row, "isMod")) ~= "boolean" then
+    once(found, `{name} must keep the fields sdk.knob made it`)
+  end
+end
+
+local function optionsOf(opts: any, name: string, found: { string })
+  if type(opts) ~= "table" or getmetatable(opts) ~= nil then
+    return
+  end
+
+  for _, option in { "duration", "delay" } do
+    if opts[option] ~= nil and not NUMBERS[type(opts[option])] then
+      once(found, `the {option} of a default modifier of {name} must be a number or a rule`)
+    end
+  end
+
+  if opts.curve ~= nil and not CURVES[type(opts.curve)] then
+    once(found, `the curve of a default modifier of {name} must be a preset's name, a curve param's value or a rule`)
+  end
+
+  if opts.lane ~= nil and type(opts.lane) ~= "string" then
+    once(found, `the lane of a default modifier of {name} must be a string`)
+  end
+end
+
+-- every table a row keeps copied into it, so the author's own lists reach
+-- nothing. a row the registry froze on an earlier load already holds copies
+local function rowOf(row: any, name: string, found: { string })
+  local fresh = not table.isfrozen(row)
+
+  fieldsOf(row, name, found)
+
+  for _, field in KEPT do
+    local key, label = field[1], field[2]
+    local value = rawget(row, key)
+
+    if type(value) ~= "table" then
+      continue
+    end
+
+    if getmetatable(value) ~= nil then
+      refuse(found, `the {label} of {name}`)
+    elseif fresh then
+      row[key] = copied(value)
+    end
+  end
+
+  -- a bound is a number or a value of the row's own type, never a table,
+  -- which the clamp would index on every read
+  for _, field in { { "lower", "min" }, { "upper", "max" } } do
+    if typeof(rawget(row, field[1])) == "table" then
+      once(found, `the {field[2]} of {name} must be a number or a value of its type, not a table`)
+    end
+  end
+
+  -- the registry walks each of these unasked, and would throw on one that is
+  -- no table rather than name it. an entry is looked up by and joined into
+  -- text, so one that is no string is refused too
+  local choices = rawget(row, "choices")
+  local specs = rawget(row, "modDefault")
+
+  if not named(rawget(row, "names")) then
+    once(found, `the aliases of {name} must be a list of names`)
+  end
+
+  if choices ~= nil and not named(choices) then
+    once(found, `the options of {name} must be a list of names`)
+  end
+
+  if specs ~= nil and type(specs) ~= "table" then
+    once(found, `the default modifiers of {name} must be a list of sdk.mod specs`)
+  end
+
+  if type(specs) ~= "table" or getmetatable(specs) ~= nil then
+    return
+  end
+
+  for _, spec in next, specs do
+    if not mod.is(spec) then
+      continue
+    end
+
+    local endpoint = rawget(spec, "endpoint")
+    local opts = rawget(spec, "opts")
+
+    optionsOf(opts, name, found)
+
+    if typeof(endpoint) == "table" then
+      once(found, `the endpoint of a default modifier of {name} must be a value or a rule, not a table`)
+    end
+
+    -- options with a metatable, or frozen with a rule load would have to
+    -- wrap, are checkFrozen's to name
+    if
+      type(opts) == "table"
+      and getmetatable(opts) == nil
+      and not table.isfrozen(opts)
+      and not table.isfrozen(spec)
+    then
+      spec.opts = copied(opts)
+    end
+  end
+end
+
+-- the rows params answered as a map the runtime owns, by name
+local function rowsOf(given: any, label: string, found: { string }): { [string]: any }
+  if given == nil then
+    return {}
+  end
+
+  if type(given) ~= "table" then
+    table.insert(found, `{label} must be a table of knobs`)
+    return {}
+  end
+
+  if getmetatable(given) ~= nil then
+    refuse(found, label)
+    return {}
+  end
+
+  local rows = {}
+  local names = {}
+
+  -- a name that is no string is never turned to text, which could run a
+  -- metamethod of the author's in the middle of the load
+  for name, row in next, given do
+    if type(name) ~= "string" then
+      once(found, `{label} names a row by a {typeof(name)}, not a string`)
+      continue
+    end
+
+    rows[name] = row
+    table.insert(names, name)
+  end
+
+  table.sort(names)
+
+  for _, name in names do
+    if knob.is(rows[name]) then
+      rowOf(rows[name], name, found)
+    end
+  end
+
+  return rows
 end
 
 -- the attributes and properties params answered, each empty when it could
@@ -226,22 +517,21 @@ local function paramsOf(author: any, sdk: any, found: { string }): ({ [string]: 
     return {}, {}
   end
 
-  for key in params do
+  if getmetatable(params) ~= nil then
+    table.insert(found, "params must answer a plain table, with no metatable")
+    return {}, {}
+  end
+
+  for key in next, params do
     if key ~= "attributes" and key ~= "properties" then
-      table.insert(found, `params answers {tostring(key)}, which is neither attributes nor properties`)
+      table.insert(
+        found,
+        `params answers {if type(key) == "string" then key else typeof(key)}, which is neither attributes nor properties`
+      )
     end
   end
 
-  local attributes = params.attributes or {}
-  local properties = params.properties or {}
-
-  for name, list in { attributes = attributes, properties = properties } do
-    if type(list) ~= "table" then
-      table.insert(found, `params.{name} must be a table of knobs`)
-    end
-  end
-
-  return if type(attributes) == "table" then attributes else {}, if type(properties) == "table" then properties else {}
+  return rowsOf(params.attributes, "params.attributes", found), rowsOf(params.properties, "params.properties", found)
 end
 
 -- every row whose default is of a type the panel cannot edit, named. a rule
@@ -250,7 +540,7 @@ local function checkKinds(rows: { [string]: any }, source: string, found: { stri
   local names = {}
 
   for name, row in rows do
-    if type(name) == "string" and knob.is(row) and row.kind ~= nil then
+    if type(name) == "string" and knob.is(row) and type(row.kind) == "string" then
       table.insert(names, name)
     end
   end
@@ -274,17 +564,27 @@ local function checkKinds(rows: { [string]: any }, source: string, found: { stri
   end
 end
 
--- a curve param whose default is a preset's name, or none, starts as that
--- preset's curve, which is what the curve editor shows and the reader hands on
+-- the preset a curve param whose default is a preset's name, or none, starts
+-- as, which is what the curve editor shows and the reader hands on
+local function presetOf(row: any): string?
+  if row.preset == nil or row.isMod then
+    return nil
+  end
+
+  local named = if row.hasDefault then row.default else row.preset
+
+  return if type(named) == "string" and curves.PRESETS[named] ~= nil then named else nil
+end
+
 local function curveDefaults(rows: { [string]: any })
   for _, row in rows do
-    if type(row) ~= "table" or row.preset == nil or row.isMod then
+    if type(row) ~= "table" then
       continue
     end
 
-    local named = if row.hasDefault then row.default else row.preset
+    local named = presetOf(row)
 
-    if type(named) == "string" and curves.PRESETS[named] ~= nil then
+    if named ~= nil then
       row.default = curves.PRESETS[named]
       row.hasDefault = true
       row.kind = "string"
@@ -292,17 +592,82 @@ local function curveDefaults(rows: { [string]: any })
   end
 end
 
--- every rule of the author's handed the view of its ctx rather than the ctx.
--- a row the registry already froze was handed it by the load that froze it
-local function viewed(rows: { [string]: any }, facade: any)
-  for _, row in rows do
-    if type(row) ~= "table" or table.isfrozen(row) then
+-- a function the facade has not yet handed the view of its ctx
+local function bare(value: any, facade: any)
+  return type(value) == "function" and facade.rule(value) ~= value
+end
+
+local function holdsBare(t: any, facade: any)
+  for _, value in next, t do
+    if bare(value, facade) then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- every frozen table load would have to change, named. a row the registry froze
+-- on an earlier load, as a module keeps at module level, holds only rules that
+-- load wrapped and passes; any other frozen one would reach the reader with the
+-- runtime's ctx, so it is refused before any of it can run
+local function checkFrozen(rows: { [string]: any }, facade: any, found: { string })
+  local names = {}
+
+  for name, row in rows do
+    if type(row) == "table" then
+      table.insert(names, name)
+    end
+  end
+
+  table.sort(names, function(a: any, b: any)
+    return tostring(a) < tostring(b)
+  end)
+
+  for _, name in names do
+    local row = rows[name]
+
+    if table.isfrozen(row) and (presetOf(row) ~= nil or holdsBare(row, facade)) then
+      table.insert(found, `a knob must come fresh from sdk.knob; {name} is frozen`)
+    end
+
+    if type(row.modDefault) ~= "table" then
       continue
     end
 
-    for _, field in RULES do
-      if type(row[field]) == "function" then
-        row[field] = facade.rule(row[field])
+    -- one that is no spec at all is the registry's to name
+    for _, spec in row.modDefault do
+      if not mod.is(spec) then
+        continue
+      end
+
+      local opts = spec.opts
+
+      if type(opts) ~= "table" or getmetatable(opts) ~= nil then
+        table.insert(found, `a default modifier of {name} must keep the options sdk.mod made it`)
+      elseif
+        (table.isfrozen(spec) and bare(spec.endpoint, facade))
+        or (table.isfrozen(opts) and holdsBare(opts, facade))
+      then
+        table.insert(found, `a default modifier must come fresh from sdk.mod; one of {name}'s is frozen`)
+      end
+    end
+  end
+end
+
+-- every rule of the author's handed the view of its ctx rather than the ctx.
+-- checkFrozen left no frozen table here with a rule still to wrap
+local function viewed(rows: { [string]: any }, facade: any)
+  for _, row in rows do
+    if type(row) ~= "table" then
+      continue
+    end
+
+    if not table.isfrozen(row) then
+      for _, field in RULES do
+        if type(row[field]) == "function" then
+          row[field] = facade.rule(row[field])
+        end
       end
     end
 
@@ -311,12 +676,16 @@ local function viewed(rows: { [string]: any }, facade: any)
     end
 
     for _, spec in row.modDefault do
-      if type(spec) ~= "table" or type(spec.opts) ~= "table" then
+      if not mod.is(spec) then
         continue
       end
 
-      if type(spec.endpoint) == "function" then
+      if not table.isfrozen(spec) and type(spec.endpoint) == "function" then
         spec.endpoint = facade.rule(spec.endpoint)
+      end
+
+      if table.isfrozen(spec.opts) then
+        continue
       end
 
       for _, option in OPTIONS do
@@ -345,20 +714,6 @@ local function viewedLayout(entries: any, facade: any)
 
     viewedLayout(entry.entries, facade)
   end
-end
-
-local function copy(value: any): any
-  if type(value) ~= "table" then
-    return value
-  end
-
-  local out = {}
-
-  for k, v in value do
-    out[k] = copy(v)
-  end
-
-  return out
 end
 
 local function tagsOf(compound: string): { string }
@@ -409,24 +764,43 @@ function load.overlap(classifier: string, except: any?): string?
 end
 
 -- the effect module the runtime registers for what a tagged module returned,
--- or nil and every reason it was refused. `path` names the module in a reason,
--- `except` is the version it replaces, whose id and classifier are free, and
--- `alias` the name its source runs under when that is not `path`, which its
--- reported failures name as `path` instead
-function load.assemble(author: any, path: string, except: any?, alias: string?): (any?, { string })
+-- or nil and every reason it was refused, and the unload it held when load
+-- read it, which the caller calls in place of reading the author's table
+-- again, refused or not. `path` names the module in a reason, `except` is the
+-- version it replaces, whose id and classifier are free, and `alias` the name
+-- its source runs under when that is not `path`, which its reported failures
+-- name as `path` instead
+function load.assemble(author: any, path: string, except: any?, alias: string?): (any?, { string }, (() -> ())?)
   if type(author) ~= "table" then
     return nil, { `{path} answers a {typeof(author)}, not an effect table` }
+  end
+
+  if getmetatable(author) ~= nil then
+    return nil, { `{path} answers a table with a metatable, not a plain effect table` }
+  end
+
+  local found = {}
+
+  author = snapshot(author, found)
+
+  local unload = author.unload
+
+  if type(unload) ~= "function" or debug.info(unload, "s") == "[C]" then
+    unload = nil
+  end
+
+  if #found > 0 then
+    return nil, found, unload
   end
 
   local label = if type(author.id) == "string" then author.id else path
   local version, refusal = versionOf(author, label)
 
   if version == nil then
-    return nil, { refusal :: string }
+    return nil, { refusal :: string }, unload
   end
 
   local facade = VERSIONS[version]
-  local found = {}
 
   checkFields(author, found)
 
@@ -434,9 +808,11 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
 
   checkKinds(attributes, "attributes", found)
   checkKinds(properties, "properties", found)
+  checkFrozen(attributes, facade, found)
+  checkFrozen(properties, facade, found)
 
   if #found > 0 then
-    return nil, found
+    return nil, found, unload
   end
 
   curveDefaults(attributes)
@@ -444,17 +820,16 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   viewed(attributes, facade)
   viewed(properties, facade)
 
-  local sdk = facade.sdk
   local run = facade.run
   local emit = author.emit
   local duration = author.duration
   local template = author.template
 
-  local layout = copy(author.layout)
+  local layout = author.layout
   local reflect = author.display.reflect
 
   if type(reflect) == "table" then
-    reflect = table.freeze(table.clone(reflect))
+    reflect = table.freeze(reflect)
   end
 
   viewedLayout(layout, facade)
@@ -473,11 +848,7 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
     constant = author.constant,
     attributes = attributes,
     properties = properties,
-    duration = if duration ~= nil
-      then function(_, attrs: any, props: any)
-        return duration(sdk, attrs, props)
-      end
-      else nil,
+    duration = if duration ~= nil then facade.duration(duration) else nil,
     emit = function(ctx: any, attrs: any, props: any)
       run(emit, ctx, attrs, props)
     end,
@@ -498,14 +869,14 @@ function load.assemble(author: any, path: string, except: any?, alias: string?):
   end
 
   if #found > 0 then
-    return nil, found
+    return nil, found, unload
   end
 
   if alias ~= nil then
     facade.alias(module, alias, path)
   end
 
-  return module, found
+  return module, found, unload
 end
 
 return load

@@ -68,38 +68,6 @@ utility.COPY_SPECIALMESH_PROPERTIES = {
   "VertexColor",
 }
 
-utility.COPY_PART_PROPERTIES = {
-  "CastShadow",
-
-  "Color",
-
-  "Material",
-  "MaterialVariant",
-  "Reflectance",
-
-  "Shape",
-
-  "FrontSurface",
-  "BackSurface",
-  "LeftSurface",
-  "RightSurface",
-  "TopSurface",
-  "BottomSurface",
-}
-
-utility.COPY_EXTENDED_PART_PROPERTIES = {
-  "Size",
-  "Transparency",
-
-  "CustomPhysicalProperties",
-
-  "CanCollide",
-  "CanQuery",
-  "CanTouch",
-
-  "CollisionGroup",
-}
-
 function utility.setCollisionGroups(groups)
   local rules = {}
 
@@ -119,19 +87,6 @@ function utility.setCollisionGroups(groups)
 
       PhysicsService:CollisionGroupSetCollidable(name, group, collidable)
     end
-  end
-end
-
-local last_id = 0
-
-function utility.getRandomId()
-  last_id += 1
-  return tostring(last_id)
-end
-
-function utility.copyProperties(from: Instance, to: Instance, list: { string })
-  for _, k in list do
-    to[k] = from[k]
   end
 end
 
@@ -216,14 +171,6 @@ function utility.getTarget(obj: Instance): Instance?
   return parent
 end
 
-function utility.onCancel(scope: lifetime.effect, callback: () -> ())
-  lifetime.defer(scope, function(cancelled)
-    if cancelled then
-      callback()
-    end
-  end)
-end
-
 -- a window's tick runs on the window's clock, which already carries the
 -- window's Speed; a passive loop's tick and a plain emit run at their own
 function utility.speedFrom(scope: lifetime.effect, constant: boolean?, row: any)
@@ -234,8 +181,8 @@ function utility.speedFrom(scope: lifetime.effect, constant: boolean?, row: any)
   lifetime.speed(scope, row)
 end
 
--- the module-level scopes (api.scope, the caches, texture preloads) are plain
--- tables; every emit and effect is a lifetime record now
+-- the module-level scopes (api.scope, texture preloads) are plain tables;
+-- every emit and effect is a lifetime record now
 function utility.cleanupScope(scope: { [any]: any }, syncFunctions: boolean?)
   for _, v in scope do
     local t = typeof(v)
@@ -289,7 +236,8 @@ end
 
 function utility.cloneParticleAncestry(
   particle: ParticleEmitter,
-  map: { [Instance?]: Instance }
+  map: { [Instance?]: Instance },
+  make: (obj: Instance) -> Instance
 ): (Instance?, Instance?)
   if not particle:FindFirstAncestorWhichIsA("BasePart") and not particle:FindFirstAncestorOfClass("Attachment") then
     return
@@ -320,13 +268,7 @@ function utility.cloneParticleAncestry(
       return created, if obj == particle then map[obj.Parent] else map[findAncestor(obj.Parent)] or map[obj]
     end
 
-    local clone = Instance.fromExisting(obj)
-    clone.Archivable = false
-
-    if clone:IsA("BasePart") then
-      clone.Locked = true
-    end
-
+    local clone = make(obj)
     local ancestor = clone
 
     if map then
@@ -430,10 +372,10 @@ function utility.getMeshDecals(ref: Model, start: BasePart)
 
         fromToMap[from] = to
 
-        if not attr.get(v, "FlipbookEnabled", nil) then
+        if not attr.get(v, "FlipbookEnabled", nil, true) then
           table.insert(decals, v)
         else
-          local data = attr.get(v, "FlipbookTextures", nil)
+          local data = attr.get(v, "FlipbookTextures", nil, true)
 
           if data then
             flipbooks[v] = utility.deserializeFlipbook(data)
@@ -490,45 +432,6 @@ function utility.getMeshDecals(ref: Model, start: BasePart)
   end
 
   return decals, flipbooks, fromToMap
-end
-
-function utility.assembleMeshVFX(start: BasePart, scope: lifetime.effect, shared_part_cache: any)
-  local id = utility.getRandomId()
-
-  if start:IsA("Part") then
-    local objAbstr = shared_part_cache:get(id)
-    objAbstr.CFrame = start.CFrame
-
-    local obj = objAbstr._getReal()
-
-    utility.copyProperties(start, obj, utility.COPY_PART_PROPERTIES)
-    utility.copyProperties(start, obj, utility.COPY_EXTENDED_PART_PROPERTIES)
-
-    local clone = utility.clone(start)
-
-    for _, child in clone:GetChildren() do
-      child.Parent = obj
-    end
-
-    clone:Destroy()
-
-    lifetime.hold(scope, function()
-      shared_part_cache:free(id)
-    end)
-
-    return objAbstr
-  else
-    local clone = utility.clone(start)
-    clone.Archivable = false
-    clone.Locked = true
-    clone.Parent = workspace.Terrain
-
-    clone:AddTag(utility.CLEANUP_TAG)
-
-    lifetime.hold(scope, clone)
-
-    return clone
-  end
 end
 
 function utility.getBezierPoints(root: Attachment, metadata: boolean?)

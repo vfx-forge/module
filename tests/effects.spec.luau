@@ -1,5 +1,7 @@
 local fs = require("@lune/fs")
 local mods = require("@mod/mods")
+local pool = require("@srv/pool")
+local mover = require("@srv/mover")
 local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local curve = require("@mod/curve")
@@ -15,6 +17,8 @@ local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
+local fake_pool = require("@tests/fake_pool")
+local bezier_common = require("@mod/common/bezier")
 local enabled_effects = require("@srv/enabled_effects")
 local test, expect = harness.test, harness.expect
 local row = harness.row
@@ -30,6 +34,10 @@ local RAW_NEW = Promise._new
 frame.configure(harness.fakeEncoding, harness.fakeCompression)
 
 local function noop() end
+
+local LISTS = {
+  Part = { "Color", "Size", "Transparency" },
+}
 
 -- a stand-in module, classified by class name, whose emit is the spec's own. one
 -- that takes its whole subtree emits what is under it itself, the way a screen does
@@ -1440,8 +1448,8 @@ harness.suite(function()
   end)
 
   -- pattern specs: the join and try shape a bezier piece or a lightning bolt
-  -- runs through, not bezier or lightning themselves, which need a Points
-  -- attachment and a cached part and only run in Studio
+  -- runs through, on a stand-in rather than bezier or lightning themselves,
+  -- whose emission frame and hitbox need Studio
   harness.describe("the shape a bezier or a bolt waits in", function()
     test("a piece whose setup throws is logged once and counted out, and its sibling still holds the body", function()
       local built = fresh()
@@ -2057,7 +2065,10 @@ harness.suite(function()
       local seen = {}
       local dispatch = emitters.dispatch
 
-      effect.init({})
+      if effect.init then
+        effect.init({})
+      end
+
       registry.register(effect)
       inst:SetAttribute("EmitDuration", 1)
 
@@ -2079,7 +2090,11 @@ harness.suite(function()
 
       emitters.dispatch = dispatch
       env:Clear()
-      effect.deinit()
+
+      if effect.deinit then
+        effect.deinit()
+      end
+
       built.restore()
 
       return inst, seen
@@ -2320,15 +2335,99 @@ harness.suite(function()
 
       built.restore()
     end)
+
+    test("a beam's copy keeps the effects nested under it, and emits them", function()
+      local built = fresh()
+      local seen = {}
+
+      registry.register(require("@vfx/beam"))
+      registry.register(module("counts", "Folder", counting(seen)))
+
+      local fake = fake_pool.start({ Beam = { "Enabled" }, Folder = {} })
+      local part = harness.make("Part")
+      local beam = harness.make("Beam", part) :: any
+      local child = harness.make("Folder", beam)
+
+      child.Name = "child"
+      beam.Attachment0 = harness.make("Attachment", part)
+      beam.Attachment1 = harness.make("Attachment", part)
+
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0.25)
+
+      expect(seen.child).toBe(0.25)
+
+      env:Clear()
+      fake_pool.stop(fake)
+      built.restore()
+    end)
+
+    test("a reused throwaway attachment starts where the authored one is", function()
+      local built = fresh()
+      local CFrame = harness.datatypes.CFrame
+      registry.register(require("@vfx/beam"))
+
+      local fake = fake_pool.start({ Beam = { "Enabled" }, Attachment = { "Visible", "CFrame" } })
+
+      -- a beam scaled by 2 between attachments at `z0` and `z1`, answering
+      -- where its throwaway attachments are after one frame
+      local function scaled(z0: number, z1: number): { CFrame }
+        local part = harness.make("Part")
+        local a0 = harness.make("Attachment", part)
+        local a1 = harness.make("Attachment", part)
+        local beam = harness.make("Beam", part) :: any
+
+        a0.CFrame = CFrame.new(0, 0, z0)
+        a1.CFrame = CFrame.new(0, 0, z1)
+        beam.Attachment0 = a0
+        beam.Attachment1 = a1
+        beam:SetAttribute("LengthScale", 2)
+
+        local env = effects.emit(0, beam)
+
+        scheduler.frame(0)
+
+        local found = {}
+
+        for _, inst in part:GetChildren() do
+          if inst.Name == "_ForgeTempAttachment" then
+            table.insert(found, (inst :: Attachment).CFrame)
+          end
+        end
+
+        env:Clear()
+
+        return found
+      end
+
+      scaled(100, 140)
+
+      local made = fake.made
+      local found = scaled(0, 10)
+
+      expect(fake.made).toBe(made)
+      expect(found[1]).toEqual(CFrame.new(0, 0, -5))
+      expect(found[2]).toEqual(CFrame.new(0, 0, 15))
+
+      fake_pool.stop(fake)
+      built.restore()
+    end)
   end)
 
   harness.describe("a line's emission", function()
     -- a line whose rays all land, so the pieces it makes are the ones the
-    -- cache hands out
-    local function pieces(frames: number, deltaTime: number, authored: { [string]: any }): number
+    -- pool hands out; given `watch`, the rays land at `hit`, the mover never
+    -- lands a write and `watch` sees the pool's folder before the clear
+    local function pieces(
+      frames: number,
+      deltaTime: number,
+      authored: { [string]: any },
+      hit: Vector3?,
+      watch: ((folder: Instance) -> ())?
+    ): number
       local built = fresh()
       local line = require("@vfx/shockwave_line")
-      local made = 0
       local raycast = workspace.Raycast
       local params = RaycastParams
       local Vector3 = harness.datatypes.Vector3
@@ -2342,8 +2441,8 @@ harness.suite(function()
       workspace.Raycast = function()
         return {
           Instance = { Color = harness.datatypes.Color3.new(1, 1, 1), Transparency = 0 },
-          Material = "Plastic",
-          Position = Vector3.zero,
+          Material = Enum.Material.Plastic,
+          Position = hit or Vector3.zero,
           Normal = Vector3.yAxis,
         }
       end
@@ -2351,20 +2450,7 @@ harness.suite(function()
 
       registry.register(require("@vfx/shockwave"))
       registry.register(table.clone(line))
-      line.init({
-        get = function()
-          made += 1
-
-          local real = harness.make("Part")
-
-          return {
-            _getReal = function()
-              return real
-            end,
-          }
-        end,
-        free = noop,
-      } :: any)
+      local fake = fake_pool.start(LISTS)
 
       local extents = utility.getTransformedOriginExtents
       utility.getTransformedOriginExtents = function()
@@ -2391,20 +2477,31 @@ harness.suite(function()
       ref:SetAttribute("SizeScaleIn", Vector3.one)
       ref:SetAttribute(mods.attrName("attribute", "SizeScaleIn"), frame.frame(codec.encode({ lanes = { start = {} } })))
 
+      local after = scheduler.after
+
+      if watch ~= nil then
+        scheduler.after = nil
+      end
+
       local env = effects.emit(0, ref)
 
       for _ = 1, frames do
         scheduler.frame(deltaTime)
       end
 
+      if watch ~= nil then
+        watch(fake.folder)
+      end
+
+      scheduler.after = after
       env:Clear()
-      line.deinit()
+      fake_pool.stop(fake)
       workspace.Raycast = raycast
       utility.getTransformedOriginExtents = extents
       RaycastParams = params
       built.restore()
 
-      return made
+      return fake.made
     end
 
     test("emits every piece of a fixed amount even where the summed deltas fall short", function()
@@ -2421,6 +2518,462 @@ harness.suite(function()
       expect(pieces(100, 1 / 240, { Duration = 0.3, Rate = 10 })).toBe(3)
       expect(pieces(100, 1 / 240, { Duration = 0.3, Rate = 20 })).toBe(6)
       expect(pieces(60, 1 / 60, { Duration = 0.5, Rate = 10 })).toBe(5)
+    end)
+
+    test("a taken piece stands where its ray landed before the mover lands anything", function()
+      local Vector3 = harness.datatypes.Vector3
+      local positions = {}
+
+      pieces(30, 1 / 60, { Duration = 0.3, FixedAmount = 1 }, Vector3.new(0, 0, 7), function(folder: Instance)
+        for _, piece in folder:GetChildren() do
+          table.insert(positions, (piece :: BasePart).CFrame.Position)
+        end
+      end)
+
+      expect(positions).toEqual({ Vector3.new(0, 0, 7) })
+    end)
+  end)
+
+  harness.describe("a mesh's pieces", function()
+    type Seen = { count: number, id: string, cframe: CFrame, tagged: boolean, attributes: number }
+
+    -- a mesh whose start is a MeshPart, emitted twice on the pool, its origin
+    -- at a new height each time, and the piece each emit holds a frame in;
+    -- `decal` gives the start and end a decal of differing colors, and with
+    -- `flush` off the mover never lands a write
+    local function emitTwice(decal: boolean, flush: boolean)
+      local built = fresh()
+      local CFrame = harness.datatypes.CFrame
+      local Color3 = harness.datatypes.Color3
+
+      registry.register(require("@vfx/mesh"))
+      local fake = fake_pool.start({ MeshPart = LISTS.Part, Decal = { "Color3", "Transparency" } })
+
+      local height = 0
+      local extents = utility.getTransformedOriginExtents
+      utility.getTransformedOriginExtents = function()
+        return CFrame.new(0, height, 0)
+      end
+
+      local after = scheduler.after
+
+      if not flush then
+        scheduler.after = nil
+      end
+
+      -- a read on a kept copy that is not soft writes its default back on a
+      -- server, which spoils the copy's set
+      local loud = 0
+      local get = attr.get
+
+      attr.get = function(obj: Instance, key: string, default: any, soft: boolean?, validate: any)
+        if not soft and pool.kept(fake.stable(obj)) then
+          loud += 1
+        end
+
+        return get(obj, key, default, soft, validate)
+      end
+
+      -- lune hands out a new wrapper on every FindFirstChild, so the start
+      -- each emit finds is taken as the one Studio would hand back
+      local take = pool.take
+
+      pool.take = function(holder: any, source: Instance, alone: boolean?)
+        return take(holder, fake.stable(source), alone)
+      end
+
+      local model = harness.make("Model", harness.make("Folder"))
+      local start = harness.make("MeshPart", model)
+      local goal = harness.make("MeshPart", model)
+
+      start.Name = "Start"
+      goal.Name = "End"
+
+      -- lune holds no default for a MeshPart's mesh
+      start.MeshId = "rbxassetid://1"
+      goal.MeshId = "rbxassetid://1"
+
+      if decal then
+        local from = harness.make("Decal", start) :: Decal
+        local to = harness.make("Decal", goal) :: Decal
+
+        from.Name, to.Name = "Face", "Face"
+        from.Color3, to.Color3 = Color3.new(1, 0, 0), Color3.new(0, 0, 1)
+      end
+
+      local seen: { Seen } = {}
+
+      for _, y in { 5, 9 } do
+        height = y
+
+        local env = effects.emit(0, model)
+
+        scheduler.frame(0.1)
+
+        local pieces = fake.folder:GetChildren()
+        local face = pieces[1]:FindFirstChildOfClass("Decal")
+        local attributes = 0
+
+        for _ in if face ~= nil then face:GetAttributes() else {} do
+          attributes += 1
+        end
+
+        table.insert(seen, {
+          count = #pieces,
+          id = pieces[1]:GetDebugId(),
+          cframe = pieces[1].CFrame,
+          tagged = pieces[1]:HasTag(utility.CLEANUP_TAG),
+          attributes = attributes,
+        })
+
+        env:Clear()
+      end
+
+      local stats = pool.stats()
+
+      fake_pool.stop(fake)
+      pool.take = take
+      attr.get = get
+      scheduler.after = after
+      utility.getTransformedOriginExtents = extents
+      built.restore()
+
+      return seen, fake.made, stats, loud
+    end
+
+    test("a MeshPart piece is the pool's, moved by the mover, and comes back for the next emit", function()
+      local seen, made = emitTwice(false, true)
+
+      expect(made).toBe(1)
+      expect(seen[1].count).toBe(1)
+      expect(seen[2].id).toBe(seen[1].id)
+      expect(seen[1].cframe.Position).toEqual(harness.datatypes.Vector3.new(0, 5, 0))
+      expect(seen[1].tagged).toBe(false)
+    end)
+
+    test("a taken piece stands at its first pose before the mover lands anything", function()
+      local seen = emitTwice(false, false)
+
+      expect(seen[1].cframe.Position).toEqual(harness.datatypes.Vector3.new(0, 5, 0))
+      expect(seen[2].id).toBe(seen[1].id)
+      expect(seen[2].cframe.Position).toEqual(harness.datatypes.Vector3.new(0, 9, 0))
+    end)
+
+    test("a start whose decal changes color keeps its set between emits", function()
+      local seen, _, stats, loud = emitTwice(true, true)
+
+      expect(stats.builds).toBe(1)
+      expect(stats.reuses).toBe(1)
+      expect(loud).toBe(0)
+      expect(seen[1].attributes).toBe(0)
+      expect(seen[2].attributes).toBe(0)
+    end)
+  end)
+
+  harness.describe("a bezier's and a bolt's parts", function()
+    type Options = {
+      bits: boolean?,
+      flush: boolean?,
+      frames: { number },
+      look: (fake: fake_pool.Fake, cleared: boolean) -> (),
+    }
+
+    -- a bolt of `effect` under a part, with its points and its template, emitted
+    -- twice on the pool along a path laid along z from a height the spec raises
+    -- between the emits; `authored` is written on the bolt, `bits` gives the
+    -- template a child, and with `flush` off the mover lands nothing. `look`
+    -- sees the pool after each emit's frames, and again once it is cleared
+    local function emitTwice(effect: any, tag: string, authored: { [string]: any }, options: Options)
+      local built = fresh()
+      local CFrame = harness.datatypes.CFrame
+      local Vector3 = harness.datatypes.Vector3
+
+      registry.register(effect)
+      local fake = fake_pool.start({ Part = LISTS.Part, Folder = {} })
+
+      local height = 0
+      local take = pool.take
+      local instance = Instance
+      local after = scheduler.after
+      local terrain = workspace.Terrain
+      local points = utility.getBezierPoints
+      local extents = utility.getTransformedOriginExtents
+      local getter = bezier_common.createPosGetter
+      local hitbox = bezier_common.createHitboxParams
+      local emission = bezier_common.calculateEmissionCFrame
+
+      utility.getTransformedOriginExtents = function()
+        return CFrame.new(0, height, 0), Vector3.zero
+      end
+
+      utility.getBezierPoints = function()
+        return { vector.zero, vector.create(0, 0, 10) }
+      end
+
+      bezier_common.createPosGetter = function()
+        return function(alpha: number)
+          return Vector3.new(0, height, alpha * 10)
+        end
+      end
+
+      -- lune has no CFrame.fromAxisAngle, and the path above ignores the frame
+      bezier_common.calculateEmissionCFrame = function()
+        return CFrame.identity
+      end
+
+      bezier_common.createHitboxParams = function()
+        return {}
+      end
+
+      -- lune hands out a new wrapper on every FindFirstChildOfClass, so the
+      -- template each emit finds is taken as the one Studio would hand back
+      pool.take = function(holder: any, source: Instance, alone: boolean?)
+        return take(holder, fake.stable(source), alone)
+      end
+
+      if not options.flush then
+        scheduler.after = nil
+      end
+
+      -- a highlighted bolt builds its container with Instance.new
+      -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+      Instance = harness.datatypes.Instance
+      workspace.Terrain = harness.make("Folder")
+
+      local ok, err = pcall(function()
+        local bolt = harness.make("Attachment", harness.make("Part"))
+        local root = harness.make("Attachment", bolt)
+        local template = harness.make("Part", bolt)
+
+        bolt:AddTag(tag)
+        root.Name = "Points"
+
+        for key, v in authored do
+          bolt:SetAttribute(key, v)
+        end
+
+        if options.bits then
+          harness.make("Folder", template).Name = "Bits"
+        end
+
+        for _, y in { 5, 9 } do
+          height = y
+
+          local env = effects.emit(0, bolt)
+
+          for _, deltaTime in options.frames do
+            scheduler.frame(deltaTime)
+          end
+
+          options.look(fake, false)
+          env:Clear()
+          options.look(fake, true)
+        end
+      end)
+
+      local stats = pool.stats()
+
+      fake_pool.stop(fake)
+      pool.take = take
+      Instance = instance
+      scheduler.after = after
+      workspace.Terrain = terrain
+      utility.getBezierPoints = points
+      utility.getTransformedOriginExtents = extents
+      bezier_common.createPosGetter = getter
+      bezier_common.createHitboxParams = hitbox
+      bezier_common.calculateEmissionCFrame = emission
+      built.restore()
+
+      if not ok then
+        error(err, 0)
+      end
+
+      return fake, stats
+    end
+
+    local function position(inst: Instance): Vector3
+      return (inst :: BasePart).CFrame.Position
+    end
+
+    test("a bezier piece is the pool's, placed at once, then moved by the mover", function()
+      local Vector3 = harness.datatypes.Vector3
+      local seen = {}
+
+      local fake = emitTwice(bezier, utility.BEZIER_TAG, {}, {
+        flush = true,
+        frames = { 0.25 },
+        look = function(fake: fake_pool.Fake, cleared: boolean)
+          if cleared then
+            return
+          end
+
+          local pieces = fake.folder:GetChildren()
+
+          table.insert(seen, { count = #pieces, id = pieces[1]:GetDebugId(), at = position(pieces[1]) })
+        end,
+      })
+
+      expect(fake.made).toBe(1)
+      expect(seen[1].count).toBe(1)
+      expect(seen[2].id).toBe(seen[1].id)
+      expect(seen[1].at).toEqual(Vector3.new(0, 5, 2.5))
+      expect(seen[2].at).toEqual(Vector3.new(0, 9, 2.5))
+    end)
+
+    test("a bezier piece stands at its first pose before the mover lands anything", function()
+      local Vector3 = harness.datatypes.Vector3
+      local seen = {}
+
+      emitTwice(bezier, utility.BEZIER_TAG, {}, {
+        frames = { 0.25 },
+        look = function(fake: fake_pool.Fake, cleared: boolean)
+          if not cleared then
+            table.insert(seen, position(fake.folder:GetChildren()[1]))
+          end
+        end,
+      })
+
+      expect(seen).toEqual({ Vector3.new(0, 5, 0), Vector3.new(0, 9, 0) })
+    end)
+
+    test("a bezier projectile starts from the pose its path left pending", function()
+      local Vector3 = harness.datatypes.Vector3
+      local seen = {}
+
+      -- a projectile outliving the path, standing still where it set off
+      local authored =
+        { ProjectileEnabled = true, ProjectileSpeed = 0, ProjectileLifetime = harness.datatypes.NumberRange.new(2, 2) }
+
+      emitTwice(bezier, utility.BEZIER_TAG, authored, {
+        frames = { 0.5, 0.5, 0.25 },
+        look = function(fake: fake_pool.Fake, cleared: boolean)
+          if not cleared then
+            mover.flush()
+            table.insert(seen, position(fake.folder:GetChildren()[1]))
+          end
+        end,
+      })
+
+      expect(seen).toEqual({ Vector3.new(0, 5, 10), Vector3.new(0, 9, 10) })
+    end)
+
+    test("a bezier template with children keeps its set between emits", function()
+      local names = {}
+
+      local fake, stats = emitTwice(bezier, utility.BEZIER_TAG, {}, {
+        bits = true,
+        frames = { 0.25 },
+        look = function(fake: fake_pool.Fake, cleared: boolean)
+          if cleared then
+            return
+          end
+
+          local bits = fake.folder:GetChildren()[1]:FindFirstChild("Bits")
+
+          table.insert(names, if bits ~= nil then bits.Name else "none")
+        end,
+      })
+
+      expect(fake.made).toBe(1)
+      expect(stats.builds).toBe(1)
+      expect(stats.reuses).toBe(1)
+      expect(names).toEqual({ "Bits", "Bits" })
+    end)
+
+    test("a bolt's segments with no nested effect are bare parts that come back for the next emit", function()
+      local seen = {}
+
+      local fake = emitTwice(lightning, utility.LIGHTNING_TAG, { Segments = 2, OffsetScale = 0 }, {
+        bits = true,
+        flush = true,
+        frames = { 0.25 },
+        look = function(fake: fake_pool.Fake, cleared: boolean)
+          if cleared then
+            return
+          end
+
+          for _, piece in fake.folder:GetChildren() do
+            table.insert(seen, #piece:GetChildren())
+          end
+        end,
+      })
+
+      expect(fake.made).toBe(2)
+      expect(seen).toEqual({ 0, 0, 0, 0 })
+    end)
+
+    test("a segment stands at its first pose before the mover lands anything", function()
+      local Vector3 = harness.datatypes.Vector3
+      local seen = {}
+
+      emitTwice(lightning, utility.LIGHTNING_TAG, { Segments = 2, OffsetScale = 0 }, {
+        frames = { 0.25 },
+        look = function(fake: fake_pool.Fake, cleared: boolean)
+          if cleared then
+            return
+          end
+
+          for _, piece in fake.folder:GetChildren() do
+            local part = piece :: BasePart
+
+            if part.Transparency < 1 then
+              table.insert(seen, part.CFrame.Position)
+            end
+          end
+        end,
+      })
+
+      expect(seen).toEqual({ Vector3.new(0, 5, 1.25), Vector3.new(0, 9, 1.25) })
+    end)
+
+    test("a highlighted bolt's segments go back to the pool before its container goes", function()
+      local containers = {}
+      local free = {}
+
+      local fake = emitTwice(lightning, utility.LIGHTNING_TAG, { Segments = 2, FillTransparency = 0 }, {
+        flush = true,
+        frames = { 0.25 },
+        look = function(fake: fake_pool.Fake, cleared: boolean)
+          table.insert(containers, #workspace.Terrain:GetChildren())
+
+          if cleared then
+            table.insert(free, #fake.folder:GetChildren())
+          end
+        end,
+      })
+
+      expect(containers).toEqual({ 1, 0, 1, 0 })
+      expect(free).toEqual({ 2, 2 })
+      expect(fake.made).toBe(2)
+    end)
+
+    test("a head bolt's children go home with their set from whichever segment holds them", function()
+      local held = {}
+      local homes = {}
+
+      local fake, stats = emitTwice(lightning, utility.LIGHTNING_TAG, { Segments = 3, NestedEffectMode = "Head" }, {
+        bits = true,
+        flush = true,
+        frames = { 0.5 },
+        look = function(fake: fake_pool.Fake, cleared: boolean)
+          for _, piece in fake.folder:GetChildren() do
+            if piece:FindFirstChild("Bits") ~= nil then
+              table.insert(if cleared then homes else held, piece:GetDebugId())
+            end
+          end
+        end,
+      })
+
+      expect(fake.made).toBe(3)
+      expect(stats.builds).toBe(1)
+      expect(stats.reuses).toBe(3)
+      expect(#held).toBe(2)
+      expect(#homes).toBe(2)
+
+      -- the head had moved them off the segment whose set they are
+      expect(held[1] ~= homes[1]).toBe(true)
+      expect(held[2] ~= homes[2]).toBe(true)
     end)
   end)
 end)

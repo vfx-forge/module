@@ -1,6 +1,5 @@
 local Promise = require("@pkg/Promise")
 local lifetime = require("@mod/lifetime")
-local ObjectCache = require("@obj/ObjectCache")
 
 export type scope = lifetime.effect
 
@@ -21,10 +20,6 @@ export type EmitEnv = {
   GetTime: (self: EmitEnv) -> number,
   SetPriority: (self: EmitEnv, priority: number) -> (),
   GetPriority: (self: EmitEnv) -> number,
-}
-
-export type ApiCaches = {
-  shared_part: ObjectCache.ObjectCache,
 }
 
 export type EffectsService = {
@@ -57,7 +52,6 @@ export type Api = {
   setup: boolean,
 
   scope: { unknown },
-  caches: ApiCaches,
 
   init: (params: any?) -> (),
   deinit: () -> (),

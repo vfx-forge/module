@@ -23,11 +23,12 @@ export type Module = {
   selected: ((ctx: any) -> ())?,
 }
 
--- the two maps a particle's ancestry clone is shared through for the life of
--- one emit, built by the dispatcher and handed to every effect of that emit
+-- the maps a particle's ancestry clone is shared through for the life of one
+-- emit, built by the dispatcher and handed to every effect of that emit
 export type Shared = {
   unc: { [Instance]: number },
   ref: { [Instance]: Instance },
+  held: { [Instance]: { any } },
 }
 
 export type Ctx = {
@@ -49,7 +50,7 @@ export type Track = {
   has: (lane: string) -> boolean,
   reach: (lane: string) -> number,
   still: (lane: string, at: number) -> boolean,
-  apply: (self: Track, write: (v: any) -> ()) -> (),
+  apply: (self: Track, write: (v: any) -> (), done: (() -> ())?) -> (),
 }
 
 -- where the walk takes an instance's attributes from. replaceable, for a host
@@ -62,7 +63,7 @@ reader.source = reader.defaultSource
 
 -- what apply binds a track with. the engine helper is out of this module's
 -- reach, so the dispatcher hands it in at load
-reader.bind = nil :: ((scope: any, track: Track, write: (v: any) -> ()) -> ())?
+reader.bind = nil :: ((scope: any, track: Track, write: (v: any) -> (), follow: number?, done: (() -> ())?) -> ())?
 
 -- the indexing a property row's base is read through, kept out of propertyOf so
 -- the pcall below has a function to call rather than one to build per row
@@ -503,14 +504,14 @@ wrap = function(state: State, source: string, name: string, row: knob.Knob, rest
     still = inner.still,
   }
 
-  function track.apply(_, write: (v: any) -> ())
+  function track.apply(_, write: (v: any) -> (), done: (() -> ())?)
     if reader.bind == nil or ctx.scope == nil then
       logger.error(`{name} cannot be applied without a running effect`)
     end
 
     local bind = reader.bind :: any
 
-    bind(ctx.scope, track, write)
+    bind(ctx.scope, track, write, nil, done)
   end
 
   -- a piece calls the row for a track of its own: rules run again, a value

@@ -306,6 +306,20 @@ harness.suite(function()
 
       expect(registry.get("ok").id).toBe("ok")
     end)
+
+    test("the version moves on every register, unregister and clear", function()
+      local before = registry.version
+      local module = stub("version_probe")
+
+      registry.register(module :: any)
+      expect(registry.version).toBe(before + 1)
+
+      registry.unregister(module :: any)
+      expect(registry.version).toBe(before + 2)
+
+      registry.clear()
+      expect(registry.version).toBe(before + 3)
+    end)
   end)
 
   harness.describe("registry.depth and registry.subjects", function()

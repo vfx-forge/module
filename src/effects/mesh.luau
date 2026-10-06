@@ -10,6 +10,9 @@ local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
+
+local pool = require("@srv/pool")
+local mover = require("@srv/mover")
 local enabled_effects = require("@srv/enabled_effects")
 
 local rng = Random.new()
@@ -165,19 +168,9 @@ function mesh.duration(_, attrs: any)
   return attrs.EffectDuration.Max
 end
 
-local part_cache: any
-
-function mesh.init(cache)
-  part_cache = cache
-end
-
-function mesh.deinit()
-  part_cache = nil
-end
-
 -- one piece: the assembled part driven over a duration of its own, the tail of
 -- the old effect body
-local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
+local function piece(ctx: reader.Ctx, attrs: any, obj: BasePart, duration: number)
   local ref = ctx.ref :: Model
   local scope = ctx.scope
 
@@ -213,7 +206,6 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
   ) * utility.DEG_TO_RAD
 
   local parent = ref:FindFirstAncestorOfClass("Attachment") or start
-  local realObj = typeof(obj) == "table" and obj._getReal() or obj
 
   local origin = utility.getTransformedOriginExtents(parent)
   local goalCFrameOffset = start.CFrame:ToObjectSpace(goal.CFrame)
@@ -229,9 +221,9 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
     0
   )
 
-  local function updatePos(deltaTime: number)
+  local function pose(deltaTime: number)
     local o = sync and utility.getTransformedOriginExtents(parent) or origin
-    local add = initRot:Sign() * currentRotSpeed * deltaTime
+    local add = vector.sign(initRot) * currentRotSpeed * deltaTime
 
     currentRot *= CFrame.fromOrientation(add.x, add.y, add.z)
 
@@ -245,12 +237,16 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
     cf *= currentRot
 
-    obj.CFrame = cf
+    return cf
   end
 
-  updatePos(0)
+  -- the first pose is written at once, so a reused piece never shows a frame
+  -- where its last holder let it go
+  obj.CFrame = pose(0)
 
-  lifetime.step(scope, updatePos, "follow")
+  lifetime.step(scope, function(deltaTime: number)
+    mover.move(scope, obj, pose(deltaTime))
+  end, "follow")
 
   local children = lifetime.join(scope)
 
@@ -308,7 +304,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
       objMesh.Parent = nil
 
       lifetime.hold(scope, function()
-        objMesh.Parent = realObj
+        objMesh.Parent = obj
       end)
     end
   end
@@ -326,7 +322,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
     end)
 
     local displayDecal = Instance.new("Decal")
-    displayDecal.Parent = realObj
+    displayDecal.Parent = obj
 
     lifetime.hold(scope, displayDecal)
 
@@ -371,7 +367,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
       end
 
       if from.Color3 ~= to.Color3 then
-        local colorCurve = curve.new(duration, attr.get(from, "Color_Curve", utility.default_bezier))
+        local colorCurve = curve.new(duration, attr.get(from, "Color_Curve", utility.default_bezier, true))
 
         tween.play(scope, colorCurve, function(alpha: number)
           decal.Color3 = color.blend(from.Color3, to.Color3, alpha, true)
@@ -387,8 +383,8 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
           effectDuration = duration,
           syncDuration = attr.get(from, "SyncDuration", false, true) == true,
 
-          curve = attr.get(from, "Flipbook_Change_Curve", utility.linear_bezier),
-          duration = attr.get(from, "Flipbook_Change_Duration", duration),
+          curve = attr.get(from, "Flipbook_Change_Curve", utility.linear_bezier, true),
+          duration = attr.get(from, "Flipbook_Change_Duration", duration, true),
 
           setTexture = function(texture)
             decal.Texture = texture
@@ -413,7 +409,7 @@ local function piece(ctx: reader.Ctx, attrs: any, obj: any, duration: number)
 
   lifetime.awaitJoin(children)
 
-  scope.effects.emitOnFinish(emitOnFinish, realObj, scope.depth + 1, scope, children)
+  scope.effects.emitOnFinish(emitOnFinish, obj, scope.depth + 1, scope, children)
   lifetime.awaitJoin(children)
 end
 
@@ -424,7 +420,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   local start = ref:FindFirstChild("Start")
   local goal = ref:FindFirstChild("End")
 
-  if not start or not goal or not start:IsA("BasePart") or not goal:IsA("BasePart") or not part_cache then
+  if not start or not goal or not start:IsA("BasePart") or not goal:IsA("BasePart") then
     return
   end
 
@@ -453,7 +449,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
     local duration = rng:NextNumber(range.Min, range.Max)
 
     lifetime.spawn(outstanding, function()
-      piece(ctx, attrs, utility.assembleMeshVFX(start, scope, part_cache), duration)
+      piece(ctx, attrs, pool.take(scope, start) :: BasePart, duration)
     end)
   end
 

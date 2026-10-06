@@ -44,7 +44,7 @@ end
 -- with the module it was classified as, which for a legacy tween child is none
 local function emit(root: Instance)
   local em = lifetime.emit(nil)
-  local shared = { unc = {}, ref = {} }
+  local shared = { unc = {}, ref = {}, held = {} }
   local claimant = registry.of(root)
 
   local function dispatch(obj: Instance, effect: registry.Module?)
@@ -208,7 +208,7 @@ harness.suite(function()
       local em = lifetime.emit(nil)
 
       lifetime.run(lifetime.effect(em, 0, nil), function(scope)
-        emitters.dispatch(part, scope, { unc = {}, ref = {} }, registry.get("piece"))
+        emitters.dispatch(part, scope, { unc = {}, ref = {}, held = {} }, registry.get("piece"))
       end)
 
       lifetime.seal(em)
@@ -282,7 +282,7 @@ harness.suite(function()
       local em = lifetime.emit(nil)
 
       lifetime.run(lifetime.effect(em, 0, nil), function(scope)
-        emitters.dispatch(obj, scope, { unc = {}, ref = {} }, registry.get("piece"))
+        emitters.dispatch(obj, scope, { unc = {}, ref = {}, held = {} }, registry.get("piece"))
       end)
 
       lifetime.seal(em)
@@ -395,7 +395,7 @@ harness.suite(function()
         local em = lifetime.emit(nil)
 
         lifetime.run(lifetime.effect(em, 0, nil), function(scope)
-          emitters.dispatch(obj, scope, { unc = {}, ref = {} }, registry.get("piece"), constant)
+          emitters.dispatch(obj, scope, { unc = {}, ref = {}, held = {} }, registry.get("piece"), constant)
         end)
 
         lifetime.seal(em)

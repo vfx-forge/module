@@ -89,6 +89,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local clock = require("@mod/clock")
 local logger = require("@mod/logger")
+local retime = require("@mod/retime")
+local resize = require("@mod/resize")
+local recolor = require("@mod/recolor")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
@@ -111,7 +114,8 @@ local ShockwaveRing = require("@vfx/shockwave_ring")
 local ShockwaveLine = require("@vfx/shockwave_line")
 local ShockwaveDebris = require("@vfx/shockwave_debris")
 
-local caches = require("@srv/caches")
+local pool = require("@srv/pool")
+local mover = require("@srv/mover")
 local effects = require("@srv/effects")
 local texture_loader = require("@srv/texture_loader")
 local enabled_effects = require("@srv/enabled_effects")
@@ -194,7 +198,7 @@ function api.init(params: params?)
 
   scheduler.start()
 
-  api.caches = caches.init(api.scope)
+  pool.init(api.scope)
 
   shared.vfx = api
 
@@ -207,13 +211,7 @@ function api.init(params: params?)
   -- init effects
   Sound.init()
   CameraShake.init()
-
-  Mesh.init(api.caches.shared_part)
-  Bezier.init(api.caches.shared_part)
-  Lightning.init(api.caches.shared_part)
-  ShockwaveRing.init(api.caches.shared_part)
-  ShockwaveLine.init(api.caches.shared_part)
-  ShockwaveDebris.init(api.caches.shared_part)
+  ShockwaveDebris.init()
 end
 
 function api.deinit()
@@ -231,19 +229,16 @@ function api.deinit()
     return
   end
 
-  -- the live emits are cleared first, while the caches their parts go back to
-  -- still stand
+  -- the live emits are cleared first, while the pool their parts go back to
+  -- still stands
   effects.deinit()
 
   utility.cleanupScope(api.scope)
 
-  Mesh.deinit()
+  mover.clear()
+
   Sound.deinit()
-  Bezier.deinit()
-  Lightning.deinit()
   CameraShake.deinit()
-  ShockwaveRing.deinit()
-  ShockwaveLine.deinit()
   ShockwaveDebris.deinit()
 
   -- after the shake has put the camera back, and before the plugin unloads, so
@@ -348,9 +343,29 @@ function api.disable(obj: Instance)
   end
 end
 
-api.retime = require("@mod/retime").batch
-api.resize = require("@mod/resize").batch
-api.recolor = require("@mod/recolor")
+-- an edit through the api drops the kept sets of what it edited at once, so an
+-- emit in the same frame never takes one built before it
+local function touch(...: Instance)
+  for _, inst in { ... } do
+    pool.touch(inst)
+  end
+end
+
+function api.retime(factor: number, ...: Instance)
+  retime.batch(factor, ...)
+  touch(...)
+end
+
+function api.resize(factor: number, ...: Instance)
+  resize.batch(factor, ...)
+  touch(...)
+end
+
+function api.recolor(color: Color3, mode: "replace" | "multiply", ...: Instance)
+  recolor(color, mode, ...)
+  touch(...)
+end
+
 -- what is registered, built-in and custom, to read and never to change
 api.effects = table.freeze({
   list = function()

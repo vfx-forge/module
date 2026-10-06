@@ -152,6 +152,10 @@ function Knob.mod(self: Knob, ...: any): Knob
   return self
 end
 
+-- shared by every effect's rows, whose unset rules read through it, and an
+-- author's sdk.knob hands it out
+table.freeze(Knob)
+
 function knob.ordered(v: any)
   local t = typeof(v)
 

@@ -10,6 +10,8 @@ local scheduler = require("@mod/scheduler")
 
 local numeric_common = require("@mod/common/numeric")
 
+local pool = require("@srv/pool")
+
 local Promise = require("@pkg/Promise")
 
 local effects = {}
@@ -493,7 +495,7 @@ end
 -- a nested emit was started by, and the instance its children sit under is
 -- that effect's own; `from` tells a nested emit from an on-finish one
 local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effect?, from: string, ...: Instance)
-  local shared: reader.Shared = { unc = {}, ref = {} }
+  local shared: reader.Shared = { unc = {}, ref = {}, held = {} }
 
   local list = { ... }
   local modules: { registry.Module? } = table.create(#list)
@@ -591,7 +593,12 @@ function effects.prepareEmitFolder(obj: Instance, folderName: string, scope: typ
 
   if folder and folder:IsA("Folder") then
     folder.Parent = nil
-    lifetime.hold(scope, folder)
+
+    -- a kept copy's folder goes back to its set when the piece is released
+    if not pool.kept(folder) then
+      lifetime.hold(scope, folder)
+    end
+
     return folder
   end
 

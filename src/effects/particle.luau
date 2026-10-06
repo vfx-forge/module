@@ -8,6 +8,8 @@ local lifetime = require("@mod/lifetime")
 local timing_common = require("@mod/common/timing")
 local numeric_common = require("@mod/common/numeric")
 
+local pool = require("@srv/pool")
+
 local function always()
   return true
 end
@@ -76,18 +78,39 @@ local function prepare(ctx: reader.Ctx): ParticleEmitter?
     return ref
   end
 
-  local parent, ancestor = utility.cloneParticleAncestry(ref, shared.ref)
+  local links = {}
+
+  local parent, ancestor = utility.cloneParticleAncestry(ref, shared.ref, function(obj: Instance)
+    local link = pool.take(links, obj, true)
+
+    -- a take never places a part, and a link sits where its source does
+    if link:IsA("BasePart") then
+      (link :: BasePart).CFrame = (obj :: BasePart).CFrame
+    end
+
+    return link
+  end)
 
   if not parent then
+    lifetime.releasePlain(links)
     return nil
   end
 
-  local clone = utility.clone(ref)
-  clone.Archivable = false
+  local held = shared.held[ancestor]
+
+  if held == nil then
+    held = {}
+    shared.held[ancestor] = held
+  end
+
+  for _, release in links do
+    table.insert(held, release)
+  end
+
+  local clone = pool.take(scope, ref, true) :: ParticleEmitter
   clone.Parent = parent
 
   if not shared.unc[ancestor] then
-    ancestor.Parent = workspace.Terrain
     shared.unc[ancestor] = 1
   else
     shared.unc[ancestor] += 1
@@ -97,7 +120,16 @@ local function prepare(ctx: reader.Ctx): ParticleEmitter?
     shared.unc[ancestor] -= 1
 
     if shared.unc[ancestor] <= 0 then
-      ancestor:Destroy()
+      -- every link of the ancestor sits under it until it is released, and a
+      -- released one may already be another holder's
+      for source, link in shared.ref do
+        if link == ancestor or link:IsDescendantOf(ancestor) then
+          shared.ref[source] = nil
+        end
+      end
+
+      lifetime.releasePlain(shared.held[ancestor])
+      shared.held[ancestor] = nil
     end
   end)
 
@@ -182,8 +214,8 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   -- what is in the air is wiped only by the last emit playing on the emitter,
   -- since every one that has started holds its TimeScale. one still in its
   -- EmitDelay holds none yet, and wipes nothing
-  utility.onCancel(scope, function()
-    if emitted and lifetime.writing(obj, "property", "TimeScale") <= 1 then
+  lifetime.defer(scope, function(cancelled: boolean)
+    if cancelled and emitted and lifetime.writing(obj, "property", "TimeScale") <= 1 then
       obj:Clear()
     end
   end)

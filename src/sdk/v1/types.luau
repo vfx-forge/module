@@ -55,14 +55,14 @@ export type Params = {
 
 -- an animated param's value
 export type Track = {
-  -- the value at the start
+  -- the param's own value, the one the panel holds, which its modifiers run from or to; its value at a time is at(t)
   value: any,
   -- false when no modifier moves it
   animated: boolean,
   -- seconds the modifiers run
   duration: number,
-  -- the value at a time in seconds
-  at: (elapsed: number) -> any,
+  -- the value at a time in seconds; call it as track:at(t)
+  at: (self: Track, elapsed: number) -> any,
 }
 
 -- what emit is handed about the instance it plays
@@ -137,8 +137,9 @@ export type V1 = {
   },
   -- waits seconds of effect time, and answers the seconds waited
   wait: (ctx: Ctx, seconds: number) -> number,
-  -- calls fn every frame with the frame's seconds and the seconds since the step began, and answers a function that stops it
-  step: (ctx: Ctx, fn: (dt: number, elapsed: number) -> ()) -> () -> (),
+  -- calls fn every frame with the frame's seconds and the seconds since the step began, and answers a function that stops it.
+  -- pass "late" runs it after the camera has moved, for anything placed against the camera
+  step: (ctx: Ctx, fn: (dt: number, elapsed: number) -> (), pass: ("early" | "late")?) -> () -> (),
   -- a curve running for duration seconds
   curve: (duration: number, shape: CurveShape, options: {}?) -> Curve,
   -- plays the curve on effect time, calling fn with each value; the effect waits for it
@@ -157,8 +158,19 @@ export type V1 = {
   getWriter: (ctx: Ctx, obj: Instance, property: string) -> Writer,
   -- a writer for an attribute of obj
   getAttributeWriter: (ctx: Ctx, obj: Instance, name: string) -> Writer,
-  -- runs the effect's time at an animated param's value
+  -- runs the effect's time at a param declared with :mod()
   speed: (ctx: Ctx, track: Track) -> (),
+  -- writes a param's value now, and every frame while modifiers move it; the effect waits for it
+  apply: (ctx: Ctx, row: any, write: (value: any) -> ()) -> (),
+  -- logs text once per module, instance and text; the effect plays on
+  warn: (ctx: Ctx, text: string) -> (),
+  -- plays this emit alone on ctx.ref: a later emit while it plays ends at its own lock, silently,
+  -- though panel modifiers on a reflected property already started for it before emit ran
+  lock: (ctx: Ctx) -> (),
+  -- where the effect runs: "edit" in Studio's editor, "client" or "server" in a running game
+  context: () -> "edit" | "client" | "server",
+  -- the folder every gui the effect makes goes in: StarterGui's in the editor, the local PlayerGui's on a client; refused on the server
+  guiRoot: (ctx: Ctx) -> Folder,
   -- t of the way from a to b, for any value that blends
   lerp: <T>(a: T, b: T, t: number) -> T,
   -- colors blended the way eyes see them

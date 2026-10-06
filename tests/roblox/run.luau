@@ -1,6 +1,7 @@
 local specs = {
   require("./modifier_frame.spec"),
   require("./modifier_codec.spec"),
+  require("./pool.spec"),
 }
 
 return function()

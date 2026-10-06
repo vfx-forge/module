@@ -1,9 +1,11 @@
 local fs = require("@lune/fs")
 local mod = require("@mod/mod")
 local knob = require("@mod/knob")
+local curve = require("@mod/curve")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
+local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
@@ -19,17 +21,40 @@ local Vector3 = harness.datatypes.Vector3
 local sdk = facade.sdk
 
 -- the internal module a custom effect becomes, its emit run under the facade
-local function custom(id: string, emit: (sdk: any, ctx: any, attrs: any, props: any) -> ())
+local function custom(
+  id: string,
+  emit: (sdk: any, ctx: any, attrs: any, props: any) -> (),
+  attributes: { [string]: any }?,
+  properties: { [string]: any }?
+)
   registry.register({
     id = id,
     display = { name = id },
     classifier = "Folder",
-    attributes = {},
-    properties = {},
+    attributes = attributes or {},
+    properties = properties or {},
     emit = function(ctx: any, attrs: any, props: any)
       facade.run(emit, ctx, attrs, props)
     end,
   })
+end
+
+-- what a value an author is handed is, a Track's view told apart from the
+-- reader's own Track and from any other table
+local function kindOf(value: any)
+  local viewed = type(value) == "table" and value.reach == nil and getmetatable(value) ~= nil and table.isfrozen(value)
+
+  return if viewed then "view" else typeof(value)
+end
+
+local function walked(read: any)
+  local kinds = {}
+
+  for name, value in read do
+    kinds[name] = kindOf(value)
+  end
+
+  return kinds
 end
 
 local function fresh()
@@ -125,6 +150,12 @@ harness.suite(function()
       expect(mod.is(sdk.mod.to(1))).toBe(true)
     end)
 
+    test("the classes behind a knob, a mod spec and a curve are frozen, as every effect's share them", function()
+      expect(table.isfrozen(getmetatable(sdk.knob(1)))).toBe(true)
+      expect(table.isfrozen(getmetatable(sdk.mod.to(1)))).toBe(true)
+      expect(table.isfrozen(getmetatable(sdk.curve(1, "linear")))).toBe(true)
+    end)
+
     test("a call without the ctx the emit was handed is refused with the reason", function()
       local ok, err = pcall(sdk.wait, 5 :: any, 1)
 
@@ -141,6 +172,43 @@ harness.suite(function()
       expect(table.isfrozen(c)).toBe(true)
       expect(math.abs(c:at(1) - 1) < 1e-6).toBe(true)
       expect(c:at(0.5) < 0.4).toBe(true)
+    end)
+
+    test(
+      "a preset's shape cannot be rewritten through an author's curve, and every built-in eases as before",
+      function()
+        local c = sdk.curve(1, "easeOut")
+        local shape = c.shape :: any
+
+        expect((pcall(function()
+          shape.xs[2] = 1
+        end))).toBe(false)
+
+        expect((pcall(function()
+          shape.steps = {}
+        end))).toBe(false)
+
+        expect(curve.new(1, "easeOut"):at(0.5)).toBe(0.87509411341477272)
+      end
+    )
+
+    test("a chain or path curve holds a frozen copy of the shape the built-ins share", function()
+      local chain = { vector.create(0, 0), vector.create(0.3, 0.05), vector.create(0.65, 0.95), vector.create(1, 1) }
+      local shared = curve.new(1, chain)
+      local c = sdk.curve(1, chain)
+      local shape = c.shape :: any
+
+      expect(shape ~= shared.shape).toBe(true)
+      expect(table.isfrozen(shape) and table.isfrozen(shape.xs) and table.isfrozen(shape.ys)).toBe(true)
+      expect(shape.steps ~= nil and table.isfrozen(shape.steps)).toBe(true)
+
+      expect((pcall(function()
+        shape.ys[2] = 1
+      end))).toBe(false)
+
+      for _, t in { 0.1, 0.3, 0.5, 0.9 } do
+        expect(c:at(t)).toBe(shared:at(t))
+      end
     end)
 
     test("reads every preset, and a curve param's value", function()
@@ -282,6 +350,59 @@ harness.suite(function()
       scheduler.frame(0.25)
 
       expect(ended(env)).toBe(true)
+    end)
+
+    test("a late step runs after every early step of the frame, and a bad pass is refused", function()
+      fresh()
+
+      local order = {}
+      local err
+
+      custom("passes", function(sdk: any, ctx: any)
+        sdk.step(ctx, function()
+          table.insert(order, "late")
+        end, "late")
+        sdk.step(ctx, function()
+          table.insert(order, "early")
+        end)
+
+        local ok, problem = pcall(sdk.step, ctx, function() end, "middle")
+
+        err = if ok then "" else tostring(problem)
+        sdk.wait(ctx, 0.5)
+      end)
+
+      play()
+      scheduler.frame(0.25)
+
+      expect(order).toEqual({ "early", "late" })
+      expect(string.find(err, 'sdk.step\'s pass is "early" or "late", got middle', 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a step is still called while its effect is paused, with no time passing", function()
+      fresh()
+
+      local seen = {}
+
+      custom("paused_step", function(sdk: any, ctx: any)
+        sdk.step(ctx, function(dt: number)
+          table.insert(seen, dt)
+        end)
+        sdk.wait(ctx, 1)
+      end)
+
+      local env = play()
+
+      env:Pause()
+      scheduler.frame(0.25)
+      env:Resume()
+      scheduler.frame(0.25)
+
+      expect(seen).toEqual({ 0, 0.25 })
+    end)
+
+    test("context answers edit outside a running game", function()
+      expect(sdk.context()).toBe("edit")
     end)
 
     test("wait answers the time waited, and refuses to run inside a step", function()
@@ -482,23 +603,617 @@ harness.suite(function()
       expect(reached).toBe(nil)
     end)
 
-    test("speed runs the effect's time at the track's value", function()
+    test("speed runs the effect's time at a param's value", function()
       fresh()
 
       local seen = {}
 
-      custom("fast", function(sdk: any, ctx: any)
-        sdk.speed(ctx, row(2))
+      custom("fast", function(sdk: any, ctx: any, attrs: any)
+        sdk.speed(ctx, attrs.Speed)
         sdk.step(ctx, function(dt: number)
           table.insert(seen, dt)
         end)
         sdk.wait(ctx, 1)
-      end)
+      end, { Speed = knob(2):mod() })
 
       play()
       scheduler.frame(0.25)
 
       expect(seen).toEqual({ 0.5 })
+    end)
+  end)
+
+  harness.describe("a param's Track", function()
+    test("reaches emit as a frozen view of value, animated and duration, read with :at", function()
+      fresh()
+
+      local seen
+
+      custom("viewed", function(_, _, attrs: any)
+        local track = attrs.Growth
+
+        seen = {
+          frozen = table.isfrozen(track),
+          value = track.value,
+          animated = track.animated,
+          duration = track.duration,
+          at = track:at(0.5),
+          same = rawequal(track, attrs.Growth),
+          fields = {},
+        }
+
+        for key in track do
+          table.insert(seen.fields, key)
+        end
+
+        table.sort(seen.fields)
+      end, { Growth = knob(2):mod(mod.from(0):duration(1):curve("linear")) })
+
+      play()
+
+      expect(seen.frozen).toBe(true)
+      expect(seen.value).toBe(2)
+      expect(seen.animated).toBe(true)
+      expect(seen.duration).toBe(1)
+      expect(math.abs(seen.at - 1) < 0.2).toBe(true)
+      expect(seen.same).toBe(true)
+      expect(seen.fields).toEqual({ "animated", "duration", "value" })
+    end)
+
+    test("refuses a dot call, naming the colon call", function()
+      fresh()
+
+      local err
+
+      custom("dotted", function(_, _, attrs: any)
+        local ok, problem = pcall(attrs.Growth.at, 0.5)
+
+        err = if ok then "" else tostring(problem)
+      end, { Growth = knob(2):mod() })
+
+      play()
+
+      expect(string.find(err, "call track:at(t), not track.at(t)", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("attrs and props are read only, and iterate as views", function()
+      fresh()
+
+      local wrote, attrKinds, propKinds
+
+      custom("readonly", function(_, _, attrs: any, props: any)
+        wrote = pcall(function()
+          attrs.Growth = 5
+        end)
+
+        attrKinds = walked(attrs)
+        propKinds = walked(props)
+      end, { Growth = knob(2):mod(), Count = knob(3) }, { Size = knob(1):mod() })
+
+      play()
+
+      expect(wrote).toBe(false)
+      expect(attrKinds).toEqual({ Growth = "view", Count = "number" })
+      expect(propKinds).toEqual({ Size = "view" })
+    end)
+
+    test("a copy of attrs is refused by name", function()
+      fresh()
+
+      local err
+
+      custom("copied", function(_, _, attrs: any)
+        local copy = table.clone(attrs)
+        local ok, problem = pcall(function()
+          return copy.Growth
+        end)
+
+        err = if ok then "" else tostring(problem)
+      end, { Growth = knob(2):mod() })
+
+      play()
+
+      expect(string.find(err, "attrs and props are read only windows", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a rule and duration see views too, never the reader's Track", function()
+      fresh()
+
+      local inRule, inDuration, ruleKinds, durationKinds
+      local source = {
+        sdk_version = 1,
+        id = "ruled",
+        display = { name = "Ruled" },
+        classifier = "BasePart.Ruled",
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Growth = sdk.knob(2):mod(),
+              Shown = sdk.knob(true):readonly(function(_, attrs: any, props: any)
+                inRule = attrs.Growth.reach == nil and attrs.Growth:at(0) == 2
+                ruleKinds = { touched = kindOf(props.Transparency), attrs = walked(attrs), props = walked(props) }
+
+                return false
+              end),
+            },
+            properties = {
+              Transparency = sdk.knob(0):mod(),
+            },
+          }
+        end,
+        duration = function(_, attrs: any, props: any)
+          inDuration = attrs.Growth.reach == nil and attrs.Growth.value == 2
+          durationKinds = {
+            Growth = kindOf(attrs.Growth),
+            Transparency = kindOf(props.Transparency),
+            attrs = walked(attrs),
+            props = walked(props),
+          }
+
+          return 1
+        end,
+        emit = function() end,
+      }
+
+      local sdk_custom = require("@root/sdk/custom")
+      local added = sdk_custom.add("ruled", source, "tests.ruled")
+      local part = harness.make("Part", harness.make("Folder"))
+
+      part:AddTag("Ruled")
+      effects.emit(0, part)
+      sdk_custom.clear()
+
+      expect(added).toBe(true)
+      expect(inRule).toBe(true)
+      expect(inDuration).toBe(true)
+      expect(ruleKinds).toEqual({
+        touched = "view",
+        attrs = { Growth = "view" },
+        props = { Transparency = "view" },
+      })
+
+      -- the mod rows a duration pulls are provisional and never kept, so its
+      -- walk finds none
+      expect(durationKinds).toEqual({
+        Growth = "view",
+        Transparency = "view",
+        attrs = {},
+        props = {},
+      })
+    end)
+
+    test("speed refuses anything that is not a param's Track", function()
+      fresh()
+
+      local err
+
+      custom("raw", function(sdk: any, ctx: any)
+        local ok, problem = pcall(sdk.speed, ctx, row(2))
+
+        err = if ok then "" else tostring(problem)
+      end)
+
+      play()
+
+      expect(string.find(err, "sdk.speed takes a param declared with :mod()", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
+  harness.describe("sdk.apply", function()
+    test("writes a plain value once", function()
+      fresh()
+
+      local seen = {}
+
+      custom("plain", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Count, function(value: number)
+          table.insert(seen, value)
+        end)
+        sdk.wait(ctx, 0.5)
+      end, { Count = knob(3) })
+
+      play()
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(seen).toEqual({ 3 })
+    end)
+
+    test("writes an animated row at once and every frame it runs, and a static one once", function()
+      fresh()
+
+      local moving, still = {}, {}
+
+      custom("animated", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Growth, function(value: number)
+          table.insert(moving, value)
+        end)
+        sdk.apply(ctx, attrs.Flat, function(value: number)
+          table.insert(still, value)
+        end)
+        sdk.wait(ctx, 1)
+      end, { Growth = knob(2):mod(mod.from(0):duration(0.5)), Flat = knob(4):mod() })
+
+      play()
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(moving[1]).toBe(0)
+      expect(#moving >= 3).toBe(true)
+      expect(moving[#moving]).toBe(2)
+      expect(still).toEqual({ 4 })
+    end)
+
+    test("apply then return: the write reaches the row's end and the effect ends only after its span", function()
+      fresh()
+
+      local seen = {}
+
+      custom("applied", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Growth, function(value: number)
+          table.insert(seen, value)
+        end)
+      end, { Growth = knob(2):mod(mod.from(0):duration(0.5)) })
+
+      local env = play()
+
+      expect(ended(env)).toBe(false)
+
+      scheduler.frame(0.25)
+
+      expect(ended(env)).toBe(false)
+
+      scheduler.frame(0.25)
+
+      expect(seen[1]).toBe(0)
+      expect(#seen >= 3).toBe(true)
+      expect(seen[#seen]).toBe(2)
+      expect(ended(env)).toBe(true)
+    end)
+
+    test("a static row applied then returned ends the effect at once", function()
+      fresh()
+
+      local seen = {}
+
+      custom("applied_flat", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Flat, function(value: number)
+          table.insert(seen, value)
+        end)
+      end, { Flat = knob(4):mod() })
+
+      local env = play()
+
+      expect(seen).toEqual({ 4 })
+      expect(ended(env)).toBe(true)
+    end)
+
+    test("refuses a table that is not a param's value", function()
+      fresh()
+
+      local err
+
+      custom("apply_raw", function(sdk: any, ctx: any)
+        local ok, problem = pcall(sdk.apply, ctx, row(2), function() end)
+
+        err = if ok then "" else tostring(problem)
+      end)
+
+      play()
+
+      expect(string.find(err, "sdk.apply takes a param's value", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a write that throws is warned once and ends the effect", function()
+      fresh()
+
+      custom("throws", function(sdk: any, ctx: any, attrs: any)
+        sdk.apply(ctx, attrs.Growth, function()
+          error("bad write")
+        end)
+        sdk.wait(ctx, 1)
+      end, { Growth = knob(2):mod(mod.from(0):duration(0.5)) })
+
+      local env
+      local warnings = harness.captureWarnings(function()
+        env = play()
+        scheduler.frame(0.25)
+      end)
+
+      expect(#warnings).toBe(1)
+      expect(string.find(warnings[1], "bad write", 1, true) ~= nil).toBe(true)
+      expect(ended(env)).toBe(true)
+    end)
+  end)
+
+  harness.describe("sdk.warn", function()
+    test("warns once per text and instance, and the effect plays on", function()
+      fresh()
+
+      local after = false
+
+      custom("noted", function(sdk: any, ctx: any)
+        sdk.warn(ctx, "no target found")
+        sdk.warn(ctx, "no target found")
+        sdk.warn(ctx, "too far")
+        after = true
+      end)
+
+      local folder = harness.make("Folder")
+      local warnings = harness.captureWarnings(function()
+        effects.emit(0, folder)
+        effects.emit(0, folder)
+      end)
+
+      expect(after).toBe(true)
+      expect(#warnings).toBe(2)
+      expect(string.find(warnings[1], "custom effect noted on", 1, true) ~= nil).toBe(true)
+      expect(string.find(warnings[1], ": no target found", 1, true) ~= nil).toBe(true)
+      expect(string.find(warnings[2], ": too far", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("never silences a later failure on the same instance", function()
+      fresh()
+
+      custom("then_fails", function(sdk: any, ctx: any)
+        sdk.warn(ctx, "careful")
+        error("broke")
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        effects.emit(0, harness.make("Folder"))
+      end)
+
+      expect(#warnings).toBe(2)
+      expect(string.find(warnings[2], "broke", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("refuses a text that is not a string", function()
+      fresh()
+
+      local err
+
+      custom("bad_text", function(sdk: any, ctx: any)
+        local ok, problem = pcall(sdk.warn, ctx, 5)
+
+        err = if ok then "" else tostring(problem)
+      end)
+
+      play()
+
+      expect(string.find(err, "sdk.warn takes a string, got number", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
+  harness.describe("sdk.lock", function()
+    test("a second emit on the instance ends silently and the first plays on", function()
+      fresh()
+
+      local played = 0
+
+      custom("locked", function(sdk: any, ctx: any)
+        sdk.lock(ctx)
+        played += 1
+        sdk.wait(ctx, 1)
+      end)
+
+      local folder = harness.make("Folder")
+      local first, second
+      local warnings = harness.captureWarnings(function()
+        first = effects.emit(0, folder)
+        second = effects.emit(0, folder)
+      end)
+
+      expect(played).toBe(1)
+      expect(#warnings).toBe(0)
+      expect(ended(second)).toBe(true)
+      expect(ended(first)).toBe(false)
+
+      scheduler.frame(0.6)
+      scheduler.frame(0.6)
+
+      expect(ended(first)).toBe(true)
+
+      effects.emit(0, folder)
+
+      expect(played).toBe(2)
+    end)
+
+    test("a second lock from the emit that holds it plays on", function()
+      fresh()
+
+      local played = 0
+
+      custom("locked_twice", function(sdk: any, ctx: any)
+        sdk.lock(ctx)
+        sdk.lock(ctx)
+        played += 1
+        sdk.wait(ctx, 1)
+      end)
+
+      local env
+      local warnings = harness.captureWarnings(function()
+        env = play()
+      end)
+
+      expect(played).toBe(1)
+      expect(#warnings).toBe(0)
+      expect(ended(env)).toBe(false)
+
+      scheduler.frame(0.6)
+      scheduler.frame(0.6)
+
+      expect(ended(env)).toBe(true)
+    end)
+
+    test("refuses a call from a step", function()
+      fresh()
+
+      local err
+
+      custom("lock_step", function(sdk: any, ctx: any)
+        sdk.step(ctx, function()
+          if err == nil then
+            local ok, problem = pcall(sdk.lock, ctx)
+
+            err = if ok then "" else tostring(problem)
+          end
+        end)
+        sdk.wait(ctx, 0.5)
+      end)
+
+      play()
+      scheduler.frame(0.25)
+
+      expect(string.find(err, "sdk.lock runs in emit only", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
+  harness.describe("sdk.guiRoot", function()
+    -- lune has no Instance global, so the folder is made through the seam a
+    -- spec stands a real one in for
+    local function withInstances(body: () -> ())
+      local create = adapters.create
+
+      adapters.create = function(class: string)
+        return harness.datatypes.Instance.new(class)
+      end
+
+      local ok, err = pcall(body)
+
+      adapters.create = create
+
+      assert(ok, err)
+    end
+
+    test("answers one non-archivable folder under StarterGui in the editor, made again once destroyed", function()
+      withInstances(function()
+        fresh()
+
+        local first, second
+
+        custom("gui_root", function(sdk: any, ctx: any)
+          first = sdk.guiRoot(ctx)
+          second = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        local starter = game:GetService("StarterGui")
+
+        expect(first).toBe(second)
+        expect(first.Name).toBe("VFXForgeGui")
+        expect(first.ClassName).toBe("Folder")
+        expect(first.Archivable).toBe(false)
+        expect(first.Parent).toBe(starter)
+
+        first:Destroy()
+
+        local third
+
+        fresh()
+        custom("gui_root_again", function(sdk: any, ctx: any)
+          third = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        expect(third ~= first).toBe(true)
+        expect(third.Parent).toBe(starter)
+
+        third:Destroy()
+      end)
+    end)
+
+    test("never takes a user's archivable folder of the same name", function()
+      withInstances(function()
+        fresh()
+
+        local starter = game:GetService("StarterGui")
+        local theirs = harness.make("Folder", starter)
+
+        theirs.Name = "VFXForgeGui"
+
+        local root
+
+        custom("gui_root_theirs", function(sdk: any, ctx: any)
+          root = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        expect(root ~= theirs).toBe(true)
+        expect(root.Archivable).toBe(false)
+
+        theirs:Destroy()
+        root:Destroy()
+      end)
+    end)
+
+    test("takes a non-archivable folder of the name already under StarterGui", function()
+      withInstances(function()
+        fresh()
+
+        local earlier
+
+        custom("gui_root_earlier", function(sdk: any, ctx: any)
+          earlier = sdk.guiRoot(ctx)
+        end)
+
+        play()
+        earlier:Destroy()
+
+        local starter = game:GetService("StarterGui")
+        local ours = harness.make("Folder", starter)
+
+        ours.Name = "VFXForgeGui"
+        ours.Archivable = false
+
+        local root
+
+        fresh()
+        custom("gui_root_ours", function(sdk: any, ctx: any)
+          root = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        expect(root).toBe(ours)
+
+        ours:Destroy()
+      end)
+    end)
+
+    test("lets go of its root once something makes it archivable", function()
+      withInstances(function()
+        fresh()
+
+        local earlier
+
+        custom("gui_root_kept", function(sdk: any, ctx: any)
+          earlier = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        earlier.Archivable = true
+
+        local root
+
+        fresh()
+        custom("gui_root_after", function(sdk: any, ctx: any)
+          root = sdk.guiRoot(ctx)
+        end)
+
+        play()
+
+        expect(root ~= earlier).toBe(true)
+        expect(root.Archivable).toBe(false)
+
+        earlier:Destroy()
+        root:Destroy()
+      end)
     end)
   end)
 
@@ -798,12 +1513,13 @@ harness.suite(function()
         refused("tween", sdk.tween, ctx, sdk.curve(1, "linear"), math.floor)
         refused("hold", sdk.hold, ctx, print)
         refused("spawn", sdk.spawn, join, print, "http://127.0.0.1:1/")
+        refused("apply", sdk.apply, ctx, 1, print)
       end)
 
       play()
       refused("curve", sdk.curve, 1, math.floor)
 
-      expect(refusals).toEqual({ step = true, tween = true, hold = true, spawn = true, curve = true })
+      expect(refusals).toEqual({ step = true, tween = true, hold = true, spawn = true, apply = true, curve = true })
     end)
 
     test("a function of the author's own is still taken, and spawn hands it its arguments", function()

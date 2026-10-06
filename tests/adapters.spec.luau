@@ -317,7 +317,7 @@ harness.suite(function()
       }
 
       lifetime.run(fx, function(scope: lifetime.effect)
-        local ctx = { ref = obj, scope = scope, shared = { unc = {}, ref = obj.refMap or {} } }
+        local ctx = { ref = obj, scope = scope, shared = { unc = {}, ref = obj.refMap or {}, held = {} } }
 
         particle.emit(
           ctx :: any,
@@ -463,6 +463,11 @@ harness.suite(function()
 
       template.Clone = function()
         return clone
+      end
+
+      -- the pool asks what it copied whether it is a part
+      clone.IsA = function()
+        return false
       end
 
       local window = play(template, 1, 1)

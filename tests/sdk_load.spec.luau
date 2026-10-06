@@ -527,6 +527,566 @@ harness.suite(function()
       expect(seen.duration).toBe(2)
       expect(seen.scope).toBe(nil)
     end)
+
+    test("a frozen knob holding a rule of its own is refused by name, before the rule can run", function()
+      fresh()
+
+      local ran = false
+
+      local function rule()
+        ran = true
+        return false
+      end
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = {
+                Rise = sdk.knob(0):mod(sdk.mod.to(1)),
+                Locked = table.freeze(sdk.knob(1):readonly(rule)),
+                Hidden = table.freeze(sdk.knob(1):hidden(rule)),
+              },
+              properties = {
+                Size = table.freeze(sdk.knob(rule)),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({
+        "a knob must come fresh from sdk.knob; Hidden is frozen",
+        "a knob must come fresh from sdk.knob; Locked is frozen",
+        "a knob must come fresh from sdk.knob; Size is frozen",
+      })
+      expect(registry.get("my_effect")).toBe(nil)
+
+      effects.emit(0, tagged())
+
+      expect(ran).toBe(false)
+    end)
+
+    test("a frozen curve knob, default modifier or options are refused by name rather than thrown on", function()
+      fresh()
+
+      local function rule()
+        return 0.25
+      end
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            local fall = sdk.mod.to(0):duration(rule)
+
+            table.freeze(fall.opts)
+
+            return {
+              attributes = {
+                Fade = table.freeze(sdk.knob("easeOut"):curve("easeOut")),
+                Rise = sdk.knob(0):mod(table.freeze(sdk.mod.to(rule))),
+                Fall = sdk.knob(1):mod(fall),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({
+        "a knob must come fresh from sdk.knob; Fade is frozen",
+        "a default modifier must come fresh from sdk.mod; one of Fall's is frozen",
+        "a default modifier must come fresh from sdk.mod; one of Rise's is frozen",
+      })
+    end)
+
+    test("a default modifier whose options are not the plain table sdk.mod made is refused by name", function()
+      fresh()
+
+      local ran = false
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            local hooked = sdk.mod.to(2)
+            local swapped = sdk.mod.to(function()
+              ran = true
+              return 1
+            end)
+
+            setmetatable(hooked.opts, {
+              __index = function(_, key: string)
+                if key == "duration" then
+                  return function()
+                    ran = true
+                    return 0.25
+                  end
+                end
+
+                return nil
+              end,
+              __newindex = function() end,
+            })
+
+            swapped.opts = "" :: any
+
+            return {
+              attributes = {
+                Rise = sdk.knob(0):mod(hooked),
+                Fall = sdk.knob(1):mod(swapped),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({
+        "a default modifier of Fall must keep the options sdk.mod made it",
+        "a default modifier of Rise must keep the options sdk.mod made it",
+      })
+
+      effects.emit(0, tagged())
+
+      expect(ran).toBe(false)
+    end)
+
+    test(
+      "a module whose knobs the registry froze on its last load loads again, its rules still handed views",
+      function()
+        fresh()
+
+        local seen = {}
+        local rows
+
+        local function params(sdk: any)
+          if rows == nil then
+            rows = {
+              attributes = {
+                Plain = table.freeze(sdk.knob(2)),
+                Fade = sdk.knob("easeOut"):curve("easeOut"),
+                Rise = sdk.knob(0):mod(sdk.mod.to(1):duration(function()
+                  return 0.25
+                end)),
+                Locked = sdk.knob(1):readonly(function(ctx: any, attrs: any)
+                  seen.ctx = ctx
+                  seen.rise = attrs.Rise
+                  return false
+                end),
+              },
+            }
+          end
+
+          return rows
+        end
+
+        expect((custom.add("a", effect({ params = params }), "ReplicatedStorage.A"))).toBe(true)
+        expect(table.isfrozen(rows.attributes.Locked)).toBe(true)
+        expect(table.isfrozen(rows.attributes.Rise.modDefault[1].opts)).toBe(true)
+
+        local ok, found = custom.add("a", effect({ params = params }), "ReplicatedStorage.A")
+
+        expect(found).toEqual({})
+        expect(ok).toBe(true)
+
+        effects.emit(0, tagged())
+
+        expect(seen.ctx.scope).toBe(nil)
+        expect(seen.rise ~= nil).toBe(true)
+        expect(seen.rise.reach).toBe(nil)
+      end
+    )
+
+    test("attributes that answer a row through __index are refused, and the rule behind it never runs", function()
+      fresh()
+
+      local ran = false
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = setmetatable({ FadeTime = sdk.knob(1) }, {
+                __index = function(_, key: string)
+                  if key ~= "Evil" then
+                    return nil
+                  end
+
+                  return sdk.knob(1):readonly(function()
+                    ran = true
+                    return false
+                  end)
+                end,
+              }),
+            }
+          end,
+          duration = function(_, attrs: any)
+            return if attrs.Evil ~= nil then 1 else 2
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({ "params.attributes must be a plain table, with no metatable" })
+
+      effects.emit(0, tagged())
+
+      expect(ran).toBe(false)
+    end)
+
+    test("a default modifier list that iterates through __iter is refused before anything walks it", function()
+      fresh()
+
+      local armed = false
+      local ran = false
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            local rise = sdk.knob(0):mod(sdk.mod.to(1))
+            local evil = sdk.mod.to(function()
+              ran = true
+              return 1
+            end)
+
+            rise.modDefault = setmetatable(rise.modDefault, {
+              __iter = function(list: any)
+                return next, if armed then { evil } else list
+              end,
+            })
+
+            return { attributes = { Rise = rise } }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      armed = true
+
+      expect(ok).toBe(false)
+      expect(found).toEqual({ "the default modifiers of Rise must be a plain table, with no metatable" })
+
+      effects.emit(0, tagged())
+
+      expect(ran).toBe(false)
+    end)
+
+    test("the author's attributes changed after the add change nothing the reader sees", function()
+      fresh()
+
+      local seen
+      local attributes
+
+      local ok = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            attributes = { FadeTime = sdk.knob(0.5) }
+
+            return { attributes = attributes }
+          end,
+          emit = function(_, _, attrs: any)
+            seen = { fade = attrs.FadeTime, extra = attrs.Extra }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(true)
+      expect(table.isfrozen(attributes)).toBe(false)
+
+      attributes.FadeTime = nil
+      attributes.Extra = facade.sdk.knob(3)
+
+      local module = registry.get("my_effect")
+
+      expect(module.attributes.Extra).toBe(nil)
+      expect(module.attributes.FadeTime ~= nil).toBe(true)
+
+      effects.emit(0, tagged())
+
+      expect(seen.fade).toBe(0.5)
+      expect(seen.extra).toBe(nil)
+    end)
+
+    test("every table the runtime keeps is refused by name when it carries a metatable", function()
+      fresh()
+
+      local hidden = setmetatable({}, { __metatable = false })
+
+      expect(refusal(setmetatable(effect(), {}))).toEqual({
+        "ReplicatedStorage.MyEffect answers a table with a metatable, not a plain effect table",
+      })
+
+      expect(refusal(effect({ display = setmetatable({ name = "My Effect" }, { __metatable = false }) }))).toEqual({
+        "display must be a plain table, with no metatable",
+      })
+
+      expect(refusal(effect({ display = { name = "My Effect", reflect = setmetatable({ "Color" }, {}) } }))).toEqual({
+        "display.reflect must be a plain table, with no metatable",
+      })
+
+      expect(refusal(effect({ layout = { setmetatable({ title = "Fade", entries = { "FadeTime" } }, {}) } }))).toEqual({
+        "layout must be plain tables, with no metatable",
+      })
+
+      expect(refusal(effect({
+        params = function()
+          return setmetatable({}, {})
+        end,
+      }))).toEqual({ "params must answer a plain table, with no metatable" })
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            properties = setmetatable({ Transparency = sdk.knob(0) }, hidden),
+          }
+        end,
+      }))).toEqual({ "params.properties must be a plain table, with no metatable" })
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          local old = sdk.knob(1):aliases("Old")
+
+          setmetatable(old.names, {})
+
+          return {
+            attributes = {
+              Old = old,
+              Picked = sdk.knob("a"):options(setmetatable({ "a", "b" }, {})),
+              Low = sdk.knob(function() end):min(setmetatable({}, {})),
+              High = sdk.knob(function() end):max(setmetatable({}, {})),
+              Rise = sdk.knob(0):mod(sdk.mod.to(setmetatable({}, {}))),
+            },
+          }
+        end,
+      }))).toEqual({
+        "the max of High must be a number or a value of its type, not a table",
+        "the min of Low must be a number or a value of its type, not a table",
+        "the aliases of Old must be a plain table, with no metatable",
+        "the options of Picked must be a plain table, with no metatable",
+        "the endpoint of a default modifier of Rise must be a value or a rule, not a table",
+      })
+    end)
+
+    test("a default modifier that is no mod spec is refused with the registry's reason", function()
+      fresh()
+
+      local found = refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Rise = sdk.knob(0):mod({} :: any),
+              Fall = sdk.knob(1):mod({ opts = "", endpoint = 0 } :: any),
+            },
+          }
+        end,
+      }))
+
+      -- in the order the registry walks the rows, which keeps none
+      table.sort(found)
+
+      expect(found).toEqual({
+        "a default modifier of Fall is not a mod spec",
+        "a default modifier of Rise is not a mod spec",
+      })
+    end)
+
+    test("a knob's list that is no table is refused by name rather than thrown on", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          local old = sdk.knob(1)
+          local rise = sdk.knob(0):mod()
+
+          old.names = nil
+          rise.modDefault = 5
+
+          return {
+            attributes = {
+              Old = old,
+              Picked = sdk.knob("a"):options("a" :: any),
+              Rise = rise,
+            },
+          }
+        end,
+      }))).toEqual({
+        "the aliases of Old must be a list of names",
+        "the options of Picked must be a list of names",
+        "the default modifiers of Rise must be a list of sdk.mod specs",
+      })
+    end)
+
+    test("a layout holding one table twice is refused at once, a cycle among them", function()
+      fresh()
+
+      local group = { title = "Fade", entries = { "FadeTime" } }
+
+      table.insert(group.entries, group)
+
+      expect(refusal(effect({ layout = { group } }))).toEqual({ "layout must not hold one table twice" })
+
+      local shared = { "FadeTime" }
+
+      expect(refusal(effect({
+        layout = { { title = "A", entries = shared }, { title = "B", entries = shared } },
+      }))).toEqual({ "layout must not hold one table twice" })
+
+      -- each level holding the next twice, which a copy walks once per path
+      local deep: any = { "FadeTime" }
+
+      for _ = 1, 24 do
+        deep = { title = "Fade", entries = { deep, deep } }
+      end
+
+      local started = os.clock()
+
+      local found = refusal(effect({ layout = { deep } }))
+
+      expect(table.find(found, "layout must not hold one table twice") ~= nil).toBe(true)
+      expect(os.clock() - started < 0.01).toBe(true)
+    end)
+
+    test("a layout nested deeper than eight tables is refused, and one of seven loads", function()
+      fresh()
+
+      local function nested(groups: number)
+        local entries: any = { "FadeTime" }
+
+        for _ = 1, groups do
+          entries = { { title = "Fade", entries = entries } }
+        end
+
+        return entries
+      end
+
+      -- the innermost entries, then a list and a group for each level
+      expect(load.assemble(effect({ layout = nested(3) }), "ReplicatedStorage.MyEffect") ~= nil).toBe(true)
+      expect(refusal(effect({ layout = nested(4) }))).toEqual({ "layout must nest no deeper than 8 tables" })
+    end)
+
+    test("a table bound, a table endpoint or an alias that is no string is refused, on a frozen row too", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Low = table.freeze(sdk.knob(1):min({})),
+              High = sdk.knob(function() end):max({}),
+              Old = sdk.knob(1):aliases("Before", {} :: any),
+              Rise = sdk.knob(0):mod(table.freeze(sdk.mod.to({}))),
+            },
+          }
+        end,
+      }))).toEqual({
+        "the max of High must be a number or a value of its type, not a table",
+        "the min of Low must be a number or a value of its type, not a table",
+        "the aliases of Old must be a list of names",
+        "the endpoint of a default modifier of Rise must be a value or a rule, not a table",
+      })
+    end)
+
+    test("a knob's own fields are checked by type, so no reason ever turns an author's table to text", function()
+      fresh()
+
+      local told = false
+      local loud = setmetatable({}, {
+        __tostring = function()
+          told = true
+          return "loud"
+        end,
+      })
+
+      local found = refusal(effect({
+        params = function(sdk: any)
+          local kind = sdk.knob(1)
+          local order = sdk.knob(1)
+
+          kind.default = loud
+          order.order = loud
+
+          return {
+            attributes = {
+              Label = sdk.knob(1):label(loud),
+              Hint = sdk.knob(1):hint(loud),
+              Unit = sdk.knob(1):unit(loud),
+              Curve = sdk.knob():curve(loud),
+              Kind = kind,
+              Order = order,
+              Lane = sdk.knob(0):mod(sdk.mod.to(1):lane(loud)),
+              Eased = sdk.knob(0):mod(sdk.mod.to(1):curve(loud)),
+              Timed = sdk.knob(0):mod(sdk.mod.to(1):duration(loud)),
+              Waits = sdk.knob(0):mod(sdk.mod.to(1):delay(loud)),
+            },
+          }
+        end,
+      }))
+
+      expect(found).toEqual({
+        "the curve of Curve must be a preset's name",
+        "the curve of a default modifier of Eased must be a preset's name, a curve param's value or a rule",
+        "the hint of Hint must be a string",
+        "Kind must keep the fields sdk.knob made it",
+        "the label of Label must be a string",
+        "the lane of a default modifier of Lane must be a string",
+        "Order must keep the fields sdk.knob made it",
+        "the duration of a default modifier of Timed must be a number or a rule",
+        "the unit of Unit must be a string",
+        "the delay of a default modifier of Waits must be a number or a rule",
+      })
+      expect(told).toBe(false)
+    end)
+
+    test("a row named by anything but a string is refused before its name is ever turned to text", function()
+      fresh()
+
+      local named = false
+      local key = setmetatable({}, {
+        __tostring = function()
+          named = true
+          return "Key"
+        end,
+      })
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return { attributes = { [key] = sdk.knob(1), FadeTime = sdk.knob(0.5) } }
+        end,
+      }))).toEqual({ "params.attributes names a row by a table, not a string" })
+
+      expect(named).toBe(false)
+    end)
+
+    test("the effect table and its display are read once, so params cannot change them after the check", function()
+      fresh()
+
+      local author = effect({ display = { name = "My Effect" } })
+
+      author.params = function(sdk: any)
+        author.display.reflect = setmetatable({ "Color" }, {})
+        author.display.name = 4
+
+        return { attributes = { FadeTime = sdk.knob(0.5) } }
+      end
+
+      local module = load.assemble(author, "ReplicatedStorage.MyEffect")
+
+      expect(module ~= nil).toBe(true)
+      expect(module.display.name).toBe("My Effect")
+      expect(module.display.reflect).toBe(nil)
+    end)
   end)
 
   harness.describe("classifying a custom effect's instance", function()
@@ -946,6 +1506,60 @@ harness.suite(function()
   end)
 
   harness.describe("replacing and removing a custom effect", function()
+    test("an engine function as unload is refused, since the host would call it with its own rights", function()
+      fresh()
+
+      expect(refusal(effect({ unload = print }))).toEqual({
+        "unload must be a function of your own, not an engine function",
+      })
+    end)
+
+    test("a refused module with a metatable is never read through it on the host's thread", function()
+      fresh()
+
+      local touched = false
+      local author = setmetatable(effect(), {
+        __index = function()
+          touched = true
+          return nil
+        end,
+      })
+
+      expect((custom.add("a", author, "ReplicatedStorage.A"))).toBe(false)
+      expect(touched).toBe(false)
+    end)
+
+    test("the unload called is the one the module held when it loaded, refused or removed", function()
+      fresh()
+
+      local called = {}
+
+      local function swapping(name: string, extra: { [string]: any }?)
+        local author = effect(extra)
+
+        author.unload = function()
+          table.insert(called, name)
+        end
+
+        author.params = function(sdk: any)
+          author.unload = function()
+            table.insert(called, `{name} swapped`)
+          end
+
+          return { attributes = { FadeTime = sdk.knob(0.5) } }
+        end
+
+        return author
+      end
+
+      expect((custom.add("a", swapping("kept"), "ReplicatedStorage.A"))).toBe(true)
+      expect((custom.add("b", swapping("refused", { emit = 4 }), "ReplicatedStorage.B"))).toBe(false)
+
+      custom.remove("a")
+
+      expect(called).toEqual({ "refused", "kept" })
+    end)
+
     test("a new version under the same key replaces the old, whose unload runs once", function()
       fresh()
 
