@@ -802,6 +802,43 @@ local function readsChild(module: Module?, child: Instance): boolean
   return owned[module][legacy_mods.childSource(child)][child.Name] == true
 end
 
+-- one instance of each class under root, from one walk, so a scan asks whether
+-- a class occurs there at all without a query. taken fresh for every scan
+local function classesUnder(root: Instance): { [string]: Instance }
+  local seen: { [string]: Instance } = {}
+
+  for _, inst in root:GetDescendants() do
+    local class = inst.ClassName
+
+    if seen[class] == nil then
+      seen[class] = inst
+    end
+  end
+
+  return seen
+end
+
+local function occurs(seen: { [string]: Instance }, answers: { [string]: boolean }, class: string): boolean
+  local known = answers[class]
+
+  if known ~= nil then
+    return known
+  end
+
+  local found = false
+
+  for _, inst in seen do
+    if inst:IsA(class) then
+      found = true
+      break
+    end
+  end
+
+  answers[class] = found
+
+  return found
+end
+
 -- every descendant of root that some module classifies, plus every legacy
 -- tween child no module reads, less the ones another hit or the root's own
 -- module claims as components. a module whose components selector is the whole
@@ -815,8 +852,30 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
   local hits: { Hit } = {}
   local taken: { [Instance]: boolean } = {}
 
+  -- a module classifies only instances of its subjects' classes, so one whose
+  -- classes nothing under the root is can match nothing there and is not asked
+  local seen = classesUnder(root)
+  local answers: { [string]: boolean } = {}
+
   -- the first module to reach an instance takes it, in the order `of` asks
   for _, module in order do
+    local subjects = shape[module].subjects
+
+    if subjects ~= nil then
+      local any = false
+
+      for _, class in subjects do
+        if occurs(seen, answers, class) then
+          any = true
+          break
+        end
+      end
+
+      if not any then
+        continue
+      end
+    end
+
     for _, inst in query(scanRoot(root, shape[module].depth), module.classifier) do
       -- a query run from above the root reaches the root's siblings too, and
       -- none of them is this scan's
@@ -833,7 +892,7 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
   -- effect had a module and still do: every RayValue no module classified, at
   -- one query for the scan. what the child carries is dispatch's business, so
   -- nothing here reads it
-  for _, inst in query(root, "RayValue") do
+  for _, inst in if occurs(seen, answers, "RayValue") then query(root, "RayValue") else {} do
     if taken[inst] then
       continue
     end
