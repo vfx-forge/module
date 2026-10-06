@@ -575,6 +575,9 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
   return prevOut
 end
 
+-- an endpoint no frame has read yet
+local UNREAD = table.freeze({})
+
 -- one entry of a queue as its sampler keeps it between frames: where schedule
 -- put it and how long it runs, placed again whenever the queue is, the curve's
 -- shape looked up once, and the endpoints and drawn alphas, each worked out the
@@ -589,8 +592,6 @@ export type Step = {
   shape: ((t: number) -> number)?,
   start: any,
   finish: any,
-  startHeld: boolean,
-  finishHeld: boolean,
   alpha: number?,
   axes: { number }?,
 }
@@ -622,12 +623,8 @@ function modifiers.compile(queue: { any }, ctx: Ctx): { Step }
       offset = 0,
       length = nil,
       shape = if form == "string" or form == "buffer" then curve.sampler(shaped) else nil,
-      start = nil,
-      finish = nil,
-      startHeld = false,
-      finishHeld = false,
-      alpha = nil,
-      axes = nil,
+      start = UNREAD,
+      finish = UNREAD,
     }
   end
 
@@ -659,10 +656,8 @@ local function endOf(step: Step, ctx: Ctx, closing: boolean): any
 
   if closing then
     step.finish = v
-    step.finishHeld = true
   else
     step.start = v
-    step.startHeld = true
   end
 
   return v
@@ -700,13 +695,21 @@ function modifiers.sample(steps: { Step }, ctx: Ctx, elapsed: number, base: any)
     if m.chain and haveOut then
       startVal = prevOut
     elseif m.start then
-      startVal = if step.startHeld then step.start else endOf(step, ctx, false)
+      startVal = step.start
+
+      if rawequal(startVal, UNREAD) then
+        startVal = endOf(step, ctx, false)
+      end
     end
 
     local finishVal: any = startVal
 
     if m.finish then
-      finishVal = if step.finishHeld then step.finish else endOf(step, ctx, true)
+      finishVal = step.finish
+
+      if rawequal(finishVal, UNREAD) then
+        finishVal = endOf(step, ctx, true)
+      end
     end
 
     local d = step.length
