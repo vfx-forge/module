@@ -484,6 +484,25 @@ local function ownerAt(lanes: { Lane }, piece: Piece?, elapsed: number, since: n
   return best
 end
 
+-- the owning lane's queue at `elapsed`, run from its trigger over `base`. an
+-- event lane runs out the phase its firer said it opens, else what the effect
+-- has left from where it fired; the start and end lanes were told theirs when
+-- they were built
+local function played(lane: Lane, piece: Piece?, span: number, elapsed: number, from: number, base: any): any
+  local left: number? = nil
+
+  if lane.from == nil then
+    local runs = (piece :: Piece).runs
+    local told = if runs ~= nil then runs[lane.name] else nil
+
+    left = if told ~= nil then told else span - from
+  end
+
+  local v = (lane.sample :: any)(elapsed - from, base, left)
+
+  return if v ~= nil then v else base
+end
+
 -- the row's value at `elapsed`: the owning lane's queue run from its own
 -- trigger, over what the lanes under it hold. that base is read where the
 -- lane's first modifier starts, and live until then: a chained first entry
@@ -509,21 +528,8 @@ local function valueAt(
   local lane = live(lanes[i]) :: Lane
   local from = firedAt(lane, piece) :: number
   local base = valueAt(lanes, piece, span, math.min(elapsed, from + lane.lead), own, since, i)
-  -- an event lane runs out the phase its firer said it opens, else what the
-  -- effect has left from where it fired; the start and end lanes were told
-  -- theirs when they were built
-  local left: number? = nil
 
-  if lane.from == nil then
-    local runs = (piece :: Piece).runs
-    local told = if runs ~= nil then runs[lane.name] else nil
-
-    left = if told ~= nil then told else span - from
-  end
-
-  local v = (lane.sample :: any)(elapsed - from, base, left)
-
-  return if v ~= nil then v else base
+  return played(lane, piece, span, elapsed, from, base)
 end
 
 -- the one value a queue of chained tweens leaves the row at when every entry
@@ -568,10 +574,37 @@ local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any):
     reach = math.max(reach, span)
   end
 
-  return {
+  local function at(elapsed: number, own: any?, since: number?)
+    return valueAt(set, piece, span, elapsed, if own ~= nil then own else rest, since, nil)
+  end
+
+  -- a row of one lane is that lane's from the moment it fires, over where the
+  -- row rests, since no other lane can own it or lie under it: the same answer
+  -- as the fold without the walk or the fold. a trigger is never nan nor below
+  -- zero, so the walk's own test against -1 always holds
+  if #set == 1 then
+    local only = set[1]
+
     at = function(elapsed: number, own: any?, since: number?)
-      return valueAt(set, piece, span, elapsed, if own ~= nil then own else rest, since, nil)
-    end,
+      local held = if own ~= nil then own else rest
+      local from = firedAt(only, piece)
+
+      if from == nil or from > elapsed or (since ~= nil and from < since) then
+        return held
+      end
+
+      local lane = live(only)
+
+      if lane == nil then
+        return held
+      end
+
+      return played(lane, piece, span, elapsed, firedAt(lane, piece) :: number, held)
+    end
+  end
+
+  return {
+    at = at,
     span = reach,
     animated = true,
     has = function(lane: string)
