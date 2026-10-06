@@ -275,6 +275,98 @@ harness.suite(function()
       built.restore()
     end)
 
+    test(
+      "GetTime counts the emit's effect time: scaled by its speed, still while paused and once it is done",
+      function()
+        local built = fresh()
+        registry.register(module("waits", "Folder", waiting(10)))
+
+        local env = effects.emit(0, harness.make("Folder"))
+
+        expect(env:GetTime()).toBe(0)
+
+        scheduler.frame(0.5)
+
+        expect(env:GetTime()).toBe(0.5)
+
+        env:SetSpeed(2)
+        scheduler.frame(0)
+        scheduler.frame(0.25)
+
+        expect(env:GetTime()).toBe(1)
+
+        env:Pause()
+        scheduler.frame(0)
+        scheduler.frame(3)
+
+        expect(env:GetTime()).toBe(1)
+
+        env:Resume()
+        scheduler.frame(0)
+        scheduler.frame(0.25)
+
+        expect(env:GetTime()).toBe(1.5)
+
+        env:Clear()
+        scheduler.frame(0)
+        scheduler.frame(1)
+
+        expect(env:GetTime()).toBe(1.5)
+
+        built.restore()
+      end
+    )
+
+    test("GetTime first asked after some frames counts them at the emit's speed then", function()
+      local built = fresh()
+      registry.register(module("waits", "Folder", waiting(10)))
+
+      local env = effects.emit(0, harness.make("Folder"))
+
+      scheduler.frame(0.5)
+      scheduler.frame(0.25)
+
+      expect(env:GetTime()).toBe(0.75)
+
+      scheduler.frame(0.25)
+
+      expect(env:GetTime()).toBe(1)
+
+      env:Clear()
+      built.restore()
+    end)
+
+    test(
+      "GetTime first asked once the emit has finished answers the real seconds since it, then stands still",
+      function()
+        local built = fresh()
+        local log = {}
+        registry.register(module("waits", "Folder", function(ctx: any)
+          lifetime.wait(ctx.scope, 1)
+          table.insert(log, "waited")
+        end))
+
+        local env = effects.emit(0, harness.make("Folder"))
+
+        scheduler.frame(0.5)
+        scheduler.frame(0.75)
+        scheduler.frame(0)
+
+        expect(log).toEqual({ "waited" })
+
+        scheduler.frame(0.5)
+
+        expect(env:GetTime()).toBe(1.75)
+
+        scheduler.frame(0)
+        scheduler.frame(1)
+
+        expect(env:GetTime()).toBe(1.75)
+
+        built.restore()
+      end
+    )
+
     test("refuses a speed that is not a finite number of 0 or more, naming SetSpeed", function()
       local built = fresh()
       registry.register(module("waits", "Folder", waiting(10)))
@@ -2036,6 +2128,85 @@ harness.suite(function()
 
       expect(seen).toEqual({ true, true, true })
       expect(att:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
+    end)
+  end)
+
+  harness.describe("a clone of what an author made", function()
+    -- the engine's Clone, which answers nil for an instance whose Archivable
+    -- is false; lune's clones one anyway. every write is counted
+    local function authored(archivable: boolean, throws: boolean?)
+      local state = { Archivable = archivable }
+      local inst = { writes = 0 }
+
+      function inst.Clone()
+        if throws then
+          error("clone refused")
+        end
+
+        return if state.Archivable then { Archivable = true } else nil
+      end
+
+      return setmetatable(inst, {
+        __index = state,
+        __newindex = function(_, key: string, value: any)
+          inst.writes += 1
+          state[key] = value
+        end,
+      }) :: any
+    end
+
+    test("one that is not archivable is cloned and left as it was", function()
+      local inst = authored(false)
+      local copy = utility.clone(inst)
+
+      expect(copy ~= nil).toBe(true)
+      expect(inst.Archivable).toBe(false)
+    end)
+
+    test("one that is not archivable is left as it was when its clone throws", function()
+      local inst = authored(false, true)
+
+      local ok, err = pcall(utility.clone, inst)
+
+      expect(ok).toBe(false)
+      expect(string.find(tostring(err), "clone refused", 1, true) ~= nil).toBe(true)
+      expect(inst.Archivable).toBe(false)
+    end)
+
+    test("one that is archivable is cloned with nothing written to it", function()
+      local inst = authored(true)
+      local copy = utility.clone(inst)
+
+      expect(copy ~= nil).toBe(true)
+      expect(inst.Archivable).toBe(true)
+      expect(inst.writes).toBe(0)
+    end)
+
+    -- cannot fail against the original bug under lune: the mock's Clone does not
+    -- answer nil for an instance that is not archivable
+    test("a beam that is not archivable plays out and is left as it was", function()
+      local built = fresh()
+      registry.register(require("@vfx/beam"))
+
+      local part = harness.make("Part")
+      local beam = harness.make("Beam", part) :: any
+
+      beam.Archivable = false
+      beam.Attachment0 = harness.make("Attachment", part)
+      beam.Attachment1 = harness.make("Attachment", part)
+      beam:SetAttribute("EffectDuration", harness.datatypes.NumberRange.new(0.5, 0.5))
+      beam:SetAttribute("LengthScale", 2)
+
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+      scheduler.frame(0.25)
+
+      expect(env.Finished:getStatus()).toBe("Resolved")
+      expect(beam.Archivable).toBe(false)
+
+      built.restore()
     end)
   end)
 

@@ -56,6 +56,10 @@ local scheduler = {}
 -- module never requires it
 scheduler.failed = nil :: ((owner: any) -> ())?
 
+-- the real seconds every frame so far has stepped, read by an emit's handle to
+-- count the time before it first asked for its own
+scheduler.now = 0
+
 local slots: { [string]: Slot } = {}
 
 for _, phases in { COMPUTE, LATE } do
@@ -317,6 +321,7 @@ end
 -- every step that computes a value
 function scheduler.compute(deltaTime: number)
   if not passing then
+    scheduler.now += deltaTime
     clock.tick()
   end
 

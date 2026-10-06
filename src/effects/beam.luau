@@ -128,7 +128,7 @@ local function prepare(ctx: reader.Ctx, attrs: any): Beam?
     return nil
   end
 
-  local clone = ref:Clone()
+  local clone = utility.clone(ref)
   clone.Archivable = false
   clone.Parent = workspace.Terrain
 
@@ -137,7 +137,7 @@ local function prepare(ctx: reader.Ctx, attrs: any): Beam?
   local lengthScale = attrs.LengthScale
 
   if lengthScale.animated or lengthScale.at(0) ~= 1 then
-    local a, b = att0:Clone(), att1:Clone()
+    local a, b = utility.clone(att0), utility.clone(att1)
 
     lifetime.hold(scope, a)
     lifetime.hold(scope, b)

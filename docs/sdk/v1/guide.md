@@ -52,6 +52,8 @@ Every method takes `sdk` first. Never require ForgeVFX from a custom effect.
 
 `params(sdk)` is called once each time the module loads and answers `attributes` and `properties`, tables of knobs by name. A knob declared with `:curve(preset)` is a curve param, edited in the curve editor; its value goes straight into `sdk.curve`. A knob declared with `:mod()` can be animated by modifiers and is read as a Track, which `sdk.speed` takes.
 
+A knob's default is a number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence or ColorSequence, or a curve; a knob under `properties` may also default to an EnumItem. A default of any other type is refused, naming the param, since the panel has no editor for it.
+
 A knob's default can be a function instead of a value. It is a rule, and it answers the default from the other params when the module is read.
 
 ### Rules

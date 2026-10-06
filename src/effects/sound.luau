@@ -157,7 +157,7 @@ local function selectRandomSound(ref: Sound, poolTag: string): Sound?
 end
 
 local function createSoundClone(ref: Sound, sourceSound: Sound, scope: lifetime.effect): (Sound, Part?)
-  local clone = sourceSound:Clone()
+  local clone = utility.clone(sourceSound)
 
   for _, tag in clone:GetTags() do
     clone:RemoveTag(tag)
