@@ -33,6 +33,43 @@ export type Rolls = {
   envelope: number,
 }
 
+-- the walk behind mods.span, which also hands back the schedule it made: a
+-- sampler built over the same rolls right after it places every modifier
+-- exactly so, and takes these rather than walk the queue a second time
+local function spanned(
+  queue: { any },
+  fallback: number,
+  rolls: Rolls?,
+  left: number?
+): (number, number, number, { [number]: number }?, number, { [number]: number }?)
+  local picks = if rolls then rolls.picks else nil
+
+  -- schedule seeds a linked modifier's run from the fallback, so a nan one
+  -- poisons every offset in the queue and the span comes back nan. zero makes
+  -- the frontier the far end of the authored durations instead
+  if fallback ~= fallback then
+    fallback = 0
+  end
+
+  local offsets, frontier, resolved, lengths =
+    modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil, left)
+
+  -- a lane told nothing is left may take no time at all, and that zero is its
+  -- reach: falling back would start it at the emit rather than at the end
+  if frontier == 0 and left ~= nil and left == left then
+    return 0, fallback, 0, offsets, resolved, lengths
+  end
+
+  -- an effect turns this straight into a tween's duration, and a tween that
+  -- never ends holds the emit open for good. nothing an author can mean by a
+  -- span is infinite, so an unusable one falls back the same way an empty one does
+  if frontier ~= frontier or frontier <= 0 or frontier == math.huge then
+    return fallback, fallback, if frontier == 0 then 0 else fallback, offsets, resolved, lengths
+  end
+
+  return frontier, fallback, frontier, offsets, resolved, lengths
+end
+
 -- how long a queue runs on its own terms: modifiers run one after another,
 -- so the answer is where the last one ends rather than the longest single
 -- duration, and a caller whose delay is drawn per instance passes the rolls in
@@ -43,31 +80,9 @@ export type Rolls = {
 -- the third return is how far the queue reaches on its own, zero for one that
 -- takes no time where the first falls back to the effect's duration
 function mods.span(queue: { any }, fallback: number, rolls: Rolls?, left: number?): (number, number, number)
-  local picks = if rolls then rolls.picks else nil
+  local reach, lent, length = spanned(queue, fallback, rolls, left)
 
-  -- schedule seeds a linked modifier's run from the fallback, so a nan one
-  -- poisons every offset in the queue and the span comes back nan. zero makes
-  -- the frontier the far end of the authored durations instead
-  if fallback ~= fallback then
-    fallback = 0
-  end
-
-  local _, frontier = modifiers.schedule(queue, picks, fallback, if rolls then rolls.env else nil, left)
-
-  -- a lane told nothing is left may take no time at all, and that zero is its
-  -- reach: falling back would start it at the emit rather than at the end
-  if frontier == 0 and left ~= nil and left == left then
-    return 0, fallback, 0
-  end
-
-  -- an effect turns this straight into a tween's duration, and a tween that
-  -- never ends holds the emit open for good. nothing an author can mean by a
-  -- span is infinite, so an unusable one falls back the same way an empty one does
-  if frontier ~= frontier or frontier <= 0 or frontier == math.huge then
-    return fallback, fallback, if frontier == 0 then 0 else fallback
-  end
-
-  return frontier, fallback, frontier
+  return reach, lent, length
 end
 
 -- a queue that moves nothing: one that only waits, or only holds values the
@@ -219,31 +234,23 @@ function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
   return { draws = draws, picks = picks, env = env, envelope = rng:NextNumber() * 2 - 1 }
 end
 
--- a caller that already read the queue, to span it or to test it, passes it
--- back in rather than paying a second base64 plus buffer decode for the same
--- attribute, and passes its rolls back in so the span it computed and the
--- sampler it gets are drawn from the same hat. the second return is where the
--- queue's first modifier on the clock starts, which is how long it waits first
-function mods.sampler(
+-- a sampler over a queue already scheduled from `rolled`, `lent` and `left`
+local function samplerOf(
   ref: Instance,
   source: string,
   name: string,
   duration: number,
   queue: { any },
-  rolls: Rolls?,
-  linked: number?,
-  left: number?
+  rolled: Rolls,
+  lent: number,
+  left: number?,
+  offsets: { [number]: number }?,
+  resolved: number,
+  lengths: { [number]: number }?
 ): (((elapsed: number, own: any?, left: number?) -> any)?, number)
   if #queue == 0 then
     return nil, 0
   end
-
-  local rolled = rolls or mods.roll(queue)
-  -- `duration` is the reach, which can run past the effect when the named
-  -- durations add up to more than it. a modifier naming none runs out what is
-  -- left of the effect, so a caller that knows the effect duration it lent says so
-  local lent = if linked ~= nil then linked else duration
-  local offsets, _, resolved, lengths = modifiers.schedule(queue, rolled.picks, lent, rolled.env, left)
 
   local base = baseOf(ref, source, name)
   local lead = 0
@@ -277,7 +284,6 @@ function mods.sampler(
 
   local ctx: modifiers.Ctx = {
     duration = duration,
-    base = base,
     draws = rolled.draws,
     picks = rolled.picks,
     offsets = offsets,
@@ -287,6 +293,7 @@ function mods.sampler(
     envelope = rolled.envelope,
   }
 
+  local steps = modifiers.compile(queue, ctx)
   local scheduledFor = left
 
   -- a lane fired over a running row begins from the value under it rather than
@@ -294,20 +301,48 @@ function mods.sampler(
   -- a lane that fires late tells the sampler the time the effect has left, and
   -- only a queue with some other kind naming no duration has anything to redo then
   local function sample(elapsed: number, own: any?, left: number?)
-    ctx.base = if own ~= nil then own else base
-
     if openEnded and left ~= nil and left == left and left ~= scheduledFor then
       local placed, _, _, runs = modifiers.schedule(queue, rolled.picks, lent, rolled.env, left)
 
       scheduledFor = left
       ctx.offsets = placed
       ctx.lengths = runs
+      modifiers.place(steps, ctx, placed, runs)
     end
 
-    return modifiers.evaluate(queue, elapsed, ctx)
+    return modifiers.sample(steps, ctx, elapsed, if own ~= nil then own else base)
   end
 
   return sample, lead
+end
+
+-- a caller that already read the queue, to span it or to test it, passes it
+-- back in rather than paying a second base64 plus buffer decode for the same
+-- attribute, and passes its rolls back in so the span it computed and the
+-- sampler it gets are drawn from the same hat. the second return is where the
+-- queue's first modifier on the clock starts, which is how long it waits first
+function mods.sampler(
+  ref: Instance,
+  source: string,
+  name: string,
+  duration: number,
+  queue: { any },
+  rolls: Rolls?,
+  linked: number?,
+  left: number?
+): (((elapsed: number, own: any?, left: number?) -> any)?, number)
+  if #queue == 0 then
+    return nil, 0
+  end
+
+  local rolled = rolls or mods.roll(queue)
+  -- `duration` is the reach, which can run past the effect when the named
+  -- durations add up to more than it. a modifier naming none runs out what is
+  -- left of the effect, so a caller that knows the effect duration it lent says so
+  local lent = if linked ~= nil then linked else duration
+  local offsets, _, resolved, lengths = modifiers.schedule(queue, rolled.picks, lent, rolled.env, left)
+
+  return samplerOf(ref, source, name, duration, queue, rolled, lent, left, offsets, resolved, lengths)
 end
 
 export type Track = {
@@ -484,6 +519,25 @@ local function ownerAt(lanes: { Lane }, piece: Piece?, elapsed: number, since: n
   return best
 end
 
+-- the owning lane's queue at `elapsed`, run from its trigger over `base`. an
+-- event lane runs out the phase its firer said it opens, else what the effect
+-- has left from where it fired; the start and end lanes were told theirs when
+-- they were built
+local function played(lane: Lane, piece: Piece?, span: number, elapsed: number, from: number, base: any): any
+  local left: number? = nil
+
+  if lane.from == nil then
+    local runs = (piece :: Piece).runs
+    local told = if runs ~= nil then runs[lane.name] else nil
+
+    left = if told ~= nil then told else span - from
+  end
+
+  local v = (lane.sample :: any)(elapsed - from, base, left)
+
+  return if v ~= nil then v else base
+end
+
 -- the row's value at `elapsed`: the owning lane's queue run from its own
 -- trigger, over what the lanes under it hold. that base is read where the
 -- lane's first modifier starts, and live until then: a chained first entry
@@ -509,21 +563,8 @@ local function valueAt(
   local lane = live(lanes[i]) :: Lane
   local from = firedAt(lane, piece) :: number
   local base = valueAt(lanes, piece, span, math.min(elapsed, from + lane.lead), own, since, i)
-  -- an event lane runs out the phase its firer said it opens, else what the
-  -- effect has left from where it fired; the start and end lanes were told
-  -- theirs when they were built
-  local left: number? = nil
 
-  if lane.from == nil then
-    local runs = (piece :: Piece).runs
-    local told = if runs ~= nil then runs[lane.name] else nil
-
-    left = if told ~= nil then told else span - from
-  end
-
-  local v = (lane.sample :: any)(elapsed - from, base, left)
-
-  return if v ~= nil then v else base
+  return played(lane, piece, span, elapsed, from, base)
 end
 
 -- the one value a queue of chained tweens leaves the row at when every entry
@@ -568,10 +609,39 @@ local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any):
     reach = math.max(reach, span)
   end
 
-  return {
+  local at: (elapsed: number, own: any?, since: number?) -> any
+
+  -- a row of one lane is that lane's from the moment it fires, over where the
+  -- row rests, since no other lane can own it or lie under it: the same answer
+  -- as the fold without the walk or the fold. a trigger is never nan nor below
+  -- zero, so the walk's own test against -1 always holds
+  if #set == 1 then
+    local only = set[1]
+
+    at = function(elapsed: number, own: any?, since: number?)
+      local held = if own ~= nil then own else rest
+      local from = firedAt(only, piece)
+
+      if from == nil or from > elapsed or (since ~= nil and from < since) then
+        return held
+      end
+
+      local lane = live(only)
+
+      if lane == nil then
+        return held
+      end
+
+      return played(lane, piece, span, elapsed, firedAt(lane, piece) :: number, held)
+    end
+  else
     at = function(elapsed: number, own: any?, since: number?)
       return valueAt(set, piece, span, elapsed, if own ~= nil then own else rest, since, nil)
-    end,
+    end
+  end
+
+  return {
+    at = at,
     span = reach,
     animated = true,
     has = function(lane: string)
@@ -733,8 +803,8 @@ local function laneOf(
   -- duration has nothing left to run for and snaps to its finish
   local left = if lane == "end" then 0 else nil
   local rolls = mods.roll(queue, env)
-  local reach, linked, length = mods.span(queue, span, rolls, left)
-  local sample, lead = mods.sampler(ref, source, name, reach, queue, rolls, linked, left)
+  local reach, linked, length, offsets, resolved, lengths = spanned(queue, span, rolls, left)
+  local sample, lead = samplerOf(ref, source, name, reach, queue, rolls, linked, left, offsets, resolved, lengths)
 
   if sample == nil then
     return nil, span, 0, 0
@@ -873,7 +943,7 @@ local function eventLaneOf(
   draws: boolean
 ): Lane
   local rolls: Rolls? = if draws then mods.roll(queue, env) elseif env ~= nil then unrolled(env) else nil
-  local reach, linked, length = mods.span(queue, span, rolls, nil)
+  local reach, linked, length, offsets, resolved, lengths = spanned(queue, span, rolls, nil)
 
   local out: Lane = {
     name = lane,
@@ -889,8 +959,19 @@ local function eventLaneOf(
     rests = restsOf(queue),
   }
 
+  -- a var in the queue reads the environment as it stands when the lane is
+  -- built, the first time it fires, which may no longer be what the read placed
+  -- it by. a lane with an environment is placed again then, one without as the
+  -- read placed it
   out.build = function()
-    local sample, lead = mods.sampler(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil)
+    local sample, lead
+
+    if env ~= nil then
+      sample, lead = mods.sampler(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil)
+    else
+      sample, lead =
+        samplerOf(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil, offsets, resolved, lengths)
+    end
 
     if sample == nil or (sample(0) == nil and (probe == nil or sample(0, probe) == nil)) then
       out.silent = true

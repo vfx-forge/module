@@ -704,6 +704,73 @@ harness.suite(function()
         legacy = 1,
       })
     end)
+
+    test("scan asks no module whose classes nothing under the root is, and asks again once one is", function()
+      local asked: { [string]: number } = {}
+
+      registry.clear()
+      registry.configure({
+        query = function(root: Instance, selector: string)
+          asked[selector] = (asked[selector] or 0) + 1
+
+          return harness.query(root, selector)
+        end,
+      })
+      registry.register(stub("beam"))
+      registry.register(stub("trail", { classifier = "Trail" }))
+      registry.register(stub("spin", { classifier = "Model:not(Model:has(> BasePart#Start))" }))
+      registry.register(stub("ring", { classifier = ".Shockwave > #Rings > BasePart" }))
+      registry.register(stub("any", { classifier = ".Loose" }))
+      harness.reset()
+
+      local root = harness.make("Folder", harness.make("Folder", harness.make("Folder")))
+      local beam = harness.make("Beam", root)
+      local origin = harness.make("Attachment", root)
+      local rings = harness.make("Folder", origin)
+
+      origin:AddTag("Shockwave")
+      rings.Name = "Rings"
+
+      -- a subject class answered by a subclass of it, which only IsA tells
+      local piece = harness.make("MeshPart", rings)
+
+      local function ids(hits: { any }): { [string]: Instance }
+        local out = {}
+
+        for _, hit in hits do
+          out[if hit.effect ~= nil then hit.effect.id else "legacy"] = hit.instance
+        end
+
+        return out
+      end
+
+      expect(ids(registry.scan(root))).toEqual({ beam = beam, ring = piece })
+
+      -- a classifier whose subject names no class can be anything, so it is
+      -- always asked, and the old format's children only where one can be
+      expect(asked).toEqual({
+        ["Beam"] = 1,
+        [".Shockwave > #Rings > BasePart"] = 1,
+        [".Loose"] = 1,
+      })
+
+      local trail = harness.make("Trail", root)
+      local model = harness.make("Model", root)
+      local child = harness.make("RayValue", beam)
+
+      table.clear(asked)
+
+      expect(ids(registry.scan(root))).toEqual({
+        beam = beam,
+        ring = piece,
+        trail = trail,
+        spin = model,
+        legacy = child,
+      })
+      expect(asked.Trail).toBe(1)
+      expect(asked.RayValue).toBe(1)
+      expect(asked["Model:not(Model:has(> BasePart#Start))"]).toBe(1)
+    end)
   end)
   harness.describe("registry.problems and registry.unregister", function()
     test("every reason a module is refused for is named at once, and nothing is registered", function()

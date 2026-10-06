@@ -484,6 +484,16 @@ function curve.sample(shape: string | buffer | { vector }, t: number): number
   return solve(shapeOf(shape), t)
 end
 
+-- the same read as curve.sample with the shape looked up once, for a caller
+-- sampling one shape every frame
+function curve.sampler(shape: string | buffer | { vector })
+  local resolved = shapeOf(shape)
+
+  return function(t: number)
+    return solve(resolved, t)
+  end
+end
+
 -- the value at t, 0 to 1 over the curve
 function Curve.at(self: Curve, t: number): number
   if t ~= t then

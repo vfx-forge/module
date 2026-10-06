@@ -802,6 +802,22 @@ local function readsChild(module: Module?, child: Instance): boolean
   return owned[module][legacy_mods.childSource(child)][child.Name] == true
 end
 
+-- whether anything under root is of `class`, asked of the engine the first
+-- time a scan needs it and kept in that scan's own answers alone
+local function occurs(root: Instance, answers: { [string]: boolean }, class: string): boolean
+  local known = answers[class]
+
+  if known ~= nil then
+    return known
+  end
+
+  local found = root:FindFirstChildWhichIsA(class, true) ~= nil
+
+  answers[class] = found
+
+  return found
+end
+
 -- every descendant of root that some module classifies, plus every legacy
 -- tween child no module reads, less the ones another hit or the root's own
 -- module claims as components. a module whose components selector is the whole
@@ -815,8 +831,29 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
   local hits: { Hit } = {}
   local taken: { [Instance]: boolean } = {}
 
+  -- a module classifies only instances of its subjects' classes, so one whose
+  -- classes nothing under the root is can match nothing there and is not asked
+  local answers: { [string]: boolean } = {}
+
   -- the first module to reach an instance takes it, in the order `of` asks
   for _, module in order do
+    local subjects = shape[module].subjects
+
+    if subjects ~= nil then
+      local present = false
+
+      for _, class in subjects do
+        if occurs(root, answers, class) then
+          present = true
+          break
+        end
+      end
+
+      if not present then
+        continue
+      end
+    end
+
     for _, inst in query(scanRoot(root, shape[module].depth), module.classifier) do
       -- a query run from above the root reaches the root's siblings too, and
       -- none of them is this scan's
@@ -833,7 +870,13 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
   -- effect had a module and still do: every RayValue no module classified, at
   -- one query for the scan. what the child carries is dispatch's business, so
   -- nothing here reads it
-  for _, inst in query(root, "RayValue") do
+  local children: { Instance } = {}
+
+  if occurs(root, answers, "RayValue") then
+    children = query(root, "RayValue")
+  end
+
+  for _, inst in children do
     if taken[inst] then
       continue
     end

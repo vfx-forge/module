@@ -435,22 +435,32 @@ function modifiers.alphaFromCurve(shape: string | buffer, progress: number): num
   return curve.sample(shape, progress)
 end
 
--- a randomizer over two Vector3s, drawn once per component. a weight curve
--- shapes each draw the same way it shapes a single one, so an axis is
--- distributed the way the author asked, independently of the other two
-local function componentDraw(m: any, startVal: any, finishVal: any, draws: { number }): any
-  local out = {}
+-- a randomizer's draw for each component, shaped by its weight curve the same
+-- way a single draw is, so an axis is distributed the way the author asked,
+-- independently of the other two
+local function axesOf(m: any, draws: { number }): { number }
+  local out = table.create(3)
 
   for axis = 1, 3 do
     local draw = draws[axis] or 0.5
-    local alpha = if m.weight then modifiers.alphaFromCurve(m.weight, draw) else draw
-    local a = if axis == 1 then startVal.X elseif axis == 2 then startVal.Y else startVal.Z
-    local b = if axis == 1 then finishVal.X elseif axis == 2 then finishVal.Y else finishVal.Z
 
-    out[axis] = a + (b - a) * alpha
+    out[axis] = if m.weight then modifiers.alphaFromCurve(m.weight, draw) else draw
   end
 
-  return Vector3.new(out[1], out[2], out[3])
+  return out
+end
+
+local function componentAt(startVal: any, finishVal: any, axes: { number }): any
+  local x = startVal.X + (finishVal.X - startVal.X) * axes[1]
+  local y = startVal.Y + (finishVal.Y - startVal.Y) * axes[2]
+  local z = startVal.Z + (finishVal.Z - startVal.Z) * axes[3]
+
+  return Vector3.new(x, y, z)
+end
+
+-- a randomizer over two Vector3s, drawn once per component
+local function componentDraw(m: any, startVal: any, finishVal: any, draws: { number }): any
+  return componentAt(startVal, finishVal, axesOf(m, draws))
 end
 
 -- an endpoint's own pick, shaped by the weight curve the endpoint carries
@@ -546,6 +556,208 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
       alpha = if m.curve then modifiers.alphaFromCurve(m.curve, progress) else progress
     else
       -- unknown kind: pass the value through unchanged, round trip with no eval
+      if startVal ~= nil then
+        prevOut = startVal
+      end
+
+      haveOut = prevOut ~= nil
+      continue
+    end
+
+    if m.envelope and ctx.envelope then
+      alpha = math.clamp(alpha + envelopeAt(m.envelope, progress) * ctx.envelope, 0, 1)
+    end
+
+    prevOut = lerp.any(startVal, finishVal, alpha)
+    haveOut = true
+  end
+
+  return prevOut
+end
+
+-- an endpoint no frame has read yet
+local UNREAD = table.freeze({})
+
+-- one entry of a queue as its sampler keeps it between frames: where schedule
+-- put it and how long it runs, placed again whenever the queue is, the curve's
+-- shape looked up once, and the endpoints and drawn alphas, each worked out the
+-- first time a frame reaches it and kept, so a malformed one still throws on
+-- the frame it always did. a var is read every frame, since the environment it
+-- names is the caller's
+export type Step = {
+  entry: any,
+  index: number,
+  offset: number,
+  length: number?,
+  shape: ((t: number) -> number)?,
+  start: any,
+  finish: any,
+  alpha: number?,
+  axes: { number }?,
+}
+
+-- a queue's entries as its sampler keeps them, for modifiers.sample to read in
+-- place of evaluate: the same answer at every elapsed, for a ctx whose draws,
+-- picks, envelope and env stay put. ctx.offsets and ctx.lengths are placed
+-- here, and by modifiers.place whenever the caller schedules the queue anew
+function modifiers.compile(queue: { any }, ctx: Ctx): { Step }
+  local steps: { Step } = {}
+  local n = 0
+
+  for i, m in queue do
+    local kind = m.kind
+
+    if kind == "delay" or modifiers.BASE_KINDS[kind] then
+      continue
+    end
+
+    -- a serialized curve resolves without ever throwing, so its shape is
+    -- looked up here. any other is left for alphaFromCurve every frame
+    local shaped = kind == "tween" and m.curve
+    local form = typeof(shaped)
+
+    n += 1
+    steps[n] = {
+      entry = m,
+      index = i,
+      offset = 0,
+      length = nil,
+      shape = if form == "string" or form == "buffer" then curve.sampler(shaped) else nil,
+      start = UNREAD,
+      finish = UNREAD,
+    }
+  end
+
+  modifiers.place(steps, ctx, ctx.offsets, ctx.lengths)
+
+  return steps
+end
+
+function modifiers.place(steps: { Step }, ctx: Ctx, offsets: { [number]: number }?, lengths: { [number]: number }?)
+  for _, step in steps do
+    local i = step.index
+
+    step.offset = if offsets then offsets[i] or 0 else 0
+    step.length = durationOf(step.entry, i, ctx, lengths)
+  end
+end
+
+-- an endpoint the first time a frame reads it, kept unless it is a var
+local function endOf(step: Step, ctx: Ctx, closing: boolean): any
+  local m = step.entry
+  local x = if closing then m.finish else m.start
+  local picks = if ctx.picks then ctx.picks[step.index] else nil
+  local pick = if picks then (if closing then picks.finish else picks.start) else nil
+  local v = endpointAt(x, pick, ctx.env)
+
+  if x.t == "var" then
+    return v
+  end
+
+  if closing then
+    step.finish = v
+  else
+    step.start = v
+  end
+
+  return v
+end
+
+-- the randomizer's one alpha the first time a frame reads it
+local function drawnAlpha(step: Step, draw: Draw?): number
+  local d: number = if type(draw) == "number" then draw else 0.5
+  local weight = step.entry.weight
+  local alpha = if weight then modifiers.alphaFromCurve(weight, d) else d
+
+  step.alpha = alpha
+
+  return alpha
+end
+
+-- evaluate over a compiled queue, step for step
+function modifiers.sample(steps: { Step }, ctx: Ctx, elapsed: number, base: any): any
+  local prevOut: any = base
+  local haveOut = base ~= nil
+  local ran = false
+
+  for _, step in steps do
+    local m = step.entry
+    local offset = step.offset
+
+    if ran and elapsed < offset and not m.parallel then
+      continue
+    end
+
+    ran = true
+
+    local startVal: any = nil
+
+    if m.chain and haveOut then
+      startVal = prevOut
+    elseif m.start then
+      startVal = step.start
+
+      if rawequal(startVal, UNREAD) then
+        startVal = endOf(step, ctx, false)
+      end
+    end
+
+    local finishVal: any = startVal
+
+    if m.finish then
+      finishVal = step.finish
+
+      if rawequal(finishVal, UNREAD) then
+        finishVal = endOf(step, ctx, true)
+      end
+    end
+
+    local d = step.length
+    local since = elapsed - offset
+    local progress: number
+
+    -- with no rate named, steppedProgress is the plain progress
+    if m.fps ~= nil then
+      progress = steppedProgress(m, d, since)
+    elseif d == nil then
+      progress = if since < 0 then 0 else 1
+    else
+      progress = math.clamp(since / d, 0, 1)
+    end
+
+    local kind = m.kind
+    local alpha: number
+
+    if kind == "randomizer" then
+      local draw = if ctx.draws then ctx.draws[step.index] else nil
+
+      if type(draw) == "table" and typeof(startVal) == "Vector3" and typeof(finishVal) == "Vector3" then
+        local axes = step.axes
+
+        if axes == nil then
+          axes = axesOf(m, draw)
+          step.axes = axes
+        end
+
+        prevOut = componentAt(startVal, finishVal, axes :: { number })
+        haveOut = true
+        continue
+      end
+
+      local drawn = step.alpha
+
+      alpha = if drawn ~= nil then drawn else drawnAlpha(step, draw)
+    elseif kind == "tween" then
+      local shape = step.shape
+
+      if shape ~= nil then
+        alpha = shape(progress)
+      elseif m.curve then
+        alpha = modifiers.alphaFromCurve(m.curve, progress)
+      else
+        alpha = progress
+      end
+    else
       if startVal ~= nil then
         prevOut = startVal
       end
