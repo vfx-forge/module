@@ -110,12 +110,19 @@ end
 
 -- one build of the same row from each side, both drawing from the stand-in
 -- Random's fixed seed, so a row that draws draws the same on both
-local function pair(lanes: { [string]: { any } }, rest: any, span: number, events: { string }?, opts: any?)
+local function pair(
+  lanes: { [string]: { any } },
+  rest: any,
+  span: number,
+  events: { string }?,
+  opts: any?,
+  env: { [string]: any }?
+)
   local ref = Instance.new("Attachment")
   local newPiece = mods.piece(events)
   local oldPiece = before.piece(events)
-  local new = mods.build(ref, "attribute", "Width", rest, span, nil, lanes, true, opts, newPiece)
-  local old = before.build(ref, "attribute", "Width", rest, span, nil, lanes, true, opts, oldPiece)
+  local new = mods.build(ref, "attribute", "Width", rest, span, env, lanes, true, opts, newPiece)
+  local old = before.build(ref, "attribute", "Width", rest, span, env, lanes, true, opts, oldPiece)
 
   return {
     new = new,
@@ -474,6 +481,51 @@ harness.suite(function()
         table.insert(into.old, { true, rows.old.reach(lane) })
         table.insert(into.labels, `reach {lane}`)
       end
+
+      settle(into)
+    end)
+
+    test("an environment that moved before a lane fires places the lane as it stands then", function()
+      local into = fresh()
+      local waits = { kind = "delay", chain = false, wait = value.var("W") }
+
+      for _, lanes in
+        {
+          { start = { tween(0, 1, 1) }, dissipate = { waits, onward(5, 0.5) } },
+          { dissipate = { waits, onward(5, 0.5) } },
+        }
+      do
+        local env = { W = 0.2 }
+        local rows = pair(lanes, 0, 2, { "dissipate" }, nil, env)
+
+        sweep(rows, into, "unfired")
+
+        env.W = 0.6
+        rows.fire("dissipate", 0.5)
+        sweep(rows, into, "fired after the wait moved")
+
+        env.W = 0.1
+        sweep(rows, into, "the wait moved again after the fire")
+
+        rows.fire("dissipate", 1)
+        sweep(rows, into, "fired again")
+      end
+
+      settle(into)
+    end)
+
+    test("an environment that moved after the build leaves a start lane where it was placed", function()
+      local into = fresh()
+      local env = { W = 0.2 }
+      local lanes = {
+        start = { { kind = "delay", chain = false, wait = value.var("W") }, tween(0, 1, 0.5), onward(3) },
+      }
+      local rows = pair(lanes, 0, 2, nil, nil, env)
+
+      sweep(rows, into, "built")
+
+      env.W = 0.6
+      sweep(rows, into, "moved")
 
       settle(into)
     end)

@@ -957,9 +957,19 @@ local function eventLaneOf(
     rests = restsOf(queue),
   }
 
+  -- a var in the queue reads the environment as it stands when the lane is
+  -- built, the first time it fires, which may no longer be what the read placed
+  -- it by. a lane with an environment is placed again then, one without as the
+  -- read placed it
   out.build = function()
-    local sample, lead =
-      samplerOf(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil, offsets, resolved, lengths)
+    local sample, lead
+
+    if env ~= nil then
+      sample, lead = mods.sampler(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil)
+    else
+      sample, lead =
+        samplerOf(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil, offsets, resolved, lengths)
+    end
 
     if sample == nil or (sample(0) == nil and (probe == nil or sample(0, probe) == nil)) then
       out.silent = true
