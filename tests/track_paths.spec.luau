@@ -216,7 +216,6 @@ local function sampled(new: any, old: any, into: any, lefts: { any }, tag: strin
   end
 end
 
--- the sampler a lane builds, from each side over the same rolls
 -- a queue driven through modifiers.evaluate the way a sampler drove it before
 -- it compiled: scheduled once, the base handed in per call, and scheduled again
 -- when a queue with an entry naming no duration is told a new time left. the
