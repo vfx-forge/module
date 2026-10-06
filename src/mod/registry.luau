@@ -802,37 +802,16 @@ local function readsChild(module: Module?, child: Instance): boolean
   return owned[module][legacy_mods.childSource(child)][child.Name] == true
 end
 
--- one instance of each class under root, from one walk, so a scan asks whether
--- a class occurs there at all without a query. taken fresh for every scan
-local function classesUnder(root: Instance): { [string]: Instance }
-  local seen: { [string]: Instance } = {}
-
-  for _, inst in root:GetDescendants() do
-    local class = inst.ClassName
-
-    if seen[class] == nil then
-      seen[class] = inst
-    end
-  end
-
-  return seen
-end
-
-local function occurs(seen: { [string]: Instance }, answers: { [string]: boolean }, class: string): boolean
+-- whether anything under root is of `class`, asked of the engine the first
+-- time a scan needs it and kept in that scan's own answers alone
+local function occurs(root: Instance, answers: { [string]: boolean }, class: string): boolean
   local known = answers[class]
 
   if known ~= nil then
     return known
   end
 
-  local found = false
-
-  for _, inst in seen do
-    if inst:IsA(class) then
-      found = true
-      break
-    end
-  end
+  local found = root:FindFirstChildWhichIsA(class, true) ~= nil
 
   answers[class] = found
 
@@ -854,7 +833,6 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
 
   -- a module classifies only instances of its subjects' classes, so one whose
   -- classes nothing under the root is can match nothing there and is not asked
-  local seen = classesUnder(root)
   local answers: { [string]: boolean } = {}
 
   -- the first module to reach an instance takes it, in the order `of` asks
@@ -862,16 +840,16 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
     local subjects = shape[module].subjects
 
     if subjects ~= nil then
-      local any = false
+      local present = false
 
       for _, class in subjects do
-        if occurs(seen, answers, class) then
-          any = true
+        if occurs(root, answers, class) then
+          present = true
           break
         end
       end
 
-      if not any then
+      if not present then
         continue
       end
     end
@@ -892,7 +870,13 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
   -- effect had a module and still do: every RayValue no module classified, at
   -- one query for the scan. what the child carries is dispatch's business, so
   -- nothing here reads it
-  for _, inst in if occurs(seen, answers, "RayValue") then query(root, "RayValue") else {} do
+  local children: { Instance } = {}
+
+  if occurs(root, answers, "RayValue") then
+    children = query(root, "RayValue")
+  end
+
+  for _, inst in children do
     if taken[inst] then
       continue
     end
