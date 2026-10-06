@@ -352,7 +352,12 @@ local function fieldsOf(row: any, name: string, found: { string })
   local has = rawget(row, "hasDefault")
   local agrees = if has == true then kind == knob.kindOf(default) else has == false and default == nil and kind == nil
 
-  if not agrees or type(rawget(row, "order")) ~= "number" or type(rawget(row, "isMod")) ~= "boolean" then
+  if
+    not agrees
+    or type(rawget(row, "order")) ~= "number"
+    or type(rawget(row, "isMod")) ~= "boolean"
+    or type(rawget(row, "isSlider")) ~= "boolean"
+  then
     once(found, `{name} must keep the fields sdk.knob made it`)
   end
 end
@@ -374,6 +379,34 @@ local function optionsOf(opts: any, name: string, found: { string })
 
   if opts.lane ~= nil and type(opts.lane) ~= "string" then
     once(found, `the lane of a default modifier of {name} must be a string`)
+  end
+end
+
+-- a slider drags a number between two numbers, its own range or the row's
+-- bounds, which the panel cannot draw without
+local function sliderOf(row: any, name: string, found: { string })
+  local kind = rawget(row, "kind")
+
+  if kind ~= nil and kind ~= "number" then
+    once(found, `the slider of {name} needs a number param`)
+    return
+  end
+
+  local low = rawget(row, "dragLower")
+  local high = rawget(row, "dragUpper")
+
+  if (low ~= nil and type(low) ~= "number") or (high ~= nil and type(high) ~= "number") then
+    once(found, `the slider range of {name} must be numbers`)
+    return
+  end
+
+  low = if low ~= nil then low else rawget(row, "lower")
+  high = if high ~= nil then high else rawget(row, "upper")
+
+  if type(low) ~= "number" or type(high) ~= "number" then
+    once(found, `the slider of {name} needs a range: give it one, or a min and a max`)
+  elseif low >= high then
+    once(found, `the slider of {name} must run from a lower number to a higher one`)
   end
 end
 
@@ -405,6 +438,10 @@ local function rowOf(row: any, name: string, found: { string })
     if typeof(rawget(row, field[1])) == "table" then
       once(found, `the {field[2]} of {name} must be a number or a value of its type, not a table`)
     end
+  end
+
+  if rawget(row, "isSlider") == true then
+    sliderOf(row, name, found)
   end
 
   -- the registry walks each of these unasked, and would throw on one that is

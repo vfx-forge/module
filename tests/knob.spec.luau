@@ -47,6 +47,21 @@ harness.suite(function()
       end).kind).toBe(nil)
     end)
 
+    test("a slider keeps the range it drags over, or none for its bounds", function()
+      local row = knob(0.5):min(0):max(1)
+
+      expect(row.isSlider).toBe(false)
+      expect(row:slider()).toBe(row)
+      expect(row.isSlider).toBe(true)
+      expect(row.dragLower).toBe(nil)
+      expect(row.dragUpper).toBe(nil)
+
+      local soft = knob(10):min(0):slider(1, 50)
+
+      expect(soft.dragLower).toBe(1)
+      expect(soft.dragUpper).toBe(50)
+    end)
+
     test("every chain method returns the same knob", function()
       local row = knob(1)
       local same = row:min(0):max(2):aliases("A", "B"):label("One"):hint("h"):curve("linear"):unit("seconds"):mod()

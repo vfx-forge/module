@@ -998,6 +998,55 @@ harness.suite(function()
       })
     end)
 
+    test("a slider loads with its own range or its row's bounds", function()
+      fresh()
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = {
+                Strength = sdk.knob(0.5):min(0):max(1):slider(),
+                Size = sdk.knob(4):min(0):slider(1, 20):unit("studs"),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(true)
+      expect(found).toEqual({})
+
+      local attributes = registry.get("my_effect").attributes
+
+      expect(attributes.Strength.isSlider).toBe(true)
+      expect(attributes.Size.dragUpper).toBe(20)
+    end)
+
+    test("a slider on no number, with no range or a range that runs backwards is refused, naming the row", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Tint = sdk.knob(Color3.new()):slider(0, 1),
+              Open = sdk.knob(1):min(0):slider(),
+              Back = sdk.knob(1):slider(2, 1),
+              Text = sdk.knob(1):slider("a" :: any, 2),
+            },
+          }
+        end,
+      }))).toEqual({
+        "the slider of Back must run from a lower number to a higher one",
+        "the slider of Open needs a range: give it one, or a min and a max",
+        "the slider range of Text must be numbers",
+        "the slider of Tint needs a number param",
+      })
+    end)
+
     test("a knob's own fields are checked by type, so no reason ever turns an author's table to text", function()
       fresh()
 

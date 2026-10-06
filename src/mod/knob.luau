@@ -43,6 +43,9 @@ type Fields = {
   units: string?,
   hiddenRule: Rule?,
   readonlyRule: Rule?,
+  isSlider: boolean,
+  dragLower: number?,
+  dragUpper: number?,
   isMod: boolean,
   modDefault: any,
   order: number,
@@ -73,6 +76,9 @@ local function make(default: any): Knob
     units = nil,
     hiddenRule = nil,
     readonlyRule = nil,
+    isSlider = false,
+    dragLower = nil,
+    dragUpper = nil,
     isMod = false,
     modDefault = nil,
     order = counter,
@@ -136,6 +142,15 @@ end
 
 function Knob.readonly(self: Knob, rule: Rule): Knob
   self.readonlyRule = rule
+  return self
+end
+
+-- a number row drawn as a slider, dragged from low to high, each its min or
+-- max when left out. a typed value still clamps to min and max
+function Knob.slider(self: Knob, low: number?, high: number?): Knob
+  self.isSlider = true
+  self.dragLower = low
+  self.dragUpper = high
   return self
 end
 

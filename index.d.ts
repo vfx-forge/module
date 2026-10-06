@@ -403,6 +403,8 @@ export namespace SDK {
 		hidden(rule: Rule): Knob;
 		/** Locks the row to its default while the rule answers true. */
 		readonly(rule: Rule): Knob;
+		/** A number param drawn as a slider, dragged from low to high (its min and max when left out); a typed value still clamps to min and max. */
+		slider(low?: number, high?: number): Knob;
 		/** A value modifiers can animate, read as a Track, with default modifiers. */
 		mod(...mods: Mod[]): Knob;
 	}

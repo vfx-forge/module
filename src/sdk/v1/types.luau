@@ -29,6 +29,8 @@ export type Knob = {
   hidden: (self: Knob, rule: Rule) -> Knob,
   -- locks the row to its default while the rule answers true
   readonly: (self: Knob, rule: Rule) -> Knob,
+  -- a number param drawn as a slider, dragged from low to high (its min and max when left out); a typed value still clamps to min and max
+  slider: (self: Knob, low: number?, high: number?) -> Knob,
   -- a value modifiers can animate, read as a Track, with default modifiers made by sdk.mod
   mod: (self: Knob, ...Mod) -> Knob,
 }
