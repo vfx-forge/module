@@ -2,12 +2,15 @@ local mods = require("@mod/mods")
 local value = require("@mod/value")
 local curves = require("@mod/curves")
 local harness = require("@tests/harness")
+local modifiers = require("@mod/modifiers")
 local test, expect = harness.test, harness.expect
 local Instance = harness.datatypes.Instance
 local Vector3 = harness.datatypes.Vector3
 
--- the lanes and the sampler as they stood before the fast paths, dev 22f78f0:
--- the general path every fast one has to answer exactly as
+-- the lane fold as it stood at 22f78f0, which the one-lane path and every
+-- lane rule here have to answer exactly as. it pins 22f78f0's lane rules: when
+-- one of them changes on purpose, re-point this copy at the new rules or
+-- retire it with the cases that use it
 local before = require("@tests/fixtures/mods_22f78f0")
 
 local EASE = curves.PRESETS.easeIn
@@ -214,14 +217,60 @@ local function sampled(new: any, old: any, into: any, lefts: { any }, tag: strin
 end
 
 -- the sampler a lane builds, from each side over the same rolls
+-- a queue driven through modifiers.evaluate the way a sampler drove it before
+-- it compiled: scheduled once, the base handed in per call, and scheduled again
+-- when a queue with an entry naming no duration is told a new time left. the
+-- target carries no value of its own, so the base is whatever the call hands in
+local function evaluated(queue: { any }, rolls: mods.Rolls, duration: number, lent: number)
+  local offsets, _, resolved, lengths = modifiers.schedule(queue, rolls.picks, lent, rolls.env, nil)
+  local openEnded = false
+
+  for _, m in queue do
+    if m.kind == "delay" or m.kind == "randomizer" or modifiers.BASE_KINDS[m.kind] then
+      continue
+    end
+
+    if typeof(m.duration) ~= "number" then
+      openEnded = true
+    end
+  end
+
+  local ctx: modifiers.Ctx = {
+    duration = duration,
+    draws = rolls.draws,
+    picks = rolls.picks,
+    offsets = offsets,
+    lengths = lengths,
+    linked = resolved,
+    env = rolls.env,
+    envelope = rolls.envelope,
+  }
+
+  local scheduledFor: number? = nil
+
+  return function(elapsed: number, own: any?, left: number?)
+    ctx.base = own
+
+    if openEnded and left ~= nil and left == left and left ~= scheduledFor then
+      local placed, _, _, runs = modifiers.schedule(queue, rolls.picks, lent, rolls.env, left)
+
+      scheduledFor = left
+      ctx.offsets = placed
+      ctx.lengths = runs
+    end
+
+    return modifiers.evaluate(queue, elapsed, ctx)
+  end
+end
+
+-- the sampler a lane builds over some rolls, and evaluate over the same
 local function samplers(queue: { any }, span: number, env: { [string]: any }?)
   local ref = Instance.new("Attachment")
   local rolls = mods.roll(queue, env)
   local reach, linked = mods.span(queue, span, rolls)
   local new = mods.sampler(ref, "attribute", "Width", reach, queue, rolls, linked)
-  local old = before.sampler(ref, "attribute", "Width", reach, queue, rolls, linked)
 
-  return new, old
+  return new, evaluated(queue, rolls, reach, linked)
 end
 
 local function compared(queue: { any }, span: number, lefts: { any })
