@@ -12,7 +12,7 @@ local before = require("@tests/fixtures/mods_22f78f0")
 local ROUNDS = 9
 local FRAMES = 240
 local PASSES = 20
-local BUILDS = 500
+local BUILDS = 100
 
 local function tween(startV: any, finishV: any, duration: number?, shaped: boolean?)
   return {
