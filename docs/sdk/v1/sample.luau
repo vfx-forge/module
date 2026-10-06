@@ -26,7 +26,7 @@ function effect.params(sdk)
         :label("Fade")
         :hint("Seconds the part takes to fade out; 0.2 to 2 reads well."),
       FadeCurve = sdk.knob("easeOut"):curve("easeOut"):label("Curve"):hint("How the fade eases."),
-      Growth = sdk.knob(2):min(0):label("Growth"):hint("Times its size the part grows to; 1 to 4."),
+      Growth = sdk.knob(2):min(0):slider(1, 4):label("Growth"):hint("Times its size the part grows to; 1 to 4."),
       EndColor = sdk.knob(Color3.new(1, 1, 1)):label("Color"):hint("The color the part fades to."),
       Shine = sdk
         .knob(0)
