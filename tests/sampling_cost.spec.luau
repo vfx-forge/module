@@ -12,7 +12,7 @@ local before = require("@tests/fixtures/mods_22f78f0")
 local ROUNDS = 9
 local FRAMES = 240
 local PASSES = 20
-local BUILDS = 100
+local BUILDS = 1000
 
 local function tween(startV: any, finishV: any, duration: number?, shaped: boolean?)
   return {
@@ -101,6 +101,7 @@ harness.suite(function()
   harness.describe("the cost of sampling a row", function()
     test("every row shape samples no slower than the lanes before the fast paths", function()
       local lines = {}
+      local ratios = {}
 
       for _, shape in SHAPES do
         local new = trackOf(mods, shape)
@@ -120,14 +121,19 @@ harness.suite(function()
           `{shape.name} {string.format("%.0f", fast * 1e9)} ns, {string.format("%.0f", slow * 1e9)} ns before`
         )
 
-        expect(fast <= slow * 1.05).toBe(true)
+        table.insert(ratios, fast / slow)
       end
 
       print(`a row's at per call: {table.concat(lines, ", ")}`)
+
+      for _, ratio in ratios do
+        expect(ratio <= 1.05).toBe(true)
+      end
     end)
 
     test("building a row and its first sample costs no more than before the fast paths", function()
       local lines = {}
+      local ratios = {}
 
       for _, shape in SHAPES do
         local fast, slow = math.huge, math.huge
@@ -142,10 +148,14 @@ harness.suite(function()
           `{shape.name} {string.format("%.2f", fast * 1e6)} us, {string.format("%.2f", slow * 1e6)} us before`
         )
 
-        expect(fast <= slow * 1.05).toBe(true)
+        table.insert(ratios, fast / slow)
       end
 
       print(`a row built and sampled once: {table.concat(lines, ", ")}`)
+
+      for _, ratio in ratios do
+        expect(ratio <= 1.05).toBe(true)
+      end
     end)
   end)
 end)
