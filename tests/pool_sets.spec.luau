@@ -613,6 +613,34 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a refused template is tried again only once it changes or rests", function()
+      local fake = start()
+      local source = template()
+      harness.make("Script", source)
+
+      local holder = {}
+      local function made()
+        pool.take(holder, source)
+        lifetime.releasePlain(holder)
+
+        return pool.stats().made
+      end
+
+      local first = made()
+
+      pool.sweep(os.clock())
+      expect(made()).toBe(first)
+
+      fake.changed[source]()
+      expect(made()).toBe(first + 1)
+
+      pool.sweep(1e9)
+      pool.sweep(2e9)
+      expect(made()).toBe(first + 2)
+
+      stop(fake)
+    end)
+
     test("a template a custom effect claims inside clones fresh every emit", function()
       local fake = start()
       local source = template()

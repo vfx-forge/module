@@ -683,6 +683,11 @@ local function trim(stack: Store)
     return
   end
 
+  -- a refusal asked for lately is kept, or every take would build it again
+  if entry.keep == false and math.max(stack.peak, stack.previous) > 0 then
+    return
+  end
+
   for _, conn in entry.watch or {} do
     conn:Disconnect()
   end
@@ -964,6 +969,7 @@ local function kept(holder: any, key: Instance, source: Instance)
 
   -- a whole clone, so references between its children name each other
   if entry.keep == false then
+    entry.peak = math.max(entry.peak, 1)
     return fresh(holder, source)
   end
 
@@ -1004,21 +1010,23 @@ local function kept(holder: any, key: Instance, source: Instance)
 
   dress(root, source)
 
+  -- heard from its first build, since an edit may lift a refusal too
+  if entry.watch == nil then
+    watchOf(entry)
+  end
+
   local set = build(root, key, entry)
 
   -- its children were cloned one by one, so a reference between them still
   -- names the template's; a whole clone names its own
   if set == nil then
     entry.keep = false
+    entry.peak = math.max(entry.peak, 1)
     destroy(root)
     return fresh(holder, source)
   end
 
   entry.keep = true
-
-  if entry.watch == nil then
-    watchOf(entry)
-  end
 
   return begin(holder, root, entry, set)
 end
