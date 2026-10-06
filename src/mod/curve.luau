@@ -486,10 +486,10 @@ end
 
 -- the same read as curve.sample with the shape looked up once, for a caller
 -- sampling one shape every frame
-function curve.sampler(shape: string | buffer | { vector }): (t: number) -> number
+function curve.sampler(shape: string | buffer | { vector })
   local resolved = shapeOf(shape)
 
-  return function(t: number): number
+  return function(t: number)
     return solve(resolved, t)
   end
 end
