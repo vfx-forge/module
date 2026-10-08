@@ -8,7 +8,7 @@ local mover = require("@srv/mover")
 local FLOOR = 64
 local BUCKET = 15
 local EVERY = 1
-local FOLDER = "DO_NOT_REMOVE_ForgeSharedPartCache"
+local FOLDER = "VFXForgeCache"
 
 -- a clone carries every serialized property but these, which a copy keeps
 -- its own of
