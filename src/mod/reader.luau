@@ -124,6 +124,48 @@ local SEEDED = table.freeze({ ownStart = true })
 -- piece can never fire, so one serves them all and a read allocates none
 local STILL = mods.piece(nil)
 
+-- the lane map wrapped around each old queue, one per queue table
+local LEGACY_LANES: { [any]: { [string]: { any } } } = setmetatable({}, { __mode = "k" }) :: any
+
+-- the builds every instance storing the same content shares: the lanes a row
+-- was found under are one table per distinct content, and a row of another
+-- instance found under that same table, resting at the same value over the
+-- same span, is handed the lanes the first build kept, the way a piece of the
+-- same emit already is. a build that draws per piece hands nothing on and is
+-- never kept here
+type Kept = {
+  source: string,
+  built: string,
+  span: number,
+  rest: any,
+  framed: boolean,
+  share: (other: mods.Piece) -> mods.Track?,
+}
+
+local BUILDS: { [any]: { Kept } } = setmetatable({}, { __mode = "k" }) :: any
+
+local function keptOf(lanes: any, source: string, built: string, span: number, rest: any, framed: boolean): Kept?
+  local held = BUILDS[lanes]
+
+  if held == nil then
+    return nil
+  end
+
+  for _, kept in held do
+    if
+      kept.source == source
+      and kept.built == built
+      and kept.span == span
+      and kept.rest == rest
+      and kept.framed == framed
+    then
+      return kept
+    end
+  end
+
+  return nil
+end
+
 -- the instance's children, taken once for the whole read and handed to every
 -- old shape that walks them, rather than once per row per side. taken on the
 -- first row that reaches the old shapes at all, so a read that finds every row
@@ -214,8 +256,17 @@ local function queueOf(
     return nil, false, under
   end
 
-  -- the old format had one trigger, which is the lane every queue was
-  return { start = queue }, false, under
+  -- the old format had one trigger, which is the lane every queue was. the
+  -- queue is one table per distinct content, and so is the map around it, so
+  -- a build kept under the map is kept under the content
+  local wrapped = LEGACY_LANES[queue]
+
+  if wrapped == nil then
+    wrapped = table.freeze({ start = queue })
+    LEGACY_LANES[queue] = wrapped
+  end
+
+  return wrapped, false, under
 end
 
 local function usableDuration(d: any)
@@ -478,6 +529,30 @@ local function trackOf(
   -- that is where the value it chains from and the range it draws inside are
   -- stored too; a property row's base is the property, whatever the spelling
   local built = if source == "property" then name else found.under or name
+
+  -- a build from where the row rests, over a default that is the row's own
+  -- value, is a function of the stored content alone, so one such build is
+  -- shared by every instance storing that content. a declared default reads
+  -- other rows, a range draws, and a seeded or provisional build is a piece's
+  -- or a rule's own
+  local shareable = lanes ~= nil and declared == nil and default == rest and not seeded and not state.deciding
+
+  if shareable then
+    local kept = keptOf(lanes, source, built, span, rest, found.framed)
+
+    if kept ~= nil then
+      local shared = kept.share(own)
+
+      if shared ~= nil then
+        found.share = kept.share
+        found.shareSpan = span
+        found.rest = rest
+
+        return wrap(state, source, name, row, rest, shared)
+      end
+    end
+  end
+
   local inner, share = mods.build(ctx.ref, source, built, default, span, nil, lanes, found.framed, opts, own)
 
   -- only a build from where the row rests, with the duration decided, is the
@@ -486,6 +561,20 @@ local function trackOf(
     found.share = share
     found.shareSpan = span
     found.rest = rest
+  end
+
+  if shareable and share ~= nil then
+    local held = BUILDS[lanes]
+
+    if held == nil then
+      held = {}
+      BUILDS[lanes] = held
+    end
+
+    table.insert(
+      held,
+      { source = source, built = built, span = span, rest = rest, framed = found.framed, share = share }
+    )
   end
 
   return wrap(state, source, name, row, rest, inner)
