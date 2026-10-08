@@ -137,6 +137,44 @@ harness.suite(function()
       expect(b.Width.at(0)).toBe(1)
     end)
 
+    -- a module whose duration is drawn per emit builds over a new span every
+    -- read, and the reader keeps only the newest few of those, so a game that
+    -- emits such an effect for an hour holds a bounded number of builds
+    test("builds over many spans are kept a few at a time", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+
+      local m = module("shared_f")
+      m.attributes.Duration = knob(1):min(0):unit("seconds")
+      m.duration = function(_, attrs: any)
+        return attrs.Duration
+      end
+      registry.register(m)
+
+      local function at(duration: number)
+        local obj = instance(1, 3)
+        obj:SetAttribute("Duration", duration)
+        return obj
+      end
+
+      registry.read(at(1))
+
+      for i = 2, 12 do
+        registry.read(at(i))
+      end
+
+      local newest = counting(function()
+        expect(registry.read(at(12)).Width.duration).toBe(12)
+      end)
+      local oldest = counting(function()
+        expect(registry.read(at(1)).Width.duration).toBe(1)
+      end)
+
+      -- Spread draws and Speed stores nothing, so both build every read;
+      -- only Width's build is the one the oldest span has lost
+      expect(oldest).toBe(newest + 1)
+    end)
+
     test("a piece calling a shared row gets lanes on its own clock", function()
       registry.clear()
       registry.configure({ query = harness.query })

@@ -180,6 +180,11 @@ type Kept = {
 
 local BUILDS: { [any]: { Kept } } = setmetatable({}, { __mode = "k" }) :: any
 
+-- a build is keyed by the span it ran over, and a module whose duration is
+-- drawn per emit brings a new span every time, so each lanes table keeps only
+-- its newest few builds, the oldest let go when one more arrives
+local KEPT_MAX = 8
+
 local function keptOf(lanes: any, source: string, built: string, span: number, rest: any, framed: boolean): Kept?
   local held = BUILDS[lanes]
 
@@ -647,6 +652,10 @@ local function trackOf(
     if held == nil then
       held = {}
       BUILDS[lanes] = held
+    end
+
+    if #held >= KEPT_MAX then
+      table.remove(held, 1)
     end
 
     table.insert(
