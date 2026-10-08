@@ -491,9 +491,52 @@ local function trackOf(
   return wrap(state, source, name, row, rest, inner)
 end
 
-wrap = function(state: State, source: string, name: string, row: knob.Knob, rest: any, inner: mods.Track): Track
-  local ctx = state.ctx
+local function apply(track: any, write: (v: any) -> (), done: (() -> ())?)
+  local ctx = track.state.ctx
 
+  if reader.bind == nil or ctx.scope == nil then
+    logger.error(`{track.name} cannot be applied without a running effect`)
+  end
+
+  local bind = reader.bind :: any
+
+  bind(ctx.scope, track, write, nil, done)
+end
+
+-- a piece calls the row for a track of its own: rules run again, a value
+-- handed in is where this piece's state is, a span handed in is the clock this
+-- piece runs over when it drew one, and a piece handed in is the clock its own
+-- event lanes fire on. one metatable serves every track, reading what the
+-- track was built from off the track itself, so a read allocates no closure
+-- per row for a call most rows never get
+local TRACK_META = {
+  __call = function(track: any, current: any, span: number?, own: mods.Piece?)
+    local state: State = track.state
+    local source: string = track.source
+    local name: string = track.name
+    local row: knob.Knob = track.row
+    local over = span or durationOf(state)
+
+    if current == nil then
+      local found = queueFor(state, source, name, row)
+      local share = found.share
+
+      if share ~= nil and found.shareSpan == over then
+        local shared = share(if own ~= nil then own else pieceOf(state))
+
+        if shared ~= nil then
+          return wrap(state, source, name, row, found.rest, shared)
+        end
+      end
+    end
+
+    local held = if current ~= nil then current else plainOf(state, source, name, row)
+
+    return trackOf(state, source, name, row, held, current ~= nil, over, own)
+  end,
+}
+
+wrap = function(state: State, source: string, name: string, row: knob.Knob, rest: any, inner: mods.Track): Track
   local track = {
     at = inner.at,
     duration = inner.span,
@@ -502,46 +545,14 @@ wrap = function(state: State, source: string, name: string, row: knob.Knob, rest
     has = inner.has,
     reach = inner.reach,
     still = inner.still,
+    apply = apply,
+    state = state,
+    source = source,
+    name = name,
+    row = row,
   }
 
-  function track.apply(_, write: (v: any) -> (), done: (() -> ())?)
-    if reader.bind == nil or ctx.scope == nil then
-      logger.error(`{name} cannot be applied without a running effect`)
-    end
-
-    local bind = reader.bind :: any
-
-    bind(ctx.scope, track, write, nil, done)
-  end
-
-  -- a piece calls the row for a track of its own: rules run again, a value
-  -- handed in is where this piece's state is, a span handed in is the clock this
-  -- piece runs over when it drew one, and a piece handed in is the clock its own
-  -- event lanes fire on
-  setmetatable(track, {
-    __call = function(_, current: any, span: number?, own: mods.Piece?)
-      local over = span or durationOf(state)
-
-      if current == nil then
-        local found = queueFor(state, source, name, row)
-        local share = found.share
-
-        if share ~= nil and found.shareSpan == over then
-          local shared = share(if own ~= nil then own else pieceOf(state))
-
-          if shared ~= nil then
-            return wrap(state, source, name, row, found.rest, shared)
-          end
-        end
-      end
-
-      local held = if current ~= nil then current else plainOf(state, source, name, row)
-
-      return trackOf(state, source, name, row, held, current ~= nil, over, own)
-    end,
-  })
-
-  return table.freeze(track) :: any
+  return table.freeze(setmetatable(track, TRACK_META)) :: any
 end
 
 local function resolveRow(
@@ -600,7 +611,9 @@ local function rowIndex(t: any, k: any)
   return resolveRow(state, t, module.properties, state.propPending, "property", k)
 end
 
-function reader.resolve(module: Module, ctx: Ctx): (any, any)
+-- the third return is every attribute the walk read the instance under, for
+-- a caller that goes on to walk the same keys and would otherwise read them again
+function reader.resolve(module: Module, ctx: Ctx): (any, any, { [string]: any })
   local attrs = {}
   local props = {}
 
@@ -651,7 +664,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any)
   setmetatable(attrs, nil)
   setmetatable(props, nil)
 
-  return table.freeze(attrs), table.freeze(props)
+  return table.freeze(attrs), table.freeze(props), state.map
 end
 
 return reader

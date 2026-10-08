@@ -306,15 +306,18 @@ end
 -- every target it drives is written through a writer, so two emits driving one
 -- hand it over, and the last to end puts back what it held before.
 -- `reflected`, a custom effect's mirrored properties, limits it to the panel
--- queues on those: true for every property, or the set it names
+-- queues on those: true for every property, or the set it names. `map` is the
+-- attributes a reader already read off the instance, so one with a module is
+-- read once rather than once more here
 function emitters.applyMods(
   obj: Instance,
   scope: types.scope,
   duration: number,
   owned: { [string]: { [string]: boolean } }?,
-  reflected: registry.Reflected?
+  reflected: registry.Reflected?,
+  map: { [string]: any }?
 )
-  for _, key in attr.keys(obj) do
+  for key in (if map ~= nil then map else attr.map(obj)) do
     local source: string? = nil
     local name: string? = nil
 
@@ -409,14 +412,14 @@ function emitters.dispatch(
       shared = shared,
       constant = constant,
     }
-    local ok, attrs, props = utility.try(`failed to read {effect.id} with error: %s`, reader.resolve, effect, ctx)
+    local ok, attrs, props, map = utility.try(`failed to read {effect.id} with error: %s`, reader.resolve, effect, ctx)
 
     if not ok then
       return
     end
 
     if not constant and (not own or reflected ~= nil) then
-      emitters.applyMods(obj, scope, ctx.duration :: number, registry.owned(effect), reflected)
+      emitters.applyMods(obj, scope, ctx.duration :: number, registry.owned(effect), reflected, map)
     end
 
     utility.try(`failed to emit {effect.id} with error: %s`, effect.emit, ctx, attrs, props)
