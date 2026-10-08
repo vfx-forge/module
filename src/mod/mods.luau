@@ -390,6 +390,14 @@ type Lane = {
   -- the one value an event lane made only of chained tweens to it ends every
   -- entry at, and nil for any other lane
   rests: any,
+  -- the entries the lane was built from, and whether they hold the row at one
+  -- value (`level`) from its trigger, judged over `under`: a lane leading with
+  -- a chain holds whatever it is fired over, so a track judges it again over
+  -- what its own lanes hold
+  queue: { any }?,
+  flat: boolean,
+  level: any,
+  leads: boolean,
 }
 
 -- the lane that answers for `lane` once it has fired: itself, built on the
@@ -591,6 +599,91 @@ local function restsOf(queue: { any }): any
   return rests
 end
 
+-- the one value a lane's entries hold the row at from its trigger, when they
+-- hold it anywhere at all: every entry ends where it starts, a chained one
+-- starting from what the entry before it left, or from `under` when it leads.
+-- a drawn endpoint counts when its corners agree, since the draw can land
+-- nowhere else. false when any entry moves the row or draws. the third return
+-- says the lane leads with a chain, so what it holds depends on `under`
+local function flatOf(queue: { any }, under: any): (boolean, any, boolean)
+  local running: any = nil
+  local any = false
+  local leads = false
+
+  for _, m in queue do
+    local kind = m.kind
+
+    if modifiers.BASE_KINDS[kind] or kind == "delay" then
+      continue
+    end
+
+    if kind ~= "tween" and kind ~= "randomizer" then
+      return false, nil, false
+    end
+
+    local startV: any
+
+    if m.chain then
+      if running == nil then
+        leads = true
+      end
+
+      startV = if running ~= nil then running else under
+    else
+      startV = value.fixed(m.start)
+    end
+
+    local finishV = if m.finish ~= nil then value.fixed(m.finish) else startV
+
+    if startV == nil or finishV == nil or startV ~= finishV then
+      return false, nil, false
+    end
+
+    if running ~= nil and startV ~= running then
+      return false, nil, false
+    end
+
+    running = finishV
+    any = true
+  end
+
+  return any, running, leads
+end
+
+-- whether a set of lanes leaves the row at one value for good: the start lane,
+-- first in the set, holds the row somewhere from the emit, and every lane after
+-- it holds that same value, so firing one changes nothing. a lane with a
+-- fallback may hand the row to its default, which is not told from here
+local function pinned(set: { Lane }, rest: any): boolean
+  local held = rest
+
+  for _, lane in set do
+    local queue = lane.queue
+
+    if queue == nil or lane.fallback ~= nil then
+      return false
+    end
+
+    local flat, level = lane.flat, lane.level
+
+    if lane.leads then
+      flat, level = flatOf(queue, held)
+    end
+
+    if not flat then
+      return false
+    end
+
+    if lane.name == "start" then
+      held = level
+    elseif level ~= held then
+      return false
+    end
+  end
+
+  return true
+end
+
 local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any): Track
   local reach = span
   local ends = false
@@ -643,7 +736,7 @@ local function trackFrom(set: { Lane }, piece: Piece?, span: number, rest: any):
   return {
     at = at,
     span = reach,
-    animated = true,
+    animated = not pinned(set, rest),
     has = function(lane: string)
       for _, held in set do
         if held.name == lane then
@@ -786,6 +879,38 @@ end
 -- the callers that already hold mods
 mods.kindOf = knob.kindOf
 
+-- whether a lane's entries come out differently for each piece that builds
+-- them: a draw is rolled per build, an envelope deviates by a roll, and an
+-- event lane whose entry names no duration is scheduled again from whatever
+-- the fire says is left
+local function perPiece(queue: { any }, event: boolean): boolean
+  for _, m in queue do
+    if m.kind == "randomizer" or m.envelope ~= nil then
+      return true
+    end
+
+    if (m.start ~= nil and value.isDraw(m.start)) or (m.finish ~= nil and value.isDraw(m.finish)) then
+      return true
+    end
+
+    if type(m.wait) == "table" and value.isDraw(m.wait) then
+      return true
+    end
+
+    if event and m.kind ~= "delay" and not modifiers.BASE_KINDS[m.kind] and typeof(m.duration) ~= "number" then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- the rolls of a queue that draws nothing, which is what mods.roll would hand
+-- it without the generator: no draw, no pick, and an envelope nothing reads
+local function unrolled(env: { [string]: any }?): Rolls
+  return { draws = {}, picks = {}, env = env, envelope = 0 }
+end
+
 -- one lane as a sampler on its own clock, drawn once for this instance. the
 -- probe is where the row rests, which is what a lane whose first entry chains
 -- begins from when nothing under it has run yet
@@ -802,7 +927,7 @@ local function laneOf(
   -- the end lane plays out as the effect ends, so a modifier on it naming no
   -- duration has nothing left to run for and snaps to its finish
   local left = if lane == "end" then 0 else nil
-  local rolls = mods.roll(queue, env)
+  local rolls = if perPiece(queue, false) then mods.roll(queue, env) else unrolled(env)
   local reach, linked, length, offsets, resolved, lengths = spanned(queue, span, rolls, left)
   local sample, lead = samplerOf(ref, source, name, reach, queue, rolls, linked, left, offsets, resolved, lengths)
 
@@ -892,38 +1017,6 @@ local function completed(
   return queue
 end
 
--- whether a lane's entries come out differently for each piece that builds
--- them: a draw is rolled per build, an envelope deviates by a roll, and an
--- event lane whose entry names no duration is scheduled again from whatever
--- the fire says is left
-local function perPiece(queue: { any }, event: boolean): boolean
-  for _, m in queue do
-    if m.kind == "randomizer" or m.envelope ~= nil then
-      return true
-    end
-
-    if (m.start ~= nil and value.isDraw(m.start)) or (m.finish ~= nil and value.isDraw(m.finish)) then
-      return true
-    end
-
-    if type(m.wait) == "table" and value.isDraw(m.wait) then
-      return true
-    end
-
-    if event and m.kind ~= "delay" and not modifiers.BASE_KINDS[m.kind] and typeof(m.duration) ~= "number" then
-      return true
-    end
-  end
-
-  return false
-end
-
--- the rolls of a queue that draws nothing, which is what mods.roll would hand
--- it without the generator: no draw, no pick, and an envelope nothing reads
-local function unrolled(env: { [string]: any }?): Rolls
-  return { draws = {}, picks = {}, env = env, envelope = 0 }
-end
-
 -- an event lane as its reach and length alone, which is all a row answers
 -- before the lane fires: its sampler, and the probe that says whether it
 -- samples anything at all, wait for the first time a piece has fired it. a
@@ -957,7 +1050,13 @@ local function eventLaneOf(
     silent = false,
     fallback = nil,
     rests = restsOf(queue),
+    queue = queue,
+    flat = false,
+    level = nil,
+    leads = false,
   }
+
+  out.flat, out.level, out.leads = flatOf(queue, probe)
 
   -- a var in the queue reads the environment as it stands when the lane is
   -- built, the first time it fires, which may no longer be what the read placed
@@ -1083,12 +1182,26 @@ local function buildNow(
 
       local sample: ((elapsed: number, own: any?, left: number?) -> any)? = nil
       local reach, first, length = span, 0, 0
+      local flat, level, leads = false, nil, false
 
       if entries ~= nil then
+        flat, level, leads = flatOf(entries, footing)
+      end
+
+      -- a lane that holds the row at one literal value needs no sampler walked
+      -- for it, only its reach, which a phase length may still read. one that
+      -- leads with a chain holds whatever it is fired over, so it keeps its
+      -- sampler and the track decides what it comes to
+      if flat and not leads then
+        reach, _, length = spanned(entries :: { any }, span, unrolled(env), if lane == "end" then 0 else nil)
+        sample = function()
+          return level
+        end
+      elseif entries ~= nil then
         sample, reach, first, length = laneOf(ref, source, name, entries, span, env, seed, lane)
       end
 
-      if sample ~= nil and not varies then
+      if sample ~= nil and not flat and not varies then
         varies = perPiece(entries :: { any }, event)
       end
 
@@ -1127,6 +1240,10 @@ local function buildNow(
         silent = false,
         fallback = nil,
         rests = nil,
+        queue = entries,
+        flat = flat,
+        level = level,
+        leads = leads,
       })
     end
 

@@ -44,6 +44,27 @@ function value.isVar(x: Value): boolean
   return x.t == "var"
 end
 
+-- the one value an endpoint can resolve to whatever is drawn: a literal's own,
+-- or the corner of a draw whose two corners agree. nil for a var, and for a
+-- draw that can land anywhere between two values
+function value.fixed(x: Value?): any
+  if x == nil then
+    return nil
+  end
+
+  if x.t == "lit" then
+    return (x :: any).v
+  end
+
+  if x.t == "draw" then
+    local d = x :: any
+
+    return if d.a == d.b then d.a else nil
+  end
+
+  return nil
+end
+
 -- a draw resolves at its alpha, and at its midpoint when nobody drew one, which
 -- is both what an editor showing the value wants and a sane pure evaluation.
 --

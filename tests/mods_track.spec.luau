@@ -138,7 +138,8 @@ harness.suite(function()
     local warnings = harness.captureWarnings(function()
       local track = mods.track(obj, "attribute", "Size", mods.draw(Vector3.new(1, 1, 1), Vector3.new(1, 1, 1)), 2)
 
-      expect(track.animated).toBe(true)
+      -- a draw between two equal corners holds one value, so it is not animated
+      expect(track.animated).toBe(false)
       expect(track.at(0)).toEqual(Vector3.new(1, 1, 1))
     end)
 
