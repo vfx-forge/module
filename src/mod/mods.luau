@@ -1310,8 +1310,15 @@ local function buildNow(
       return track, nil
     end
 
+    -- a track fires its lanes on its piece's clock and holds nothing else of
+    -- its own, so a caller on the very piece this one was built for, which is
+    -- every read of a module that fires no event, is handed this track
     return track,
       function(other: Piece)
+        if other == piece then
+          return track
+        end
+
         if other.events ~= events then
           return nil
         end
@@ -1561,13 +1568,18 @@ function mods.build(
   end
 
   local events = if piece then piece.events else nil
+  local own = deferred(piece)
 
   if varies then
-    return deferred(piece), nil
+    return own, nil
   end
 
-  return deferred(piece),
+  return own,
     function(other: Piece)
+      if other == piece then
+        return own
+      end
+
       if other.events ~= events then
         return nil
       end

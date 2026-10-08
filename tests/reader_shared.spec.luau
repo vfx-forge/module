@@ -123,6 +123,20 @@ harness.suite(function()
       expect(builds >= 1).toBe(true)
     end)
 
+    -- a module that fires no event reads every row on the one still piece,
+    -- so a clone is handed the first read's track itself, not a copy of it
+    test("reads of a module with no events share the track itself", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(module("shared_e"))
+
+      local a = registry.read(instance(1, 3))
+      local b = registry.read(instance(1, 3))
+
+      expect(rawequal(a.Width.at, b.Width.at)).toBe(true)
+      expect(b.Width.at(0)).toBe(1)
+    end)
+
     test("a piece calling a shared row gets lanes on its own clock", function()
       registry.clear()
       registry.configure({ query = harness.query })
