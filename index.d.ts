@@ -79,6 +79,12 @@ export interface EmitOptions {
    * default. Anything but a finite number warns and is 0.
    */
   priority?: number;
+  /**
+   * Seconds of one frame this emit may spend starting its effects before the rest wait
+   * for the next frame, in place of the module's budget. 0 starts every effect in the
+   * call. The first effect always starts in the call.
+   */
+  budget?: number;
 }
 
 /**
@@ -110,6 +116,19 @@ export interface Signal<T extends unknown[]> {
  * @param speed 1 is authored speed, 0.5 half, 2 double
  */
 export function setSpeed(speed: number): void;
+
+/**
+ * Seconds of one frame an emit may spend starting its effects before the rest wait for
+ * the next frame that moves, 0.008 by default, so a large emit is spread over a few
+ * frames instead of one long one. undefined or 0 starts every effect in the call. An
+ * emit's own `budget` option takes its place for that emit.
+ */
+export function setBudget(seconds?: number): void;
+
+/**
+ * The budget last set with setBudget, 0.008 by default.
+ */
+export function getBudget(): number | undefined;
 
 /**
  * The global speed last set with setSpeed, 1 by default. Pausing does not change it, and

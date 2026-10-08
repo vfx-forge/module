@@ -30,7 +30,20 @@ local BORN = table.freeze({})
 local TIMER = table.freeze({})
 
 -- the keys an emit's options table may hold
-local OPTIONS = { priority = true }
+local OPTIONS = { priority = true, budget = true }
+
+-- the seconds of one frame spent starting effects before the ones left wait
+-- for the next frame, so a large emit is spread over a few frames instead of
+-- one long one; nil or 0 starts every effect in the call. the first effect
+-- of an emit always starts in the call, whatever the frame has spent
+effects.budget = 0.008
+
+-- what this frame has spent starting effects, cleared as each frame begins
+local spent = 0
+local reset: scheduler.Handle? = nil
+
+-- a wait so short the next frame that moves ends it, and a paused emit never does
+local NEXT_FRAME = 1e-9
 
 local EMPTY_ENV: types.EmitEnv = {
   Finished = Promise.resolve(),
@@ -77,10 +90,25 @@ local REGIONS = setmetatable({} :: { [lifetime.effect]: Region }, { __mode = "k"
 
 function effects.init(api: types.Api)
   api_ref = api
+
+  if reset ~= nil then
+    reset:Disconnect()
+  end
+
+  reset = scheduler.add("undo", function()
+    spent = 0
+  end, 0, nil, true)
 end
 
 function effects.deinit()
   api_ref = nil
+
+  if reset ~= nil then
+    reset:Disconnect()
+    reset = nil
+  end
+
+  spent = 0
 
   for emit in table.clone(LIVE) do
     if not emit.done then
@@ -433,19 +461,52 @@ local function dispatchInto(
   end)
 end
 
+type Job = { obj: Instance, depth: number, effect: registry.Module? }
+
+-- the jobs of an emit run in order, as many per frame as the budget allows:
+-- when a frame's share is spent the rest wait for the next frame that moves,
+-- on an effect of the emit's own, so a clear drops what has not started and
+-- the emit stays open until the last has. with no budget they all run here
+local function start(
+  emit: lifetime.emit,
+  depth: number,
+  jobs: { Job },
+  shared: reader.Shared,
+  placement: Placement?,
+  budget: number?
+)
+  local limit = if budget ~= nil then budget else effects.budget
+
+  if limit == nil or limit <= 0 then
+    for _, job in jobs do
+      dispatchInto(emit, job.obj, job.depth, job.effect, shared, placement)
+    end
+
+    return
+  end
+
+  local fx = lifetime.effect(emit, depth, effects)
+
+  lifetime.run(fx, function(scope)
+    for i, job in jobs do
+      if i > 1 and spent >= limit then
+        lifetime.wait(scope, NEXT_FRAME)
+      end
+
+      local began = os.clock()
+
+      dispatchInto(emit, job.obj, job.depth, job.effect, shared, placement)
+      spent += os.clock() - began
+    end
+  end)
+end
+
 -- a hit's depth is how many ancestors lie between it and the root, and a hit
 -- under an ancestor excluded from emitting is left alone. the walk caches
 -- every ancestor it passes, so a tree of many hits walks each branch once. a
 -- hit with no effect is a legacy tween child, which the dispatcher drives
 -- without a module
-local function emitDescendants(
-  target: lifetime.emit,
-  obj: Instance,
-  baseDepth: number,
-  found: { registry.Hit },
-  shared: reader.Shared,
-  placement: Placement?
-)
+local function collectDescendants(jobs: { Job }, obj: Instance, baseDepth: number, found: { registry.Hit })
   if #found == 0 then
     return
   end
@@ -483,7 +544,7 @@ local function emitDescendants(
     end
 
     if not shouldSkip then
-      dispatchInto(target, desc, depthCache[desc.Parent], hit.effect, shared, placement)
+      table.insert(jobs, { obj = desc, depth = depthCache[desc.Parent], effect = hit.effect })
     end
   end
 end
@@ -492,7 +553,14 @@ end
 -- scales stand before the first effect under it starts. `host` is the effect
 -- a nested emit was started by, and the instance its children sit under is
 -- that effect's own; `from` tells a nested emit from an on-finish one
-local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effect?, from: string, ...: Instance)
+local function emitInto(
+  emit: lifetime.emit,
+  depth: number,
+  host: lifetime.effect?,
+  from: string,
+  budget: number?,
+  ...: Instance
+)
   local shared: reader.Shared = { unc = {}, ref = {}, held = {} }
 
   local list = { ... }
@@ -516,11 +584,14 @@ local function emitInto(emit: lifetime.emit, depth: number, host: lifetime.effec
   end
 
   local placement = if parents ~= nil then placementOf(emit, host, from, list, parents) else nil
+  local jobs: { Job } = {}
 
   for i, obj in list do
-    dispatchInto(emit, obj, depth, modules[i], shared, placement)
-    emitDescendants(emit, obj, depth + 1, scans[i], shared, placement)
+    table.insert(jobs, { obj = obj, depth = depth, effect = modules[i] })
+    collectDescendants(jobs, obj, depth + 1, scans[i])
   end
+
+  start(emit, depth, jobs, shared, placement, budget)
 end
 
 -- the region a controller scales and the key it scales with, handed to it
@@ -536,9 +607,9 @@ function effects.regionOf(fx: lifetime.effect): (Region?, {}?)
   return region, key
 end
 
--- the priority an emit's options table asks for, every key it does not know
--- and every priority that is not a finite number warned about
-local function priorityOf(options: { [any]: any }): number?
+-- the priority and the budget an emit's options table asks for, every key it
+-- does not know and every value that is not a finite number warned about
+local function optionsOf(options: { [any]: any }): (number?, number?)
   for key in options do
     if OPTIONS[key] == nil then
       logger.warn(`emit has no option called {key}`)
@@ -546,17 +617,19 @@ local function priorityOf(options: { [any]: any }): number?
   end
 
   local priority = options.priority
+  local budget = options.budget
 
-  if priority == nil then
-    return nil
-  end
-
-  if type(priority) ~= "number" or not numeric_common.finite(priority) then
+  if priority ~= nil and (type(priority) ~= "number" or not numeric_common.finite(priority)) then
     logger.warn(`emit's priority must be a finite number, not {priority}`)
-    return nil
+    priority = nil
   end
 
-  return priority
+  if budget ~= nil and (type(budget) ~= "number" or not numeric_common.finite(budget) or budget < 0) then
+    logger.warn(`emit's budget must be a finite number of seconds, not {budget}`)
+    budget = nil
+  end
+
+  return priority, budget
 end
 
 function effects.emit(depth: number, ...: any): types.EmitEnv
@@ -571,10 +644,12 @@ function effects.emit(depth: number, ...: any): types.EmitEnv
 
   -- an options table ends the instances, told apart by being a table
   if type(last) == "table" then
-    emit.priority = priorityOf(last) or 0
-    emitInto(emit, depth, nil, "", table.unpack({ ... }, 1, count - 1))
+    local priority, budget = optionsOf(last)
+
+    emit.priority = priority or 0
+    emitInto(emit, depth, nil, "", budget, table.unpack({ ... }, 1, count - 1))
   else
-    emitInto(emit, depth, nil, "", ...)
+    emitInto(emit, depth, nil, "", nil, ...)
   end
 
   lifetime.seal(emit)
@@ -623,7 +698,7 @@ local function emitChildren(
   -- a nested emit runs on the clock of the effect that started it
   local emit = if parentScope then lifetime.emit(parentScope.emit, parentScope.clock) else lifetime.emit(nil)
 
-  emitInto(emit, depth, parentScope, from, table.unpack(children))
+  emitInto(emit, depth, parentScope, from, nil, table.unpack(children))
   lifetime.seal(emit)
 
   if join then

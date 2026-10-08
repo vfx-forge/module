@@ -278,6 +278,21 @@ function api.emitWithDepth(depth: number, ...: Instance)
   return fullEmit(depth, ...)
 end
 
+-- the seconds of one frame an emit may spend starting its effects before the
+-- rest wait for the next frame; nil or 0 starts every effect in the call
+function api.setBudget(seconds: number?)
+  if seconds ~= nil and (type(seconds) ~= "number" or seconds ~= seconds or seconds < 0 or seconds == math.huge) then
+    logger.warn(`setBudget takes a finite number of seconds or nil, not {seconds}`)
+    return
+  end
+
+  effects.budget = seconds
+end
+
+function api.getBudget(): number?
+  return effects.budget
+end
+
 function api.cacheAttributes(obj: Instance, shallow: boolean)
   if utility.SERVER_CONTEXT then
     logger.error("attributes can only be cached in a client-side context")

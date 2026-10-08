@@ -396,6 +396,96 @@ harness.suite(function()
       built.restore()
     end)
 
+    -- three folders of a module that notes the frame each one started in,
+    -- emitted on a budget so small that one job spends it
+    local function budgeted(options: { [string]: any }?)
+      local built = fresh()
+      local frame = 0
+      local started = {}
+
+      registry.register(module("notes", "Folder", function(ctx: any)
+        table.insert(started, `{ctx.ref.Name}@{frame}`)
+      end))
+
+      local folders = {}
+
+      for _, name in { "a", "b", "c" } do
+        local folder = harness.make("Folder")
+        folder.Name = name
+        table.insert(folders, folder)
+      end
+
+      local budget = effects.budget
+      effects.budget = 1e-9
+
+      local env = if options ~= nil
+        then effects.emit(0, folders[1], folders[2], folders[3], options)
+        else effects.emit(0, folders[1], folders[2], folders[3])
+
+      effects.budget = budget
+
+      local function step()
+        frame += 1
+        scheduler.frame(1 / 60)
+      end
+
+      return env, started, step, built
+    end
+
+    test("an emit past its budget starts the rest one frame at a time, and ends after the last", function()
+      local env, started, step, built = budgeted()
+
+      expect(started).toEqual({ "a@0" })
+      expect(env.Finished:getStatus()).toBe("Started")
+
+      step()
+      expect(started).toEqual({ "a@0", "b@1" })
+
+      step()
+      expect(started).toEqual({ "a@0", "b@1", "c@2" })
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("a budget of 0 in the options starts every effect in the call", function()
+      local env, started, _, built = budgeted({ budget = 0 })
+
+      expect(started).toEqual({ "a@0", "b@0", "c@0" })
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      built.restore()
+    end)
+
+    test("a clear starts none of the effects still waiting for their frame", function()
+      local env, started, step, built = budgeted()
+
+      env:Clear()
+
+      expect(env.Finished:getStatus()).toBe("Resolved")
+
+      step()
+      step()
+      expect(started).toEqual({ "a@0" })
+
+      built.restore()
+    end)
+
+    test("a paused emit starts nothing until it resumes", function()
+      local env, started, step, built = budgeted()
+
+      env:Pause()
+      step()
+      step()
+      expect(started).toEqual({ "a@0" })
+
+      env:Resume()
+      step()
+      expect(started).toEqual({ "a@0", "b@3" })
+
+      built.restore()
+    end)
+
     test("Clear still works called without self", function()
       local built = fresh()
       registry.register(module("waits", "Folder", waiting(10)))
