@@ -34,6 +34,10 @@ local LastRefId = 0
 
 local attr = {}
 
+-- moves on every write into a cache, so a reader keeping what it resolved
+-- from one knows when that is no longer what the cache holds
+attr.generation = 0
+
 function attr.cache(obj: Instance)
   local prevId = obj:GetAttribute(ATTR_CACHE_ID)
 
@@ -63,6 +67,7 @@ function attr.cache(obj: Instance)
   end
 
   Cache[id] = map
+  attr.generation += 1
 
   obj:SetAttribute(ATTR_CACHE_ID, id)
 end
@@ -81,6 +86,7 @@ function attr.restore(obj: Instance)
     obj:SetAttribute(k, v)
   end
 
+  attr.generation += 1
   obj:SetAttribute(ATTR_CACHE_ID, nil)
 end
 
@@ -152,9 +158,29 @@ function attr.set<T>(obj: Instance, key: string, value: T)
 
   if cache then
     cache[key] = value
+    attr.generation += 1
   else
     obj:SetAttribute(key, value)
   end
+end
+
+-- the cache table an instance reads through, when it has one and carries no
+-- live attribute beyond its id: then the table is the whole of what a read
+-- sees, and every clone of the cached template hands back the same one
+function attr.cached(obj: Instance): { [string]: any }?
+  local cache = Cache[obj:GetAttribute(ATTR_CACHE_ID)]
+
+  if cache == nil then
+    return nil
+  end
+
+  for k in obj:GetAttributes() do
+    if k ~= ATTR_CACHE_ID then
+      return nil
+    end
+  end
+
+  return cache
 end
 
 -- the value as stored, a cached instance's entry first, with no check that it

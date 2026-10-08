@@ -113,8 +113,44 @@ type State = {
   propPending: { [string]: boolean },
   attrQueues: { [string]: Found }?,
   propQueues: { [string]: Found }?,
+  baked: Baked?,
   __index: (t: any, k: any) -> any,
 }
+
+-- what a read of a module resolved from one attribute cache, kept for every
+-- instance reading through that cache: the clones of a cached template. a
+-- plain attribute value is a function of the cache alone unless a rule
+-- decides it, and a row's lanes come from the cache and the instance's old
+-- children, which clones carry alike. property values are read live, since
+-- a game may have changed a clone's. dropped once the cache is written to
+type Baked = {
+  generation: number,
+  plain: { [string]: any },
+  found: { [string]: { [string]: { lanes: { [string]: { any } }?, framed: boolean, under: string? } } },
+}
+
+-- a plain value of nil, kept apart from a row not resolved yet
+local NONE = table.freeze({})
+
+local BAKED: { [Module]: { [any]: Baked } } = setmetatable({}, { __mode = "k" }) :: any
+
+local function bakedOf(module: Module, cache: { [string]: any }): Baked
+  local held = BAKED[module]
+
+  if held == nil then
+    held = setmetatable({}, { __mode = "k" }) :: any
+    BAKED[module] = held
+  end
+
+  local baked = held[cache]
+
+  if baked == nil or baked.generation ~= attr.generation then
+    baked = { generation = attr.generation, plain = {}, found = { attribute = {}, property = {} } }
+    held[cache] = baked
+  end
+
+  return baked
+end
 
 -- the one option a piece's own track is built with. shared because mods.build
 -- only ever reads it
@@ -303,12 +339,34 @@ local function queueFor(state: State, source: string, name: string, row: knob.Kn
 
   local found = memo[name]
 
-  if found == nil then
+  if found ~= nil then
+    return found
+  end
+
+  local baked = state.baked
+  local known = if baked ~= nil then baked.found[source][name] else nil
+
+  if known ~= nil then
+    found = {
+      lanes = known.lanes,
+      framed = known.framed,
+      under = known.under,
+      live = nil,
+      share = nil,
+      shareSpan = nil,
+      rest = nil,
+    }
+  else
     local lanes, framed, under = queueOf(state, source, name, row)
 
     found = { lanes = lanes, framed = framed, under = under, live = nil, share = nil, shareSpan = nil, rest = nil }
-    memo[name] = found
+
+    if baked ~= nil then
+      baked.found[source][name] = { lanes = lanes, framed = framed, under = under }
+    end
   end
+
+  memo[name] = found
 
   return found
 end
@@ -376,6 +434,20 @@ end
 
 local function plainOf(state: State, source: string, name: string, row: knob.Knob)
   local ctx = state.ctx
+
+  -- an attribute row no rule decides rests where the cache says, for every
+  -- instance reading through it
+  local baked = state.baked
+  local bakes = baked ~= nil and source == "attribute" and row.rule == nil and row.readonlyRule == nil
+
+  if bakes then
+    local known = (baked :: Baked).plain[name]
+
+    if known ~= nil then
+      return if known == NONE then nil else known
+    end
+  end
+
   local base = if source == "property" then propertyOf(ctx.obj, name) else nil
   local want: string? = nil
 
@@ -441,7 +513,13 @@ local function plainOf(state: State, source: string, name: string, row: knob.Kno
     v = fallbackOf(state, row, base)
   end
 
-  return knob.clamp(v, row.lower, row.upper)
+  local out = knob.clamp(v, row.lower, row.upper)
+
+  if bakes then
+    (baked :: Baked).plain[name] = if out == nil then NONE else out
+  end
+
+  return out
 end
 
 -- the lanes of a stored map that move something, dropping every lane that is
@@ -710,9 +788,14 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any, { [string]: any })
   -- one pulling itself is a module bug rather than a runtime state. a guard
   -- table per source keys a row by its own name, so the guard costs no string
   -- built per read
+  -- an instance reading through an attribute cache, with the walk's own
+  -- source, reads what every other instance of that cache read: the cache
+  -- table is the map, and what the module resolved from it is kept under it
+  local cache = if reader.source == reader.defaultSource then attr.cached(ctx.ref) else nil
+
   local state: State = {
     ctx = ctx,
-    map = reader.source(ctx.ref),
+    map = if cache ~= nil then cache else reader.source(ctx.ref),
     attrs = attrs,
     props = props,
     module = module,
@@ -724,6 +807,7 @@ function reader.resolve(module: Module, ctx: Ctx): (any, any, { [string]: any })
     propPending = {},
     attrQueues = nil,
     propQueues = nil,
+    baked = if cache ~= nil then bakedOf(module, cache) else nil,
     __index = rowIndex,
   }
 
