@@ -104,6 +104,27 @@ function mods.inert(queue: { any }): boolean
   return true
 end
 
+-- a framed attribute decoded once per distinct string: every clone of a
+-- template carries the same string, and the lanes are read and never written
+-- past this point, so one frozen table answers them all and a build keyed on
+-- it is a build keyed on the content. cleared whole once it holds more strings
+-- than a place authors, rather than weighed entry by entry
+local DECODED: { [string]: { [string]: { any } } } = {}
+local DECODED_CAP = 2048
+local decodedCount = 0
+
+local function deepFreeze(t: { [any]: any })
+  for _, v in t do
+    if type(v) == "table" and not table.isfrozen(v) then
+      deepFreeze(v)
+    end
+  end
+
+  table.freeze(t)
+end
+
+mods.deepFreeze = deepFreeze
+
 -- the framed attribute decoded on its own, with no legacy fallback. an EMPTY
 -- queue is a tombstone the authoring side writes deliberately, so a caller
 -- asking whether anything is authored here has to tell it apart from an absent
@@ -116,6 +137,12 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
     return nil
   end
 
+  local known = DECODED[raw :: string]
+
+  if known ~= nil then
+    return known
+  end
+
   local body = frame.unframe(raw)
 
   if body == nil then
@@ -126,7 +153,19 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
   local ok, decoded = pcall(codec.decode, body)
 
   if ok and decoded then
-    return decoded.lanes
+    local lanes = decoded.lanes
+
+    deepFreeze(lanes)
+
+    if decodedCount >= DECODED_CAP then
+      table.clear(DECODED)
+      decodedCount = 0
+    end
+
+    DECODED[raw :: string] = lanes
+    decodedCount += 1
+
+    return lanes
   end
 
   logger.warn(`failed to decode the modifier queue on {name}`)

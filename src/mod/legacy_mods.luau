@@ -353,6 +353,51 @@ local function keysOf(name: string)
   return derived
 end
 
+-- an old shape read once per distinct set of stored values: every clone of a
+-- template stores the same ones, and a queue is read and never written past
+-- here, so one frozen table answers them all and a build keyed on it is a
+-- build keyed on the content. the values are spelled out by type and text,
+-- which tells any two apart that a tween could tell apart
+local QUEUES: { [string]: { any } } = {}
+local QUEUES_CAP = 4096
+local queueCount = 0
+
+local function text(v: any): string
+  if v == nil then
+    return ""
+  end
+
+  if typeof(v) == "buffer" then
+    return `buffer:{buffer.tostring(v)}`
+  end
+
+  return `{typeof(v)}:{tostring(v)}`
+end
+
+local function remember(key: string, queue: { any }): { any }
+  for _, m in queue do
+    for _, v in m do
+      if type(v) == "table" then
+        table.freeze(v)
+      end
+    end
+
+    table.freeze(m)
+  end
+
+  table.freeze(queue)
+
+  if queueCount >= QUEUES_CAP then
+    table.clear(QUEUES)
+    queueCount = 0
+  end
+
+  QUEUES[key] = queue
+  queueCount += 1
+
+  return queue
+end
+
 function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
   local keys = keysOf(name)
   local startV = legacy_mods.alias(ref, keys.start, nil, map)
@@ -360,6 +405,15 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: 
 
   if startV == nil and finishV == nil then
     return nil
+  end
+
+  local durationRaw = legacy_mods.alias(ref, keys.duration, nil, map)
+  local curveRaw = legacy_mods.alias(ref, keys.curve, nil, map)
+  local key = `quad|{source}|{name}|{text(startV)}|{text(finishV)}|{text(durationRaw)}|{text(curveRaw)}`
+  local known = QUEUES[key]
+
+  if known ~= nil then
+    return known
   end
 
   -- a half-authored quad cannot be completed here, because the missing half's
@@ -377,12 +431,12 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: 
     finishV = startV
   end
 
-  local durationV = durationOf(legacy_mods.alias(ref, keys.duration, nil, map)) or legacy_mods.SPANS[name]
-  local curveV = curveOf(legacy_mods.alias(ref, keys.curve, nil, map)) or legacy_mods.defaultCurve(keys.curve)
+  local durationV = durationOf(durationRaw) or legacy_mods.SPANS[name]
+  local curveV = curveOf(curveRaw) or legacy_mods.defaultCurve(keys.curve)
 
   local drawn = legacy_mods.isDrawnRange(source, name)
 
-  return {
+  return remember(key, {
     {
       kind = "tween",
       chain = false,
@@ -392,7 +446,7 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: 
       curve = curveV,
       partial = partial,
     },
-  }
+  })
 end
 
 -- the RayValue children the applier in the emitter plays. only children
@@ -442,7 +496,12 @@ function legacy_mods.readRange(ref: Instance, source: string, name: string, map:
   local range = stored(ref, name, map)
 
   if typeof(range) == "NumberRange" then
-    return { { kind = "randomizer", chain = false, start = value.lit(range.Min), finish = value.lit(range.Max) } }
+    local key = `range|{name}|{text(range)}`
+
+    return QUEUES[key]
+      or remember(key, {
+        { kind = "randomizer", chain = false, start = value.lit(range.Min), finish = value.lit(range.Max) },
+      })
   end
 
   local keys = keysOf(name)
@@ -464,7 +523,12 @@ function legacy_mods.readRange(ref: Instance, source: string, name: string, map:
     return nil
   end
 
-  return { { kind = "randomizer", chain = false, start = value.lit(min), finish = value.lit(max), perComponent = true } }
+  local key = `pair|{name}|{text(min)}|{text(max)}`
+
+  return QUEUES[key]
+    or remember(key, {
+      { kind = "randomizer", chain = false, start = value.lit(min), finish = value.lit(max), perComponent = true },
+    })
 end
 
 -- a curve authored with neither end of its quad. it eases whatever ramp the
@@ -478,15 +542,19 @@ function legacy_mods.readCurve(ref: Instance, _source: string, name: string, map
     return nil
   end
 
-  return {
-    {
-      kind = "tween",
-      chain = false,
-      duration = durationOf(legacy_mods.alias(ref, keys.duration, nil, map)) or legacy_mods.SPANS[name],
-      curve = curveV,
-      partial = "both",
-    },
-  }
+  local durationRaw = legacy_mods.alias(ref, keys.duration, nil, map)
+  local key = `curve|{name}|{text(curveV)}|{text(durationRaw)}`
+
+  return QUEUES[key]
+    or remember(key, {
+      {
+        kind = "tween",
+        chain = false,
+        duration = durationOf(durationRaw) or legacy_mods.SPANS[name],
+        curve = curveV,
+        partial = "both",
+      },
+    })
 end
 
 -- range last: it is the broadest of the three shapes, matching on a single
