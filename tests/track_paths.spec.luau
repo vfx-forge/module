@@ -80,6 +80,17 @@ local function same(a: any, b: any): boolean
     return true
   end
 
+  -- a vector or a color of nans is not itself either, so each is compared a part at a time
+  local kind = typeof(a)
+
+  if kind == typeof(b) and kind == "Vector3" then
+    return same(a.X, b.X) and same(a.Y, b.Y) and same(a.Z, b.Z)
+  end
+
+  if kind == typeof(b) and kind == "Color3" then
+    return same(a.R, b.R) and same(a.G, b.G) and same(a.B, b.B)
+  end
+
   return a == b
 end
 
@@ -134,6 +145,31 @@ local function pair(
       newPiece:fire(name, at, runFor)
       oldPiece:fire(name, at, runFor)
     end,
+  }
+end
+
+-- the same row built straight and through the lanes of the live module: an
+-- entry marked parallel means nothing to a queue of one and keeps the lanes
+-- building it, so a row the lanes answer differently from the fold at
+-- 22f78f0 on purpose, a flat one at a nan, is checked against the lanes
+local function pairLive(lanes: { [string]: { any } }, rest: any, span: number)
+  local ref = Instance.new("Attachment")
+  local through = {}
+
+  for lane, queue in lanes do
+    local copy = {}
+
+    for i, m in queue do
+      copy[i] = table.clone(m)
+      copy[i].parallel = true
+    end
+
+    through[lane] = copy
+  end
+
+  return {
+    new = mods.build(ref, "attribute", "Width", rest, span, nil, lanes, true, nil, mods.piece(nil)),
+    old = mods.build(ref, "attribute", "Width", rest, span, nil, through, true, nil, mods.piece(nil)),
   }
 end
 
@@ -291,6 +327,74 @@ harness.suite(function()
       sweep(pair({ start = { tween(2, 5, nil, EASE) } }, 0, 1.5), into, "open")
 
       settle(into)
+    end)
+
+    -- the row built straight: every kind of value, curve, duration and rest a
+    -- stored start lane of one tween comes in, against the lanes, on every
+    -- surface a driver or an effect reads
+    test("a start lane of one tween over every value, curve, duration and rest, and its lane surface", function()
+      local into = fresh()
+      local Color3 = harness.datatypes.Color3
+      -- each pair of ends with two rests of its own kind, and one of another
+      local ends = {
+        { 0, 1, 0, 9 },
+        { 2, -3, 2, Vector3.new(1, 1, 1) },
+        { Vector3.new(0, 0, 0), Vector3.new(1, 2, 3), Vector3.new(0, 0, 0), Vector3.new(5, 5, 5) },
+        { Color3.new(0, 0, 0), Color3.new(1, 0.5, 0.25), Color3.new(1, 1, 1), 0 },
+        -- two ends alike, resting there and elsewhere
+        { 4, 4, 4, 9 },
+        { Vector3.new(1, 2, 3), Vector3.new(1, 2, 3), Vector3.new(0, 0, 0), 1 },
+      }
+      local shapes = { NONE, EASE, curves.default(), curves.PRESETS.linear, curves.PRESETS.easeInOut }
+      local durations = { NONE, 0.5, 3, 0 }
+      local lanes = { "start", "end", "dissipate" }
+      local ats = { 0, 0.25, 1.5 }
+
+      for i, pairOf in ends do
+        for j, shape in shapes do
+          for k, duration in durations do
+            for _, rest in { pairOf[3], pairOf[4] } do
+              local tag = `ends {i} shape {j} duration {k} rest {tostring(rest)}`
+              local lanes = { start = { tween(pairOf[1], pairOf[2], given(duration), given(shape)) } }
+              local rows = if pairOf[1] == pairOf[2] then pairLive(lanes, rest, 1.5) else pair(lanes, rest, 1.5)
+
+              sweep(rows, into, tag)
+
+              for _, field in { "span", "animated" } do
+                table.insert(into.new, { true, rows.new[field] })
+                table.insert(into.old, { true, rows.old[field] })
+                table.insert(into.labels, `{tag} {field}`)
+              end
+
+              for _, lane in lanes do
+                for _, fn in { "has", "reach" } do
+                  table.insert(into.new, { true, rows.new[fn](lane) })
+                  table.insert(into.old, { true, rows.old[fn](lane) })
+                  table.insert(into.labels, `{tag} {fn} {lane}`)
+                end
+
+                for _, at in ats do
+                  table.insert(into.new, { true, rows.new.still(lane, at) })
+                  table.insert(into.old, { true, rows.old.still(lane, at) })
+                  table.insert(into.labels, `{tag} still {lane} at {at}`)
+                end
+              end
+            end
+          end
+        end
+      end
+
+      settle(into)
+    end)
+
+    test("a start lane of one tween is handed to every piece as the one track", function()
+      local ref = Instance.new("Attachment")
+      local lanes = { start = { tween(0, 1, 1, EASE) } }
+      local track, share = mods.build(ref, "attribute", "Width", 0, 1, nil, lanes, true, nil, mods.piece(nil))
+
+      expect(share ~= nil).toBe(true)
+      expect(rawequal((share :: any)(mods.piece({ "dissipate" })), track)).toBe(true)
+      expect(track.at(0.5) > 0 and track.at(0.5) < 1).toBe(true)
     end)
 
     test("a start lane of chained entries with waits between", function()

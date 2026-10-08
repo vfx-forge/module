@@ -153,8 +153,13 @@ harness.suite(function()
 
       print(`a row built and sampled once: {table.concat(lines, ", ")}`)
 
-      for _, ratio in ratios do
+      for i, ratio in ratios do
         expect(ratio <= 1.05).toBe(true)
+
+        -- a start lane of one tween is built straight, at a fraction of the lanes
+        if SHAPES[i].name == "start tween" or SHAPES[i].name == "curved tween" then
+          expect(ratio <= 0.5).toBe(true)
+        end
       end
     end)
   end)

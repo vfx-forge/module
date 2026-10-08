@@ -1,6 +1,8 @@
 local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
+local lerp = require("@mod/lerp")
 local codec = require("@mod/modifier_codec")
+local curve = require("@mod/curve")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
 local curves = require("@mod/curves")
@@ -1448,6 +1450,127 @@ end
 -- the second return hands the same lanes to another piece of the same events,
 -- so a caller building one track per piece pays for the lanes once. nil when
 -- some lane draws or schedules per piece, which only a build of its own gets
+-- the row most effects are made of: stored lanes of one start lane holding
+-- one tween from a literal to another, eased by a serialized curve or not,
+-- over a duration it names or the row's span, with nothing drawn, chained,
+-- waited or stepped, over a default that is where the row rests. such a row
+-- fires at the emit whatever the piece, so its track holds nothing of a
+-- piece's and is built straight, with none of the lane machinery, to answer
+-- exactly what the lanes answer for it: held where the caller says below
+-- zero or when frozen after its trigger, else the tween at its progress, or
+-- the one value a tween between two ends alike holds the row at, which the
+-- lanes know as a flat lane and never animate. nil for every other row,
+-- which the lanes build
+local function simpleOf(default: any, span: number, lanes: { [string]: { any } }?, opts: any?): Track?
+  if opts ~= nil or lanes == nil or default == nil or type(default) == "table" then
+    return nil
+  end
+
+  if span ~= span or span <= 0 or span == math.huge then
+    return nil
+  end
+
+  local first = next(lanes)
+
+  if first ~= "start" or next(lanes, first) ~= nil then
+    return nil
+  end
+
+  local queue = lanes.start
+
+  if #queue ~= 1 then
+    return nil
+  end
+
+  local m = queue[1]
+
+  if
+    m.kind ~= "tween"
+    or m.chain
+    or m.partial ~= nil
+    or m.parallel
+    or m.fps ~= nil
+    or m.envelope ~= nil
+    or m.speed ~= nil
+    or m.reset ~= nil
+  then
+    return nil
+  end
+
+  local a, b = m.start, m.finish
+
+  if a == nil or b == nil or not value.isLit(a) or not value.isLit(b) then
+    return nil
+  end
+
+  local from, to = (a :: any).v, (b :: any).v
+
+  -- a kind the row does not rest in is the lanes' to refuse and warn about
+  if from == nil or to == nil then
+    return nil
+  end
+
+  local kind = knob.kindOf(from)
+
+  if kind ~= knob.kindOf(to) or kind ~= knob.kindOf(default) then
+    return nil
+  end
+
+  local shape = m.curve
+  local form = typeof(shape)
+
+  if shape ~= nil and form ~= "string" and form ~= "buffer" then
+    return nil
+  end
+
+  local d = m.duration
+
+  if d ~= nil and (type(d) ~= "number" or d ~= d or d <= 0 or d == math.huge) then
+    return nil
+  end
+
+  local length: number = if d ~= nil then d else span
+  local sampler = if shape ~= nil then curve.sampler(shape) else nil
+  local rest = default
+  local flat = from == to
+  local at: (elapsed: number, own: any?, since: number?) -> any
+
+  if flat then
+    at = function(elapsed: number, own: any?, since: number?)
+      if elapsed < 0 or (since ~= nil and since > 0) then
+        return if own ~= nil then own else rest
+      end
+
+      return from
+    end
+  else
+    at = function(elapsed: number, own: any?, since: number?)
+      if elapsed < 0 or (since ~= nil and since > 0) then
+        return if own ~= nil then own else rest
+      end
+
+      local progress = math.clamp(elapsed / length, 0, 1)
+
+      return lerp.any(from, to, if sampler ~= nil then sampler(progress) else progress)
+    end
+  end
+
+  return {
+    at = at,
+    span = length,
+    animated = not flat,
+    has = function(lane: string)
+      return lane == "start"
+    end,
+    reach = function(lane: string): number
+      return if lane == "start" then length else 0
+    end,
+    still = function(lane: string): boolean
+      return lane ~= "start"
+    end,
+  }
+end
+
 function mods.build(
   ref: Instance,
   source: string,
@@ -1460,6 +1583,15 @@ function mods.build(
   opts: { ownStart: boolean?, value: any? }?,
   piece: Piece?
 ): (Track, ((other: Piece) -> Track?)?)
+  local simple = simpleOf(default, span, lanes, opts)
+
+  -- nothing of a piece in it, so every piece is handed the one track
+  if simple ~= nil then
+    return simple, function()
+      return simple
+    end
+  end
+
   local stated: any = if opts ~= nil then opts.value else nil
 
   -- a default made only of event lanes, with nothing stored over it, rests
