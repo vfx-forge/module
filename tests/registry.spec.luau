@@ -443,6 +443,126 @@ harness.suite(function()
       expect(hits[1].effect.id).toBe("debris")
     end)
 
+    -- a query from above the root reads the whole subtree of that ancestor, which
+    -- for a root under workspace is the whole place: a chain of class, tag and
+    -- name compounds is matched against the root's own ancestry by hand instead
+    test("scan reaches a subject through the root without asking above the root", function()
+      registry.clear()
+
+      local above = 0
+      local root
+
+      registry.configure({
+        query = function(from, selector)
+          if from ~= root and not from:IsDescendantOf(root) then
+            above += 1
+          end
+
+          return harness.query(from, selector)
+        end,
+      })
+
+      registry.register(stub("ring", { classifier = ".Shockwave > #Rings > BasePart" }))
+      harness.reset()
+
+      -- the root sits two levels down, as a folder in workspace does
+      root = harness.make("Folder", harness.make("Folder", harness.make("Folder")))
+
+      local attachment = harness.make("Attachment", root)
+      attachment:AddTag("Shockwave")
+      local rings = harness.make("Folder", attachment)
+      rings.Name = "Rings"
+      local piece = harness.make("Part", rings)
+
+      -- a Rings folder that is not a child of the tagged attachment is no hit
+      local model = harness.make("Model", attachment)
+      local deeper = harness.make("Folder", model)
+      deeper.Name = "Rings"
+      harness.make("Part", deeper)
+
+      for _, from in { root, attachment, rings } do
+        above = 0
+
+        local hits = registry.scan(from)
+
+        expect(#hits).toBe(1)
+        expect(hits[1].instance).toBe(piece)
+        expect(above).toBe(0)
+      end
+    end)
+
+    test("scan still asks above the root for a chain whose leading compound is not plain", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(stub("debris", { classifier = "Attachment:has(> Folder) > Folder > Part" }))
+      harness.reset()
+
+      local part = harness.make("Part")
+      local attachment = harness.make("Attachment", part)
+      local folder = harness.make("Folder", attachment)
+      local piece = harness.make("Part", folder)
+
+      local hits = registry.scan(attachment)
+
+      expect(#hits).toBe(1)
+      expect(hits[1].instance).toBe(piece)
+    end)
+
+    test("of classifies through a chain of plain compounds without a query", function()
+      registry.clear()
+
+      local asked = 0
+
+      registry.configure({
+        query = function(from, selector)
+          asked += 1
+          return harness.query(from, selector)
+        end,
+      })
+
+      registry.register(stub("ring", { classifier = ".Shockwave > #Rings > BasePart" }))
+      harness.reset()
+
+      local attachment = harness.make("Attachment", harness.make("Part"))
+      attachment:AddTag("Shockwave")
+      local rings = harness.make("Folder", attachment)
+      rings.Name = "Rings"
+      local piece = harness.make("Part", rings)
+      local loose = harness.make("Part", attachment)
+
+      asked = 0
+
+      expect(registry.of(piece).id).toBe("ring")
+      expect(registry.of(loose)).toBe(nil)
+      expect(asked).toBe(0)
+    end)
+
+    test("a hit that claims every descendant drops a hit any number of levels below it", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(stub("mesh", { classifier = "Model", components = "Instance" }))
+      registry.register(stub("beam", { classifier = "Beam" }))
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local model = harness.make("Model", root)
+      harness.make("Beam", harness.make("Part", harness.make("Folder", model)))
+      local outside = harness.make("Beam", root)
+
+      local hits = registry.scan(root)
+
+      expect(#hits).toBe(2)
+
+      local ids = {}
+
+      for _, hit in hits do
+        ids[hit.effect.id] = hit.instance
+      end
+
+      expect(ids.mesh == model).toBe(true)
+      expect(ids.beam == outside).toBe(true)
+    end)
+
     test("scan drops a hit that lies outside the root it was asked for", function()
       registry.clear()
       registry.configure({ query = harness.query })

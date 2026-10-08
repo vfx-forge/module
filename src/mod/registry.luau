@@ -44,10 +44,31 @@ local owned: { [Module]: Owned } = {}
 -- display.reflect names, nil when it mirrors none
 local reflected: { [Module]: Reflected } = {}
 
+-- a compound of a class, a name and tags and nothing else, which an instance
+-- answers on its own; nil for one carrying a filter or a nested selector
+type Plain = { class: string?, name: string?, tags: { string } }
+
+-- one alternative of a classifier: its compounds left to right, each parsed
+-- when plain, and whether every combinator between them is the child one
+type Chain = { compounds: { string }, plain: { Plain? }, direct: boolean }
+
 -- what a module's classifier says about where to run it from. sole is the class
 -- of a classifier that is nothing but a class name, which an instance answers
 -- on its own
-local shape: { [Module]: { depth: number, subjects: { string }?, sole: string? } } = {}
+type Shape = {
+  depth: number,
+  subjects: { string }?,
+  sole: string?,
+  chains: { Chain },
+  -- every chain past a bare class leads with compounds this module can match
+  -- by hand, so a scan never has to ask the engine from above its root
+  byHand: boolean,
+  -- every chain is made of such compounds through its subject too, so an
+  -- instance is classified by walking its ancestry rather than by a query
+  whole: boolean,
+}
+
+local shape: { [Module]: Shape } = {}
 
 -- the selector engine is the engine's; a test host hands one in
 local function engineQuery(root: Instance, selector: string)
@@ -113,6 +134,145 @@ function registry.alternatives(classifier: string): { { string } }
   end
 
   return out
+end
+
+local function plainOf(compound: string): Plain?
+  local rest = compound
+  local class = string.match(rest, "^[%a_][%w_]*")
+  local out: Plain = { class = class, name = nil, tags = {} }
+
+  if class ~= nil then
+    rest = string.sub(rest, #class + 1)
+  end
+
+  while #rest > 0 do
+    local mark, word = string.match(rest, "^([.#])([%w_]+)")
+
+    if mark == nil then
+      return nil
+    end
+
+    if mark == "#" then
+      if out.name ~= nil then
+        return nil
+      end
+
+      out.name = word
+    else
+      table.insert(out.tags, word)
+    end
+
+    rest = string.sub(rest, #word + 2)
+  end
+
+  return out
+end
+
+-- the alternatives of a classifier, split at the commas and child combinators
+-- that sit outside any parenthesis or bracket, each compound kept as the
+-- engine spells it so a part of a chain can be asked of the engine again
+local function chainsOf(classifier: string): { Chain }
+  local out: { Chain } = {}
+  local parts: { string } = {}
+  local direct = true
+  local current = {}
+  local depth = 0
+
+  local function closeCompound()
+    local text = string.match(table.concat(current), "^%s*(.-)%s*$")
+
+    if text ~= "" then
+      table.insert(parts, text)
+    end
+
+    table.clear(current)
+  end
+
+  local function closeChain()
+    closeCompound()
+
+    if #parts > 0 then
+      local plain = table.create(#parts)
+
+      for i, compound in parts do
+        plain[i] = plainOf(compound)
+      end
+
+      table.insert(out, { compounds = parts, plain = plain, direct = direct })
+    end
+
+    parts = {}
+    direct = true
+  end
+
+  local i = 1
+
+  while i <= #classifier do
+    local c = string.sub(classifier, i, i)
+
+    if c == "(" or c == "[" then
+      depth += 1
+    elseif c == ")" or c == "]" then
+      depth = math.max(depth - 1, 0)
+    end
+
+    if depth == 0 and c == "," then
+      closeChain()
+    elseif depth == 0 and c == ">" then
+      closeCompound()
+
+      local after = string.match(classifier, "^%s*>", i + 1)
+
+      if after ~= nil then
+        direct = false
+        i += #after
+      end
+    else
+      table.insert(current, c)
+    end
+
+    i += 1
+  end
+
+  closeChain()
+
+  return out
+end
+
+local function matchPlain(inst: Instance, plain: Plain): boolean
+  if plain.class ~= nil and not inst:IsA(plain.class) then
+    return false
+  end
+
+  if plain.name ~= nil and inst.Name ~= plain.name then
+    return false
+  end
+
+  for _, tag in plain.tags do
+    if not inst:HasTag(tag) then
+      return false
+    end
+  end
+
+  return true
+end
+
+-- whether the chain's compounds from `first` to `last` match `inst` and its
+-- ancestors in turn, the compound at `last` against the instance itself
+local function matchUp(inst: Instance?, chain: Chain, first: number, last: number): boolean
+  local current = inst
+
+  for i = last, first, -1 do
+    local plain = chain.plain[i]
+
+    if current == nil or plain == nil or not matchPlain(current, plain) then
+      return false
+    end
+
+    current = current.Parent
+  end
+
+  return true
 end
 
 function registry.depth(classifier: string)
@@ -534,10 +694,38 @@ function registry.register(module: Module, isCustom: boolean?)
 
   owned[module] = table.freeze(ownedOf(module))
 
+  local chains = chainsOf(module.classifier)
+  local byHand = true
+  local whole = true
+
+  for _, chain in chains do
+    local last = #chain.compounds
+
+    if not chain.direct then
+      byHand = false
+      whole = false
+    end
+
+    -- indexed, since a compound that is not plain leaves a hole the generic
+    -- walk would step over
+    for i = 1, last do
+      if chain.plain[i] == nil then
+        whole = false
+
+        if i < last then
+          byHand = false
+        end
+      end
+    end
+  end
+
   shape[module] = {
     depth = registry.depth(module.classifier),
     subjects = subjects,
     sole = soleClass(module.classifier, subjects),
+    chains = chains,
+    byHand = byHand,
+    whole = whole,
   }
 
   freezeRows(module.attributes)
@@ -754,7 +942,31 @@ function registry.of(inst: Instance): Module?
       continue
     end
 
-    local root = ancestorAt(inst, shape[module].depth + 1)
+    local shaped = shape[module]
+
+    -- a chain of plain compounds is walked up the instance's ancestry, at no
+    -- query. one the instance has too few ancestors to walk is left to the
+    -- query path below, which knows what an unrooted instance is to a custom
+    -- effect
+    if shaped.whole then
+      local decided = true
+
+      for _, chain in shaped.chains do
+        local last = #chain.compounds
+
+        if ancestorAt(inst, last - 1) == nil then
+          decided = false
+        elseif matchUp(inst, chain, 1, last) then
+          return module
+        end
+      end
+
+      if decided then
+        continue
+      end
+    end
+
+    local root = ancestorAt(inst, shaped.depth + 1)
 
     if root == nil then
       local answer = if custom[module] then unrooted(inst, module.classifier) else nil
@@ -831,6 +1043,15 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
   local hits: { Hit } = {}
   local taken: { [Instance]: boolean } = {}
 
+  local function take(inst: Instance, module: Module)
+    if taken[inst] then
+      return
+    end
+
+    taken[inst] = true
+    table.insert(hits, { instance = inst, effect = module })
+  end
+
   -- a module classifies only instances of its subjects' classes, so one whose
   -- classes nothing under the root is can match nothing there and is not asked
   local answers: { [string]: boolean } = {}
@@ -854,15 +1075,46 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
       end
     end
 
-    for _, inst in query(scanRoot(root, shape[module].depth), module.classifier) do
-      -- a query run from above the root reaches the root's siblings too, and
-      -- none of them is this scan's
-      if taken[inst] or not inst:IsDescendantOf(root) then
-        continue
+    local held = shape[module]
+
+    -- a chain the engine cannot be shown from the root is asked from above it,
+    -- where the query reaches the root's siblings too, and none of them is
+    -- this scan's
+    if not held.byHand then
+      for _, inst in query(scanRoot(root, held.depth), module.classifier) do
+        if inst:IsDescendantOf(root) then
+          take(inst, module)
+        end
       end
 
-      taken[inst] = true
-      table.insert(hits, { instance = inst, effect = module })
+      continue
+    end
+
+    for _, inst in query(root, module.classifier) do
+      take(inst, module)
+    end
+
+    -- a chain whose upper compounds are the root and its ancestors: the engine
+    -- never matches a chain's leftmost compound against the instance it is
+    -- asked from, so those compounds are matched here and the engine is shown
+    -- what is left of the chain, from the root. a subject it answers is a hit
+    -- only where the chain's compound at the root really is the root
+    for _, chain in held.chains do
+      local last = #chain.compounds
+
+      for at = 1, last - 1 do
+        if not matchUp(root, chain, 1, at) then
+          continue
+        end
+
+        local below = table.concat(chain.compounds, " > ", at + 1, last)
+
+        for _, inst in query(root, below) do
+          if ancestorAt(inst, last - at) == root then
+            take(inst, module)
+          end
+        end
+      end
     end
   end
 
@@ -902,20 +1154,50 @@ function registry.scan(root: Instance, claimant: Module?): { Hit }
     end
   end
 
+  -- a hit that claims its whole subtree claims every hit below it, told by
+  -- walking each hit's ancestry up to the root rather than by asking every hit
+  -- about every other. the claimants are bucketed by name and compared by
+  -- equality, because an ancestor an instance hands back is equal to a hit
+  -- rather than the same table under the test host
+  local whole: { [string]: { Instance } } = {}
+  local claims = false
+
+  for _, hit in hits do
+    if hit.effect ~= nil and hit.effect.components == "Instance" then
+      local name = hit.instance.Name
+      local bucket = whole[name]
+
+      if bucket == nil then
+        bucket = {}
+        whole[name] = bucket
+      end
+
+      table.insert(bucket, hit.instance)
+      claims = true
+    end
+  end
+
+  if claims then
+    for _, hit in hits do
+      local current = hit.instance.Parent
+
+      while current ~= nil and current ~= root do
+        local bucket = whole[current.Name]
+
+        if bucket ~= nil and table.find(bucket, current) ~= nil then
+          component[hit.instance] = true
+          break
+        end
+
+        current = current.Parent
+      end
+    end
+  end
+
   for _, hit in hits do
     local selector = if hit.effect ~= nil then hit.effect.components else nil
 
-    if selector == nil then
-      continue
-    end
-
-    if selector == "Instance" then
-      for _, other in hits do
-        if other ~= hit and other.instance:IsDescendantOf(hit.instance) then
-          component[other.instance] = true
-        end
-      end
-
+    if selector == nil or selector == "Instance" then
       continue
     end
 
