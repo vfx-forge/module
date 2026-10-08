@@ -313,10 +313,10 @@ do
 end
 
 table.insert(cases, {
-  name = "a kept set put back after its emit matches its template",
+  name = "a source with children is cloned whole on every take",
   run = function()
     local template = Instance.new("Part")
-    template.Name = "KeptRoot"
+    template.Name = "WholeRoot"
     template.Anchored = true
 
     local mount = Instance.new("Attachment")
@@ -328,40 +328,23 @@ table.insert(cases, {
     emitter.Rate = 7
     emitter.Parent = mount
 
-    local model = Instance.new("Model")
-    model.Name = "Rig"
-    model.Parent = template
-
-    local inner = Instance.new("Part")
-    inner.Name = "Inner"
-    inner.Anchored = true
-    inner.Size = Vector3.new(2, 2, 2)
-    inner.Parent = model
-
     local ok, err = pcall(withPool, function()
       local holder = {}
       local copy = pool.take(holder, template)
-      local copyEmitter = copy:FindFirstChild("Mount"):FindFirstChild("Sparks") :: ParticleEmitter
-      local copyModel = copy:FindFirstChild("Rig") :: Model
+      local copyEmitter = copy:FindFirstChild("Mount") and copy.Mount:FindFirstChild("Sparks")
 
-      copyEmitter.Rate = 99
-      copyEmitter.Color = ColorSequence.new(Color3.new(0, 0, 1))
-      copyModel:ScaleTo(2)
-      copyModel:PivotTo(copyModel:GetPivot() * CFrame.new(10, 0, 0))
+      check(copyEmitter ~= nil, "the copy lacks the template's children")
+      check((copyEmitter :: ParticleEmitter).Rate == 7, "the copy's emitter is not the template's")
+
+      local again = {}
+      local second = pool.take(again, template)
+
+      check(second ~= copy, "a second take handed out the first copy")
+      check(pool.stats().fresh == 2, `{pool.stats().fresh} fresh`)
 
       lifetime.releasePlain(holder)
 
-      local found = pool.audit()
-
-      check(#found == 0, `audit: {table.concat(found, "; ")}`)
-      check(copyModel:GetScale() == model:GetScale(), `copy scale {copyModel:GetScale()}`)
-      check(copyModel.WorldPivot == model.WorldPivot, `copy pivot {copyModel.WorldPivot}`)
-      check(copyEmitter.Enabled == false, "a free set's emitter is enabled")
-
-      local again = {}
-
-      check(pool.take(again, template) == copy, "the set was not reused")
-      check(pool.stats().builds == 1, `{pool.stats().builds} builds`)
+      check(copy.Parent == nil, "a released whole clone was kept")
 
       lifetime.releasePlain(again)
     end)
@@ -375,7 +358,7 @@ table.insert(cases, {
 })
 
 table.insert(cases, {
-  name = "a first build points a beam at its copy's attachments, not the template's",
+  name = "a whole clone points a beam at its copy's attachments, not the template's",
   run = function()
     local template = Instance.new("Part")
     template.Name = "BeamRoot"

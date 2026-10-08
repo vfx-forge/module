@@ -10,8 +10,6 @@ export type Fake = {
   made: number,
   wrappers: { [string]: Instance },
   stable: (inst: Instance) -> Instance,
-  changed: { [Instance]: () -> () }?,
-  dirty: { [Instance]: () -> () }?,
   destroyed: { [Instance]: () -> () }?,
 }
 
@@ -63,18 +61,6 @@ function fake_pool.start(lists: { [string]: { string } }): Fake
     end,
     properties = function(class: string)
       return lists[class]
-    end,
-    watch = function(template: Instance, changed: () -> ())
-      fake.changed = fake.changed or {}
-      fake.changed[template] = changed
-
-      return {}
-    end,
-    listen = function(inst: Instance, changed: () -> ())
-      fake.dirty = fake.dirty or {}
-      fake.dirty[inst] = changed
-
-      return { Disconnect = function() end }
     end,
     children = function(inst: Instance)
       local list = {}

@@ -343,27 +343,16 @@ function api.disable(obj: Instance)
   end
 end
 
--- an edit through the api drops the kept sets of what it edited at once, so an
--- emit in the same frame never takes one built before it
-local function touch(...: Instance)
-  for _, inst in { ... } do
-    pool.touch(inst)
-  end
-end
-
 function api.retime(factor: number, ...: Instance)
   retime.batch(factor, ...)
-  touch(...)
 end
 
 function api.resize(factor: number, ...: Instance)
   resize.batch(factor, ...)
-  touch(...)
 end
 
 function api.recolor(color: Color3, mode: "replace" | "multiply", ...: Instance)
   recolor(color, mode, ...)
-  touch(...)
 end
 
 -- what is registered, built-in and custom, to read and never to change

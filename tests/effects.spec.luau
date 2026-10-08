@@ -2561,19 +2561,6 @@ harness.suite(function()
         scheduler.after = nil
       end
 
-      -- a read on a kept copy that is not soft writes its default back on a
-      -- server, which spoils the copy's set
-      local loud = 0
-      local get = attr.get
-
-      attr.get = function(obj: Instance, key: string, default: any, soft: boolean?, validate: any)
-        if not soft and pool.kept(fake.stable(obj)) then
-          loud += 1
-        end
-
-        return get(obj, key, default, soft, validate)
-      end
-
       -- lune hands out a new wrapper on every FindFirstChild, so the start
       -- each emit finds is taken as the one Studio would hand back
       local take = pool.take
@@ -2633,12 +2620,11 @@ harness.suite(function()
 
       fake_pool.stop(fake)
       pool.take = take
-      attr.get = get
       scheduler.after = after
       utility.getTransformedOriginExtents = extents
       built.restore()
 
-      return seen, fake.made, stats, loud
+      return seen, fake.made, stats
     end
 
     test("a MeshPart piece is the pool's, moved by the mover, and comes back for the next emit", function()
@@ -2659,14 +2645,12 @@ harness.suite(function()
       expect(seen[2].cframe.Position).toEqual(harness.datatypes.Vector3.new(0, 9, 0))
     end)
 
-    test("a start whose decal changes color keeps its set between emits", function()
-      local seen, _, stats, loud = emitTwice(true, true)
+    test("a start carrying a decal is cloned whole for every emit", function()
+      local seen, made, stats = emitTwice(true, true)
 
-      expect(stats.builds).toBe(1)
-      expect(stats.reuses).toBe(1)
-      expect(loud).toBe(0)
-      expect(seen[1].attributes).toBe(0)
-      expect(seen[2].attributes).toBe(0)
+      expect(made).toBe(0)
+      expect(stats.fresh).toBe(2)
+      expect(seen[2].id ~= seen[1].id).toBe(true)
     end)
   end)
 
@@ -2858,7 +2842,7 @@ harness.suite(function()
       expect(seen).toEqual({ Vector3.new(0, 5, 10), Vector3.new(0, 9, 10) })
     end)
 
-    test("a bezier template with children keeps its set between emits", function()
+    test("a bezier template with children is cloned whole for every emit", function()
       local names = {}
 
       local fake, stats = emitTwice(bezier, utility.BEZIER_TAG, {}, {
@@ -2875,9 +2859,8 @@ harness.suite(function()
         end,
       })
 
-      expect(fake.made).toBe(1)
-      expect(stats.builds).toBe(1)
-      expect(stats.reuses).toBe(1)
+      expect(fake.made).toBe(0)
+      expect(stats.fresh).toBe(2)
       expect(names).toEqual({ "Bits", "Bits" })
     end)
 
@@ -2948,7 +2931,9 @@ harness.suite(function()
       expect(fake.made).toBe(2)
     end)
 
-    test("a head bolt's children go home with their set from whichever segment holds them", function()
+    -- the nested segment's copy is a whole clone, whose children the head
+    -- carries from segment to segment and the emit's end destroys with it
+    test("a head bolt's children ride its segments and go with the emit", function()
       local held = {}
       local homes = {}
 
@@ -2965,15 +2950,10 @@ harness.suite(function()
         end,
       })
 
-      expect(fake.made).toBe(3)
-      expect(stats.builds).toBe(1)
-      expect(stats.reuses).toBe(3)
+      expect(fake.made).toBe(2)
+      expect(stats.fresh).toBe(2)
       expect(#held).toBe(2)
-      expect(#homes).toBe(2)
-
-      -- the head had moved them off the segment whose set they are
-      expect(held[1] ~= homes[1]).toBe(true)
-      expect(held[2] ~= homes[2]).toBe(true)
+      expect(#homes).toBe(0)
     end)
   end)
 end)
