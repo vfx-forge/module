@@ -357,6 +357,7 @@ local function fieldsOf(row: any, name: string, found: { string })
     or type(rawget(row, "order")) ~= "number"
     or type(rawget(row, "isMod")) ~= "boolean"
     or type(rawget(row, "isSlider")) ~= "boolean"
+    or type(rawget(row, "isSeed")) ~= "boolean"
   then
     once(found, `{name} must keep the fields sdk.knob made it`)
   end
@@ -410,6 +411,23 @@ local function sliderOf(row: any, name: string, found: { string })
   end
 end
 
+-- a seed is a number the panel draws with a reroll, so it is one row shape
+-- and not a slider's or a curve's as well
+local function seedOf(row: any, name: string, found: { string })
+  local kind = rawget(row, "kind")
+
+  if kind ~= nil and kind ~= "number" then
+    once(found, `the seed of {name} needs a number param`)
+    return
+  end
+
+  if rawget(row, "isSlider") == true then
+    once(found, `the seed of {name} cannot also be a slider`)
+  elseif rawget(row, "preset") ~= nil then
+    once(found, `the seed of {name} cannot also be a curve`)
+  end
+end
+
 -- every table a row keeps copied into it, so the author's own lists reach
 -- nothing. a row the registry froze on an earlier load already holds copies
 local function rowOf(row: any, name: string, found: { string })
@@ -442,6 +460,10 @@ local function rowOf(row: any, name: string, found: { string })
 
   if rawget(row, "isSlider") == true then
     sliderOf(row, name, found)
+  end
+
+  if rawget(row, "isSeed") == true then
+    seedOf(row, name, found)
   end
 
   -- the registry walks each of these unasked, and would throw on one that is

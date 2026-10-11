@@ -62,6 +62,14 @@ harness.suite(function()
       expect(soft.dragUpper).toBe(50)
     end)
 
+    test("a seed marks the row and returns it", function()
+      local row = knob(0)
+
+      expect(row.isSeed).toBe(false)
+      expect(row:seed()).toBe(row)
+      expect(row.isSeed).toBe(true)
+    end)
+
     test("every chain method returns the same knob", function()
       local row = knob(1)
       local same = row:min(0):max(2):aliases("A", "B"):label("One"):hint("h"):curve("linear"):unit("seconds"):mod()

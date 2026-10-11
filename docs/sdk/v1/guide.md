@@ -59,6 +59,8 @@ A knob's default is a number, boolean, string, NumberRange, Vector2, Vector3, UD
 
 A number knob declared with `:slider()` is drawn as a slider dragged between its `:min` and `:max`, or between the two numbers it is handed, as in `:slider(0, 10)`; a typed value still clamps to `:min` and `:max`. A slider on a knob that is not a number, or with no range to drag over, is refused.
 
+A number knob declared with `:seed()` is drawn as a seed: a field and a reroll button beside it that picks another whole number. Any number is a seed, so the field takes whatever is typed, within the knob's `:min` and `:max` when it has them, and the reroll stays inside them too. A seed on a knob that is not a number, or that is also a slider or a curve, is refused.
+
 A knob's default can be a function instead of a value. It is a rule, and it answers the default from the other params when the module is read.
 
 ### Rules

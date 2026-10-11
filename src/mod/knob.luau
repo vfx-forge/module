@@ -46,6 +46,7 @@ type Fields = {
   isSlider: boolean,
   dragLower: number?,
   dragUpper: number?,
+  isSeed: boolean,
   isMod: boolean,
   modDefault: any,
   order: number,
@@ -79,6 +80,7 @@ local function make(default: any): Knob
     isSlider = false,
     dragLower = nil,
     dragUpper = nil,
+    isSeed = false,
     isMod = false,
     modDefault = nil,
     order = counter,
@@ -151,6 +153,14 @@ function Knob.slider(self: Knob, low: number?, high: number?): Knob
   self.isSlider = true
   self.dragLower = low
   self.dragUpper = high
+  return self
+end
+
+-- a number row drawn as a seed: the field and a reroll beside it, since the
+-- one thing anyone does with a seed is try another. any number is a seed in
+-- luau, so the row keeps the knob's own bounds and no others
+function Knob.seed(self: Knob): Knob
+  self.isSeed = true
   return self
 end
 

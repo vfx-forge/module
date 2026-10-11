@@ -1047,6 +1047,54 @@ harness.suite(function()
       })
     end)
 
+    test("a seed loads on a number param, with the bounds it was given", function()
+      fresh()
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = {
+                Seed = sdk.knob(7):seed(),
+                Variant = sdk.knob(1):min(1):max(64):seed(),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(true)
+      expect(found).toEqual({})
+
+      local attributes = registry.get("my_effect").attributes
+
+      expect(attributes.Seed.isSeed).toBe(true)
+      expect(attributes.Variant.isSeed).toBe(true)
+      expect(attributes.Variant.upper).toBe(64)
+    end)
+
+    test("a seed on no number, on a slider or on a curve is refused, naming the row", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Tint = sdk.knob(Color3.new()):seed(),
+              Both = sdk.knob(1):min(0):max(9):slider():seed(),
+              Ease = sdk.knob("linear"):curve("linear"):seed(),
+            },
+          }
+        end,
+      }))).toEqual({
+        "the seed of Both cannot also be a slider",
+        "the seed of Ease needs a number param",
+        "the seed of Tint needs a number param",
+      })
+    end)
+
     test("a knob's own fields are checked by type, so no reason ever turns an author's table to text", function()
       fresh()
 
