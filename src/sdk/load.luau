@@ -412,7 +412,8 @@ local function sliderOf(row: any, name: string, found: { string })
 end
 
 -- a seed is a number the panel draws with a reroll, so it is one row shape
--- and not a slider's or a curve's as well
+-- and not a slider's or a curve's as well, and never animated: the one thing
+-- anyone does with a seed is try another
 local function seedOf(row: any, name: string, found: { string })
   local kind = rawget(row, "kind")
 
@@ -425,6 +426,8 @@ local function seedOf(row: any, name: string, found: { string })
     once(found, `the seed of {name} cannot also be a slider`)
   elseif rawget(row, "preset") ~= nil then
     once(found, `the seed of {name} cannot also be a curve`)
+  elseif rawget(row, "isMod") == true then
+    once(found, `the seed of {name} cannot also be animated`)
   end
 end
 

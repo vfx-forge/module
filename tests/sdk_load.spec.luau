@@ -1075,7 +1075,7 @@ harness.suite(function()
       expect(attributes.Variant.upper).toBe(64)
     end)
 
-    test("a seed on no number, on a slider or on a curve is refused, naming the row", function()
+    test("a seed on no number, on a slider, on a curve or animated is refused, naming the row", function()
       fresh()
 
       expect(refusal(effect({
@@ -1085,12 +1085,14 @@ harness.suite(function()
               Tint = sdk.knob(Color3.new()):seed(),
               Both = sdk.knob(1):min(0):max(9):slider():seed(),
               Ease = sdk.knob("linear"):curve("linear"):seed(),
+              Moved = sdk.knob(1):seed():mod(),
             },
           }
         end,
       }))).toEqual({
         "the seed of Both cannot also be a slider",
         "the seed of Ease needs a number param",
+        "the seed of Moved cannot also be animated",
         "the seed of Tint needs a number param",
       })
     end)
