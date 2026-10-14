@@ -151,6 +151,48 @@ harness.suite(function()
       expect(#warnings).toBe(0)
     end)
 
+    test("a number stored as text reads as the number it spells", function()
+      local obj = Instance.new("Part")
+      obj:SetAttribute("A", "2.5")
+      obj:SetAttribute("B", "5")
+      obj:SetAttribute("R", "2")
+
+      local m = module({
+        A = knob(1):min(0),
+        B = knob(function()
+          return 1
+        end),
+        R = knob(NumberRange.new(0, 1)),
+      })
+
+      local attrs
+      local warnings = harness.captureWarnings(function()
+        attrs = reader.resolve(m, ctxFor(obj))
+      end)
+
+      expect(attrs.A).toBe(2.5)
+      expect(attrs.B).toBe(5)
+      expect(attrs.R.Min).toBe(2)
+      expect(attrs.R.Max).toBe(2)
+      expect(#warnings).toBe(0)
+    end)
+
+    test("text stored on a text row stays text, a number it spells included", function()
+      local obj = Instance.new("Part")
+      obj:SetAttribute("A", "7")
+      obj:SetAttribute("B", "1")
+
+      local m = module({
+        A = knob("x"),
+        B = knob("a"):options({ "a", "1" }),
+      })
+
+      local attrs = reader.resolve(m, ctxFor(obj))
+
+      expect(attrs.A).toBe("7")
+      expect(attrs.B).toBe("1")
+    end)
+
     test("a readonly row ignores what was stored", function()
       local obj = Instance.new("Part")
       obj:SetAttribute("A", 5)

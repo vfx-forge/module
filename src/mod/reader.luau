@@ -478,6 +478,14 @@ local function plainOf(state: State, source: string, name: string, row: knob.Kno
     end
   end
 
+  -- a number stored as text, the way a string attribute typed by hand or a
+  -- tool writing attributes as text leaves one, reads as the number it
+  -- spells on every row but a text row. one type check on a row that holds
+  -- a value, which a read cannot measure
+  if type(v) == "string" and want ~= "string" and row.choices == nil then
+    v = tonumber(v) or v
+  end
+
   -- an authored value no clock or lerp can use reads as the row's fallback,
   -- the way every read did before rows
   if v ~= nil and not numeric_common.usable(v) then

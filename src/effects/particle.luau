@@ -143,7 +143,9 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   local count = attrs.EmitCount
   local duration = attrs.EmitDuration
 
-  if count == nil or (count <= 0 and duration <= 0) then
+  -- a count the reader could not make a number of, text that spells none,
+  -- emits nothing rather than throwing on the compare
+  if type(count) ~= "number" or (count <= 0 and duration <= 0) then
     return
   end
 
