@@ -361,6 +361,66 @@ harness.suite(function()
       expect(registry.of(root)).toBe(nil)
     end)
 
+    test("of asks no query of an instance that fails its subject's own filters", function()
+      registry.clear()
+
+      local asked = 0
+
+      registry.configure({
+        query = function(root: Instance, selector: string)
+          asked += 1
+          return harness.query(root, selector)
+        end,
+      })
+      registry.register(stub("screen", { classifier = "BasePart[$Enabled=true]:not(.Shockwave >> BasePart)" }))
+      registry.register(stub("mesh", { classifier = "Model#Rig:has(> BasePart#Start)" }))
+      harness.reset()
+
+      local root = harness.make("Folder", harness.make("Folder"))
+      local plain = harness.make("Part", root)
+      local off = harness.make("Part", root)
+      local on = harness.make("Part", root)
+      local other = harness.make("Model", root)
+      local rig = harness.make("Model", root)
+
+      off:SetAttribute("Enabled", false)
+      on:SetAttribute("Enabled", true)
+      other.Name = "Other"
+      rig.Name = "Rig"
+      harness.make("Part", rig).Name = "Start"
+
+      expect(registry.of(plain)).toBe(nil)
+      expect(registry.of(off)).toBe(nil)
+      expect(registry.of(other)).toBe(nil)
+      expect(asked).toBe(0)
+
+      expect(registry.of(on).id).toBe("screen")
+      expect(registry.of(rig).id).toBe("mesh")
+      expect(asked > 0).toBe(true)
+    end)
+
+    test("a filter the engine might read another way is left to the query", function()
+      registry.clear()
+
+      local asked = 0
+
+      registry.configure({
+        query = function(root: Instance, selector: string)
+          asked += 1
+          return harness.query(root, selector)
+        end,
+      })
+      registry.register(stub("screen", { classifier = "BasePart[$Enabled=true]:not(.Shockwave >> BasePart)" }))
+      harness.reset()
+
+      local part = harness.make("Part", harness.make("Folder", harness.make("Folder")))
+
+      part:SetAttribute("Enabled", "true")
+      registry.of(part)
+
+      expect(asked).toBe(1)
+    end)
+
     test("a custom classifier decides an unparented instance a built-in plays whole", function()
       registry.clear()
       registry.configure({ query = harness.query })

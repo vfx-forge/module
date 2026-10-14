@@ -871,6 +871,92 @@ local function bare(inst: Instance, compound: string): boolean?
   return matched
 end
 
+-- the value a filter spells, as the engine reads one: a boolean, a number or
+-- a string, quoted or bare
+local function literal(text: string): any
+  if text == "true" then
+    return true
+  end
+
+  if text == "false" then
+    return false
+  end
+
+  local number = tonumber(text)
+
+  if number ~= nil then
+    return number
+  end
+
+  return string.match(text, '^"(.*)"$') or string.match(text, "^'(.*)'$") or text
+end
+
+-- whether an instance could be a compound's subject, from what the compound
+-- asks of the instance itself: its class, tags, name and attributes, read up
+-- to the first filter that asks more (a property, :has, :not). false only on
+-- a filter the instance fails for sure; an attribute the engine might read
+-- another way than this does passes
+local function couldBe(inst: Instance, compound: string): boolean
+  local class, rest = string.match(compound, "^([%a_][%w_]*)(.*)$")
+
+  if class ~= nil and not inst:IsA(class) then
+    return false
+  end
+
+  rest = rest or compound
+
+  while rest ~= "" do
+    local kind, word, after = string.match(rest, "^([%.#])([%w_]+)(.*)$")
+
+    if kind == "." then
+      if not inst:HasTag(word) then
+        return false
+      end
+
+      rest = after
+      continue
+    end
+
+    if kind == "#" then
+      if inst.Name ~= word then
+        return false
+      end
+
+      rest = after
+      continue
+    end
+
+    local name, value, afterValue = string.match(rest, "^%[%s*%$([%w_]+)%s*=%s*(.-)%s*%](.*)$")
+
+    if name ~= nil then
+      local held = inst:GetAttribute(name)
+
+      local spelled = string.match(value, '^"(.*)"$') or string.match(value, "^'(.*)'$") or value
+
+      if held == nil or (held ~= literal(value) and tostring(held) ~= spelled) then
+        return false
+      end
+
+      rest = afterValue
+      continue
+    end
+
+    local set, afterSet = string.match(rest, "^%[%s*%$([%w_]+)%s*%](.*)$")
+
+    if set == nil then
+      return true
+    end
+
+    if inst:GetAttribute(set) == nil then
+      return false
+    end
+
+    rest = afterSet
+  end
+
+  return true
+end
+
 -- a custom classifier asked of an instance with no ancestor to query it from:
 -- "claims" when a lone subject compound matches it outright, "holds" when the
 -- instance carries a subject's class and every tag but the classifier cannot be
@@ -980,7 +1066,20 @@ function registry.of(inst: Instance): Module?
       continue
     end
 
-    if table.find(query(root, module.classifier), inst) then
+    -- the subject's own filters are asked of the instance before the query:
+    -- one it fails matches below no root, and the query that would say so
+    -- walks everything the root holds, a rig's animation saves or the whole
+    -- place from above a rig
+    local possible = false
+
+    for _, chain in shaped.chains do
+      if couldBe(inst, chain.compounds[#chain.compounds]) then
+        possible = true
+        break
+      end
+    end
+
+    if possible and table.find(query(root, module.classifier), inst) then
       return module
     end
   end
