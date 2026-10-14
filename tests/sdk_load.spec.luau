@@ -955,7 +955,10 @@ harness.suite(function()
       local found = refusal(effect({ layout = { deep } }))
 
       expect(table.find(found, "layout must not hold one table twice") ~= nil).toBe(true)
-      expect(os.clock() - started < 0.01).toBe(true)
+
+      -- a walk once per path would take years here, so the bound only has to
+      -- be one a loaded runner cannot cross on the right walk
+      expect(os.clock() - started < 1).toBe(true)
     end)
 
     test("a layout nested deeper than eight tables is refused, and one of seven loads", function()

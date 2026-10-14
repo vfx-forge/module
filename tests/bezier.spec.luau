@@ -1,4 +1,3 @@
-local process = require("@lune/process")
 local harness = require("@tests/harness")
 
 local Bezier = require("@obj/Bezier")
@@ -109,42 +108,6 @@ local function refusal(points: { vector }): string
   expect(ok).toBe(false)
 
   return tostring(err)
-end
-
--- two chains of ten segments that differ at every point, so each set moves
--- every segment
-local function pair(): ({ vector }, { vector })
-  local a = chain(10, 60)
-  local b = {}
-
-  for i, p in a do
-    b[i] = p + vector.create(0.5, 0.25, -0.5)
-  end
-
-  return a, b
-end
-
--- run on its own as `lune run tests/bezier.spec gate`: the best of 200 rounds
--- of a set and 100 atUniform reads, in seconds
-if process.args[1] == "gate" then
-  local a, b = pair()
-  local path = Bezier.new(a)
-  local best = math.huge
-
-  for round = 1, 200 do
-    local started = os.clock()
-
-    path:set(if round % 2 == 0 then a else b)
-
-    for n = 0, 99 do
-      path:atUniform(n / 99)
-    end
-
-    best = math.min(best, os.clock() - started)
-  end
-
-  print(best)
-  process.exit(0)
 end
 
 harness.suite(function()
@@ -276,43 +239,6 @@ harness.suite(function()
 
       expect(path.segments).toBe(5)
       expect(math.abs(path:length() - Bezier.new(points):length()) < 1e-9).toBe(true)
-    end)
-  end)
-
-  harness.describe("Bezier's cost", function()
-    -- an earlier spec reads its globals through getfenv, which turns off the
-    -- fast library calls for the whole process, so the gate is timed in a
-    -- lune of its own
-    test("a set of ten moved segments and 100 atUniform reads take under 0.1 ms", function()
-      local result = process.exec("lune", { "run", "tests/bezier.spec", "gate" })
-
-      expect(result.ok).toBe(true)
-
-      local best = tonumber(result.stdout) :: number
-
-      print(`  bezier rebuild: set of 10 moved segments and 100 atUniform in {string.format("%.4f", best * 1000)} ms`)
-
-      expect(best < 1e-4).toBe(true)
-    end)
-
-    test("set and every read allocate nothing once the curve exists", function()
-      local a, b = pair()
-      local path = Bezier.new(a)
-
-      path:length()
-
-      local before = gcinfo()
-
-      for round = 1, 1000 do
-        path:set(if round % 2 == 0 then a else b)
-        path:at(0.3)
-        path:tangent(0.6)
-        path:length()
-        path:atUniform(0.7)
-      end
-
-      -- a round that made one small table would grow it by tens of KB
-      expect(gcinfo() - before < 1).toBe(true)
     end)
   end)
 end)

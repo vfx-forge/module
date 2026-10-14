@@ -57,6 +57,10 @@ selene generate-roblox-std
 
 Run that once after cloning. Without it `selene` cannot resolve the standard library. CI does not need it, because selene is not a gate there yet.
 
+## Tests
+
+`lune run tests/run` is the suite CI judges every push and pull request by, and every spec in it is deterministic. The timing and allocation gates (`*_cost.spec.luau`, under `lune run tests/cost`) measure the process they run in, so they live in that second lane, run by hand when a change is about speed, and never gate a pull request. A new gate that compares a cost or counts allocations goes in a `_cost` spec, not in `tests/run`.
+
 ## Always run stylua
 
 ```sh
