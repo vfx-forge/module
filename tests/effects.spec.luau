@@ -2742,6 +2742,46 @@ harness.suite(function()
       expect(stats.fresh).toBe(2)
       expect(seen[2].id ~= seen[1].id).toBe(true)
     end)
+
+    test("a piece plays from the start and end the emit found, though the model lost one in its delay", function()
+      local built = fresh()
+
+      registry.register(require("@vfx/mesh"))
+      local fake = fake_pool.start({ MeshPart = LISTS.Part })
+
+      local model = harness.make("Model", harness.make("Folder"))
+      local start = harness.make("MeshPart", model)
+      local goal = harness.make("MeshPart", model)
+
+      start.Name = "Start"
+      goal.Name = "End"
+      start.MeshId = "rbxassetid://1"
+      goal.MeshId = "rbxassetid://1"
+      model:SetAttribute("EmitDelay", 0.1)
+
+      local seen = {}
+      local warn = logger.warn
+
+      logger.warn = function(...)
+        table.insert(seen, table.concat({ ... }, " "))
+      end
+
+      local env = effects.emit(0, model)
+
+      scheduler.frame(0.05)
+      goal.Parent = nil
+      scheduler.frame(0.1)
+
+      local pieces = #fake.folder:GetChildren()
+
+      env:Clear()
+      logger.warn = warn
+      fake_pool.stop(fake)
+      built.restore()
+
+      expect(seen).toEqual({})
+      expect(pieces).toBe(1)
+    end)
   end)
 
   harness.describe("a bezier's and a bolt's parts", function()

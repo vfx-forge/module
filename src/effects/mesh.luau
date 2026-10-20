@@ -169,13 +169,12 @@ function mesh.duration(_, attrs: any)
 end
 
 -- one piece: the assembled part driven over a duration of its own, the tail of
--- the old effect body
-local function piece(ctx: reader.Ctx, attrs: any, obj: BasePart, duration: number)
+-- the old effect body. `start` and `goal` are the ones the emit checked: the
+-- piece runs after the emit's delay, by which time the model may no longer
+-- hold them
+local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePart, obj: BasePart, duration: number)
   local ref = ctx.ref :: Model
   local scope = ctx.scope
-
-  local start = ref:FindFirstChild("Start") :: BasePart
-  local goal = ref:FindFirstChild("End") :: BasePart
 
   local destroyDelay = attrs.DestroyDelay
 
@@ -449,7 +448,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
     local duration = rng:NextNumber(range.Min, range.Max)
 
     lifetime.spawn(outstanding, function()
-      piece(ctx, attrs, pool.take(scope, start) :: BasePart, duration)
+      piece(ctx, attrs, start :: BasePart, goal :: BasePart, pool.take(scope, start) :: BasePart, duration)
     end)
   end
 
