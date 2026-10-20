@@ -350,7 +350,7 @@ function sound.init()
 
   emitterTemplate = template
 
-  local plugin = script:FindFirstAncestorOfClass("Plugin")
+  local plugin = if script ~= nil then script:FindFirstAncestorOfClass("Plugin") else nil
 
   if not plugin then
     return

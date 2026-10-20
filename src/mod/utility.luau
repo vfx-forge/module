@@ -14,8 +14,9 @@ local context_common = require("@mod/common/context")
 
 local utility = {}
 
+-- an Open Cloud luau execution task runs the runtime with no `script`
 utility.PLUGIN_CONTEXT = context_common.pluginContext(
-  script:FindFirstAncestorOfClass("Plugin") ~= nil,
+  script ~= nil and script:FindFirstAncestorOfClass("Plugin") ~= nil,
   RunService:IsStudio(),
   RunService:IsRunning()
 )

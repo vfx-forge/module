@@ -6,8 +6,9 @@ local numeric_common = require("./common/numeric")
 
 local SERVER_CONTEXT = context_common.serverContext(
   RunService:IsServer(),
+  -- an Open Cloud luau execution task runs the runtime with no `script`
   context_common.pluginContext(
-    script:FindFirstAncestorOfClass("Plugin") ~= nil,
+    script ~= nil and script:FindFirstAncestorOfClass("Plugin") ~= nil,
     RunService:IsStudio(),
     RunService:IsRunning()
   )
