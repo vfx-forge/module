@@ -1,5 +1,8 @@
+local RunService = game:GetService("RunService")
+
 local pool = require("@srv/pool")
 local lifetime = require("@mod/lifetime")
+local scheduler = require("@mod/scheduler")
 
 -- local content, so no write reaches the network
 local TEXTURE = "rbxasset://textures/particles/sparkles_main.dds"
@@ -86,12 +89,33 @@ local function withPool(body: () -> ())
   -- an init here would replace the folder and maps of a pool the runtime uses
   check(not pool.started(), "the pool is already running; run this spec on a copy that is not inited")
 
-  local scope = {}
-  pool.init(scope)
+  -- an Open Cloud task is a server, which has no RenderStepped and never
+  -- starts the runtime, so the scheduler steps on Heartbeat here instead
+  local server = not RunService:IsClient()
 
-  local ok, err = pcall(body)
+  if server then
+    scheduler.start({
+      IsRunning = function()
+        return false
+      end,
+      RenderStepped = RunService.Heartbeat,
+    })
+  end
+
+  -- the init inside the pcall, so one that fails part way still lets the pool
+  -- go and the next case finds it stopped
+  local scope = {}
+
+  local ok, err = pcall(function()
+    pool.init(scope)
+    body()
+  end)
 
   lifetime.releasePlain(scope)
+
+  if server then
+    scheduler.stop()
+  end
 
   if not ok then
     error(err, 0)
