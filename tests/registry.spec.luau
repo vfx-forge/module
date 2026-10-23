@@ -399,6 +399,82 @@ harness.suite(function()
       expect(asked > 0).toBe(true)
     end)
 
+    test("the place and its services are never an effect, and never asked", function()
+      registry.clear()
+
+      local asked = 0
+
+      registry.configure({
+        query = function(root: Instance, selector: string)
+          asked += 1
+          return harness.query(root, selector)
+        end,
+      })
+      registry.register(stub("mesh", { classifier = "Model:has(> BasePart#Start):has(> BasePart#End)" }))
+      harness.reset()
+
+      local place = harness.make("DataModel")
+      local workspace = harness.make("Workspace", place)
+
+      expect(registry.of(place)).toBe(nil)
+      expect(registry.of(workspace)).toBe(nil)
+      expect(asked).toBe(0)
+    end)
+
+    test("a model straight under a service is asked from the service, never the place", function()
+      registry.clear()
+
+      local roots: { Instance } = {}
+
+      registry.configure({
+        query = function(root: Instance, selector: string)
+          table.insert(roots, root)
+          return harness.query(root, selector)
+        end,
+      })
+      registry.register(stub("mesh", { classifier = "Model:has(> BasePart#Start):has(> BasePart#End)" }))
+      harness.reset()
+
+      local place = harness.make("DataModel")
+      local workspace = harness.make("Workspace", place)
+      local rig = harness.make("Model", workspace)
+
+      harness.make("Part", rig).Name = "Start"
+      harness.make("Part", rig).Name = "End"
+
+      expect(registry.of(rig).id).toBe("mesh")
+      expect(#roots > 0).toBe(true)
+      expect(table.find(roots, place)).toBe(nil)
+    end)
+
+    test("a scan of a service never climbs to the place", function()
+      registry.clear()
+
+      local roots: { Instance } = {}
+
+      registry.configure({
+        query = function(root: Instance, selector: string)
+          table.insert(roots, root)
+          return harness.query(root, selector)
+        end,
+      })
+      registry.register(stub("beam", { classifier = "Model:has(> Part) > Beam" }))
+      harness.reset()
+
+      local place = harness.make("DataModel")
+      local workspace = harness.make("Workspace", place)
+      local holder = harness.make("Model", workspace)
+
+      harness.make("Part", holder)
+
+      local beam = harness.make("Beam", holder)
+      local hits = registry.scan(workspace)
+
+      expect(#hits).toBe(1)
+      expect(hits[1].instance).toBe(beam)
+      expect(table.find(roots, place)).toBe(nil)
+    end)
+
     test("a filter the engine might read another way is left to the query", function()
       registry.clear()
 

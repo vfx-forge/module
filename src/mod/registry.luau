@@ -821,24 +821,38 @@ local function ancestorAt(inst: Instance, levels: number): Instance?
   return current
 end
 
+-- the place itself, or one of its services: never an effect, and never a root
+-- to query from, since a query from the place walks every service in it
+local function placeLevel(inst: Instance): boolean
+  local parent = inst.Parent
+
+  return inst:IsA("DataModel") or (parent ~= nil and parent:IsA("DataModel"))
+end
+
+-- an ancestor up to `levels` above inst, stopping at a service or at the top
+local function climb(inst: Instance, levels: number): Instance
+  local current = inst
+
+  for _ = 1, levels do
+    local parent = current.Parent
+
+    if parent == nil or parent:IsA("DataModel") then
+      break
+    end
+
+    current = parent
+  end
+
+  return current
+end
+
 -- where a module's classifier runs from for a scan of root. the engine never
 -- matches a classifier's leftmost compound against the instance queried, so a
 -- root that is the compound's own instance has to be asked from above it; a
 -- tree shallower than the classifier is asked from the highest ancestor it has
+-- below the place
 local function scanRoot(root: Instance, depth: number): Instance
-  local above = ancestorAt(root, depth)
-
-  if above ~= nil then
-    return above
-  end
-
-  local current = root
-
-  while current.Parent ~= nil do
-    current = current.Parent
-  end
-
-  return current
+  return climb(root, depth)
 end
 
 -- a subject compound asked of the instance itself: true or false when it names
@@ -996,6 +1010,10 @@ end
 -- disjoint by contract, so among them first is only ever one. an instance a
 -- custom classifier holds but cannot decide is nobody's
 function registry.of(inst: Instance): Module?
+  if placeLevel(inst) then
+    return nil
+  end
+
   local held = false
 
   for _, module in order do
@@ -1052,7 +1070,13 @@ function registry.of(inst: Instance): Module?
       end
     end
 
+    -- asked from the service rather than the place above it, the furthest a
+    -- query climbs
     local root = ancestorAt(inst, shaped.depth + 1)
+
+    if root ~= nil and root:IsA("DataModel") then
+      root = climb(inst, shaped.depth + 1)
+    end
 
     if root == nil then
       local answer = if custom[module] then unrooted(inst, module.classifier) else nil
