@@ -166,6 +166,9 @@ export type V1 = {
   getAttributeWriter: (ctx: Ctx, obj: Instance, name: string) -> Writer,
   -- runs the effect's time at a param declared with :mod()
   speed: (ctx: Ctx, track: Track) -> (),
+  -- plays the effect's Enabled loop for seconds of effect time, a tick at once and one every 1 / Rate after, and returns once
+  -- the last tick has ended; constant modules only, and never from a tick, whose ctx.constant is true
+  window: (ctx: Ctx, seconds: number) -> (),
   -- writes a param's value now, and every frame while modifiers move it; the effect waits for it
   apply: (ctx: Ctx, row: any, write: (value: any) -> ()) -> (),
   -- logs text once per module, instance and text; the effect plays on

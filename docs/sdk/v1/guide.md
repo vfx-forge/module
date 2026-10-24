@@ -94,6 +94,8 @@ A modifier whose end already equals the row's value does nothing, and a row noth
 
 `constant = true` lets an instance play the effect on a loop, which is what the ConstantVFX tag and an `EmitDuration` window do. Such an emit has `ctx.constant` set to `true`, so `emit` can tell a tick of the loop from a single play. A module without `constant` is never looped.
 
+An effect opens an `EmitDuration` window of its own with `sdk.window(ctx, seconds)`: it plays the loop for `seconds` of the effect's time, a tick as it opens and one every `1 / Rate` seconds after (the `Rate` attribute, 5 a second when there is none), each with `ctx.constant` true, and returns once the last tick has ended. Call it from a single emit only, as `if attrs.EmitDuration > 0 and not ctx.constant then sdk.window(ctx, attrs.EmitDuration) return end`, and add `EmitDuration` to `duration`. It refuses a module without `constant = true`, and a call from a tick, which would open a window on every tick after.
+
 `duration(sdk, attrs, props)` answers the effect's length in seconds, which `ctx.duration` carries into `emit`. It is optional and reads as 1 when missing.
 
 ## Templates

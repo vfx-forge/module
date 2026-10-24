@@ -623,6 +623,142 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("sdk.window", function()
+    -- a constant custom effect whose single emit opens a window of `seconds`
+    -- and whose ticks are handed to `onTick`. the instance ticks at the
+    -- default 5 a second: once as the window opens, then once a frame of 0.21
+    local function looping(seconds: number, onTick: (sdk: any, ctx: any) -> (), constant: boolean?)
+      registry.register({
+        id = "looping",
+        display = { name = "looping" },
+        classifier = "Folder",
+        constant = if constant == nil then true else constant,
+        attributes = {},
+        properties = {},
+        emit = function(ctx: any, attrs: any, props: any)
+          facade.run(function(sdk: any, view: any)
+            if view.constant then
+              onTick(sdk, view)
+              return
+            end
+
+            sdk.window(view, seconds)
+          end, ctx, attrs, props)
+        end,
+      })
+    end
+
+    test("ticks the effect at its rate for the window's seconds, each tick a constant emit", function()
+      fresh()
+
+      local ticks = 0
+
+      looping(0.5, function(_, view: any)
+        expect(view.constant).toBe(true)
+        ticks += 1
+      end)
+
+      local env = play()
+
+      for _ = 1, 4 do
+        scheduler.frame(0.21)
+      end
+
+      expect(ticks).toBe(3)
+      expect(ended(env)).toBe(true)
+    end)
+
+    test("reads the Rate attribute the passive loop reads", function()
+      fresh()
+
+      local ticks = 0
+
+      looping(1, function()
+        ticks += 1
+      end)
+
+      local folder = harness.make("Folder")
+
+      folder:SetAttribute("Rate", 2)
+
+      local env = effects.emit(0, folder)
+
+      for _ = 1, 6 do
+        scheduler.frame(0.21)
+      end
+
+      -- once as it opens, at 0.63 and again past 1.05, by when the window has closed
+      expect(ticks).toBe(2)
+      expect(ended(env)).toBe(true)
+    end)
+
+    test("returns only once the last tick has ended", function()
+      fresh()
+
+      local after = false
+
+      registry.register({
+        id = "waiting",
+        display = { name = "waiting" },
+        classifier = "Folder",
+        constant = true,
+        attributes = {},
+        properties = {},
+        emit = function(ctx: any, attrs: any, props: any)
+          facade.run(function(sdk: any, view: any)
+            if view.constant then
+              sdk.wait(view, 1)
+              return
+            end
+
+            sdk.window(view, 0.1)
+            after = true
+          end, ctx, attrs, props)
+        end,
+      })
+
+      local env = play()
+
+      scheduler.frame(0.21)
+
+      expect(after).toBe(false)
+
+      for _ = 1, 4 do
+        scheduler.frame(0.21)
+      end
+
+      expect(after).toBe(true)
+      expect(ended(env)).toBe(true)
+    end)
+
+    test("refuses a module that is not constant, and a call from a tick", function()
+      fresh()
+
+      looping(1, function() end, false)
+
+      local refused = harness.captureWarnings(function()
+        play()
+      end)
+
+      expect(#refused).toBe(1)
+      expect(string.find(refused[1], "needs constant = true", 1, true) ~= nil).toBe(true)
+
+      fresh()
+
+      looping(1, function(sdk: any, view: any)
+        sdk.window(view, 1)
+      end)
+
+      local fromTick = harness.captureWarnings(function()
+        play()
+        scheduler.frame(0.21)
+      end)
+
+      expect(#fromTick).toBe(1)
+      expect(string.find(fromTick[1], "never a tick of the loop", 1, true) ~= nil).toBe(true)
+    end)
+  end)
+
   harness.describe("a param's Track", function()
     test("reaches emit as a frozen view of value, animated and duration, read with :at", function()
       fresh()
@@ -1470,6 +1606,7 @@ harness.suite(function()
               end,
             },
           },
+          window = { sdk.window, 1 },
         }
 
         for name, call in calls do

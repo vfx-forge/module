@@ -14,6 +14,8 @@ local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
 
+local enabled_effects = require("@srv/enabled_effects")
+
 local color = require("@mod/color/color")
 
 local Bezier = require("@obj/Bezier")
@@ -102,6 +104,17 @@ end
 local VECTORS = { vector = true, Vector3 = true }
 
 local HOLDABLE = { Instance = true, RBXScriptConnection = true, ["function"] = true, thread = true }
+
+-- a window's clock as a built-in's runs at its Speed row, which a custom
+-- effect has none of
+local UNSCALED = table.freeze({
+  value = 1,
+  animated = false,
+  duration = 0,
+  at = function(_: number)
+    return 1
+  end,
+})
 
 local Track = {}
 Track.__index = Track
@@ -624,6 +637,28 @@ function v1.speed(view: any, track: any)
   end
 
   lifetime.speed(scope, inner)
+end
+
+function v1.window(view: any, seconds: number)
+  local ctx = ctxOf(view, "window")
+  local module = ctx.effect
+
+  yielding("window")
+
+  if type(seconds) ~= "number" then
+    logger.error(`sdk.window takes a number of seconds, got {typeof(seconds)}`)
+  end
+
+  if module == nil or module.constant ~= true then
+    error("sdk.window loops the effect, so it needs constant = true on the module", 2)
+  end
+
+  -- a tick that opened a window of its own would open one on every tick after
+  if ctx.constant then
+    error("sdk.window opens from a single emit, never a tick of the loop; check ctx.constant first", 2)
+  end
+
+  enabled_effects.window(ctx, module, seconds, UNSCALED :: any)
 end
 
 function v1.apply(view: any, given: any, write: (value: any) -> ())
