@@ -37,6 +37,9 @@ export type Knob = {
   seed: (self: Knob) -> Knob,
   -- a value modifiers can animate, read as a Track, with default modifiers made by sdk.mod
   mod: (self: Knob, ...Mod) -> Knob,
+  -- whether a Color3 or ColorSequence param follows a recolor, the color picker's or api.recolor's; one follows
+  -- unless declared :recolor(false)
+  recolor: (self: Knob, on: boolean?) -> Knob,
 }
 
 -- a default modifier on an animated param

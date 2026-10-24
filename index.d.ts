@@ -428,6 +428,8 @@ export namespace SDK {
 		slider(low?: number, high?: number): Knob;
 		/** A value modifiers can animate, read as a Track, with default modifiers. */
 		mod(...mods: Mod[]): Knob;
+		/** Whether a Color3 or ColorSequence param follows a recolor, the color picker's or recolor()'s; one follows unless declared recolor(false). */
+		recolor(on?: boolean): Knob;
 	}
 
 	/** A default modifier on an animated param. */

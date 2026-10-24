@@ -511,7 +511,14 @@ local function rowOf(row: any, name: string, found: { string })
     end
   end
 
-  if rawget(row, "kind") == "Instance" then
+  -- a recolor maps colors, so only a row holding one is declared to follow it or not
+  local kind = rawget(row, "kind")
+
+  if rawget(row, "recolors") ~= nil and kind ~= "Color3" and kind ~= "ColorSequence" then
+    once(found, `the recolor of {name} needs a Color3 or ColorSequence param`)
+  end
+
+  if kind == "Instance" then
     instanceOf(row, name, found)
   else
     if rawget(row, "isSlider") == true then

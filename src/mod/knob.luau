@@ -50,6 +50,7 @@ type Fields = {
   isSeed: boolean,
   isMod: boolean,
   modDefault: any,
+  recolors: boolean?,
   order: number,
 }
 
@@ -85,6 +86,7 @@ local function make(default: any): Knob
     isSeed = false,
     isMod = false,
     modDefault = nil,
+    recolors = nil,
     order = counter,
   }, Knob)
 end
@@ -184,6 +186,13 @@ end
 function Knob.instance(self: Knob, classes: { string }?): Knob
   self.kind = "Instance"
   self.classes = classes
+  return self
+end
+
+-- whether a color row follows a recolor, the plugin's color picker or api.recolor. a color row follows one unless
+-- it is declared :recolor(false), as a shadow or an outline that keeps its own color would be
+function Knob.recolor(self: Knob, on: boolean?): Knob
+  self.recolors = on ~= false
   return self
 end
 

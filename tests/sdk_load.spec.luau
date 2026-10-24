@@ -1100,6 +1100,22 @@ harness.suite(function()
       })
     end)
 
+    test("a recolor on a row that holds no color is refused, naming the row", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Kept = sdk.knob(Color3.new()):recolor(false),
+              Swept = sdk.knob(1):recolor(),
+              Tint = sdk.knob(harness.datatypes.ColorSequence.new(Color3.new())):recolor(),
+            },
+          }
+        end,
+      }))).toEqual({ "the recolor of Swept needs a Color3 or ColorSequence param" })
+    end)
+
     test("an instance row loads, keeping a copy of its classes", function()
       fresh()
 

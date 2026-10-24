@@ -125,7 +125,7 @@ local function recolorRows(obj: Instance, color: Color3, mode: string)
   for name, row in module.attributes do
     local kind = row.kind
 
-    if kind ~= "Color3" and kind ~= "ColorSequence" then
+    if (kind ~= "Color3" and kind ~= "ColorSequence") or row.recolors == false then
       continue
     end
 

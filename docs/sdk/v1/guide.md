@@ -67,6 +67,8 @@ A number knob declared with `:slider()` is drawn as a slider dragged between its
 
 A number knob declared with `:seed()` is drawn as a seed: a field and a reroll button beside it that picks another whole number. Any number is a seed, so the field takes whatever is typed, within the knob's `:min` and `:max` when it has them, and the reroll stays inside them too. A seed on a knob that is not a number, or that is also a slider, a curve or animated with `:mod()`, is refused.
 
+A Color3 or ColorSequence knob follows a recolor: the plugin's color picker recolors it with the rest of the selection, its modifiers' colors included, and so does `recolor()` in a game. Declare one that keeps its own color, such as a shadow or an outline, with `:recolor(false)`. `:recolor()` on a knob that holds no color is refused.
+
 A knob's default can be a function instead of a value. It is a rule, and it answers the default from the other params when the module is read.
 
 ### Rules

@@ -133,6 +133,30 @@ harness.suite(function()
       expect(attr.get(obj, "Rate", nil, true)).toBe(30)
     end)
 
+    test("a row declared :recolor(false) keeps its color", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register({
+        id = "outlined",
+        display = { name = "Outlined" },
+        classifier = "Attachment",
+        attributes = {
+          Tint = knob(RED),
+          Outline = knob(RED):recolor(false),
+        },
+        properties = {},
+        emit = noop,
+      })
+
+      local obj = bolt("Outline", RED)
+
+      attr.cache(obj)
+      recolor(BLUE, "replace", obj)
+
+      expect(same(colorOf(obj, "Tint"), BLUE)).toBe(true)
+      expect(same(colorOf(obj, "Outline"), RED)).toBe(true)
+    end)
+
     test("a descendant of a recolored root is classified and recolored too", function()
       boltLike()
 
