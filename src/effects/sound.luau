@@ -14,6 +14,7 @@ local scheduler = require("@mod/scheduler")
 local timing_common = require("@mod/common/timing")
 
 local pool = require("@srv/pool")
+local containers = require("@srv/containers")
 
 local rng = Random.new()
 
@@ -182,7 +183,7 @@ local function createSoundClone(ref: Sound, sourceSound: Sound, held: { any }): 
     if parent then
       clone.Parent = parent
     else
-      clone.Parent = workspace.Terrain
+      clone.Parent = containers.of("sound")
     end
   end
 

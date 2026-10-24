@@ -83,7 +83,8 @@ local function beam(): Instance
 end
 
 local function decals(stand: Stand): { string }
-  local part = stand.terrain:FindFirstChild("DO_NOT_REMOVE_ForgeTextureCache")
+  local home = stand.terrain:FindFirstChild("VFXForge")
+  local part = if home ~= nil then home:FindFirstChild("TextureCache") else nil
   local found = {}
 
   if part == nil then
@@ -122,7 +123,9 @@ harness.suite(function()
 
         utility.cleanupScope(stand.scope)
 
-        expect(#stand.terrain:GetChildren()).toBe(0)
+        local home = stand.terrain:FindFirstChild("VFXForge")
+
+        expect(home ~= nil and #home:GetChildren() or -1).toBe(0)
         expect(stand.disconnected).toBe(2)
       end)
     end)

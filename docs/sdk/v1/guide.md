@@ -151,6 +151,8 @@ A descendant of `ctx.ref` that you `sdk.emit` must also be matched by `component
 
 `sdk.lock(ctx)`, called in `emit`, plays this emit alone on `ctx.ref`. An emit that reaches the instance while this one plays ends at its own `sdk.lock`, silently, though the panel's modifiers on a reflected property have already started for it, since they start before `emit` runs. Call it first in `emit`, before anything is read or written; a step, a tween's callback or a piece may not call it, and a second call by the emit that holds the lock does nothing.
 
+`sdk.container(ctx)` answers the part everything else the effect makes goes in: `workspace.Terrain.VFXForge.<id>`, named by the effect's id, an invisible anchored part at the origin with no collision, queries or touches, not archivable. Every emit of the effect shares it, it is made on first use, and the runtime destroys it with what is left in it when it shuts down. See Where created instances go.
+
 `sdk.guiRoot(ctx)` answers the one Folder every GUI an effect makes goes in: under StarterGui in Studio's editor and under the local player's PlayerGui on a client. It is not archivable, it is made on first use, and it is refused on the server. See Where created instances go.
 
 ## Math
@@ -181,7 +183,7 @@ A shipped effect follows these.
 - **Row shapes.** Give each choice the row that fits it: one `:options` row for a mode rather than several booleans that change each other, one NumberRange for a minimum and a maximum, `display.reflect` for an engine property rather than a row that copies it, and `:slider()` for a bounded number an artist tunes by feel, such as a strength or an opacity from 0 to 1. Cut a row that repeats another under a different name.
 - **Layout.** A layout entry is a row or a group of rows, never a group inside a group, since the panel draws one level of subtitles under the effect's title.
 - **The played instance.** Classify the class the effect needs. An effect that animates its own instance, as the sample animates its part, classifies that class. One that only makes instances of its own, or plays on the camera or a GUI, classifies a `RayValue` with its tag, which has no appearance or physics, as the built-in camera shake does. One that needs only a place in the world classifies an `Attachment` and reads `ctx.ref.WorldCFrame`, so it follows the part it sits in; select that part before adding one, since the adder parents what it makes to the selection.
-- **Where created instances go.** Put a created instance under `workspace.Terrain` with `Archivable` false, `Locked` true and `CanCollide`, `CanQuery` and `CanTouch` false, held with `sdk.hold` before it is parented:
+- **Where created instances go.** Put a created instance under `sdk.container(ctx)`, the effect's own invisible part under `workspace.Terrain.VFXForge`, with `Archivable` false, `Locked` true and `CanCollide`, `CanQuery` and `CanTouch` false, held with `sdk.hold` before it is parented:
 
   ```luau
   local part = sdk.hold(ctx, Instance.new("Part"))
@@ -192,10 +194,10 @@ A shipped effect follows these.
   part.CanCollide = false
   part.CanQuery = false
   part.CanTouch = false
-  part.Parent = workspace.Terrain
+  part.Parent = sdk.container(ctx)
   ```
 
-  Never put one at the `workspace` root, in a folder of your own, or directly in `StarterGui` or `PlayerGui`; a GUI goes in `sdk.guiRoot(ctx)`. A clone you made is yours to write directly; the played instance goes through writers. Never clone from an instance a writer has written: clone first, write second, and expect a second emit while the first plays (or call `sdk.lock`).
+  Attachments, parts, models and sounds work under the container as they do under Terrain: it is a part at the origin, so an attachment's `CFrame` there is its world `CFrame`. Every emit of the effect shares it, so never destroy or rename it; hold what you put in it. The runtime destroys the container, and anything left in it, when it shuts down. Never put one at the `workspace` root, directly in `workspace.Terrain`, in a folder of your own, or directly in `StarterGui` or `PlayerGui`; a GUI goes in `sdk.guiRoot(ctx)`. A clone you made is yours to write directly; the played instance goes through writers. Never clone from an instance a writer has written: clone first, write second, and expect a second emit while the first plays (or call `sdk.lock`).
 
   A ViewportFrame does not render in a SurfaceGui parented to a part (measured in Studio's editor on 2026-10-05). Put every GUI an effect makes in `sdk.guiRoot(ctx)`: a SurfaceGui or BillboardGui there with its `Adornee` set to the part, a ScreenGui there with `ResetOnSpawn` false. Hold a GUI made for one emit with `sdk.hold`; a container every emit shares is found by name in the root or made there, and stays for the session. Nothing in the root is saved with the place or copied to players. On the server there is no root: check `sdk.context()` first.
 - **components.** Declare `components = "Instance"` when the instance owns descendants the effect plays, hides or copies.

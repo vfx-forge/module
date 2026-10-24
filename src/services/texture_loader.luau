@@ -1,13 +1,14 @@
 local CollectionService = game:GetService("CollectionService")
 
 local utility = require("@mod/utility")
+local containers = require("@srv/containers")
 local flipbook_common = require("@mod/common/flipbook")
 
 local texture_loader = {}
 
 function texture_loader.init(scope: { any })
   local parent = Instance.new("Part")
-  parent.Name = "DO_NOT_REMOVE_ForgeTextureCache"
+  parent.Name = "TextureCache"
   parent.Transparency = 1
   parent.Size = Vector3.zero
   parent.Archivable = false
@@ -15,9 +16,11 @@ function texture_loader.init(scope: { any })
   parent.CanCollide = false
   parent.CanQuery = false
   parent.Locked = true
-  parent.Parent = workspace.Terrain
+  local home = containers.root()
 
-  utility.protectParent(scope, parent)
+  parent.Parent = home
+
+  utility.protectParent(scope, parent, home)
 
   local decals: { [string]: { decal: Decal, count: number } } = {}
   local preloadScopes = {}

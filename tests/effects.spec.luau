@@ -18,6 +18,7 @@ local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
 local fake_pool = require("@tests/fake_pool")
+local containers = require("@srv/containers")
 local bezier_common = require("@mod/common/bezier")
 local enabled_effects = require("@srv/enabled_effects")
 local test, expect = harness.test, harness.expect
@@ -3041,14 +3042,14 @@ harness.suite(function()
     end)
 
     test("a highlighted bolt's segments go back to the pool before its container goes", function()
-      local containers = {}
+      local held = {}
       local free = {}
 
       local fake = emitTwice(lightning, utility.LIGHTNING_TAG, { Segments = 2, FillTransparency = 0 }, {
         flush = true,
         frames = { 0.25 },
         look = function(fake: fake_pool.Fake, cleared: boolean)
-          table.insert(containers, #workspace.Terrain:GetChildren())
+          table.insert(held, #containers.of("lightning"):GetChildren())
 
           if cleared then
             table.insert(free, #fake.folder:GetChildren())
@@ -3056,7 +3057,7 @@ harness.suite(function()
         end,
       })
 
-      expect(containers).toEqual({ 1, 0, 1, 0 })
+      expect(held).toEqual({ 1, 0, 1, 0 })
       expect(free).toEqual({ 2, 2 })
       expect(fake.made).toBe(2)
     end)

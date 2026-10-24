@@ -9,6 +9,7 @@ local lifetime = require("@mod/lifetime")
 local flipbook_common = require("@mod/common/flipbook")
 
 local pool = require("@srv/pool")
+local containers = require("@srv/containers")
 
 local rng = Random.new()
 
@@ -318,7 +319,7 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   tween.wait(scope, curve.new(math.max(duration, flipbookDuration), "linear"))
 
   if emitOnFinish then
-    scope.effects.emitOnFinish(emitOnFinish, workspace.Terrain, scope.depth + 1, scope, children)
+    scope.effects.emitOnFinish(emitOnFinish, containers.of("beam"), scope.depth + 1, scope, children)
   end
 
   lifetime.awaitJoin(children)

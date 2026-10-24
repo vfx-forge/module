@@ -117,6 +117,7 @@ local ShockwaveDebris = require("@vfx/shockwave_debris")
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
 local effects = require("@srv/effects")
+local containers = require("@srv/containers")
 local texture_loader = require("@srv/texture_loader")
 local enabled_effects = require("@srv/enabled_effects")
 
@@ -251,6 +252,9 @@ function api.deinit()
   for _, obj in cleanupObjects do
     obj:Destroy()
   end
+
+  -- last, with everything above let go, so what a teardown missed goes with it
+  containers.clear()
 end
 
 local function fullEmit(depth: number, ...: any)

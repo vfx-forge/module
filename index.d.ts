@@ -561,6 +561,8 @@ export namespace SDK {
 			ctx: Ctx,
 			thing: T,
 		): T;
+		/** The part this effect parents what it makes under, workspace.Terrain.VFXForge.<id>; attachments, parts and sounds work under it as under Terrain. */
+		container(ctx: Ctx): BasePart;
 		/** A group of pieces the effect waits for. */
 		join(ctx: Ctx): Join;
 		/** Runs fn on a thread of its own, counted into join. */
@@ -573,6 +575,8 @@ export namespace SDK {
 		await(join: Join): void;
 		/** Emits instance as a nested effect the effect waits for. */
 		emit(ctx: Ctx, instance: Instance): void;
+		/** Plays the effect's Enabled loop for seconds of effect time, a tick at once and one every 1 / Rate after, and returns once the last tick has ended; constant modules only, and never from a tick. */
+		window(ctx: Ctx, seconds: number): void;
 		/** A writer for a property of obj. */
 		getWriter<T = unknown>(
 			ctx: Ctx,

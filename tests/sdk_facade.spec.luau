@@ -9,6 +9,7 @@ local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
+local containers = require("@srv/containers")
 local test, expect = harness.test, harness.expect
 local row = harness.row
 
@@ -1582,6 +1583,59 @@ harness.suite(function()
       expect(seen.duration).toBe(2)
     end)
 
+    test("container answers one part per effect under Terrain's VFXForge, again after the runtime clears it", function()
+      fresh()
+
+      -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+      local constructor = Instance
+      -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+      Instance = harness.datatypes.Instance
+
+      local terrain = workspace.Terrain
+      local stand = harness.make("Folder")
+
+      workspace.Terrain = stand :: any
+
+      local first, again
+
+      handed(function(sdk: any, view: any)
+        first = sdk.container(view)
+        again = sdk.container(view)
+      end)
+
+      play()
+
+      local root = first.Parent
+      local same = first == again
+      local name, class = first.Name, first.ClassName
+      local rootName, underStand = root.Name, root.Parent == stand
+
+      containers.clear()
+      registry.clear()
+
+      local afterClear = #stand:GetChildren()
+      local remade
+
+      handed(function(sdk: any, view: any)
+        remade = sdk.container(view)
+      end)
+
+      play()
+
+      -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+      Instance = constructor
+      workspace.Terrain = terrain
+
+      expect(same).toBe(true)
+      expect(name).toBe("viewed")
+      expect(class).toBe("Part")
+      expect(rootName).toBe("VFXForge")
+      expect(underStand).toBe(true)
+      expect(afterClear).toBe(0)
+      expect(remade.Name).toBe("viewed")
+      expect(remade.Parent ~= nil and remade.Parent.Parent == stand).toBe(true)
+    end)
+
     test("every entry that takes a ctx refuses the runtime's own and a table like the view, naming the call", function()
       fresh()
 
@@ -1607,6 +1661,7 @@ harness.suite(function()
             },
           },
           window = { sdk.window, 1 },
+          container = { sdk.container },
         }
 
         for name, call in calls do

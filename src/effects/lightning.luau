@@ -12,6 +12,7 @@ local bezier_common = require("@mod/common/bezier")
 
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
+local containers = require("@srv/containers")
 local enabled_effects = require("@srv/enabled_effects")
 
 local Bezier = require("@obj/Bezier")
@@ -564,7 +565,7 @@ function lightning.emit(ctx: reader.Ctx, attrs: any)
       if useHighlight then
         local container = Instance.new("Model")
         container.Name = "LightningContainer"
-        container.Parent = workspace.Terrain
+        container.Parent = containers.of("lightning")
         containerModel = container
 
         -- held ahead of the segments, so they go back to the pool before it goes

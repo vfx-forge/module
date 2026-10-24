@@ -155,6 +155,9 @@ export type V1 = {
   tween: (ctx: Ctx, curve: Curve, fn: (alpha: number) -> ()) -> (),
   -- cleans thing up when the effect ends: an instance, a connection, a function or a thread
   hold: <T>(ctx: Ctx, thing: T) -> T,
+  -- the part this effect parents what it makes under, workspace.Terrain.VFXForge.<id>; attachments, parts and sounds
+  -- work under it as under Terrain
+  container: (ctx: Ctx) -> BasePart,
   -- a group of pieces the effect waits for
   join: (ctx: Ctx) -> Join,
   -- runs fn on a thread of its own, counted into join

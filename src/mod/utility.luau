@@ -210,15 +210,18 @@ function utility.cleanupScope(scope: { [any]: any }, syncFunctions: boolean?)
   table.clear(scope)
 end
 
-function utility.protectParent(scope: { [any]: any }, parent: Instance)
+-- keeps `parent` under `home` while the scope holds, unless `home` itself is gone
+function utility.protectParent(scope: { [any]: any }, parent: Instance, home: Instance?)
+  local where = home or workspace.Terrain
+
   table.insert(
     scope,
-    parent.AncestryChanged:Connect(function(_, new)
-      if parent.Parent == workspace.Terrain then
+    parent.AncestryChanged:Connect(function()
+      if parent.Parent == where or where.Parent == nil then
         return
       end
 
-      parent.Parent = workspace.Terrain
+      parent.Parent = where
     end)
   )
 end

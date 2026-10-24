@@ -3,11 +3,12 @@ local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
 
 local mover = require("@srv/mover")
+local containers = require("@srv/containers")
 
 local FLOOR = 64
 local BUCKET = 15
 local EVERY = 1
-local FOLDER = "VFXForgeCache"
+local FOLDER = "Pool"
 
 -- a clone carries every serialized property but these, which a copy keeps
 -- its own of
@@ -102,9 +103,11 @@ pool.engine = {
     local made = Instance.new("Folder")
     made.Name = FOLDER
     made.Archivable = false
-    made.Parent = workspace.Terrain
+    local home = containers.root()
 
-    utility.protectParent(scope, made)
+    made.Parent = home
+
+    utility.protectParent(scope, made, home)
 
     return made
   end,

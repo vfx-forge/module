@@ -14,6 +14,7 @@ local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
 
+local containers = require("@srv/containers")
 local enabled_effects = require("@srv/enabled_effects")
 
 local color = require("@mod/color/color")
@@ -523,6 +524,16 @@ function v1.hold<T>(view: any, thing: T): T
   end
 
   return lifetime.hold(scope, thing)
+end
+
+-- the part under workspace.Terrain.VFXForge this effect parents what it makes under, one per effect id. attachments,
+-- parts and sounds work under it as under Terrain, and the runtime destroys it, and what is left in it, when it shuts
+-- down
+function v1.container(view: any): BasePart
+  local ctx = ctxOf(view, "container")
+  local module = ctx.effect
+
+  return containers.of(if module ~= nil then module.id else "custom")
 end
 
 function v1.join(view: any)
