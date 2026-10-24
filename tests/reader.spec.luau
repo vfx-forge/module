@@ -5,12 +5,16 @@ local knob = require("@mod/knob")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
+local lerp = require("@mod/lerp")
 local reader = require("@mod/reader")
 local harness = require("@tests/harness")
 local test, expect = harness.test, harness.expect
 local Vector3 = harness.datatypes.Vector3
 local Instance = harness.datatypes.Instance
 local NumberRange = harness.datatypes.NumberRange
+local Color3 = harness.datatypes.Color3
+local ColorSequence = harness.datatypes.ColorSequence
+local ColorSequenceKeypoint = harness.datatypes.ColorSequenceKeypoint
 
 frame.configure(harness.fakeEncoding, harness.fakeCompression)
 
@@ -543,6 +547,44 @@ harness.suite(function()
       expect(attrs.A.duration).toBe(4)
       expect(near(attrs.A.at(2), 5)).toBe(true)
       expect(attrs.A.value).toBe(2)
+    end)
+
+    test("a color sequence row plays its lane between two sequences", function()
+      local white = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.new(1, 1, 1)),
+        ColorSequenceKeypoint.new(1, Color3.new(1, 1, 1)),
+      })
+      local red = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.new(1, 0, 0)),
+        ColorSequenceKeypoint.new(1, Color3.new(1, 0, 0)),
+      })
+      local blue = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.new(0, 0, 1)),
+        ColorSequenceKeypoint.new(1, Color3.new(0, 0, 1)),
+      })
+
+      local obj = Instance.new("Part")
+      obj:SetAttribute("Gradient", white)
+      framed(obj, "attribute", "Gradient", { tween(red, blue, 4) })
+
+      local attrs = reader.resolve(module({ Gradient = knob(white):mod() }), ctxFor(obj))
+      local track = attrs.Gradient
+      local middle = track.at(2)
+
+      expect(track.animated).toBe(true)
+      expect(track.value).toBe(white)
+      expect(typeof(middle)).toBe("ColorSequence")
+      expect(middle).toBe(lerp.ColorSequence(red, blue, 0.5))
+
+      -- the end is read back through oklab, so it lands on blue within a hair
+      for i, kp in track.at(4).Keypoints do
+        local want = blue.Keypoints[i]
+
+        expect(kp.Time).toBe(want.Time)
+        expect(math.abs(kp.Value.R - want.Value.R) < 1e-6).toBe(true)
+        expect(math.abs(kp.Value.G - want.Value.G) < 1e-6).toBe(true)
+        expect(math.abs(kp.Value.B - want.Value.B) < 1e-6).toBe(true)
+      end
     end)
 
     test("a queue naming no duration runs over the effect's", function()
