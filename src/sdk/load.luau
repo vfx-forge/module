@@ -47,6 +47,7 @@ local EDITABLE = {
   "Color3",
   "NumberSequence",
   "ColorSequence",
+  "Instance",
 }
 
 local load = {}
@@ -303,6 +304,7 @@ end
 local KEPT = {
   { "names", "aliases" },
   { "choices", "options" },
+  { "classes", "classes" },
   { "modDefault", "default modifiers" },
 }
 
@@ -350,7 +352,9 @@ local function fieldsOf(row: any, name: string, found: { string })
   local default = rawget(row, "default")
   local kind = rawget(row, "kind")
   local has = rawget(row, "hasDefault")
-  local agrees = if has == true then kind == knob.kindOf(default) else has == false and default == nil and kind == nil
+  local agrees = if has == true
+    then kind == knob.kindOf(default)
+    else has == false and default == nil and (kind == nil or kind == "Instance")
 
   if
     not agrees
@@ -431,6 +435,46 @@ local function seedOf(row: any, name: string, found: { string })
   end
 end
 
+-- an instance row is picked, never typed or animated, so it has no range, no
+-- choices and no motion, and its classes are names IsA can be asked
+local function instanceOf(row: any, name: string, found: { string })
+  local classes = rawget(row, "classes")
+
+  if classes ~= nil then
+    local ok = type(classes) == "table" and getmetatable(classes) == nil and #classes > 0
+
+    if ok then
+      for key, class in next, classes do
+        if type(key) ~= "number" or type(class) ~= "string" or class == "" then
+          ok = false
+          break
+        end
+      end
+    end
+
+    if not ok then
+      once(found, `the classes of {name} must be a list of class names`)
+    end
+  end
+
+  local given = {
+    { rawget(row, "lower") ~= nil, "min" },
+    { rawget(row, "upper") ~= nil, "max" },
+    { rawget(row, "choices") ~= nil, "options" },
+    { rawget(row, "preset") ~= nil, "curve" },
+    { rawget(row, "isSlider") == true, "slider" },
+    { rawget(row, "isMod") == true, "modifiers" },
+    { rawget(row, "isSeed") == true, "seed" },
+    { rawget(row, "units") ~= nil, "unit" },
+  }
+
+  for _, entry in given do
+    if entry[1] then
+      once(found, `an Instance row has no {entry[2]}`)
+    end
+  end
+end
+
 -- every table a row keeps copied into it, so the author's own lists reach
 -- nothing. a row the registry froze on an earlier load already holds copies
 local function rowOf(row: any, name: string, found: { string })
@@ -461,12 +505,16 @@ local function rowOf(row: any, name: string, found: { string })
     end
   end
 
-  if rawget(row, "isSlider") == true then
-    sliderOf(row, name, found)
-  end
+  if rawget(row, "kind") == "Instance" then
+    instanceOf(row, name, found)
+  else
+    if rawget(row, "isSlider") == true then
+      sliderOf(row, name, found)
+    end
 
-  if rawget(row, "isSeed") == true then
-    seedOf(row, name, found)
+    if rawget(row, "isSeed") == true then
+      seedOf(row, name, found)
+    end
   end
 
   -- the registry walks each of these unasked, and would throw on one that is

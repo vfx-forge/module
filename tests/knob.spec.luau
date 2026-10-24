@@ -70,6 +70,36 @@ harness.suite(function()
       expect(row.isSeed).toBe(true)
     end)
 
+    test("an instance row has no default and any class when none is named", function()
+      local row = knob():instance()
+
+      expect(row.kind).toBe("Instance")
+      expect(row.hasDefault).toBe(false)
+      expect(row.default).toBe(nil)
+      expect(row.classes).toBe(nil)
+    end)
+
+    test("an instance row keeps the classes it was given", function()
+      local row = knob():instance({ "BasePart", "Attachment" })
+
+      expect(row.kind).toBe("Instance")
+      expect(row.classes).toEqual({ "BasePart", "Attachment" })
+    end)
+
+    test("an instance row takes a label, a hint, hidden and readonly", function()
+      local rule = function()
+        return true
+      end
+
+      local row = knob():instance():label("Target"):hint("what it follows"):hidden(rule):readonly(rule)
+
+      expect(row.kind).toBe("Instance")
+      expect(row.title).toBe("Target")
+      expect(row.details).toBe("what it follows")
+      expect(row.hiddenRule).toBe(rule)
+      expect(row.readonlyRule).toBe(rule)
+    end)
+
     test("every chain method returns the same knob", function()
       local row = knob(1)
       local same = row:min(0):max(2):aliases("A", "B"):label("One"):hint("h"):curve("linear"):unit("seconds"):mod()

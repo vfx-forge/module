@@ -55,7 +55,13 @@ Every method takes `sdk` first. Never require ForgeVFX from a custom effect.
 
 Walk `attrs` and `props` with `for name, value in attrs`, never `pairs`, which sees nothing on them. Never copy them: a copy made with `table.clone` refuses every read. In a rule or in `duration`, read a row by name, since a walk there sees only the rows read so far. A param declared with `:mod()` that `duration` reads is not kept, so a walk in `duration` never finds it, and its `:at(t)` there is not the one `emit` sees: read its `value`.
 
-A knob's default is a number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence or ColorSequence, or a curve; a knob under `properties` may also default to an EnumItem. A default of any other type is refused, naming the param, since the panel has no editor for it.
+A knob's default is a number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence or ColorSequence, or a curve (a row may also hold an Instance, declared as below); a knob under `properties` may also default to an EnumItem. A default of any other type is refused, naming the param, since the panel has no editor for it.
+
+A knob declared `sdk.knob():instance(classes?)` holds an instance the artist picks, and has no default, so a row never picked reads as nil. `classes` is an optional list of class names the row takes, matched with `IsA` so `"BasePart"` takes any part; leave it out to take any instance. It takes `:label`, `:hint`, `:hidden` and `:readonly`, and `:min`, `:max`, `:options`, `:slider`, `:seed`, `:unit`, `:curve` and `:mod` on it are refused.
+
+```luau
+Target = sdk.knob():instance({ "BasePart", "Attachment" }):label("Follow")
+```
 
 A number knob declared with `:slider()` is drawn as a slider dragged between its `:min` and `:max`, or between the two numbers it is handed, as in `:slider(0, 10)`; a typed value still clamps to `:min` and `:max`. A slider on a knob that is not a number, or with no range to drag over, is refused.
 

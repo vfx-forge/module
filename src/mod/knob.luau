@@ -37,6 +37,7 @@ type Fields = {
   upper: any,
   names: { string },
   choices: { string }?,
+  classes: { string }?,
   title: string?,
   details: string?,
   preset: string?,
@@ -71,6 +72,7 @@ local function make(default: any): Knob
     upper = nil,
     names = {},
     choices = nil,
+    classes = nil,
     title = nil,
     details = nil,
     preset = nil,
@@ -174,6 +176,14 @@ function Knob.mod(self: Knob, ...: any): Knob
     self.modDefault = { ... }
   end
 
+  return self
+end
+
+-- a row that holds an instance, picked by the artist. it has no default, so
+-- an unset row reads nil. classes narrow the pick by IsA, none takes any
+function Knob.instance(self: Knob, classes: { string }?): Knob
+  self.kind = "Instance"
+  self.classes = classes
   return self
 end
 

@@ -233,7 +233,7 @@ harness.suite(function()
       fresh()
 
       local allowed =
-        "number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence, ColorSequence"
+        "number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence, ColorSequence, Instance"
 
       expect(refusal(effect({
         params = function(sdk: any)
@@ -1097,6 +1097,89 @@ harness.suite(function()
         "the seed of Ease needs a number param",
         "the seed of Moved cannot also be animated",
         "the seed of Tint needs a number param",
+      })
+    end)
+
+    test("an instance row loads, keeping a copy of its classes", function()
+      fresh()
+
+      local classes = { "BasePart", "Attachment" }
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = {
+                Target = sdk.knob():instance(classes):label("Target"):hidden(function()
+                  return false
+                end),
+                Any = sdk.knob():instance(),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(true)
+      expect(found).toEqual({})
+
+      local attributes = registry.get("my_effect").attributes
+
+      expect(attributes.Target.kind).toBe("Instance")
+      expect(attributes.Target.classes).toEqual({ "BasePart", "Attachment" })
+      expect(attributes.Target.classes == classes).toBe(false)
+      expect(attributes.Any.classes).toBe(nil)
+    end)
+
+    test("an instance row's classes must be a list of names", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Blank = sdk.knob():instance({ "" }),
+              Empty = sdk.knob():instance({}),
+              Number = sdk.knob():instance({ 5 }),
+              Text = sdk.knob():instance("BasePart"),
+            },
+          }
+        end,
+      }))).toEqual({
+        "the classes of Blank must be a list of class names",
+        "the classes of Empty must be a list of class names",
+        "the classes of Number must be a list of class names",
+        "the classes of Text must be a list of class names",
+      })
+    end)
+
+    test("an instance row refuses what has no meaning for it, one plain message each", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Bounded = sdk.knob():instance():min(1):max(2),
+              Chosen = sdk.knob():instance():options({ "a" }),
+              Curved = sdk.knob():instance():curve("linear"),
+              Dragged = sdk.knob():instance():slider(),
+              Moved = sdk.knob():instance():mod(),
+              Rolled = sdk.knob():instance():seed(),
+              Timed = sdk.knob():instance():unit("seconds"),
+            },
+          }
+        end,
+      }))).toEqual({
+        "an Instance row has no min",
+        "an Instance row has no max",
+        "an Instance row has no options",
+        "an Instance row has no curve",
+        "an Instance row has no slider",
+        "an Instance row has no modifiers",
+        "an Instance row has no seed",
+        "an Instance row has no unit",
       })
     end)
 
