@@ -20,6 +20,12 @@ local Ticks: { [Instance]: registry.Module } = {}
 local Wakes: { [Instance]: () -> () } = {}
 local Moves: { [Instance]: { any } } = {}
 
+-- every token a loop started whose ticks may still be playing. a loop that
+-- stops lets its ticks play out, so its token is kept until they have, and a
+-- teardown clears what is left: nothing else would end a tick once its host's
+-- threads are gone, and its bolts or parts would stay in the place for good
+local Tokens: { [lifetime.emit]: true } = {}
+
 local service: any = nil
 
 -- the emit every tick of a passive loop is an effect of, never sealed: it lives
@@ -208,7 +214,17 @@ function enabled_effects.add(obj: Instance)
       return
     end
 
-    local tick = enabled_effects.ticker(obj, module, enabled_effects.token(), service)
+    for token in Tokens do
+      if #token.effects == 0 and #token.children == 0 then
+        Tokens[token] = nil
+      end
+    end
+
+    local token = enabled_effects.token()
+
+    Tokens[token] = true
+
+    local tick = enabled_effects.ticker(obj, module, token, service)
 
     table.insert(tempScope, RunService.RenderStepped:Connect(tick))
   end
@@ -303,6 +319,16 @@ function enabled_effects.switch(obj: Instance, enabled: boolean)
   end
 
   enabled_effects.add(obj)
+end
+
+-- every tick still playing ended, as a cleared emit is: what it holds is let
+-- go and its pieces go back while the pool still stands
+function enabled_effects.clear()
+  for token in table.clone(Tokens) do
+    lifetime.clear(token)
+  end
+
+  table.clear(Tokens)
 end
 
 function enabled_effects.init(scope: { any }, effects_service: any)

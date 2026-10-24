@@ -5,6 +5,7 @@ local effects = require("@srv/effects")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
 local registry = require("@mod/registry")
+local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
 local enabled_effects = require("@srv/enabled_effects")
 local test, expect = harness.test, harness.expect
@@ -431,6 +432,34 @@ harness.suite(function()
 
         expect(stand.seen.passive).toBe(1)
         expect(stand.moved[m]).toBe(nil)
+      end)
+    end)
+
+    test("clear ends a loop's ticks still playing, its own and a stopped loop's", function()
+      passive(function(stand: any)
+        local released = 0
+
+        emitters.dispatch = function(_obj: any, fx: any)
+          lifetime.hold(fx, function()
+            released += 1
+          end)
+
+          lifetime.wait(fx, 60)
+        end
+
+        local m = model()
+
+        stand.vfx.enable(m)
+        harness.render(0.21)
+        stand.vfx.disable(m)
+        stand.vfx.enable(m)
+        harness.render(0.21)
+
+        expect(released).toBe(0)
+
+        enabled_effects.clear()
+
+        expect(released).toBe(2)
       end)
     end)
 

@@ -230,8 +230,9 @@ function api.deinit()
   end
 
   -- the live emits are cleared first, while the pool their parts go back to
-  -- still stands
+  -- still stands, a loop's ticks among them
   effects.deinit()
+  enabled_effects.clear()
 
   utility.cleanupScope(api.scope)
 
