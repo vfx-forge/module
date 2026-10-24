@@ -196,5 +196,30 @@ harness.suite(function()
         expect((cache :: any).Target).toBe(nil)
       end)
     end)
+
+    test("a handle set on a cached instance goes on the instance, never into the cache", function()
+      withStays(function()
+        harness.reset()
+
+        local obj = harness.make("Attachment")
+        obj:SetAttribute("Count", 7)
+        obj:SetAttribute("Old", "text")
+        attr.cache(obj)
+        attr.set(obj, "Target", "handle:b")
+        attr.set(obj, "Old", "handle:c")
+        attr.set(obj, "Count", 9)
+
+        local cache = attr.cached(obj)
+
+        expect(obj:GetAttribute("Target")).toBe("handle:b")
+        expect(cache ~= nil).toBe(true)
+        expect((cache :: any).Target).toBe(nil)
+        expect((cache :: any).Count).toBe(9)
+
+        -- a cached entry of the same name would shadow the handle
+        expect((cache :: any).Old).toBe(nil)
+        expect(attr.raw(obj, "Old")).toBe("handle:c")
+      end)
+    end)
   end)
 end)

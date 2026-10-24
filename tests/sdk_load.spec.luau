@@ -1173,6 +1173,22 @@ harness.suite(function()
       }))).toEqual({ "an Instance row has no default" })
     end)
 
+    test("an instance row is refused among properties", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            properties = {
+              Target = sdk.knob():instance(),
+            },
+          }
+        end,
+      }))).toEqual({
+        "properties.Target is an Instance row; an instance is held by an attribute row, declared under params.attributes",
+      })
+    end)
+
     test("an instance row's classes must be a sequence, with no holes or other keys", function()
       fresh()
 

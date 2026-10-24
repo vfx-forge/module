@@ -163,7 +163,16 @@ function attr.set<T>(obj: Instance, key: string, value: T)
 
   local cache = Cache[id]
 
-  if cache then
+  -- a handle in the cache would never be remapped on a clone, so it goes on
+  -- the instance, and a cached entry of its name would shadow it there
+  if cache and attr.stays(value) then
+    if cache[key] ~= nil then
+      cache[key] = nil
+      attr.generation += 1
+    end
+
+    obj:SetAttribute(key, value)
+  elseif cache then
     cache[key] = value
     attr.generation += 1
   else

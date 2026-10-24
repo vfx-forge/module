@@ -407,6 +407,21 @@ harness.suite(function()
       expect(attrs.Target).toBe(nil)
     end)
 
+    test("a readonly row ignores the target stored, reading nil as it has no fallback", function()
+      local obj = Instance.new("Part")
+      local m = module({
+        Target = knob():instance():readonly(function()
+          return true
+        end),
+      })
+
+      local attrs = withLive({ [obj] = { Target = handleOf(Instance.new("Attachment")) } }, function()
+        return reader.resolve(m, ctxFor(obj))
+      end)
+
+      expect(attrs.Target).toBe(nil)
+    end)
+
     test("a value of another kind reads nil and warns once", function()
       local obj = Instance.new("Part")
       local m = module({ Target = knob():instance() })

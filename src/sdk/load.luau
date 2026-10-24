@@ -666,6 +666,15 @@ local function checkKinds(rows: { [string]: any }, source: string, found: { stri
   for _, name in names do
     local kind = rows[name].kind
 
+    -- the reader takes an instance only from an attribute, read live
+    if kind == "Instance" and source == "properties" then
+      table.insert(
+        found,
+        `properties.{name} is an Instance row; an instance is held by an attribute row, declared under params.attributes`
+      )
+      continue
+    end
+
     if kind == "Instance" or table.find(EDITABLE, kind) or (source == "properties" and kind == "EnumItem") then
       continue
     end
