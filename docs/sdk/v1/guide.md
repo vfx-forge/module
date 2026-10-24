@@ -57,7 +57,7 @@ Walk `attrs` and `props` with `for name, value in attrs`, never `pairs`, which s
 
 A knob's default is a number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence or ColorSequence, or a curve (a row may also hold an Instance, declared as below); a knob under `properties` may also default to an EnumItem. A default of any other type is refused, naming the param, since the panel has no editor for it.
 
-A knob declared `sdk.knob():instance(classes?)` holds an instance the artist picks, and has no default, so a row never picked reads as nil. `classes` is an optional list of class names the row takes, matched with `IsA` so `"BasePart"` takes any part; leave it out to take any instance. It takes `:label`, `:hint`, `:hidden` and `:readonly`, and `:min`, `:max`, `:options`, `:slider`, `:seed`, `:unit`, `:curve` and `:mod` on it are refused.
+A knob declared `sdk.knob():instance(classes?)` holds an instance the artist picks. An Instance is never a default: `sdk.knob(part)` is refused, and so is a rule default on an `:instance()` row. The row has no default, so a row never picked reads as nil. `classes` is an optional list of class names the row takes, matched with `IsA` so `"BasePart"` takes any part; leave it out to take any instance. It takes `:label`, `:hint`, `:hidden` and `:readonly`, and `:min`, `:max`, `:options`, `:slider`, `:seed`, `:unit`, `:curve` and `:mod` on it are refused.
 
 ```luau
 Target = sdk.knob():instance({ "BasePart", "Attachment" }):label("Follow")

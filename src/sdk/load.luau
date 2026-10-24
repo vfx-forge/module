@@ -47,7 +47,6 @@ local EDITABLE = {
   "Color3",
   "NumberSequence",
   "ColorSequence",
-  "Instance",
 }
 
 local load = {}
@@ -438,13 +437,20 @@ end
 -- an instance row is picked, never typed or animated, so it has no range, no
 -- choices and no motion, and its classes are names IsA can be asked
 local function instanceOf(row: any, name: string, found: { string })
+  if rawget(row, "hasDefault") == true or rawget(row, "default") ~= nil or rawget(row, "rule") ~= nil then
+    once(found, "an Instance row has no default")
+  end
+
   local classes = rawget(row, "classes")
 
   if classes ~= nil then
     local ok = type(classes) == "table" and getmetatable(classes) == nil and #classes > 0
+    local count = 0
 
     if ok then
       for key, class in next, classes do
+        count += 1
+
         if type(key) ~= "number" or type(class) ~= "string" or class == "" then
           ok = false
           break
@@ -452,7 +458,7 @@ local function instanceOf(row: any, name: string, found: { string })
       end
     end
 
-    if not ok then
+    if not ok or count ~= #classes then
       once(found, `the classes of {name} must be a list of class names`)
     end
   end
@@ -660,7 +666,7 @@ local function checkKinds(rows: { [string]: any }, source: string, found: { stri
   for _, name in names do
     local kind = rows[name].kind
 
-    if table.find(EDITABLE, kind) or (source == "properties" and kind == "EnumItem") then
+    if kind == "Instance" or table.find(EDITABLE, kind) or (source == "properties" and kind == "EnumItem") then
       continue
     end
 
@@ -669,7 +675,7 @@ local function checkKinds(rows: { [string]: any }, source: string, found: { stri
 
     table.insert(
       found,
-      `{source}.{name} is of type {kind}, which the panel cannot edit; a param holds one of {allowed}{extra}, or a curve`
+      `{source}.{name} is of type {kind}, which the panel cannot edit; a param holds one of {allowed}{extra}, or a curve; an Instance row is declared with :instance()`
     )
   end
 end

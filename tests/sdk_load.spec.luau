@@ -233,7 +233,7 @@ harness.suite(function()
       fresh()
 
       local allowed =
-        "number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence, ColorSequence, Instance"
+        "number, boolean, string, NumberRange, Vector2, Vector3, UDim, UDim2, Color3, NumberSequence, ColorSequence"
 
       expect(refusal(effect({
         params = function(sdk: any)
@@ -250,9 +250,9 @@ harness.suite(function()
           }
         end,
       }))).toEqual({
-        `attributes.Look is of type EnumItem, which the panel cannot edit; a param holds one of {allowed}, or a curve`,
-        `attributes.Offset is of type CFrame, which the panel cannot edit; a param holds one of {allowed}, or a curve`,
-        `properties.Pivot is of type CFrame, which the panel cannot edit; a param holds one of {allowed}, EnumItem, or a curve`,
+        `attributes.Look is of type EnumItem, which the panel cannot edit; a param holds one of {allowed}, or a curve; an Instance row is declared with :instance()`,
+        `attributes.Offset is of type CFrame, which the panel cannot edit; a param holds one of {allowed}, or a curve; an Instance row is declared with :instance()`,
+        `properties.Pivot is of type CFrame, which the panel cannot edit; a param holds one of {allowed}, EnumItem, or a curve; an Instance row is declared with :instance()`,
       })
     end)
 
@@ -1151,6 +1151,43 @@ harness.suite(function()
         "the classes of Empty must be a list of class names",
         "the classes of Number must be a list of class names",
         "the classes of Text must be a list of class names",
+      })
+    end)
+
+    test("an instance is never a default, and an instance row has no rule default", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Given = sdk.knob(harness.datatypes.Instance.new("Folder")),
+              Ruled = sdk
+                .knob(function()
+                  return nil
+                end)
+                :instance(),
+            },
+          }
+        end,
+      }))).toEqual({ "an Instance row has no default" })
+    end)
+
+    test("an instance row's classes must be a sequence, with no holes or other keys", function()
+      fresh()
+
+      expect(refusal(effect({
+        params = function(sdk: any)
+          return {
+            attributes = {
+              Holes = sdk.knob():instance({ [1] = "BasePart", [3] = "Model" }),
+              Named = sdk.knob():instance({ "BasePart", Extra = "Model" }),
+            },
+          }
+        end,
+      }))).toEqual({
+        "the classes of Holes must be a list of class names",
+        "the classes of Named must be a list of class names",
       })
     end)
 
