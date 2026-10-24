@@ -39,6 +39,12 @@ local attr = {}
 -- from one knows when that is no longer what the cache holds
 attr.generation = 0
 
+-- what caching leaves on the instance: a handle, which the engine points at a
+-- clone's own copy of its target only while it is an attribute
+function attr.stays(v: any)
+  return typeof(v) == "InstanceHandle"
+end
+
 function attr.cache(obj: Instance)
   local prevId = obj:GetAttribute(ATTR_CACHE_ID)
 
@@ -59,7 +65,7 @@ function attr.cache(obj: Instance)
   local map = {}
 
   for k, v in attributes do
-    if k == ATTR_CACHE_ID then
+    if k == ATTR_CACHE_ID or attr.stays(v) then
       continue
     end
 
@@ -166,8 +172,9 @@ function attr.set<T>(obj: Instance, key: string, value: T)
 end
 
 -- the cache table an instance reads through, when it has one and carries no
--- live attribute beyond its id: then the table is the whole of what a read
--- sees, and every clone of the cached template hands back the same one
+-- live attribute beyond its id and what caching left: then the table is the
+-- whole of what a read of a plain row sees, and every clone of the cached
+-- template hands back the same one
 function attr.cached(obj: Instance): { [string]: any }?
   local cache = Cache[obj:GetAttribute(ATTR_CACHE_ID)]
 
@@ -175,8 +182,8 @@ function attr.cached(obj: Instance): { [string]: any }?
     return nil
   end
 
-  for k in obj:GetAttributes() do
-    if k ~= ATTR_CACHE_ID then
+  for k, v in obj:GetAttributes() do
+    if k ~= ATTR_CACHE_ID and not attr.stays(v) then
       return nil
     end
   end

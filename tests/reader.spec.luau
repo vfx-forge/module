@@ -51,6 +51,54 @@ local function ctxFor(obj: Instance)
   return { ref = obj, obj = obj }
 end
 
+-- lune stores no instance in an attribute, so an instance row's live read and
+-- the probe that unwraps what it hands back are replaced per case: a handle is
+-- a table naming its target, and every target counts as in the place
+local function handleOf(target: Instance)
+  return { handle = true, target = target }
+end
+
+local FAKE_PROBE = {
+  kind = function(v: any)
+    if type(v) == "table" and v.handle then
+      return "InstanceHandle"
+    end
+
+    return typeof(v)
+  end,
+  get = function(v: any)
+    return v.target
+  end,
+  alive = function()
+    return true
+  end,
+  isA = function(inst: Instance, class: string)
+    return inst:IsA(class)
+  end,
+}
+
+local function withLive(live: { [any]: { [string]: any } }, fn: () -> any)
+  local realLive, realProbe = reader.liveOf, reader.probe
+
+  reader.liveOf = function(ref: Instance, name: string)
+    local stored = live[ref]
+
+    return if stored then stored[name] else nil
+  end
+
+  reader.probe = FAKE_PROBE
+
+  local ok, out = pcall(fn)
+
+  reader.liveOf, reader.probe = realLive, realProbe
+
+  if not ok then
+    error(out, 0)
+  end
+
+  return out
+end
+
 harness.suite(function()
   harness.describe("plain rows", function()
     test("a stored value beats an alias, an alias beats a rule, a rule beats the default", function()
@@ -328,6 +376,91 @@ harness.suite(function()
       if not ok then
         error(err, 0)
       end
+    end)
+  end)
+
+  harness.describe("instance rows", function()
+    test("a row reads the target its live attribute holds, under an alias too", function()
+      local obj = Instance.new("Part")
+      local target = Instance.new("Attachment")
+      local m = module({
+        Target = knob():instance({ "Attachment" }),
+        Old = knob():instance():aliases("Before"),
+      })
+
+      local attrs = withLive({ [obj] = { Target = handleOf(target), Before = handleOf(target) } }, function()
+        return reader.resolve(m, ctxFor(obj))
+      end)
+
+      expect(attrs.Target).toBe(target)
+      expect(attrs.Old).toBe(target)
+    end)
+
+    test("a target of a class the row does not take reads nil", function()
+      local obj = Instance.new("Part")
+      local m = module({ Target = knob():instance({ "BasePart" }) })
+
+      local attrs = withLive({ [obj] = { Target = handleOf(Instance.new("Attachment")) } }, function()
+        return reader.resolve(m, ctxFor(obj))
+      end)
+
+      expect(attrs.Target).toBe(nil)
+    end)
+
+    test("a value of another kind reads nil and warns once", function()
+      local obj = Instance.new("Part")
+      local m = module({ Target = knob():instance() })
+
+      local warnings = harness.captureWarnings(function()
+        withLive({ [obj] = { Target = "Part" } }, function()
+          expect(reader.resolve(m, ctxFor(obj)).Target).toBe(nil)
+          expect(reader.resolve(m, ctxFor(obj)).Target).toBe(nil)
+        end)
+      end)
+
+      expect(#warnings).toBe(1)
+    end)
+
+    test("the walked map is never read for one", function()
+      local obj = Instance.new("Part")
+      obj:SetAttribute("Target", "Part")
+
+      local m = module({ Target = knob():instance() })
+
+      local warnings = harness.captureWarnings(function()
+        withLive({}, function()
+          expect(reader.resolve(m, ctxFor(obj)).Target).toBe(nil)
+        end)
+      end)
+
+      expect(#warnings).toBe(0)
+    end)
+
+    test("clones of a cached template each read their own target", function()
+      local template = Instance.new("Part")
+      template:SetAttribute("Count", 7)
+      attr.cache(template)
+
+      local first, second = template:Clone(), template:Clone()
+      local firstTarget, secondTarget = Instance.new("Attachment"), Instance.new("Attachment")
+      local m = module({ Count = knob(4), Target = knob():instance() })
+
+      expect(attr.cached(first) ~= nil).toBe(true)
+
+      local live = {
+        [first] = { Target = handleOf(firstTarget) },
+        [second] = { Target = handleOf(secondTarget) },
+      }
+
+      withLive(live, function()
+        local a = reader.resolve(m, ctxFor(first))
+        local b = reader.resolve(m, ctxFor(second))
+
+        expect(a.Count).toBe(7)
+        expect(b.Count).toBe(7)
+        expect(a.Target).toBe(firstTarget)
+        expect(b.Target).toBe(secondTarget)
+      end)
     end)
   end)
 

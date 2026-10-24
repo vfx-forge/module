@@ -145,4 +145,56 @@ harness.suite(function()
       expect(reads > 0).toBe(true)
     end)
   end)
+
+  -- lune stores no instance in an attribute, so the test of what stays on a
+  -- cached instance is replaced: a text starting with a marker stands in for a
+  -- handle the engine would remap on a clone
+  harness.describe("caching an instance holding a handle", function()
+    local function withStays(fn: () -> ())
+      local real = attr.stays
+
+      attr.stays = function(v: any)
+        return type(v) == "string" and string.sub(v, 1, 7) == "handle:"
+      end
+
+      local ok, err = pcall(fn)
+
+      attr.stays = real
+
+      if not ok then
+        error(err, 0)
+      end
+    end
+
+    test("the handle stays on the instance and the rest is cached", function()
+      withStays(function()
+        harness.reset()
+
+        local obj = harness.make("Attachment")
+        obj:SetAttribute("Count", 7)
+        obj:SetAttribute("Target", "handle:a")
+        attr.cache(obj)
+
+        expect(obj:GetAttribute("Count")).toBe(nil)
+        expect(obj:GetAttribute("Target")).toBe("handle:a")
+      end)
+    end)
+
+    test("a clone still reads through the cache for every other row", function()
+      withStays(function()
+        harness.reset()
+
+        local obj = harness.make("Attachment")
+        obj:SetAttribute("Count", 7)
+        obj:SetAttribute("Target", "handle:a")
+        attr.cache(obj)
+
+        local cache = attr.cached(obj:Clone())
+
+        expect(cache ~= nil).toBe(true)
+        expect((cache :: any).Count).toBe(7)
+        expect((cache :: any).Target).toBe(nil)
+      end)
+    end)
+  end)
 end)

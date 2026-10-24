@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local knob = require("@mod/knob")
 local logger = require("@mod/logger")
 local legacy_mods = require("@mod/legacy_mods")
+local instance_value = require("@mod/instance_value")
 local numeric_common = require("@mod/common/numeric")
 
 local reader = {}
@@ -64,6 +65,28 @@ reader.source = reader.defaultSource
 -- what apply binds a track with. the engine helper is out of this module's
 -- reach, so the dispatcher hands it in at load
 reader.bind = nil :: ((scope: any, track: Track, write: (v: any) -> (), follow: number?, done: (() -> ())?) -> ())?
+
+-- where an Instance row's value is read from: the instance itself, every read.
+-- a clone's handle points at the clone's own copy of its target, which a cache
+-- shared by a template's clones would lose. replaceable, as lune stores no
+-- instance in an attribute
+function reader.liveOf(ref: Instance, name: string)
+  return ref:GetAttribute(name)
+end
+
+-- how that value is looked at, replaceable for the same reason
+reader.probe = table.freeze({
+  kind = typeof,
+  get = function(v: any): Instance?
+    return v:Get()
+  end,
+  alive = function(inst: Instance)
+    return inst:IsDescendantOf(game)
+  end,
+  isA = function(inst: Instance, class: string)
+    return inst:IsA(class)
+  end,
+}) :: instance_value.Probe
 
 -- the indexing a property row's base is read through, kept out of propertyOf so
 -- the pcall below has a function to call rather than one to build per row
@@ -437,7 +460,40 @@ local function pieceOf(state: State): mods.Piece
   return piece
 end
 
+-- an Instance row, read off the emitting instance under its name or an old
+-- spelling, never from the walked map or what a cache baked
+local function instanceOf(state: State, name: string, row: knob.Knob)
+  local ctx = state.ctx
+  local v = reader.liveOf(ctx.ref, name)
+
+  if v == nil then
+    for _, alias in row.names do
+      v = reader.liveOf(ctx.ref, alias)
+
+      if v ~= nil then
+        break
+      end
+    end
+  end
+
+  local inst, got = instance_value.accept(v, row.classes, reader.probe)
+
+  if got ~= nil then
+    mods.warnOnce(ctx.ref, name, `{name} holds a {got} where {state.module.id} wants an Instance`)
+  end
+
+  if row.readonlyRule ~= nil and row.readonlyRule(ctx, state.attrs, state.props) == true then
+    return nil
+  end
+
+  return inst
+end
+
 local function plainOf(state: State, source: string, name: string, row: knob.Knob)
+  if source == "attribute" and row.kind == "Instance" then
+    return instanceOf(state, name, row)
+  end
+
   local ctx = state.ctx
 
   -- an attribute row no rule decides rests where the cache says, for every
