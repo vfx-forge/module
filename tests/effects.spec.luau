@@ -2757,17 +2757,14 @@ harness.suite(function()
       expect(seen[2].id ~= seen[1].id).toBe(true)
     end)
 
-    test("a decal fades to clear from its own Transparency attribute when it has one", function()
+    test("a decal storing no fade holds its own Transparency attribute", function()
       local plain = emitTwice(true, true)
       local half = emitTwice(true, true, 0.4)
       local clear = emitTwice(true, true, 1)
 
-      local fromNone = plain[1].transparency :: number
-      local fromHalf = half[1].transparency :: number
-
-      expect(fromNone > 0 and fromNone < 1).toBe(true)
-      expect(fromHalf > fromNone and fromHalf < 1).toBe(true)
-      expect(fromHalf > 0.4).toBe(true)
+      expect(plain[1].transparency).toBe(0)
+      -- a Decal holds its transparency as a float
+      expect(math.abs((half[1].transparency :: number) - 0.4) < 1e-6).toBe(true)
       expect(clear[1].transparency).toBe(1)
     end)
 

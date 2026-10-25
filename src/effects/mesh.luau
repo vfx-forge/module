@@ -106,7 +106,7 @@ mesh.attributes = {
     :aliases("Decal_StartTransparency")
     :hidden(always),
   DecalEndTransparency = knob(function(ctx, attrs)
-      return if stoneOnMesh(ctx, attrs) then 1 else attrs.EndTransparency or 1
+      return if stoneOnMesh(ctx, attrs) then 1 else attrs.EndTransparency
     end)
     :aliases("Decal_EndTransparency")
     :hidden(always),
@@ -179,7 +179,8 @@ local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePar
   local legacy_flipbookFadeOffset = attrs.FlipbookFadeOffset
 
   local legacy_decalST = attrs.DecalStartTransparency
-  local legacy_decalET = attrs.DecalEndTransparency
+  -- no authored end holds the decal where it starts rather than fading it
+  local legacy_decalET = if attrs.DecalEndTransparency ~= nil then attrs.DecalEndTransparency else legacy_decalST
 
   local sync = attrs.SyncPosition
 
@@ -357,7 +358,10 @@ local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePar
         return if type(v) == "number" then v else legacy_decalST
       end)
 
-      local decalTp = mods.track(from, "attribute", "Transparency", mods.ramp(decalST, legacy_decalET), duration)
+      -- a decal storing nothing holds where it rests; only an end the model
+      -- authored makes it fade by default
+      local decalET = if attrs.DecalEndTransparency ~= nil then legacy_decalET else decalST
+      local decalTp = mods.track(from, "attribute", "Transparency", mods.ramp(decalST, decalET), duration)
 
       decal.Transparency = decalTp.at(0)
 
