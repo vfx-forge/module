@@ -2626,13 +2626,21 @@ harness.suite(function()
   end)
 
   harness.describe("a mesh's pieces", function()
-    type Seen = { count: number, id: string, cframe: CFrame, tagged: boolean, attributes: number }
+    type Seen = {
+      count: number,
+      id: string,
+      cframe: CFrame,
+      tagged: boolean,
+      attributes: number,
+      transparency: number?,
+    }
 
     -- a mesh whose start is a MeshPart, emitted twice on the pool, its origin
     -- at a new height each time, and the piece each emit holds a frame in;
-    -- `decal` gives the start and end a decal of differing colors, and with
-    -- `flush` off the mover never lands a write
-    local function emitTwice(decal: boolean, flush: boolean)
+    -- `decal` gives the start and end a decal of differing colors, `rest` the
+    -- start's decal a Transparency attribute, and with `flush` off the mover
+    -- never lands a write
+    local function emitTwice(decal: boolean, flush: boolean, rest: number?)
       local built = fresh()
       local CFrame = harness.datatypes.CFrame
       local Color3 = harness.datatypes.Color3
@@ -2677,6 +2685,10 @@ harness.suite(function()
 
         from.Name, to.Name = "Face", "Face"
         from.Color3, to.Color3 = Color3.new(1, 0, 0), Color3.new(0, 0, 1)
+
+        if rest ~= nil then
+          from:SetAttribute("Transparency", rest)
+        end
       end
 
       local seen: { Seen } = {}
@@ -2702,6 +2714,7 @@ harness.suite(function()
           cframe = pieces[1].CFrame,
           tagged = pieces[1]:HasTag(utility.CLEANUP_TAG),
           attributes = attributes,
+          transparency = if face ~= nil then face.Transparency else nil,
         })
 
         env:Clear()
@@ -2742,6 +2755,20 @@ harness.suite(function()
       expect(made).toBe(0)
       expect(stats.fresh).toBe(2)
       expect(seen[2].id ~= seen[1].id).toBe(true)
+    end)
+
+    test("a decal fades to clear from its own Transparency attribute when it has one", function()
+      local plain = emitTwice(true, true)
+      local half = emitTwice(true, true, 0.4)
+      local clear = emitTwice(true, true, 1)
+
+      local fromNone = plain[1].transparency :: number
+      local fromHalf = half[1].transparency :: number
+
+      expect(fromNone > 0 and fromNone < 1).toBe(true)
+      expect(fromHalf > fromNone and fromHalf < 1).toBe(true)
+      expect(fromHalf > 0.4).toBe(true)
+      expect(clear[1].transparency).toBe(1)
     end)
 
     test("a piece plays from the start and end the emit found, though the model lost one in its delay", function()

@@ -351,8 +351,13 @@ local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePar
 
       -- this knob is authored on the DECAL rather than on ref: ownership is
       -- keyed to the instance dispatch routes to, and the decal is dispatched
-      -- on its own through emitNested
-      local decalTp = mods.track(from, "attribute", "Transparency", mods.ramp(legacy_decalST, legacy_decalET), duration)
+      -- on its own through emitNested. the decal's own resting value, which
+      -- the plugin's Transparency row writes, leads the model's old pair
+      local decalST = attr.get(from, "Transparency", legacy_decalST, true, function(v)
+        return if type(v) == "number" then v else legacy_decalST
+      end)
+
+      local decalTp = mods.track(from, "attribute", "Transparency", mods.ramp(decalST, legacy_decalET), duration)
 
       decal.Transparency = decalTp.at(0)
 
