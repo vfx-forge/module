@@ -24,6 +24,9 @@ export type Ctx = {
   linked: number?,
   env: { [string]: any }?,
   envelope: number?,
+  -- each fed randomizer's value for this emitted instance, by id, which
+  -- modifiers.compile works out once. evaluate works it out per call without it
+  fed: { [string]: any }?,
 }
 
 -- a base entry stores the row's authored value rather than modifying it. the
@@ -33,6 +36,48 @@ modifiers.BASE_KINDS = {
   sequence = true,
   gradient = true,
 }
+
+local function named(x: any, into: { [string]: boolean }?): { [string]: boolean }?
+  if type(x) == "table" and x.t == "feed" and type(x.ref) == "string" then
+    into = into or {}
+    into[x.ref] = true
+  end
+
+  return into
+end
+
+-- the randomizers an endpoint in the queue is fed by, each id to the first
+-- randomizer carrying it. a fed randomizer is a source: it draws for the
+-- endpoints naming it and is never on the clock itself, so it moves nothing
+-- after it and sets no value of its own. nil when nothing in the queue is fed
+function modifiers.sources(queue: { any }): { [string]: number }?
+  local wanted: { [string]: boolean }? = nil
+
+  for _, m in queue do
+    wanted = named(m.finish, named(m.start, wanted))
+  end
+
+  if wanted == nil then
+    return nil
+  end
+
+  local out: { [string]: number }? = nil
+
+  for i, m in queue do
+    local id = m.id
+
+    if m.kind == "randomizer" and type(id) == "string" and wanted[id] and (out == nil or out[id] == nil) then
+      out = out or {}
+      out[id] = i
+    end
+  end
+
+  return out
+end
+
+local function isSource(sources: { [string]: number }?, m: any, i: number): boolean
+  return sources ~= nil and m.kind == "randomizer" and sources[m.id] == i
+end
 
 -- envelope widths are f32 per keypoint in ALPHA units, because the authoring
 -- side divides each NumberSequenceKeypoint.Envelope by the value range before
@@ -326,8 +371,13 @@ function modifiers.schedule(
   -- the longest duration the queue NAMES, which is what a modifier naming none
   -- runs for when nobody lends an effect duration
   local linked = 0
+  local sources = modifiers.sources(queue)
 
-  for _, m in queue do
+  for i, m in queue do
+    if isSource(sources, m, i) then
+      continue
+    end
+
     -- an infinite duration is excluded rather than allowed to win: it would
     -- make every modifier that names no duration read a progress of zero and
     -- sit on its start value for the whole run
@@ -358,6 +408,10 @@ function modifiers.schedule(
         frontier = m.duration
       end
 
+      continue
+    end
+
+    if isSource(sources, m, i) then
       continue
     end
 
@@ -393,13 +447,18 @@ function modifiers.schedule(
     offsets[i] = at
 
     local d = m.duration
+    local share = m.share
 
     if typeof(d) ~= "number" then
-      -- a randomizer draws its value where it starts and takes no time, so the
-      -- next modifier starts right there. anything else runs out the time the
-      -- caller says is left from where the queue starts, else what remains of
-      -- the effect, or the named fallback without one
-      if m.kind == "randomizer" and not m.parallel then
+      -- a share is that much of the effect's duration, or of the longest one
+      -- the queue names without one. a randomizer draws its value where it
+      -- starts and takes no time, so the next modifier starts right there.
+      -- anything else runs out the time the caller says is left from where the
+      -- queue starts, else what remains of the effect, or the named fallback
+      -- without one
+      if m.kind ~= "randomizer" and typeof(share) == "number" and share >= 0 and share ~= math.huge then
+        d = share * (if lent then lent else linked)
+      elseif m.kind == "randomizer" and not m.parallel then
         d = 0
       elseif told ~= nil and not m.parallel then
         d = math.max(told - offset, 0)
@@ -466,12 +525,66 @@ end
 -- an endpoint's own pick, shaped by the weight curve the endpoint carries
 -- before it is resolved, the same way a randomizer entry's draw is shaped. a
 -- lit and a var carry none, so they cost one nil test
-local function endpointAt(x: any, pick: number?, env: { [string]: any }?): any
+local function endpointAt(x: any, pick: number?, env: { [string]: any }?, fed: { [string]: any }?): any
+  if x.t == "feed" then
+    return if fed then fed[x.ref] else nil
+  end
+
   if pick ~= nil and x.weight ~= nil then
     pick = modifiers.alphaFromCurve(x.weight, pick)
   end
 
   return value.resolve(x, pick, env)
+end
+
+-- an endpoint whose randomizer is gone takes the other end, so the modifier
+-- holds rather than interpolating from nothing
+local function unfed(m: any, startVal: any, finishVal: any): (any, any)
+  if startVal == nil and m.start and m.start.t == "feed" then
+    startVal = finishVal
+  end
+
+  if finishVal == nil and m.finish and m.finish.t == "feed" then
+    finishVal = startVal
+  end
+
+  return startVal, finishVal
+end
+
+-- what randomizer `i` lands on for this emitted instance, the value it sets
+-- where it sits on the clock and the one it feeds
+local function drawnValue(m: any, i: number, ctx: Ctx): any
+  local picks = if ctx.picks then ctx.picks[i] else nil
+  local startVal = if m.start then endpointAt(m.start, picks and picks.start, ctx.env) else nil
+  local finishVal = if m.finish then endpointAt(m.finish, picks and picks.finish, ctx.env) else startVal
+
+  if startVal == nil or finishVal == nil then
+    return if startVal == nil then finishVal else startVal
+  end
+
+  local draw = if ctx.draws then ctx.draws[i] else nil
+
+  if type(draw) == "table" and typeof(startVal) == "Vector3" and typeof(finishVal) == "Vector3" then
+    return componentDraw(m, startVal, finishVal, draw)
+  end
+
+  local d: number = if type(draw) == "number" then draw else 0.5
+
+  return lerp.any(startVal, finishVal, if m.weight then modifiers.alphaFromCurve(m.weight, d) else d)
+end
+
+local function fedValues(queue: { any }, sources: { [string]: number }?, ctx: Ctx): { [string]: any }?
+  if sources == nil then
+    return nil
+  end
+
+  local out = {}
+
+  for id, i in sources do
+    out[id] = drawnValue(queue[i], i, ctx)
+  end
+
+  return out
 end
 
 function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
@@ -491,8 +604,11 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
     lengths = lengths or scheduled
   end
 
+  local sources = modifiers.sources(queue)
+  local fed = ctx.fed or fedValues(queue, sources, ctx)
+
   for i, m in queue do
-    if modifiers.BASE_KINDS[m.kind] then
+    if modifiers.BASE_KINDS[m.kind] or isSource(sources, m, i) then
       continue
     end
 
@@ -524,10 +640,12 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
     if m.chain and haveOut then
       startVal = prevOut
     elseif m.start then
-      startVal = endpointAt(m.start, picks and picks.start, ctx.env)
+      startVal = endpointAt(m.start, picks and picks.start, ctx.env, fed)
     end
 
-    local finishVal = if m.finish then endpointAt(m.finish, picks and picks.finish, ctx.env) else startVal
+    local finishVal = if m.finish then endpointAt(m.finish, picks and picks.finish, ctx.env, fed) else startVal
+
+    startVal, finishVal = unfed(m, startVal, finishVal)
 
     local progress = steppedProgress(m, durationOf(m, i, ctx, lengths), elapsed - offset)
     local alpha: number
@@ -603,11 +721,14 @@ export type Step = {
 function modifiers.compile(queue: { any }, ctx: Ctx): { Step }
   local steps: { Step } = {}
   local n = 0
+  local sources = modifiers.sources(queue)
+
+  ctx.fed = fedValues(queue, sources, ctx)
 
   for i, m in queue do
     local kind = m.kind
 
-    if kind == "delay" or modifiers.BASE_KINDS[kind] then
+    if kind == "delay" or modifiers.BASE_KINDS[kind] or isSource(sources, m, i) then
       continue
     end
 
@@ -648,7 +769,7 @@ local function endOf(step: Step, ctx: Ctx, closing: boolean): any
   local x = if closing then m.finish else m.start
   local picks = if ctx.picks then ctx.picks[step.index] else nil
   local pick = if picks then (if closing then picks.finish else picks.start) else nil
-  local v = endpointAt(x, pick, ctx.env)
+  local v = endpointAt(x, pick, ctx.env, ctx.fed)
 
   if x.t == "var" then
     return v
@@ -711,6 +832,8 @@ function modifiers.sample(steps: { Step }, ctx: Ctx, elapsed: number, base: any)
         finishVal = endOf(step, ctx, true)
       end
     end
+
+    startVal, finishVal = unfed(m, startVal, finishVal)
 
     local d = step.length
     local since = elapsed - offset

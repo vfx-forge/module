@@ -7,6 +7,7 @@ export type Value =
   { t: "lit", v: any }
   | { t: "var", ref: string }
   | { t: "draw", a: any, b: any, weight: (string | buffer)? }
+  | { t: "feed", ref: string }
 
 local value = {}
 
@@ -30,6 +31,18 @@ end
 -- by every knob on the instance, which no per-row draw can reproduce
 function value.var(ref: string): Value
   return { t = "var", ref = ref }
+end
+
+-- an endpoint fed by a randomizer in the same queue, named by that
+-- randomizer's id: it reads the one value the randomizer drew for the emitted
+-- instance. only modifiers.evaluate and modifiers.sample can resolve one, since
+-- the draw belongs to the queue; everything else reads it as nothing
+function value.feed(ref: string): Value
+  return { t = "feed", ref = ref }
+end
+
+function value.isFeed(x: Value): boolean
+  return x.t == "feed"
 end
 
 function value.isLit(x: Value): boolean

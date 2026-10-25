@@ -1442,4 +1442,101 @@ harness.suite(function()
       expect(modifiers.waitOf({ kind = "delay", duration = math.huge })).toBe(0)
     end)
   end)
+  harness.describe("randomizer feeds", function()
+    local function lit(v: any)
+      return { t = "lit", v = v }
+    end
+
+    local function source(id: string, a: number, b: number)
+      return { kind = "randomizer", chain = false, id = id, start = lit(a), finish = lit(b) }
+    end
+
+    local function tween(startV: any, finishV: any)
+      return { kind = "tween", chain = false, duration = 1, start = startV, finish = finishV, curve = linear }
+    end
+
+    -- the randomizer sits after the tween, where a plain one would take the
+    -- value at the tween's end: fed, it sets nothing of its own
+    test("an endpoint fed by a randomizer reads its draw, and the randomizer sets nothing itself", function()
+      local queue = { tween({ t = "feed", ref = "r1" }, lit(100)), source("r1", 0, 40) }
+      local ctx = { duration = 9, draws = { [2] = 0.5 } }
+
+      expect(near(modifiers.evaluate(queue, 0, ctx) :: number, 20)).ok()
+      expect(near(modifiers.evaluate(queue, 0.5, ctx) :: number, 60)).ok()
+      expect(near(modifiers.evaluate(queue, 5, ctx) :: number, 100)).ok()
+    end)
+
+    test("a fed randomizer is off the clock, so it moves nothing after it", function()
+      local queue = { source("r1", 0, 10), tween(lit(0), { t = "feed", ref = "r1" }) }
+      local offsets, frontier = modifiers.schedule(queue, nil, 9)
+
+      expect((offsets :: any)[2]).toBe(0)
+      expect((offsets :: any)[1]).toBe(nil)
+      expect(frontier).toBe(1)
+    end)
+
+    test("one draw feeds every endpoint naming it", function()
+      local queue = { source("r1", 0, 10), tween({ t = "feed", ref = "r1" }, { t = "feed", ref = "r1" }) }
+
+      expect(near(modifiers.evaluate(queue, 0.5, { duration = 9, draws = { [1] = 0.3 } }) :: number, 3)).ok()
+    end)
+
+    test("an endpoint whose randomizer is gone holds the other end", function()
+      local queue = { tween({ t = "feed", ref = "gone" }, lit(7)) }
+
+      expect(modifiers.evaluate(queue, 0.5, { duration = 9 })).toBe(7)
+    end)
+
+    test("the compiled sampler answers what evaluate does for a fed queue", function()
+      local queue = { tween({ t = "feed", ref = "r1" }, lit(100)), source("r1", 0, 40) }
+
+      for _, at in { 0, 0.25, 0.75, 2 } do
+        local ctx = { duration = 9, draws = { [2] = 0.5 } }
+        local steps = modifiers.compile(queue, ctx)
+        local evaluated = modifiers.evaluate(queue, at, { duration = 9, draws = { [2] = 0.5 } }) :: number
+
+        expect(near(modifiers.sample(steps, ctx, at, nil) :: number, evaluated)).ok()
+      end
+    end)
+  end)
+
+  harness.describe("a duration as a share", function()
+    test("runs that much of the effect's duration", function()
+      local queue = {
+        {
+          kind = "tween",
+          chain = false,
+          share = 0.5,
+          start = { t = "lit", v = 0 },
+          finish = { t = "lit", v = 10 },
+          curve = linear,
+        },
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = { t = "lit", v = 10 },
+          finish = { t = "lit", v = 20 },
+          curve = linear,
+        },
+      }
+
+      local offsets, frontier = modifiers.schedule(queue, nil, 4)
+
+      expect((offsets :: any)[2]).toBe(2)
+      expect(frontier).toBe(3)
+      expect(near(modifiers.evaluate(queue, 1, { duration = 4 }) :: number, 5)).ok()
+    end)
+
+    test("with no effect duration, a share of the longest duration the queue names", function()
+      local queue = {
+        { kind = "tween", chain = false, share = 0.25, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
+        { kind = "tween", chain = false, duration = 8, start = { t = "lit", v = 1 }, finish = { t = "lit", v = 2 } },
+      }
+
+      local offsets = modifiers.schedule(queue, nil, nil)
+
+      expect((offsets :: any)[2]).toBe(2)
+    end)
+  end)
 end)
