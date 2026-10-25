@@ -132,8 +132,8 @@ lightning.attributes = bezier_common.rows({
     :label("Transparency")
     :hint("Fill transparency over the fill color's duration."),
 
-  -- the six old fade keys stay rows so the panel reaches them through the
-  -- Transparency drawer and retime still scales the two spans
+  -- the six old fade keys stay rows so the Transparency row's default fades
+  -- read them and retime still scales the two spans
   FadeInStart = knob(1):aliases("Fade_In_Start"):hidden(always),
   FadeInDuration = knob(0):min(0):aliases("Fade_In_Duration"):unit("seconds"):hidden(always),
   FadeInCurve = knob(eased):aliases("Fade_In_Curve"):hidden(always),
