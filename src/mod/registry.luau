@@ -34,6 +34,10 @@ local byId: { [string]: Module } = {}
 local order: { Module } = {}
 local custom: { [Module]: boolean } = {}
 
+-- the custom modules the runtime ships itself, which a host lists beside the
+-- built-ins rather than under the place's own effects
+local bundled: { [Module]: boolean } = {}
+
 -- per module, computed once at register: the rows the effect drives itself. a
 -- property row's old queues lived on the attribute side too, so the applier
 -- must leave both alone
@@ -668,8 +672,8 @@ local function reorder()
 end
 
 -- `isCustom` marks a custom effect's module, which is classified ahead of
--- every built-in
-function registry.register(module: Module, isCustom: boolean?)
+-- every built-in, and `isBundled` one the runtime ships itself
+function registry.register(module: Module, isCustom: boolean?, isBundled: boolean?)
   local found = registry.problems(module)
 
   if #found > 0 then
@@ -754,6 +758,7 @@ function registry.register(module: Module, isCustom: boolean?)
 
   if isCustom then
     custom[module] = true
+    bundled[module] = isBundled == true
     reflected[module] = reflectedOf(module)
   end
 
@@ -777,6 +782,7 @@ function registry.unregister(module: Module)
   owned[module] = nil
   shape[module] = nil
   custom[module] = nil
+  bundled[module] = nil
   reflected[module] = nil
 
   reorder()
@@ -787,6 +793,11 @@ end
 -- whether the module was registered as a custom effect's, and still is
 function registry.isCustom(module: Module): boolean
   return custom[module] == true
+end
+
+-- whether the module is a custom effect the runtime ships itself
+function registry.isBundled(module: Module): boolean
+  return bundled[module] == true
 end
 
 function registry.get(id: string): Module?

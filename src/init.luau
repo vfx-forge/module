@@ -109,6 +109,7 @@ local Particle = require("@vfx/particle")
 local Animator = require("@vfx/animator")
 local Controller = require("@vfx/controller")
 local Lightning = require("@vfx/lightning")
+local ForgeLightning = require("@vfx/forge_lightning")
 local Shockwave = require("@vfx/shockwave")
 local CameraShake = require("@vfx/camera_shake")
 local ShockwaveRing = require("@vfx/shockwave_ring")
@@ -122,6 +123,7 @@ local containers = require("@srv/containers")
 local texture_loader = require("@srv/texture_loader")
 local enabled_effects = require("@srv/enabled_effects")
 
+local load = require("@root/sdk/load")
 local watch = require("@root/sdk/watch")
 
 local PluginContext = utility.PLUGIN_CONTEXT
@@ -155,6 +157,17 @@ registry.register(Lightning)
 registry.register(Mesh)
 registry.register(Controller)
 registry.register(Animator)
+
+-- written against the sdk, so it is assembled as a custom effect's module is
+do
+  local module, found = load.assemble(ForgeLightning, "forge_lightning")
+
+  if module ~= nil then
+    registry.register(module, true, true)
+  else
+    logger.error(`the bundled lightning did not load:\n{table.concat(found, "\n")}`)
+  end
+end
 
 function api.init(params: params?)
   if api.setup then

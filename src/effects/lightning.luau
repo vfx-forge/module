@@ -72,7 +72,7 @@ end
 local lightning = {}
 
 lightning.id = "lightning"
-lightning.display = { name = "Lightning", icon = "lightning", order = 120 }
+lightning.display = { name = "Legacy Lightning", icon = "lightning", order = 120 }
 lightning.classifier = "Attachment.LightningBolt"
 lightning.components = "Instance"
 lightning.constant = true
