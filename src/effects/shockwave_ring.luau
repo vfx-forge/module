@@ -93,9 +93,6 @@ ring.attributes = {
     :label("Max")
     :hint("Maximum per-axis size for each ring piece."),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
-  -- the span an old speed quad ran over, read by the old format's reader under
-  -- this name and kept as a row so retime reaches it
-  SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   -- the entry phases rest where the old defaults left them: the offset where
   -- it stands, the size on a rise from nothing to the drawn size, the fade
   -- from where a piece rests to the end. the spans the old quads ran over

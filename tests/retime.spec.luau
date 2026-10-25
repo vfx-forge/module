@@ -71,7 +71,7 @@ local function customEmitter(): Instance
 end
 
 -- the sound's own shape for a knob whose queue can sit under the property
--- spelling, beside the legacy span of that queue as a row of its own
+-- spelling, the legacy span of that queue claimed by no row
 local function soundLike()
   registry.clear()
   registry.configure({ query = harness.query })
@@ -79,9 +79,7 @@ local function soundLike()
     id = "sound_like",
     display = { name = "Sound" },
     classifier = "Sound",
-    attributes = {
-      VolumeDuration = knob():aliases("Volume_Duration"):unit("seconds"):hidden(always),
-    },
+    attributes = {},
     properties = {
       Volume = knob():mod(),
     },

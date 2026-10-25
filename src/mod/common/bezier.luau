@@ -138,10 +138,6 @@ function common.createPosGetter(
   end
 end
 
-local function always()
-  return true
-end
-
 -- the rows a bezier and a lightning bolt share plus the module's own, a fresh
 -- table per module so the registry freezes each module's own
 function common.rows(own: { [string]: any })
@@ -210,7 +206,6 @@ function common.rows(own: { [string]: any })
       :label("IgnoreCanCollide")
       :hint("Whether the hitbox ignores non-collidable parts."),
     Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
-    SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   }
 
   for name, row in own do

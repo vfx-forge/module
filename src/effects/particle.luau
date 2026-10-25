@@ -10,10 +10,6 @@ local numeric_common = require("@mod/common/numeric")
 
 local pool = require("@srv/pool")
 
-local function always()
-  return true
-end
-
 local particle = {}
 
 particle.id = "particle"
@@ -30,9 +26,6 @@ particle.attributes = {
     :hint("The amount of effects to emit."),
   EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
   EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
-  -- the span an old time scale quad ran over, read by the old format's reader
-  -- under this name and kept as a row so retime reaches it
-  TimeScaleDuration = knob(0.1):min(0):aliases("TimeScale_Duration"):unit("seconds"):hidden(always),
 }
 
 -- the emitter's own property: a stored attribute of the same name shadows it

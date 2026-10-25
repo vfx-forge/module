@@ -13,10 +13,6 @@ local containers = require("@srv/containers")
 
 local rng = Random.new()
 
-local function always()
-  return true
-end
-
 local function linear()
   return utility.linear_bezier
 end
@@ -39,9 +35,6 @@ beam.attributes = {
     :label("Duration")
     :hint("Duration range of the effect in seconds."),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the beam's clock."),
-  -- the span an old speed quad ran over, read by the old format's reader under
-  -- this name and kept as a row so retime reaches it
-  SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   LengthScale = knob(1)
     :aliases("Length_Scale")
     :mod()

@@ -124,9 +124,6 @@ line.attributes = {
     :label("Max")
     :hint("Maximum per-axis size for each line piece."),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
-  -- the span an old speed quad ran over, read by the old format's reader under
-  -- this name and kept as a row so retime reaches it
-  SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
   OffsetIn = knob(vector.zero)
     :unit("studs")
     :mod(mod.to(offsetOutEnd):duration(offsetOutDuration):curve(offsetOutCurve):lane("despawn"))

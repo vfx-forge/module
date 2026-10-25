@@ -23,10 +23,6 @@ local rng = Random.new()
 -- still lets the emit finish
 local LOAD_TIMEOUT = 5
 
-local function always()
-  return true
-end
-
 local sound = {}
 
 sound.id = "sound"
@@ -54,11 +50,6 @@ sound.attributes = {
   SoundPoolInheritAttributes = knob(false)
     :label("InheritAttributes")
     :hint("Whether the played clone inherits the pooled sound's attributes."),
-  -- the spans the old quads ran over, read by the old format's reader under
-  -- these names and kept as rows so retime reaches them
-  VolumeDuration = knob():aliases("Volume_Duration"):unit("seconds"):hidden(always),
-  SpeedDuration = knob():aliases("Speed_Duration"):unit("seconds"):hidden(always),
-  RollOffDuration = knob():aliases("RollOff_Duration"):unit("seconds"):hidden(always),
 }
 
 -- the clone's own properties are its state; the old attribute names are the

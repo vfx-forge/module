@@ -27,10 +27,6 @@ type Active = {
   done: boolean,
 }
 
-local function always()
-  return true
-end
-
 local camera_shake = {}
 
 camera_shake.id = "camera_shake"
@@ -53,7 +49,6 @@ camera_shake.attributes = {
   PositionInfluence = knob(vector.one):label("Position"):hint("Per-axis multiplier for positional shake."),
   RotationInfluence = knob(vector.one * 0.2):label("Rotation"):hint("Per-axis multiplier for rotational shake."),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the shake's clock."),
-  SpeedDuration = knob(0.1):min(0):aliases("Speed_Duration"):unit("seconds"):hidden(always),
 }
 
 camera_shake.properties = {}
