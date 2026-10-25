@@ -20,6 +20,9 @@ export type emit = {
   effects: { effect },
   children: { emit },
 
+  -- the effect whose nested children this emit plays, when it is one
+  host: effect?,
+
   -- what the handle's speed and pause set, hanging from the clock of the
   -- effect that started the emit, or from the global clock
   clock: clock.Clock,
@@ -62,6 +65,9 @@ export type effect = {
   state: number,
   thread: thread?,
   cancelled: boolean?,
+
+  -- the span its module decided, once the dispatcher has read it
+  span: number?,
 
   -- released in this order, each list in reverse
   defers: { (cancelled: boolean) -> () }?,

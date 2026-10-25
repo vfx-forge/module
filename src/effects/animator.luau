@@ -42,14 +42,19 @@ local function targetOf(ref: Instance, attrs: any): Instance?
   return utility.getTarget(ref)
 end
 
-local function queueOf(ref: Instance, name: string): { any }?
-  if name == "" then
-    return nil
+-- the effect the animator sits under, past Folders, whose end its end lane
+-- is placed against
+local function hostOf(ref: Instance): Instance?
+  local parent = ref.Parent
+
+  while parent ~= nil and parent:IsA("Folder") do
+    parent = parent.Parent
   end
 
-  local lanes = mods.read(ref, "property", name)
-  local queue = if lanes ~= nil then lanes.start else nil
+  return parent
+end
 
+local function playable(queue: { any }?): { any }?
   if queue == nil or #queue == 0 or mods.inert(queue) then
     return nil
   end
@@ -57,28 +62,63 @@ local function queueOf(ref: Instance, name: string): { any }?
   return queue
 end
 
-function animator.duration(ctx: reader.Ctx, attrs: any)
-  local queue = queueOf(ctx.ref, attrs.Property)
-
-  if queue == nil then
-    return attrs.EmitDelay
+-- the start lane, and the end lane with the span left to place it against:
+-- the host's, less the delay it waited, and none without a host
+local function lanesOf(ref: Instance, scope: any, attrs: any): ({ any }?, { any }?, number?)
+  if attrs.Property == "" then
+    return nil, nil, nil
   end
 
-  return attrs.EmitDelay + mods.span(queue, 1)
+  local lanes = mods.read(ref, "property", attrs.Property)
+
+  if lanes == nil then
+    return nil, nil, nil
+  end
+
+  local finish = playable(lanes["end"])
+  local span = if finish ~= nil and scope ~= nil then emitters.hostSpan(scope, hostOf(ref)) else nil
+
+  if span == nil then
+    finish = nil
+  end
+
+  return playable(lanes.start), finish, if span ~= nil then math.max(span - attrs.EmitDelay, 0) else nil
+end
+
+function animator.duration(ctx: reader.Ctx, attrs: any)
+  local start, finish, span = lanesOf(ctx.ref, ctx.scope, attrs)
+  local reach = if start ~= nil then mods.span(start, 1) else 0
+
+  if finish ~= nil and span ~= nil then
+    reach = math.max(reach, span)
+  end
+
+  return attrs.EmitDelay + reach
 end
 
 function animator.emit(ctx: reader.Ctx, attrs: any)
   local ref = ctx.ref
   local scope = ctx.scope
   local name = attrs.Property
-  local queue = queueOf(ref, name)
   local target = targetOf(ref, attrs)
+  local start, finish, span = lanesOf(ref, scope, attrs)
 
-  if queue == nil or target == nil then
+  if (start == nil and finish == nil) or target == nil then
     return
   end
 
   lifetime.wait(scope, attrs.EmitDelay)
+
+  -- an end lane plays against the span left, so the row is built whole
+  local track = nil
+
+  if finish ~= nil and span ~= nil then
+    local ok, current = pcall(function()
+      return (target :: any)[name]
+    end)
+
+    track = mods.track(ref, "property", name, nil, span, nil, { value = if ok then current else nil })
+  end
 
   local runs = RUNS[target]
 
@@ -92,8 +132,9 @@ function animator.emit(ctx: reader.Ctx, attrs: any)
 
   runs[name] = handle
 
-  emitters.drive(target, "property", name, queue, scope, 1, {
+  emitters.drive(target, "property", name, start or {}, scope, 1, {
     rule = if attrs.ResetOnFinish then nil else "keep",
+    track = track,
 
     -- the run before this one ends only once this one holds the property, so
     -- the target never goes back for a frame in between

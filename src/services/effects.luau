@@ -697,6 +697,7 @@ local function emitChildren(
 
   -- a nested emit runs on the clock of the effect that started it
   local emit = if parentScope then lifetime.emit(parentScope.emit, parentScope.clock) else lifetime.emit(nil)
+  emit.host = parentScope
 
   emitInto(emit, depth, parentScope, from, nil, table.unpack(children))
   lifetime.seal(emit)

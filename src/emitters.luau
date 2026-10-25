@@ -19,6 +19,10 @@ local MAX_WRITE_FAILURES = 3
 
 local emitters = {}
 
+-- the span each instance's effect was last dispatched with, which an effect
+-- emitted beside it rather than nested in it can place its end against
+local SPANS = setmetatable({} :: { [Instance]: number }, { __mode = "k" })
+
 -- the reader binds a track on an effect's scope through the same helper every
 -- effect steps with, handed in here because the reader stays engine-free
 reader.bind = tween.drive
@@ -134,6 +138,10 @@ export type DriveOpts = {
   -- the end rule in place of the one the queue's own entries spell
   rule: string?,
 
+  -- every lane of the row, built against a span, in place of the queue's
+  -- start lane alone
+  track: mods.Track?,
+
   -- called once, when the driver has written its first value
   took: (() -> ())?,
 
@@ -154,9 +162,20 @@ local function drive(
   duration: number,
   opts: DriveOpts?
 )
-  local rolls = mods.roll(queue)
-  local span, linked = mods.span(queue, duration, rolls)
-  local sample = mods.sampler(target, source, name, span, queue, rolls, linked)
+  local track = if opts ~= nil then opts.track else nil
+  local rolls, span, linked, sample
+
+  if track ~= nil then
+    span = math.max(track.span, track.reach("start"))
+    linked = 0
+    sample = function(elapsed: number)
+      return track.at(elapsed)
+    end
+  else
+    rolls = mods.roll(queue)
+    span, linked = mods.span(queue, duration, rolls)
+    sample = mods.sampler(target, source, name, span, queue, rolls, linked)
+  end
 
   if sample == nil then
     return
@@ -176,7 +195,11 @@ local function drive(
   end
 
   local took = if opts ~= nil then opts.took else nil
-  local speedAt, speedUntil, lead = speedOf(queue, rolls, linked)
+  local speedAt, speedUntil, lead = nil, nil, 0
+
+  if rolls ~= nil then
+    speedAt, speedUntil, lead = speedOf(queue, rolls, linked)
+  end
 
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
 
@@ -397,6 +420,18 @@ end
 
 emitters.drive = drive
 
+-- the span of the effect an animator's end lane is placed against: the one
+-- whose nested children it plays among, else the last dispatch of `host`
+function emitters.hostSpan(scope: types.scope, host: Instance?): number?
+  local nested = scope.emit.host
+
+  if nested ~= nil and nested.span ~= nil then
+    return nested.span
+  end
+
+  return if host ~= nil then SPANS[host] else nil
+end
+
 -- the properties of `obj` that a Property Animator under it drives, which the
 -- effect on `obj` leaves to it: an animator is the explicit ask. one that
 -- names another target in its Target row claims nothing here
@@ -488,6 +523,9 @@ function emitters.dispatch(
     if not ok then
       return
     end
+
+    SPANS[obj] = ctx.duration
+    scope.span = ctx.duration
 
     local claimed = emitters.claims(obj)
     local owned = registry.owned(effect)
