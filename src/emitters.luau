@@ -147,6 +147,9 @@ export type DriveOpts = {
 
   -- filled with a stop, which ends the driver where it is
   handle: { stop: (() -> ())? }?,
+
+  -- called once the driver is let go, however it ends
+  ended: (() -> ())?,
 }
 
 -- drives one queue on one target as a child effect of the same emit, so the
@@ -206,6 +209,10 @@ local function drive(
   lifetime.run(fx, function(driver)
     local failures = 0
     local wall = 0
+
+    if opts ~= nil and opts.ended ~= nil then
+      lifetime.hold(driver, opts.ended)
+    end
 
     -- joined at its first write and let go with the driver, so a clear puts
     -- the target back too
@@ -438,6 +445,10 @@ end
 function emitters.claims(obj: Instance): { [string]: boolean }?
   local claimed: { [string]: boolean }? = nil
 
+  if obj:FindFirstChildWhichIsA("RayValue") == nil then
+    return nil
+  end
+
   for _, child in obj:GetChildren() do
     if not child:IsA("RayValue") or not child:HasTag(utility.PROPERTY_ANIMATOR_TAG) then
       continue
@@ -450,7 +461,15 @@ function emitters.claims(obj: Instance): { [string]: boolean }?
       continue
     end
 
-    if target ~= nil and (typeof(target) ~= "InstanceHandle" or (target :: any):Get() ~= obj) then
+    -- a handle to an instance no longer in the place reads as empty, as the
+    -- animator itself reads it, and leaves the parent its target
+    local named = if typeof(target) == "InstanceHandle" then (target :: any):Get() else nil
+
+    if named ~= nil and not named:IsDescendantOf(game) then
+      named = nil
+    end
+
+    if target ~= nil and named ~= nil and named ~= obj then
       continue
     end
 
@@ -555,7 +574,10 @@ function emitters.dispatch(
       owned = merged
     end
 
-    if not constant and (not own or reflected ~= nil) then
+    -- an animator's lane map is its target's row, which the animator plays
+    local animates = obj:HasTag(utility.PROPERTY_ANIMATOR_TAG)
+
+    if not constant and not animates and (not own or reflected ~= nil) then
       emitters.applyMods(obj, scope, ctx.duration :: number, owned, reflected, map)
     end
 

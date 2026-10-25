@@ -5,12 +5,16 @@ local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local emitters = require("@root/emitters")
 
+type Run = { stop: (() -> ())?, before: Run? }
+
 local animator = {}
 
 -- the run each target's property is under, newest emit first: a new run takes
--- the property over and stops the one before it, so one target property is
--- never driven twice by animators, re-emitted or cloned alike
-local RUNS = setmetatable({} :: { [Instance]: { [string]: { stop: (() -> ())? } } }, { __mode = "k" })
+-- the property over and stops the ones before it, so one target property is
+-- never driven twice by animators, re-emitted or cloned alike. an entry goes
+-- once its run ends, since a run holds its target and a weak key it reaches
+-- is never let go
+local RUNS = setmetatable({} :: { [Instance]: { [string]: Run } }, { __mode = "k" })
 
 animator.id = "animator"
 animator.display = { name = "Property Animator", icon = "animator", order = 95 }
@@ -127,8 +131,9 @@ function animator.emit(ctx: reader.Ctx, attrs: any)
     RUNS[target] = runs
   end
 
-  local handle: { stop: (() -> ())? } = {}
-  local before = runs[name]
+  -- the runs before this one, newest first: a run that never wrote still
+  -- links the ones under it, so a takeover reaches every one
+  local handle: Run = { stop = nil, before = runs[name] }
 
   runs[name] = handle
 
@@ -136,16 +141,39 @@ function animator.emit(ctx: reader.Ctx, attrs: any)
     rule = if attrs.ResetOnFinish then nil else "keep",
     track = track,
 
-    -- the run before this one ends only once this one holds the property, so
+    -- the runs before this one end only once this one holds the property, so
     -- the target never goes back for a frame in between
     took = function()
-      if before ~= nil and before.stop ~= nil then
-        before.stop()
+      local older = handle.before
+      handle.before = nil
+
+      while older ~= nil do
+        if older.stop ~= nil then
+          older.stop()
+        end
+
+        older = older.before
       end
     end,
 
     handle = handle,
+
+    ended = function()
+      if runs[name] == handle then
+        runs[name] = handle.before
+      end
+
+      if next(runs) == nil and RUNS[target] == runs then
+        RUNS[target] = nil
+      end
+    end,
   })
+
+  -- a run the driver turned down holds nothing, and hands the property back
+  -- to the one before it
+  if handle.stop == nil and runs[name] == handle then
+    runs[name] = handle.before
+  end
 end
 
 return animator

@@ -87,8 +87,13 @@ function tween.drive(
   follow: number?,
   done: (() -> ())?
 ): scheduler.Handle?
-  -- a track a Property Animator claimed is the animator's to write
+  -- a track a Property Animator claimed is the animator's to write, and a
+  -- caller counting on it ending hears that it has
   if track.claimed then
+    if done ~= nil then
+      done()
+    end
+
     return nil
   end
 
