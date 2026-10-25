@@ -5,7 +5,7 @@ local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local emitters = require("@root/emitters")
 
-type Run = { stop: (() -> ())?, before: Run? }
+type Run = { stop: (() -> ())?, before: Run?, ended: boolean? }
 
 local animator = {}
 
@@ -47,11 +47,16 @@ local function targetOf(ref: Instance, attrs: any): Instance?
 end
 
 -- the effect the animator sits under, past Folders, whose end its end lane
--- is placed against
+-- is placed against. one in a folder its effect emits as it ends has none:
+-- it starts once that end has passed
 local function hostOf(ref: Instance): Instance?
   local parent = ref.Parent
 
   while parent ~= nil and parent:IsA("Folder") do
+    if parent.Name == utility.EMIT_ON_FINISH then
+      return nil
+    end
+
     parent = parent.Parent
   end
 
@@ -87,6 +92,26 @@ local function lanesOf(ref: Instance, scope: any, attrs: any): ({ any }?, { any 
   end
 
   return playable(lanes.start), finish, if span ~= nil then math.max(span - attrs.EmitDelay, 0) else nil
+end
+
+-- a run that holds nothing any more hands the property back to the newest
+-- run under it still playing
+local function letGo(target: Instance, runs: { [string]: Run }, name: string, handle: Run)
+  handle.ended = true
+
+  if runs[name] == handle then
+    local back = handle.before
+
+    while back ~= nil and back.ended do
+      back = back.before
+    end
+
+    runs[name] = back
+  end
+
+  if next(runs) == nil and RUNS[target] == runs then
+    RUNS[target] = nil
+  end
 end
 
 function animator.duration(ctx: reader.Ctx, attrs: any)
@@ -133,7 +158,7 @@ function animator.emit(ctx: reader.Ctx, attrs: any)
 
   -- the runs before this one, newest first: a run that never wrote still
   -- links the ones under it, so a takeover reaches every one
-  local handle: Run = { stop = nil, before = runs[name] }
+  local handle: Run = { stop = nil, before = runs[name], ended = false }
 
   runs[name] = handle
 
@@ -159,20 +184,14 @@ function animator.emit(ctx: reader.Ctx, attrs: any)
     handle = handle,
 
     ended = function()
-      if runs[name] == handle then
-        runs[name] = handle.before
-      end
-
-      if next(runs) == nil and RUNS[target] == runs then
-        RUNS[target] = nil
-      end
+      letGo(target, runs, name, handle)
     end,
   })
 
   -- a run the driver turned down holds nothing, and hands the property back
   -- to the one before it
-  if handle.stop == nil and runs[name] == handle then
-    runs[name] = handle.before
+  if handle.stop == nil then
+    letGo(target, runs, name, handle)
   end
 end
 

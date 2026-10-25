@@ -32,6 +32,9 @@ utility.SCREENSHAKE_TAG = "CameraShake"
 
 utility.PROPERTY_TWEENER_TAG = "PropertyTweener"
 utility.PROPERTY_ANIMATOR_TAG = "PropertyAnimator"
+
+-- the folder an effect emits once it ends
+utility.EMIT_ON_FINISH = "EmitOnFinish"
 utility.PROPERTY_RANDOMIZER_TAG = "PropertyRandomizer"
 
 utility.ATTRIBUTE_TWEENER_TAG = "AttributeTweener"

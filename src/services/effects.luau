@@ -685,7 +685,8 @@ local function emitChildren(
   depth: number,
   parentScope: types.scope?,
   join: lifetime.join?,
-  from: string
+  from: string,
+  hosted: boolean?
 )
   if not api_ref or not api_ref.setup then
     return
@@ -697,7 +698,9 @@ local function emitChildren(
 
   -- a nested emit runs on the clock of the effect that started it
   local emit = if parentScope then lifetime.emit(parentScope.emit, parentScope.clock) else lifetime.emit(nil)
-  emit.host = parentScope
+  -- only the effect's own children play with it; a folder it emits as it
+  -- ends, or a piece it emits later, starts after its clock has moved on
+  emit.host = if hosted then parentScope else nil
 
   emitInto(emit, depth, parentScope, from, nil, table.unpack(children))
   lifetime.seal(emit)
@@ -708,7 +711,7 @@ local function emitChildren(
 end
 
 function effects.emitNested(part: Instance, depth: number, parentScope: types.scope?, join: lifetime.join?)
-  emitChildren(part:GetChildren(), depth, parentScope, join, "")
+  emitChildren(part:GetChildren(), depth, parentScope, join, "", true)
 end
 
 -- one instance emitted under an effect, on its clock, counted into the join
