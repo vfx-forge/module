@@ -30,6 +30,7 @@ local Keys: { [string]: { [string]: string } } = {}
 local ATTRIBUTE_TWEENER_TAG = "AttributeTweener"
 local PROPERTY_RANDOMIZER_TAG = "PropertyRandomizer"
 local ATTRIBUTE_RANDOMIZER_TAG = "AttributeRandomizer"
+local PROPERTY_ANIMATOR_TAG = "PropertyAnimator"
 
 -- the only quads whose _Start and _End hold a NumberRange the effect draws ONE
 -- scalar from per emitted instance, rather than two values to tween between.
@@ -184,7 +185,13 @@ end
 -- which side of an instance a legacy RayValue child drives: untagged means a
 -- real property, because the runtime always fell back to a property tween for
 -- old content
-local function legacySource(child: Instance): string
+local function legacySource(child: Instance): string?
+  -- a Property Animator is named for its property as a tween child is, but it
+  -- is an effect of its own
+  if child:HasTag(PROPERTY_ANIMATOR_TAG) then
+    return nil
+  end
+
   if child:HasTag(ATTRIBUTE_TWEENER_TAG) or child:HasTag(ATTRIBUTE_RANDOMIZER_TAG) then
     return "attribute"
   end
@@ -320,12 +327,12 @@ export type Child = {
 -- a legacy RayValue read on its own, for the applier to drive whatever the
 -- RayValue targets. the target is the caller's to find
 function legacy_mods.readChild(child: Instance): Child?
-  if not child:IsA("RayValue") then
+  if not child:IsA("RayValue") or child:HasTag(PROPERTY_ANIMATOR_TAG) then
     return nil
   end
 
   return {
-    source = legacySource(child),
+    source = legacySource(child) :: string,
     name = child.Name,
     queue = entriesOf(child),
     random = isRandomizer(child),

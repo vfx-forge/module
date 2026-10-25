@@ -1134,7 +1134,13 @@ local function readsChild(module: Module?, child: Instance): boolean
     return false
   end
 
-  return owned[module][legacy_mods.childSource(child)][child.Name] == true
+  local source = legacy_mods.childSource(child)
+
+  if source == nil then
+    return false
+  end
+
+  return owned[module][source][child.Name] == true
 end
 
 -- whether anything under root is of `class`, asked of the engine the first

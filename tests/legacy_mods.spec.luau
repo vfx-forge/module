@@ -142,6 +142,17 @@ harness.suite(function()
     expect(queue[2].duration).toBe(2)
   end)
 
+  test("a Property Animator is no tween child, though named for its property", function()
+    local obj = Instance.new("Part")
+    local child = tweenChild("Transparency")
+    child:AddTag("PropertyAnimator")
+    child.Parent = obj
+
+    expect(legacy_mods.readChildren(obj, "property", "Transparency")).toBe(nil)
+    expect(legacy_mods.readChild(child)).toBe(nil)
+    expect(legacy_mods.childSource(child)).toBe(nil)
+  end)
+
   -- every RayValue child of a name ran from the emit on its own clock, so two
   -- of them read as entries that start together rather than one after another
   test("two tween children start together rather than in sequence", function()

@@ -130,6 +130,17 @@ local function speedOf(
   return nil, nil, 0
 end
 
+export type DriveOpts = {
+  -- the end rule in place of the one the queue's own entries spell
+  rule: string?,
+
+  -- called once, when the driver has written its first value
+  took: (() -> ())?,
+
+  -- filled with a stop, which ends the driver where it is
+  handle: { stop: (() -> ())? }?,
+}
+
 -- drives one queue on one target as a child effect of the same emit, so the
 -- emit stays open while the driver runs and a clear stops it with everything
 -- else. `duration` is the clock the queue falls back to when nothing in it
@@ -140,7 +151,8 @@ local function drive(
   name: string,
   queue: { any },
   scope: types.scope,
-  duration: number
+  duration: number,
+  opts: DriveOpts?
 )
   local rolls = mods.roll(queue)
   local span, linked = mods.span(queue, duration, rolls)
@@ -157,6 +169,13 @@ local function drive(
   end
 
   local rule, start = endOf(queue)
+
+  if opts ~= nil and opts.rule ~= nil then
+    rule = opts.rule
+    start = nil
+  end
+
+  local took = if opts ~= nil then opts.took else nil
   local speedAt, speedUntil, lead = speedOf(queue, rolls, linked)
 
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
@@ -185,7 +204,13 @@ local function drive(
 
       local v = sample(elapsed)
 
-      if v ~= nil and not lifetime.set(writer, v) then
+      if v ~= nil and took ~= nil then
+        lifetime.set(writer, v)
+
+        local first = took
+        took = nil
+        first()
+      elseif v ~= nil and not lifetime.set(writer, v) then
         failures += 1
 
         if failures >= MAX_WRITE_FAILURES then
@@ -211,17 +236,32 @@ local function drive(
       return if scaled > 0 or (speedUntil ~= nil and wall < speedUntil) then scaled else nil
     end
 
+    local stopped = false
+
+    local function stop()
+      if stopped then
+        return
+      end
+
+      stopped = true
+      ticking:Disconnect()
+      counted()
+    end
+
     ticking = lifetime.step(driver, function(deltaTime: number)
       local moved = advance(deltaTime)
 
       if moved == nil or timing_common.done(elapsed, length) then
-        ticking:Disconnect()
-        counted()
+        stop()
         return
       end
 
       elapsed = math.clamp(elapsed + moved, 0, math.max(length, 0.001))
     end)
+
+    if opts ~= nil and opts.handle ~= nil then
+      opts.handle.stop = stop
+    end
 
     lifetime.awaitJoin(ended)
   end)
@@ -355,6 +395,37 @@ function emitters.applyMods(
   end
 end
 
+emitters.drive = drive
+
+-- the properties of `obj` that a Property Animator under it drives, which the
+-- effect on `obj` leaves to it: an animator is the explicit ask. one that
+-- names another target in its Target row claims nothing here
+function emitters.claims(obj: Instance): { [string]: boolean }?
+  local claimed: { [string]: boolean }? = nil
+
+  for _, child in obj:GetChildren() do
+    if not child:IsA("RayValue") or not child:HasTag(utility.PROPERTY_ANIMATOR_TAG) then
+      continue
+    end
+
+    local name = child:GetAttribute("Property")
+    local target = child:GetAttribute("Target")
+
+    if type(name) ~= "string" or name == "" then
+      continue
+    end
+
+    if target ~= nil and (typeof(target) ~= "InstanceHandle" or (target :: any):Get() ~= obj) then
+      continue
+    end
+
+    claimed = claimed or {}
+    (claimed :: any)[name] = true
+  end
+
+  return claimed
+end
+
 -- a legacy tween RayValue emitted on its own: the queue it spells drives
 -- whatever it targets, under a lock so two emits of one template cannot drive
 -- the same target twice. a randomizer RayValue is applied by the prologue of
@@ -418,8 +489,36 @@ function emitters.dispatch(
       return
     end
 
+    local claimed = emitters.claims(obj)
+    local owned = registry.owned(effect)
+
+    if claimed ~= nil then
+      local merged = table.clone(owned or {})
+      local names = table.clone(merged.property or {})
+      local quieted = table.clone(props)
+
+      for name in claimed do
+        names[name] = true
+
+        -- the module's own tween of it writes nothing, leaving the animator
+        -- the only writer
+        local track = quieted[name]
+
+        if type(track) == "table" then
+          local quiet = table.clone(track)
+          quiet.claimed = true
+          quieted[name] = quiet
+        end
+      end
+
+      props = table.freeze(quieted)
+
+      merged.property = names
+      owned = merged
+    end
+
     if not constant and (not own or reflected ~= nil) then
-      emitters.applyMods(obj, scope, ctx.duration :: number, registry.owned(effect), reflected, map)
+      emitters.applyMods(obj, scope, ctx.duration :: number, owned, reflected, map)
     end
 
     utility.try(`failed to emit {effect.id} with error: %s`, effect.emit, ctx, attrs, props)

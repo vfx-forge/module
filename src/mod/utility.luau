@@ -31,6 +31,7 @@ utility.SHOCKWAVE_TAG = "Shockwave"
 utility.SCREENSHAKE_TAG = "CameraShake"
 
 utility.PROPERTY_TWEENER_TAG = "PropertyTweener"
+utility.PROPERTY_ANIMATOR_TAG = "PropertyAnimator"
 utility.PROPERTY_RANDOMIZER_TAG = "PropertyRandomizer"
 
 utility.ATTRIBUTE_TWEENER_TAG = "AttributeTweener"

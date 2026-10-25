@@ -52,6 +52,9 @@ export type Track = {
   reach: (lane: string) -> number,
   still: (lane: string, at: number) -> boolean,
   apply: (self: Track, write: (v: any) -> (), done: (() -> ())?) -> (),
+
+  -- a Property Animator drives this property instead, so nothing writes it
+  claimed: boolean?,
 }
 
 -- where the walk takes an instance's attributes from. replaceable, for a host
