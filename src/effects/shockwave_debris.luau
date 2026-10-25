@@ -92,22 +92,19 @@ debris.attributes = {
     :mod(mod.to(shrinkEnd):duration(shrinkDuration):curve(shrinkCurve):lane("despawn"))
     :label("Scale")
     :hint("Size factor on each piece; its despawn lane runs the shrink."),
-  ShrinkScale = knob(vector.zero)
-    :aliases("SizeScaleOut_End", "SizeScaleEnd")
-    :label("End")
-    :hint("Fraction of the drawn size each piece tweens to before despawning."),
+  -- the old shrink rows feed the despawn lane's default and are hidden, since
+  -- the modifier window's Despawn tab edits the lane itself
+  ShrinkScale = knob(vector.zero):aliases("SizeScaleOut_End", "SizeScaleEnd"):hidden(always),
   ShrinkDuration = knob(0.5)
     :min(0)
     :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
     :unit("seconds")
-    :label("Duration")
-    :hint("Seconds the shrink takes."),
+    :hidden(always),
   ShrinkCurve = knob(function()
       return utility.default_bezier
     end)
     :aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve")
-    :label("Curve")
-    :hint("Easing of the shrink."),
+    :hidden(always),
   Transparency = knob(0)
     :aliases("Transparency_Start")
     :mod(mod.to(1):duration(transparencyDuration))
@@ -136,10 +133,7 @@ debris.layout = {
     },
   },
   { title = "Magnitude", entries = { "LinearMagnitude", "AngularMagnitude" } },
-  {
-    title = "Size",
-    entries = { "Size", "SizeScale", "ShrinkScale", { curve = "ShrinkCurve", duration = "ShrinkDuration" } },
-  },
+  { title = "Size", entries = { "Size", "SizeScale" } },
   { title = "Direction", entries = { "MinDirection", "MaxDirection" } },
 }
 

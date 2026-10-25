@@ -157,37 +157,23 @@ line.attributes = {
     :hint("Transparency each piece rests at before its fade."),
   TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"):unit("seconds"):hidden(always),
   -- the exit phases run on the despawn lane the module fires when a piece's
-  -- dwell ends; these rows feed its defaults on OffsetIn and SizeScaleIn and
-  -- stay shown, since the panel edits only the start lane
-  ShrinkScale = knob(vector.zero)
-    :aliases("SizeScaleOut_End", "SizeScaleEnd")
-    :label("End")
-    :hint("Fraction of the drawn size each piece tweens to before despawning."),
+  -- dwell ends. these old exit rows feed that lane's defaults on OffsetIn and
+  -- SizeScaleIn and the module's clock, and are hidden, since the modifier
+  -- window's Despawn tab edits the lane itself
+  ShrinkScale = knob(vector.zero):aliases("SizeScaleOut_End", "SizeScaleEnd"):hidden(always),
   ShrinkDuration = knob(0.5)
     :min(0)
     :aliases("SizeScaleOut_Duration", "Size_End_Duration", "Size_Duration")
     :unit("seconds")
-    :label("Duration")
-    :hint("Seconds the shrink takes."),
-  ShrinkCurve = knob(defaultCurve)
-    :aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve")
-    :label("Curve")
-    :hint("Easing of the shrink."),
-  OffsetOut = knob(vector.zero)
-    :aliases("OffsetOut_End", "Offset_End", "PartOffset")
-    :unit("studs")
-    :label("End")
-    :hint("Local offset each piece tweens to before despawning."),
+    :hidden(always),
+  ShrinkCurve = knob(defaultCurve):aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve"):hidden(always),
+  OffsetOut = knob(vector.zero):aliases("OffsetOut_End", "Offset_End", "PartOffset"):unit("studs"):hidden(always),
   OffsetOutDuration = knob(0.5)
     :min(0)
     :aliases("OffsetOut_Duration", "Offset_End_Duration")
     :unit("seconds")
-    :label("Duration")
-    :hint("Seconds the exit offset takes."),
-  OffsetOutCurve = knob(defaultCurve)
-    :aliases("OffsetOut_Curve", "Offset_End_Curve")
-    :label("Curve")
-    :hint("Easing of the exit offset."),
+    :hidden(always),
+  OffsetOutCurve = knob(defaultCurve):aliases("OffsetOut_Curve", "Offset_End_Curve"):hidden(always),
 }
 
 line.properties = {}
@@ -200,26 +186,13 @@ line.layout = {
   "Length",
   "Direction",
   "Rotation",
-  {
-    title = "Offset",
-    entries = { "OffsetIn", "OffsetOut", { curve = "OffsetOutCurve", duration = "OffsetOutDuration" } },
-  },
+  { title = "Offset", entries = { "OffsetIn" } },
   "Rate",
   "PathCurve",
   "FixedAmount",
   { title = "Transparency", entries = { "Transparency" } },
   "Scale",
-  {
-    title = "Size",
-    entries = {
-      {
-        title = "Scale",
-        entries = { "SizeScaleIn", "ShrinkScale", { curve = "ShrinkCurve", duration = "ShrinkDuration" } },
-      },
-      "MinSize",
-      "MaxSize",
-    },
-  },
+  { title = "Size", entries = { "SizeScaleIn", "MinSize", "MaxSize" } },
 }
 
 -- the longest a piece emitted at the very end can last: the whole emission,
