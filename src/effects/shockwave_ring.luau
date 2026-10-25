@@ -153,12 +153,9 @@ ring.properties = {}
 
 ring.layout = {
   { title = "Emit", entries = { "EmitDelay", "Speed" } },
-  "Radius",
-  "Segments",
-  "Lifetime",
-  { title = "Offset", entries = { "OffsetIn" } },
-  { title = "Transparency", entries = { "Transparency" } },
-  { title = "Size", entries = { "SizeScaleIn", "MinSize", "MaxSize" } },
+  { title = "Ring", entries = { "Radius", "Segments", "Lifetime" } },
+  { title = "Size", entries = { "MinSize", "MaxSize" } },
+  { title = "Settle", entries = { "OffsetIn", "SizeScaleIn", "Transparency" } },
 }
 
 -- the longest a segment can last, which is the ring's own clock: the longest

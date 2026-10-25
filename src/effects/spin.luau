@@ -60,8 +60,7 @@ spin.properties = {}
 
 spin.layout = {
   { title = "Emit", entries = { "EmitDelay", "ResetDelay", "ResetOnFinish" } },
-  { title = "Spin", entries = { "SpinRotation", "SpinDuration", "SpinSpeed", "SyncPosition" } },
-  { title = "Scale", entries = { "Scale" } },
+  { title = "Spin", entries = { "SpinRotation", "SpinDuration", "SpinSpeed", "SyncPosition", "Scale" } },
 }
 
 function spin.duration(_, attrs: any)

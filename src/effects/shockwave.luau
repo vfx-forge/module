@@ -19,19 +19,15 @@ shockwave.attributes = {
     :options({ "Include", "Exclude" })
     :label("Type")
     :hint("Whether the tag filter includes or excludes tagged parts."),
-  IgnoreWater = knob(true):label("Water"):hint("Whether raycasts ignore water."),
-  IgnoreCanCollide = knob(false):label("CanCollide"):hint("Whether raycasts ignore non-collidable parts."),
+  IgnoreWater = knob(true):label("IgnoreWater"):hint("Whether raycasts ignore water."),
+  IgnoreCanCollide = knob(false):label("IgnoreCanCollide"):hint("Whether raycasts ignore non-collidable parts."),
 }
 
 shockwave.properties = {}
 
 shockwave.layout = {
-  "RayDirection",
-  "RayCollisionGroup",
-  {
-    title = "Filter",
-    entries = { "FilterTag", "FilterType", { title = "Ignore", entries = { "IgnoreWater", "IgnoreCanCollide" } } },
-  },
+  { title = "Raycast", entries = { "RayDirection", "RayCollisionGroup" } },
+  { title = "Filter", entries = { "FilterTag", "FilterType", "IgnoreWater", "IgnoreCanCollide" } },
 }
 
 function shockwave.emit() end

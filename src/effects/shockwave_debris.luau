@@ -118,11 +118,10 @@ debris.attributes = {
 debris.properties = {}
 
 debris.layout = {
-  { title = "Emit", entries = { "EmitDelay" } },
-  { title = "Transparency", entries = { "Transparency" } },
-  "Amount",
-  "Lifetime",
-  "Airtime",
+  { title = "Emit", entries = { "EmitDelay", "Amount", "Lifetime" } },
+  { title = "Launch", entries = { "Airtime", "LinearMagnitude", "AngularMagnitude" } },
+  { title = "Direction", entries = { "MinDirection", "MaxDirection" } },
+  { title = "Appearance", entries = { "Size", "SizeScale", "Transparency" } },
   {
     title = "Inheritance",
     entries = {
@@ -132,9 +131,6 @@ debris.layout = {
       { action = "toggle_paths", label = "Show Paths" },
     },
   },
-  { title = "Magnitude", entries = { "LinearMagnitude", "AngularMagnitude" } },
-  { title = "Size", entries = { "Size", "SizeScale" } },
-  { title = "Direction", entries = { "MinDirection", "MaxDirection" } },
 }
 
 -- the dwell's ceiling: a piece's own lifetime is drawn below it, and a queue

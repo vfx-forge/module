@@ -30,8 +30,7 @@ screen.attributes = {
 screen.properties = {}
 
 screen.layout = {
-  "Enabled",
-  { title = "Part", entries = { "PartDistance", "PartScale" } },
+  { title = "Part", entries = { "Enabled", "PartDistance", "PartScale" } },
   { title = "Offset", entries = { "OffsetPosition", "OffsetRotation" } },
 }
 

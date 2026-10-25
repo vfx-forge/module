@@ -180,19 +180,10 @@ line.properties = {}
 
 line.layout = {
   { title = "Emit", entries = { "EmitDelay", "Speed" } },
-  "Duration",
-  "Lifetime",
-  "SyncPosition",
-  "Length",
-  "Direction",
-  "Rotation",
-  { title = "Offset", entries = { "OffsetIn" } },
-  "Rate",
-  "PathCurve",
-  "FixedAmount",
-  { title = "Transparency", entries = { "Transparency" } },
-  "Scale",
-  { title = "Size", entries = { "SizeScaleIn", "MinSize", "MaxSize" } },
+  { title = "Sweep", entries = { "Duration", "Length", "Direction", "PathCurve", "SyncPosition" } },
+  { title = "Pieces", entries = { "Rate", "FixedAmount", "Lifetime", "Rotation" } },
+  { title = "Size", entries = { "Scale", "MinSize", "MaxSize" } },
+  { title = "Settle", entries = { "OffsetIn", "SizeScaleIn", "Transparency" } },
 }
 
 -- the longest a piece emitted at the very end can last: the whole emission,
