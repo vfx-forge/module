@@ -393,6 +393,18 @@ function modifiers.schedule(
     linked = if lent then lent else 0
   end
 
+  -- a delay naming no wait but a share waits that much of the effect, the
+  -- way a share's duration runs
+  local function waitAt(m: any, i: number): number
+    local share = m.share
+
+    if m.wait == nil and typeof(share) == "number" and share >= 0 and share ~= math.huge then
+      return share * (if lent then lent else linked)
+    end
+
+    return modifiers.waitOf(m, if picks then picks[i] else nil, env)
+  end
+
   local offsets: { [number]: number }? = nil
   local lengths: { [number]: number }? = nil
   local offset = 0
@@ -416,7 +428,7 @@ function modifiers.schedule(
     end
 
     if m.kind == "delay" and m.parallel then
-      local w = modifiers.waitOf(m, if picks then picks[i] else nil, env)
+      local w = waitAt(m, i)
       held = if w ~= math.huge then w else nil
 
       continue
@@ -428,7 +440,7 @@ function modifiers.schedule(
       -- knob whose span never ends holds its emit open for good, which is the
       -- hang the per-wait guard exists to prevent. a sum that cannot grow leaves
       -- the offset where it was rather than poisoning every modifier after it
-      local sum = offset + modifiers.waitOf(m, if picks then picks[i] else nil, env)
+      local sum = offset + waitAt(m, i)
 
       if sum ~= math.huge then
         offset = sum

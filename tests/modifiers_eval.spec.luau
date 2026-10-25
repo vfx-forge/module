@@ -1528,6 +1528,17 @@ harness.suite(function()
       expect(near(modifiers.evaluate(queue, 1, { duration = 4 }) :: number, 5)).ok()
     end)
 
+    test("a delay's share waits that much of the effect's duration", function()
+      local queue = {
+        { kind = "delay", chain = false, share = 0.25 },
+        { kind = "tween", chain = false, duration = 1, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
+      }
+
+      local offsets = modifiers.schedule(queue, nil, 4)
+
+      expect((offsets :: any)[2]).toBe(1)
+    end)
+
     test("with no effect duration, a share of the longest duration the queue names", function()
       local queue = {
         { kind = "tween", chain = false, share = 0.25, start = { t = "lit", v = 0 }, finish = { t = "lit", v = 1 } },
