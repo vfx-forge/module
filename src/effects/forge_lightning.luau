@@ -210,16 +210,37 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     sdk.hold(ctx, letGo)
   end
 
-  -- a continuous bolt reads its rows as the instance holds them now, so it follows an edit. a looping one lets go once
-  -- Enabled is off, or for its loop to strike anew when an edit changes how a bolt is built
+  -- a continuous bolt reads its rows as the instance holds them now, so it follows an edit. an edit that changes how a
+  -- bolt is built is never taken on by one standing: a looping bolt lets go for its loop to strike anew, and a
+  -- Duration's keeps its build to the end. a looping one also lets go once its loop stops, Enabled or not
+  local following = true
+
   const function reread()
+    if looping and holding and not sdk.looping(ctx) then
+      letGo()
+    end
+
+    if not following then
+      return
+    end
+
     const fresh = sdk.refresh(ctx)
 
     if fresh == attrs then
       return
     end
 
-    if looping and (fresh.Enabled ~= true or rebuilt(attrs, fresh)) then
+    if rebuilt(attrs, fresh) then
+      following = false
+
+      if looping then
+        letGo()
+      end
+
+      return
+    end
+
+    if looping and fresh.Enabled ~= true then
       letGo()
     end
 
@@ -417,13 +438,13 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     local fresh = true
     local tip: Attachment? = nil
     -- the rows this bolt last took on, and what they changed that a frame redraws
-    local seen = attrs
+    local took = attrs
     local retaper = false
     local recolor = false
 
     -- what an edit changes on a bolt as it stands: anything that changes how one is built strikes it anew instead
     const function retune()
-      seen = attrs
+      took = attrs
       recolor = true
 
       if attrs.Taper ~= taper then
@@ -573,7 +594,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       if staying then
         reread()
 
-        if seen ~= attrs then
+        if took ~= attrs then
           retune()
         end
       end
