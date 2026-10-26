@@ -19,10 +19,13 @@ export type Bolt = {
   aim: Vector3,
   miss: Vector3?,
   fitEnd: Vector3,
-  -- a Direction or Ground bolt's end from its last aim, in the ref's own space with no StartOffset, so a moving start
-  -- leaves the end where it is
+  -- the bolt's end in the ref's own space with no StartOffset, so a moving start leaves the end where it is
   endAt: Vector3?,
   atFit: CFrame,
+  -- the StartOffset the frame passed as now is moved by, and the one atFit was. what the bolt keeps between frames
+  -- (its end, latched fork tips, impacts) is kept in the ref's own space and placed through it
+  shift: Vector3,
+  fitShift: Vector3,
   width: number,
   longest: number,
   middle: number,
@@ -102,7 +105,7 @@ function strike.fit(b: Bolt, now: CFrame, finish: Vector3, width: number, taper:
   for i, fork in b.shape.forks do
     const target = b.targets[i]
 
-    fork.target = if target then now:PointToWorldSpace(target) else nil
+    fork.target = if target then now:PointToWorldSpace(target - b.shift) else nil
   end
 
   path.fit(b.shape, origin, ending, b.fitted)
@@ -133,6 +136,7 @@ function strike.fit(b: Bolt, now: CFrame, finish: Vector3, width: number, taper:
   end
 
   b.atFit = now
+  b.fitShift = b.shift
   b.fitEnd = finish
   b.width = width
   b.longest = longest
@@ -143,7 +147,7 @@ end
 -- the main bolt's end in the ref's space, with the surface it struck when that makes an impact. Direction keeps the
 -- aim its strike drew in the ref's space and Ground the miss it drew, so a bolt aimed again follows the ref and what
 -- is around it without jumping to a new random end; surfaces is false once no impact is wanted, which spares End
--- the ray past its end. now is the ref's frame moved by StartOffset, which moves the start alone: every end is
+-- the ray past its end. now is the ref's frame moved by the bolt's shift, which moves the start alone: every end is
 -- found from the ref itself. EndOffset moves the end along the ref's axes, and on Ground where the surface is looked
 -- for
 const function resolve(
@@ -155,7 +159,7 @@ const function resolve(
   surfaces: boolean
 ): (Vector3, Vector3?, Vector3?)
   const origin = now.Position
-  const offset = attrs.EndOffset - attrs.StartOffset
+  const offset = attrs.EndOffset - b.shift
 
   if attrs.Target == "Direction" then
     const along = b.aim * attrs.Length + offset
@@ -194,7 +198,7 @@ const function resolve(
 
   -- an End destroyed mid bolt leaves the bolt on the end it had
   if not ending then
-    return b.fitEnd, nil, nil
+    return if b.endAt then b.endAt - b.shift else b.fitEnd, nil, nil
   end
 
   const placed = now:PointToObjectSpace(ending.WorldPosition) + attrs.EndOffset
@@ -224,7 +228,7 @@ function strike.aim(
   const params = world.params(ref)
   const finish, point, normal = resolve(attrs, b, now, params, finishAt, surfaces)
 
-  b.endAt = if attrs.Target == "End" then nil else finish + attrs.StartOffset
+  b.endAt = finish + b.shift
   const hits = {}
   const struck = {}
 
@@ -242,7 +246,7 @@ function strike.aim(
     const at, facing = world.fork(chain[1], chain[#chain], attrs.Latch, params)
 
     if at and facing then
-      b.targets[i] = now:PointToObjectSpace(at)
+      b.targets[i] = now:PointToObjectSpace(at) + b.shift
       struck[i] = { chain = i + 1, point = at, normal = facing }
     end
   end
@@ -300,6 +304,7 @@ function strike.make(
 end
 
 -- what each hit needs to fire, kept in the space of what carries it: End for the main tip in End mode, else the ref
+-- with no StartOffset
 function strike.impacts(b: Bolt, now: CFrame, hits: { Hit }, ends: { number }, finishAt: Attachment?): { Impact }
   const list = {}
 
@@ -311,7 +316,7 @@ function strike.impacts(b: Bolt, now: CFrame, hits: { Hit }, ends: { number }, f
     list[i] = {
       chain = h.chain,
       onEnd = onEnd,
-      point = space:PointToObjectSpace(h.point),
+      point = space:PointToObjectSpace(h.point) + (if onEnd then Vector3.zero else b.shift),
       normal = space:VectorToObjectSpace(h.normal),
       travel = space:VectorToObjectSpace(joint.t),
     }
