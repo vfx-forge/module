@@ -427,6 +427,10 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       length = 0,
     }
 
+    -- the joints, the mesh and the riders are built once for the first strike, so a restrike keeps its counts
+    const detail = math.clamp(math.floor(sample(mine.Detail, 0)), 2, 32)
+    const forks = math.clamp(math.floor(sample(mine.Forks, 0)), 0, 8)
+
     -- what a strike or an aim reads of the rows: this bolt's own, as they stand at elapsed
     const function settle(elapsed: number)
       return {
@@ -437,8 +441,8 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
         Reach = math.max(1, sample(mine.Reach, elapsed)),
         EndOffset = sample(mine.EndOffset, elapsed),
         Jagged = math.clamp(sample(mine.Jagged, elapsed), 0, 0.5),
-        Detail = math.clamp(math.floor(sample(mine.Detail, elapsed)), 2, 32),
-        Forks = math.clamp(math.floor(sample(mine.Forks, elapsed)), 0, 8),
+        Detail = detail,
+        Forks = forks,
         ForkLength = math.clamp(sample(mine.ForkLength, elapsed), 0.05, 1),
         Latch = math.max(0, sample(mine.Latch, elapsed)),
         Taper = taper,
