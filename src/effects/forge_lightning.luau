@@ -33,6 +33,22 @@ const random = Random.new()
 -- every ref whose loop already has a continuous bolt standing, so the loop's later ticks start none beside it
 const Staying: { [Instance]: { any } } = {}
 
+-- the rows that decide how a bolt is built, which a standing bolt cannot take on
+const REBUILT = {
+  "Style",
+  "Count",
+  "Forks",
+  "ForkLength",
+  "Detail",
+  "Target",
+  "EndPoint",
+  "Spread",
+  "GradientRestart",
+  "Motion",
+  "Jitter",
+  "Continuous",
+}
+
 type along = { children: { Instance }, host: Attachment?, joint: number, due: boolean }
 
 const effect = {}
@@ -84,6 +100,16 @@ function effect.template(_: SDK.V1)
   end
 
   return attachment
+end
+
+const function rebuilt(old: any, new: any): boolean
+  for _, name in REBUILT do
+    if old[name] ~= new[name] then
+      return true
+    end
+  end
+
+  return rows.glowing(old.Style, old.Glow) ~= rows.glowing(new.Style, new.Glow)
 end
 
 const function sample(track: any, elapsed: number)
@@ -161,35 +187,43 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
   -- a loop's tick stays until Enabled goes off, a Duration's emit for the Duration, a plain emit not at all
   const staying = continuous and (ctx.constant == true or attrs.EmitDuration > 0)
   const releaseAt = if staying and not ctx.constant then attrs.EmitDuration else nil
-  local enabled = true
+  const looping = staying and ctx.constant == true
+  local holding = true
+  local mark: { any }? = nil
 
-  if staying and ctx.constant then
+  -- the loop's standing bolt goes, and its next tick may strike another
+  const function letGo()
+    holding = false
+
+    if mark ~= nil and Staying[ref] == mark then
+      Staying[ref] = nil
+    end
+  end
+
+  if looping then
     if Staying[ref] then
       return
     end
 
-    const mark = {}
-
+    mark = {}
     Staying[ref] = mark
+    sdk.hold(ctx, letGo)
+  end
 
-    const function letGo()
-      if Staying[ref] == mark then
-        Staying[ref] = nil
-      end
+  -- a continuous bolt reads its rows as the instance holds them now, so it follows an edit. a looping one lets go once
+  -- Enabled is off, or for its loop to strike anew when an edit changes how a bolt is built
+  const function reread()
+    const fresh = sdk.refresh(ctx)
+
+    if fresh == attrs then
+      return
     end
 
-    sdk.hold(ctx, letGo)
+    if looping and (fresh.Enabled ~= true or rebuilt(attrs, fresh)) then
+      letGo()
+    end
 
-    -- Enabled is read off the instance: the rows an emit is handed are frozen as it starts
-    sdk.hold(
-      ctx,
-      ref:GetAttributeChangedSignal("Enabled"):Connect(function()
-        if ref:GetAttribute("Enabled") ~= true then
-          enabled = false
-          letGo()
-        end
-      end)
-    )
+    attrs = fresh
   end
 
   if attrs.EmitDelay > 0 then
@@ -202,9 +236,13 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     return
   end
 
-  -- turned off during the delay
-  if staying and ctx.constant and ref:GetAttribute("Enabled") ~= true then
-    return
+  -- turned off or changed during the delay
+  if looping then
+    reread()
+
+    if not holding then
+      return
+    end
   end
 
   -- a ref already out of the place would play its slots at its own offset, near the world's origin
@@ -266,7 +304,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
 
   const function bolt(seed: number)
     const start = ref.WorldCFrame
-    const taper = attrs.Taper
+    local taper = attrs.Taper
     const flowing = attrs.Motion == "Flow"
     const jitter = if flowing then 0 else attrs.Jitter
     const b: strike.Bolt = {
@@ -299,7 +337,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       timeline.stay(plan)
     end
     const appearCurve = sdk.curve(1, attrs.AppearCurve)
-    const disappearCurve = sdk.curve(1, attrs.DisappearCurve)
+    local disappearCurve = sdk.curve(1, attrs.DisappearCurve)
 
     const function appearAt(t: number)
       return appearCurve:at(t)
@@ -378,6 +416,32 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     local placed = CFrame.identity
     local fresh = true
     local tip: Attachment? = nil
+    -- the rows this bolt last took on, and what they changed that a frame redraws
+    local seen = attrs
+    local retaper = false
+    local recolor = false
+
+    -- what an edit changes on a bolt as it stands: anything that changes how one is built strikes it anew instead
+    const function retune()
+      seen = attrs
+      recolor = true
+
+      if attrs.Taper ~= taper then
+        taper = attrs.Taper
+        retaper = true
+      end
+
+      -- an open hold has not decided its disappearance yet
+      if timeline.staying(plan) then
+        plan.disappear = attrs.Disappear
+        plan.disappearTime = attrs.DisappearTime
+        disappearCurve = sdk.curve(1, attrs.DisappearCurve)
+      end
+
+      if attrs.Light > 0 and not lamp then
+        lamp, light = lightAt(sdk, ctx)
+      end
+    end
 
     if slots.EmitOnStart then
       nested.host(sdk, ctx, slots.EmitOnStart:GetChildren(), "EmitOnStart", start)
@@ -506,7 +570,15 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       -- origin (measured 2026-10-23), so a bolt whose ref is gone stays put and draws as it does past its end
       const lost = gone()
 
-      if timeline.staying(plan) and (lost or not enabled or (releaseAt ~= nil and elapsed >= releaseAt)) then
+      if staying then
+        reread()
+
+        if seen ~= attrs then
+          retune()
+        end
+      end
+
+      if timeline.staying(plan) and (lost or not holding or (releaseAt ~= nil and elapsed >= releaseAt)) then
         timeline.release(plan, elapsed)
       end
 
@@ -569,11 +641,13 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       if refit or path.refits(b.fitEnd, finish) or (blocks ~= nil and now ~= b.atFit) then
         strike.fit(b, now, finish, width, taper, if not lost and walls.due(aimClock, elapsed) then "pass" else nil)
         changed = true
-      elseif width ~= b.width then
+      elseif width ~= b.width or retaper then
         geometry.joints(b.shape, b.fitted, width, taper, b.joints)
         b.width = width
         changed = true
       end
+
+      retaper = false
 
       const still = now == b.atFit
       const toWorld = if still then CFrame.identity else now * b.atFit:Inverse()
@@ -615,7 +689,9 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
         highlight.refresh(cover)
       end
 
-      if attrs.Heat.animated or attrs.Gradient.animated then
+      if recolor or attrs.Heat.animated or attrs.Gradient.animated then
+        recolor = false
+
         const nowHeat = sample(attrs.Heat, elapsed)
         const nowSequence = sample(attrs.Gradient, elapsed)
 

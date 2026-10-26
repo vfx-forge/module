@@ -100,7 +100,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         .knob(false)
         :label("Enabled")
         :hint("Keeps striking on a loop while on, a new emit at the rate below."),
-      Continuous = sdk.knob(false):label("Continuous"):hint(
+      Continuous = sdk.knob(false):hidden(loopless):label("Continuous"):hint(
         "One bolt stays and keeps moving while Enabled is on, or for the Duration, instead of a new bolt at the rate. It disappears once Enabled goes off."
       ),
       Rate = sdk

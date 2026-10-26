@@ -372,6 +372,10 @@ harness.suite(function()
         expect(hold.hidden(nil, attrs, {}) == true).toBe(false)
       end
 
+      expect(hides(attributes.Continuous, { Enabled = false, EmitDuration = 0 })).toBe(true)
+      expect(hides(attributes.Continuous, { Enabled = true, EmitDuration = 0 })).toBe(false)
+      expect(hides(attributes.Continuous, { Enabled = false, EmitDuration = 2 })).toBe(false)
+
       -- a plain emit's bolt holds for its Hold row, continuous or not
       expect(hold.hidden(nil, { Continuous = true, Enabled = false, EmitDuration = 0 }, {}) == true).toBe(false)
     end)
