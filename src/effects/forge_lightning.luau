@@ -30,6 +30,9 @@ const LOCKED_WARNING = "Turn on Archivable for anything inside Bolt or EmitAlong
 
 const random = Random.new()
 
+-- every ref whose loop already has a continuous bolt standing, so the loop's later ticks start none beside it
+const Staying: { [Instance]: { any } } = {}
+
 type along = { children: { Instance }, host: Attachment?, joint: number, due: boolean }
 
 const effect = {}
@@ -43,13 +46,14 @@ effect.constant = true
 effect.layout = rows.layout
 effect.params = rows.params
 
--- an Instant bolt has no appear phase, so its hidden time rows add nothing
-const function timing(attrs: any)
+-- an Instant bolt has no appear phase, so its hidden time rows add nothing, and a continuous one holds until it is
+-- let go, so it takes no hold and no restrikes from its rows
+const function timing(attrs: any, staying: boolean?)
   return {
     appear = attrs.Appear,
     appearTime = if attrs.Appear == "Instant" then NO_TIME else attrs.AppearTime,
-    hold = attrs.Hold,
-    restrikes = math.floor(attrs.Restrikes),
+    hold = if staying then NO_TIME else attrs.Hold,
+    restrikes = if staying then 0 else math.floor(attrs.Restrikes),
     disappear = attrs.Disappear,
     disappearTime = attrs.DisappearTime,
   }
@@ -152,17 +156,56 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     return
   end
 
+  const ref = ctx.ref :: Attachment
+  const continuous = attrs.Continuous == true
+  -- a loop's tick stays until Enabled goes off, a Duration's emit for the Duration, a plain emit not at all
+  const staying = continuous and (ctx.constant == true or attrs.EmitDuration > 0)
+  const releaseAt = if staying and not ctx.constant then attrs.EmitDuration else nil
+  local enabled = true
+
+  if staying and ctx.constant then
+    if Staying[ref] then
+      return
+    end
+
+    const mark = {}
+
+    Staying[ref] = mark
+
+    const function letGo()
+      if Staying[ref] == mark then
+        Staying[ref] = nil
+      end
+    end
+
+    sdk.hold(ctx, letGo)
+
+    -- Enabled is read off the instance: the rows an emit is handed are frozen as it starts
+    sdk.hold(
+      ctx,
+      ref:GetAttributeChangedSignal("Enabled"):Connect(function()
+        if ref:GetAttribute("Enabled") ~= true then
+          enabled = false
+          letGo()
+        end
+      end)
+    )
+  end
+
   if attrs.EmitDelay > 0 then
     sdk.wait(ctx, attrs.EmitDelay)
   end
 
-  if attrs.EmitDuration > 0 and not ctx.constant then
+  if attrs.EmitDuration > 0 and not ctx.constant and not continuous then
     sdk.window(ctx, attrs.EmitDuration)
 
     return
   end
 
-  const ref = ctx.ref :: Attachment
+  -- turned off during the delay
+  if staying and ctx.constant and ref:GetAttribute("Enabled") ~= true then
+    return
+  end
 
   -- a ref already out of the place would play its slots at its own offset, near the world's origin
   if not ref:IsDescendantOf(game) then
@@ -209,7 +252,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
   -- drops its share of the fill while another still holds it up
   local fadeAt: number? = nil
 
-  if cover then
+  if cover and not staying then
     local latest = 0
 
     for _, seed in timings do
@@ -250,7 +293,11 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     const hits = strike.make(attrs, b, ref, start, finishAt, surfacing, 0)
     const ends = strike.ends(b.fitted)
     local list = strike.impacts(b, start, hits, ends, finishAt)
-    const plan = timeline.plan(rng.generator(seed), timing(attrs), fadeAt)
+    const plan = timeline.plan(rng.generator(seed), timing(attrs, staying), fadeAt)
+
+    if staying then
+      timeline.stay(plan)
+    end
     const appearCurve = sdk.curve(1, attrs.AppearCurve)
     const disappearCurve = sdk.curve(1, attrs.DisappearCurve)
 
@@ -458,6 +505,11 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       -- a destroyed attachment reads its world frame as its own offset, which carried the bolt to the world's
       -- origin (measured 2026-10-23), so a bolt whose ref is gone stays put and draws as it does past its end
       const lost = gone()
+
+      if timeline.staying(plan) and (lost or not enabled or (releaseAt ~= nil and elapsed >= releaseAt)) then
+        timeline.release(plan, elapsed)
+      end
+
       const now = if lost then b.atFit else ref.WorldCFrame
       const state = timeline.at(plan, if lost then plan.total + 1 else elapsed, appearAt, disappearAt)
       const width = sample(attrs.Width, elapsed)
@@ -651,15 +703,21 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
 
     const stop = sdk.step(ctx, frame, "late")
 
-    local left = plan.total
+    -- the total is read on every wait, since a continuous bolt's is set only once it is let go
+    local passed = 0
 
-    while left > 0 and not gone() do
-      const span = math.min(GONE_CHECK, left)
+    while passed < plan.total and not gone() do
+      const span = math.min(GONE_CHECK, plan.total - passed)
 
-      left -= math.max(sdk.wait(ctx, span), span)
+      passed += math.max(sdk.wait(ctx, span), span)
     end
 
     stop()
+
+    if timeline.staying(plan) then
+      timeline.release(plan, passed)
+    end
+
     frame(0, plan.total + 1)
 
     -- the drawing goes now, while the nested effects it started keep the emit alive on their own

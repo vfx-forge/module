@@ -25,6 +25,15 @@ const function loopless(_: any, attrs: any): boolean
   return attrs.Enabled == false and not (type(duration) == "number" and duration > 0)
 end
 
+-- one bolt that stays while the loop or a Duration runs, so nothing is paced and nothing holds for a set time
+const function lasting(_: any, attrs: any): boolean
+  return attrs.Continuous == true and not loopless(_, attrs)
+end
+
+const function paced(_: any, attrs: any): boolean
+  return loopless(_, attrs) or lasting(_, attrs)
+end
+
 const function instant(_: any, attrs: any): boolean
   return attrs.Appear == "Instant"
 end
@@ -53,7 +62,7 @@ const function tube(_: any, attrs: any): boolean
 end
 
 rows.layout = {
-  { title = "Emit", entries = { "EmitDelay", "EmitDuration", "Count", "Enabled", "Rate" } },
+  { title = "Emit", entries = { "EmitDelay", "EmitDuration", "Count", "Enabled", "Continuous", "Rate" } },
   { title = "Path", entries = { "Target", "EndPoint", "Length", "Spread", "Reach", "Jagged", "Detail" } },
   { title = "Motion", entries = { "Motion", "Jitter", "FlowSpeed" } },
   { title = "Forks", entries = { "Forks", "ForkLength", "Latch" } },
@@ -62,7 +71,7 @@ rows.layout = {
   { title = "Glow", entries = { "Glow" }, hidden = tube },
   { title = "Light", entries = { "Light", "LightColor" } },
   { title = "Appear", entries = { "Appear", "AppearTime", "AppearCurve" } },
-  { title = "Hold", entries = { "Hold", "Restrikes" } },
+  { title = "Hold", entries = { "Hold", "Restrikes" }, hidden = lasting },
   { title = "Disappear", entries = { "Disappear", "DisappearTime", "DisappearCurve" } },
   { title = "Impact", entries = { "ImpactFacing" } },
 }
@@ -91,11 +100,14 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         .knob(false)
         :label("Enabled")
         :hint("Keeps striking on a loop while on, a new emit at the rate below."),
+      Continuous = sdk.knob(false):label("Continuous"):hint(
+        "One bolt stays and keeps moving while Enabled is on, or for the Duration, instead of a new bolt at the rate. It disappears once Enabled goes off."
+      ),
       Rate = sdk
         .knob(5)
         :min(0)
         :unit("perSecond")
-        :hidden(loopless)
+        :hidden(paced)
         :label("Rate")
         :hint("Emits a second while the loop or a Duration runs. 2 to 10 crackles."),
       Target = sdk.knob("End"):options({ "Direction", "End", "Ground" }):label("Target"):hint(
@@ -158,7 +170,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
       Latch = sdk.knob(0):min(0):unit("studs"):hidden(forkless):label("Latch"):hint(
         "Branches bend onto a surface within this many studs of their tip and strike it. 0 keeps them in the air."
       ),
-      Style = sdk.knob("Glow"):options({ "Tube", "Glow", "Segments" }):label("Style"):hint(
+      Style = sdk.knob("Tube"):options({ "Tube", "Glow", "Segments" }):label("Style"):hint(
         "Tube is the bright core alone. Glow wraps it in a soft shell of the bolt's color. Segments builds the bolt from blocky parts, which also work where meshes are not allowed."
       ),
       Width = sdk
@@ -169,13 +181,13 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         :label("Width")
         :hint("How thick the bolt is where it starts. 0.3 to 1.5 for most bolts."),
       Taper = sdk
-        .knob(0.15)
+        .knob(0)
         :min(0)
         :max(1)
         :slider()
         :label("Taper")
         :hint("How thick each tip is, as a share of where it starts. 1 keeps the width all the way."),
-      Gradient = sdk.knob(ColorSequence.new(Color3.fromRGB(80, 140, 255))):mod():label("Color"):hint(
+      Gradient = sdk.knob(ColorSequence.new(Color3.new(1, 1, 1))):mod():label("Color"):hint(
         "The bolt's color from the origin to the tip. One color paints the whole bolt, more keys shift it along its length. The glow shows it as it is, the core whitened by Heat."
       ),
       Heat = sdk.knob(0.8):min(0):max(1):slider():mod():label("Heat"):hint(
@@ -193,7 +205,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         :label("Brightness")
         :hint("How bright a light flashes at the bolt's middle. 0 casts none, 2 to 10 lights the scene."),
       LightColor = sdk
-        .knob(Color3.fromRGB(80, 140, 255))
+        .knob(Color3.new(1, 1, 1))
         :mod()
         :label("Color")
         :hint("Color of the light the bolt casts on what is around it."),

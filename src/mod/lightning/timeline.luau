@@ -85,6 +85,26 @@ function timeline.plan(next: () -> number, rows: rows, fadeAt: number?): Plan
   }
 end
 
+-- a continuous bolt holds until it is let go, so its hold and everything after it stand open until release
+function timeline.stay(plan: Plan)
+  plan.hold = math.huge
+  plan.still = math.huge
+  plan.total = math.huge
+end
+
+function timeline.staying(plan: Plan): boolean
+  return plan.total == math.huge
+end
+
+-- closes an open hold at t, never before the bolt has appeared, so it disappears from there
+function timeline.release(plan: Plan, t: number)
+  const hold = math.max(0, t - plan.appearTime)
+
+  plan.hold = hold
+  plan.still = plan.appearTime + hold
+  plan.total = plan.appearTime + hold + plan.disappearTime
+end
+
 function timeline.duration(rows: rows): number
   return rows.appearTime.Max + rows.hold.Max + rows.disappearTime
 end

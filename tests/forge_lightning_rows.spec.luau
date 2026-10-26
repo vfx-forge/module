@@ -29,6 +29,7 @@ const EXPECTED = {
   EmitDuration = { label = "Duration", default = 0, unit = "seconds" },
   Count = { label = "Count", default = 1 },
   Enabled = { label = "Enabled", default = false },
+  Continuous = { label = "Continuous", default = false },
   Rate = { label = "Rate", default = 5, unit = "perSecond" },
   Target = { label = "Target", default = "End" },
   EndPoint = { label = "End point" },
@@ -43,15 +44,15 @@ const EXPECTED = {
   Forks = { label = "Amount", default = 3 },
   ForkLength = { label = "Length", default = 0.3 },
   Latch = { label = "Latch", default = 0, unit = "studs" },
-  Style = { label = "Style", default = "Glow" },
+  Style = { label = "Style", default = "Tube" },
   Width = { label = "Width", default = 0.7, unit = "studs", mod = true },
-  Taper = { label = "Taper", default = 0.15 },
+  Taper = { label = "Taper", default = 0 },
   Gradient = { label = "Color", mod = true },
   Heat = { label = "Heat", default = 0.8, mod = true },
   GradientRestart = { label = "Restart on forks", default = true },
   Glow = { label = "Strength", default = 1, mod = true },
   Light = { label = "Brightness", default = 0 },
-  LightColor = { label = "Color", default = Color3.fromRGB(80, 140, 255), mod = true },
+  LightColor = { label = "Color", default = Color3.new(1, 1, 1), mod = true },
   Appear = { label = "Mode", default = "Strike" },
   AppearTime = { label = "Time", default = NumberRange.new(0.06, 0.1), unit = "seconds" },
   AppearCurve = { label = "Curve", default = "linear" },
@@ -225,7 +226,7 @@ harness.suite(function()
       end
 
       expect(found).toEqual({
-        "Emit: EmitDelay,EmitDuration,Count,Enabled,Rate",
+        "Emit: EmitDelay,EmitDuration,Count,Enabled,Continuous,Rate",
         "Path: Target,EndPoint,Length,Spread,Reach,Jagged,Detail",
         "Motion: Motion,Jitter,FlowSpeed",
         "Forks: Forks,ForkLength,Latch",
@@ -273,15 +274,16 @@ harness.suite(function()
       end
     end)
 
-    test("the Glow group hides in Tube only, and only the Glow group hides", function()
+    test("the Glow group hides in Tube only, and only it and Hold hide", function()
       const attributes = params()
       const glow = group("Glow")
+      const hold = group("Hold")
 
       expect(type(glow.hidden)).toBe("function")
       expect(hides(attributes.Glow, { Style = "Tube" })).toBe(false)
 
       for _, entry in rows.layout do
-        expect(entry.hidden == nil or entry == glow).toBe(true)
+        expect(entry.hidden == nil or entry == glow or entry == hold).toBe(true)
       end
 
       for _, style in { "Tube", "Glow", "Segments" } do
@@ -320,13 +322,13 @@ harness.suite(function()
       expect(attributes.Glow.calls.max[1]).toBe(1)
     end)
 
-    test("Color starts as a ColorSequence of one blue", function()
+    test("Color starts as a ColorSequence of one white", function()
       const default = params().Gradient.default
       const points = default.Keypoints
-      const blue = Color3.fromRGB(80, 140, 255)
+      const white = Color3.new(1, 1, 1)
 
       expect(typeof(default)).toBe("ColorSequence")
-      expect(points[1].Value == blue and points[#points].Value == blue).toBe(true)
+      expect(points[1].Value == white and points[#points].Value == white).toBe(true)
     end)
 
     test("the light takes a color of its own, so Brightness speaks of neither the rim nor the core", function()
@@ -352,6 +354,26 @@ harness.suite(function()
       expect(hides(attributes.Rate, { Enabled = false, EmitDuration = 0 })).toBe(true)
       expect(hides(attributes.Rate, { Enabled = true, EmitDuration = 0 })).toBe(false)
       expect(hides(attributes.Rate, { Enabled = false, EmitDuration = 2 })).toBe(false)
+    end)
+
+    test("a continuous bolt hides Rate and Hold only while the loop or a Duration runs", function()
+      const attributes = params()
+      const hold = group("Hold")
+
+      for _, attrs in { { Enabled = true, EmitDuration = 0 }, { Enabled = false, EmitDuration = 2 } } do
+        attrs.Continuous = true
+
+        expect(hides(attributes.Rate, attrs)).toBe(true)
+        expect(hold.hidden(nil, attrs, {}) == true).toBe(true)
+
+        attrs.Continuous = false
+
+        expect(hides(attributes.Rate, attrs)).toBe(false)
+        expect(hold.hidden(nil, attrs, {}) == true).toBe(false)
+      end
+
+      -- a plain emit's bolt holds for its Hold row, continuous or not
+      expect(hold.hidden(nil, { Continuous = true, Enabled = false, EmitDuration = 0 }, {}) == true).toBe(false)
     end)
 
     test("Duration floors at 0 and says 0 emits once", function()

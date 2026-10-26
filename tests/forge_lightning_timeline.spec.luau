@@ -471,5 +471,32 @@ harness.suite(function()
       expect({ timeline.cover(0.5) }).toEqual({ 0, 1 })
       expect({ timeline.cover(0) }).toEqual({ 0, 0 })
     end)
+
+    test("a continuous bolt holds until it is let go, then disappears from there", function()
+      const p = plan("Instant", "Thin")
+
+      timeline.stay(p)
+
+      expect(timeline.staying(p)).toBe(true)
+      expect(timeline.at(p, 1000, linear, linear).width).toBe(1)
+      expect(timeline.moving(p, 1000)).toBe(1000)
+
+      timeline.release(p, 5)
+
+      expect(timeline.staying(p)).toBe(false)
+      expect(near(p.total, 5 + p.disappearTime)).toBe(true)
+      expect(near(timeline.at(p, 5 + p.disappearTime / 2, linear, linear).width, 0.5)).toBe(true)
+      expect(timeline.at(p, p.total + 0.01, linear, linear).visible).toBe(false)
+    end)
+
+    test("a continuous bolt let go while it appears still finishes appearing first", function()
+      const p = plan("Grow", "Thin")
+
+      timeline.stay(p)
+      timeline.release(p, p.appearTime / 2)
+
+      expect(p.hold).toBe(0)
+      expect(near(p.total, p.appearTime + p.disappearTime)).toBe(true)
+    end)
   end)
 end)
