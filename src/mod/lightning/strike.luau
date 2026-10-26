@@ -140,7 +140,7 @@ end
 -- the main bolt's end in the ref's space, with the surface it struck when that makes an impact. Direction keeps the
 -- aim its strike drew in the ref's space and Ground the miss it drew, so a bolt aimed again follows the ref and what
 -- is around it without jumping to a new random end; surfaces is false once no impact is wanted, which spares End
--- the ray past its end
+-- the ray past its end. EndOffset moves the end along the ref's axes, and on Ground where the surface is looked for
 const function resolve(
   attrs: any,
   b: Bolt,
@@ -150,12 +150,14 @@ const function resolve(
   surfaces: boolean
 ): (Vector3, Vector3?, Vector3?)
   const origin = now.Position
+  const offset = attrs.EndOffset
 
   if attrs.Target == "Direction" then
-    const reach = now:VectorToWorldSpace(b.aim) * attrs.Length
+    const along = b.aim * attrs.Length + offset
+    const reach = now:VectorToWorldSpace(along)
 
-    if attrs.Length <= TINY then
-      return now:VectorToObjectSpace(reach), nil, nil
+    if along.Magnitude <= TINY then
+      return along, nil, nil
     end
 
     -- a Direction bolt stops at the first surface its line crosses and strikes it
@@ -165,12 +167,12 @@ const function resolve(
       return now:PointToObjectSpace(point), point, normal
     end
 
-    return now:VectorToObjectSpace(reach), nil, nil
+    return along, nil, nil
   end
 
   if attrs.Target == "Ground" then
     const down = -now.UpVector
-    const point, normal = world.ground(origin, down, attrs.Reach, params)
+    const point, normal = world.ground(now:PointToWorldSpace(offset), down, attrs.Reach, params)
 
     if point then
       return now:PointToObjectSpace(point), point, normal
@@ -180,7 +182,7 @@ const function resolve(
       b.miss = now:VectorToObjectSpace(impacts.miss(down, attrs.Reach, b.next))
     end
 
-    return b.miss :: Vector3, nil, nil
+    return (b.miss :: Vector3) + offset, nil, nil
   end
 
   const ending = strike.live(finishAt)
@@ -190,16 +192,17 @@ const function resolve(
     return b.fitEnd, nil, nil
   end
 
-  const finish = ending.WorldPosition
+  const placed = now:PointToObjectSpace(ending.WorldPosition) + offset
+  const finish = now:PointToWorldSpace(placed)
   const travel = finish - origin
 
   if not surfaces or travel.Magnitude < TINY then
-    return now:PointToObjectSpace(finish), nil, nil
+    return placed, nil, nil
   end
 
   const point, normal = world.beyond(finish, travel.Unit, params)
 
-  return now:PointToObjectSpace(finish), point, normal
+  return placed, point, normal
 end
 
 -- the shape aimed again from where the ref is now: its end resolved, every fork's latch cast for, and every surface
@@ -253,7 +256,7 @@ function strike.aim(
   return hits
 end
 
--- a new shape and its aim
+-- a new shape and its aim; flowed is how many bolt lengths a Flow bolt's kinks have slid so far
 function strike.make(
   attrs: any,
   b: Bolt,
@@ -261,7 +264,7 @@ function strike.make(
   now: CFrame,
   finishAt: Attachment?,
   surfaces: boolean,
-  flowAt: number
+  flowed: number
 ): { Hit }
   b.shape = path.make(b.next, {
     detail = math.floor(attrs.Detail),
@@ -270,10 +273,10 @@ function strike.make(
     jagged = attrs.Jagged,
   })
 
-  -- Flow's offsets are another pattern than make's zigzag, so a Flow bolt shows them from its first frame, at the
-  -- motion clock the frame loop flows by
+  -- Flow's offsets are another pattern than make's zigzag, so a Flow bolt shows them from its first frame, slid as
+  -- far as the frame loop has flowed them
   if attrs.Motion == "Flow" then
-    path.flow(b.shape, flowAt, attrs.FlowSpeed, attrs.Jagged)
+    path.flow(b.shape, flowed, 1, attrs.Jagged)
   end
 
   b.miss = nil

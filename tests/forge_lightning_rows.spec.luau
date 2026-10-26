@@ -27,39 +27,41 @@ const KNOB_METHODS = {
 const EXPECTED = {
   EmitDelay = { label = "Delay", default = 0, unit = "seconds" },
   EmitDuration = { label = "Duration", default = 0, unit = "seconds" },
-  Count = { label = "Count", default = 1 },
+  Count = { label = "Count", default = 1, mod = true },
   Enabled = { label = "Enabled", default = false },
   Continuous = { label = "Continuous", default = false },
   Rate = { label = "Rate", default = 5, unit = "perSecond" },
   Target = { label = "Target", default = "End" },
   EndPoint = { label = "End point" },
-  Length = { label = "Length", default = 20, unit = "studs" },
-  Spread = { label = "Spread", default = Vector2.zero },
-  Reach = { label = "Reach", default = 30, unit = "studs" },
-  Jagged = { label = "Jagged", default = 0.1 },
-  Detail = { label = "Detail", default = 16 },
+  Length = { label = "Length", default = 20, unit = "studs", mod = true },
+  Spread = { label = "Spread", default = Vector2.zero, mod = true },
+  Reach = { label = "Reach", default = 30, unit = "studs", mod = true },
+  StartOffset = { label = "Start", unit = "studs", mod = true },
+  EndOffset = { label = "End", unit = "studs", mod = true },
+  Jagged = { label = "Jagged", default = 0.1, mod = true },
+  Detail = { label = "Detail", default = 16, mod = true },
   Motion = { label = "Mode", default = "Jitter" },
-  Jitter = { label = "Jitter", default = 15, unit = "perSecond" },
-  FlowSpeed = { label = "Speed", default = 1, unit = "perSecond" },
-  Forks = { label = "Amount", default = 3 },
-  ForkLength = { label = "Length", default = 0.3 },
-  Latch = { label = "Latch", default = 0, unit = "studs" },
+  Jitter = { label = "Jitter", default = 15, unit = "perSecond", mod = true },
+  FlowSpeed = { label = "Speed", default = 1, unit = "perSecond", mod = true },
+  Forks = { label = "Amount", default = 3, mod = true },
+  ForkLength = { label = "Length", default = 0.3, mod = true },
+  Latch = { label = "Latch", default = 0, unit = "studs", mod = true },
   Style = { label = "Style", default = "Tube" },
   Width = { label = "Width", default = 0.7, unit = "studs", mod = true },
-  Taper = { label = "Taper", default = 0 },
+  Taper = { label = "Taper", default = 0, mod = true },
   Gradient = { label = "Color", mod = true },
   Heat = { label = "Heat", default = 0.8, mod = true },
   GradientRestart = { label = "Restart on forks", default = true },
   Glow = { label = "Strength", default = 1, mod = true },
-  Light = { label = "Brightness", default = 0 },
+  Light = { label = "Brightness", default = 0, mod = true },
   LightColor = { label = "Color", default = Color3.new(1, 1, 1), mod = true },
   Appear = { label = "Mode", default = "Strike" },
   AppearTime = { label = "Time", default = NumberRange.new(0.06, 0.1), unit = "seconds" },
   AppearCurve = { label = "Curve", default = "linear" },
   Hold = { label = "Time", default = NumberRange.new(0.2, 0.3), unit = "seconds" },
-  Restrikes = { label = "Restrikes", default = 1 },
+  Restrikes = { label = "Restrikes", default = 1, mod = true },
   Disappear = { label = "Mode", default = "Thin" },
-  DisappearTime = { label = "Time", default = 0.25, unit = "seconds" },
+  DisappearTime = { label = "Time", default = 0.25, unit = "seconds", mod = true },
   DisappearCurve = { label = "Curve", default = "easeIn" },
   ImpactFacing = { label = "Facing", default = "Surface" },
 }
@@ -158,7 +160,8 @@ harness.suite(function()
       end
     end)
 
-    test("only the rows an artist animates take modifiers", function()
+    -- a choice of mode, a curve, a flag or an instance takes none; everything else moves on screen
+    test("every row but modes, curves, flags, the end point and the emit's own timing takes modifiers", function()
       const attributes = params()
 
       for name, want in EXPECTED do
@@ -208,6 +211,10 @@ harness.suite(function()
       expect(hides(attributes.GradientRestart, { Forks = 2 })).toBe(false)
       expect(hides(attributes.ForkLength, { Forks = 3 })).toBe(false)
       expect(hides(attributes.Latch, { Forks = 1 })).toBe(false)
+      -- a modifier may move Forks off 0, so its fork rows stay
+      expect(hides(attributes.ForkLength, { Forks = { value = 0, animated = false } })).toBe(true)
+      expect(hides(attributes.ForkLength, { Forks = { value = 0, animated = true } })).toBe(false)
+      expect(hides(attributes.Latch, { Forks = { value = 2, animated = false } })).toBe(false)
     end)
 
     test("End point is an attachment row shown only for End", function()
@@ -228,6 +235,7 @@ harness.suite(function()
       expect(found).toEqual({
         "Emit: EmitDelay,EmitDuration,Count,Enabled,Continuous,Rate",
         "Path: Target,EndPoint,Length,Spread,Reach,Jagged,Detail",
+        "Offset: StartOffset,EndOffset",
         "Motion: Motion,Jitter,FlowSpeed",
         "Forks: Forks,ForkLength,Latch",
         "Look: Style,Width,Taper",

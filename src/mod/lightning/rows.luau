@@ -12,12 +12,6 @@ const function notGround(_: any, attrs: any): boolean
   return attrs.Target ~= "Ground"
 end
 
-const function forkless(_: any, attrs: any): boolean
-  const forks = attrs.Forks
-
-  return forks ~= nil and math.floor(forks) <= 0
-end
-
 -- Rate paces an EmitDuration window as well as the loop
 const function loopless(_: any, attrs: any): boolean
   const duration = attrs.EmitDuration
@@ -49,6 +43,12 @@ const function read(attrs: any, name: string): any
   return value
 end
 
+const function forkless(_: any, attrs: any): boolean
+  const forks = read(attrs, "Forks")
+
+  return forks ~= nil and math.floor(forks) <= 0 and not (type(attrs.Forks) == "table" and attrs.Forks.animated)
+end
+
 const function flowing(_: any, attrs: any): boolean
   return read(attrs, "Motion") == "Flow"
 end
@@ -64,6 +64,7 @@ end
 rows.layout = {
   { title = "Emit", entries = { "EmitDelay", "EmitDuration", "Count", "Enabled", "Continuous", "Rate" } },
   { title = "Path", entries = { "Target", "EndPoint", "Length", "Spread", "Reach", "Jagged", "Detail" } },
+  { title = "Offset", entries = { "StartOffset", "EndOffset" } },
   { title = "Motion", entries = { "Motion", "Jitter", "FlowSpeed" } },
   { title = "Forks", entries = { "Forks", "ForkLength", "Latch" } },
   { title = "Look", entries = { "Style", "Width", "Taper" } },
@@ -94,6 +95,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
       Count = sdk
         .knob(1)
         :min(1)
+        :mod()
         :label("Count")
         :hint("Bolts each emit makes, each with its own shape and timing. 1 to 5 reads as one storm."),
       Enabled = sdk
@@ -121,9 +123,10 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         :min(0)
         :unit("studs")
         :hidden(notDirection)
+        :mod()
         :label("Length")
         :hint("How far the bolt reaches along the up axis."),
-      Spread = sdk.knob(Vector2.zero):hidden(notDirection):label("Spread"):hint(
+      Spread = sdk.knob(Vector2.zero):hidden(notDirection):mod():label("Spread"):hint(
         "Degrees each bolt may tilt away from the up axis, around x and y. 0 aims every bolt the same way."
       ),
       Reach = sdk
@@ -131,15 +134,23 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         :min(1)
         :unit("studs")
         :hidden(notGround)
+        :mod()
         :label("Reach")
         :hint("How far below the attachment a surface is looked for. Nothing found, the bolt ends in the air."),
-      Jagged = sdk.knob(0.1):min(0):max(0.5):slider():label("Jagged"):hint(
+      StartOffset = sdk.knob(Vector3.zero):unit("studs"):mod():label("Start"):hint(
+        "Moves where the bolt starts, in studs along the attachment's axes. A random modifier starts each bolt somewhere else."
+      ),
+      EndOffset = sdk.knob(Vector3.zero):unit("studs"):mod():label("End"):hint(
+        "Moves where the bolt ends, in studs along the attachment's axes. On Ground it moves where the surface is looked for. A random modifier scatters the ends."
+      ),
+      Jagged = sdk.knob(0.1):min(0):max(0.5):slider():mod():label("Jagged"):hint(
         "How far the zigzags stray, as a share of the bolt's length. 0 is straight, 0.05 to 0.2 reads as lightning."
       ),
       Detail = sdk
         .knob(16)
         :min(2)
         :max(32)
+        :mod()
         :label("Detail")
         :hint("Segments in the main bolt. More makes finer zigzags; 8 to 24 looks right."),
       Jitter = sdk
@@ -147,6 +158,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         :min(0)
         :unit("perSecond")
         :hidden(flowing)
+        :mod()
         :label("Jitter")
         :hint("Times a second the bolt takes a new zigzag while it shows. 0 keeps one shape."),
       Motion = sdk.knob("Jitter"):options({ "Jitter", "Flow" }):label("Mode"):hint(
@@ -156,18 +168,26 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         .knob(1)
         :unit("perSecond")
         :hidden(jittering)
+        :mod()
         :label("Speed")
         :hint("Bolt lengths a second the kinks slide. Negative flows back toward the origin."),
-      Forks = sdk.knob(3):min(0):max(8):label("Amount"):hint("Branches leaving the middle of the bolt. 0 makes none."),
+      Forks = sdk
+        .knob(3)
+        :min(0)
+        :max(8)
+        :mod()
+        :label("Amount")
+        :hint("Branches leaving the middle of the bolt. 0 makes none."),
       ForkLength = sdk
         .knob(0.3)
         :min(0.05)
         :max(1)
         :slider()
         :hidden(forkless)
+        :mod()
         :label("Length")
         :hint("How long the branches are, as a share of the bolt's length."),
-      Latch = sdk.knob(0):min(0):unit("studs"):hidden(forkless):label("Latch"):hint(
+      Latch = sdk.knob(0):min(0):unit("studs"):hidden(forkless):mod():label("Latch"):hint(
         "Branches bend onto a surface within this many studs of their tip and strike it. 0 keeps them in the air."
       ),
       Style = sdk.knob("Tube"):options({ "Tube", "Glow", "Segments" }):label("Style"):hint(
@@ -185,6 +205,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         :min(0)
         :max(1)
         :slider()
+        :mod()
         :label("Taper")
         :hint("How thick each tip is, as a share of where it starts. 1 keeps the width all the way."),
       Gradient = sdk.knob(ColorSequence.new(Color3.new(1, 1, 1))):mod():label("Color"):hint(
@@ -202,6 +223,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
       Light = sdk
         .knob(0)
         :min(0)
+        :mod()
         :label("Brightness")
         :hint("How bright a light flashes at the bolt's middle. 0 casts none, 2 to 10 lights the scene."),
       LightColor = sdk
@@ -234,12 +256,13 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
       Restrikes = sdk
         .knob(1)
         :min(0)
+        :mod()
         :label("Restrikes")
         :hint("Times the bolt blinks out and strikes again in a new shape while it holds. 0 to 3."),
       Disappear = sdk.knob("Thin"):options({ "Thin", "Fade", "Retract", "Recoil" }):label("Mode"):hint(
         "How the bolt goes. Thin narrows it to nothing, Fade fades the bolt out at full width, Retract lets go of the origin first, Recoil pulls the tips back in."
       ),
-      DisappearTime = sdk.knob(0.25):min(0):unit("seconds"):label("Time"):hint("Seconds the bolt takes to go."),
+      DisappearTime = sdk.knob(0.25):min(0):unit("seconds"):mod():label("Time"):hint("Seconds the bolt takes to go."),
       DisappearCurve = sdk
         .knob("easeIn")
         :curve("easeIn")

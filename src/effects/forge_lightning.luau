@@ -49,6 +49,32 @@ const REBUILT = {
   "Continuous",
 }
 
+-- the rows each bolt reads for itself: a random modifier on one draws again for every bolt, so the bolts of one emit
+-- differ
+const APART = {
+  "Width",
+  "Taper",
+  "Length",
+  "Spread",
+  "Reach",
+  "StartOffset",
+  "EndOffset",
+  "Jagged",
+  "Detail",
+  "Forks",
+  "ForkLength",
+  "Latch",
+  "Jitter",
+  "FlowSpeed",
+  "Gradient",
+  "Heat",
+  "Glow",
+  "Light",
+  "LightColor",
+  "Restrikes",
+  "DisappearTime",
+}
+
 type along = { children: { Instance }, host: Attachment?, joint: number, due: boolean }
 
 const effect = {}
@@ -62,16 +88,24 @@ effect.constant = true
 effect.layout = rows.layout
 effect.params = rows.params
 
+const function sample(track: any, elapsed: number)
+  return if track.animated then track:at(elapsed) else track.value
+end
+
 -- an Instant bolt has no appear phase, so its hidden time rows add nothing, and a continuous one holds until it is
--- let go, so it takes no hold and no restrikes from its rows
-const function timing(attrs: any, staying: boolean?)
+-- let go, so it takes no hold and no restrikes from its rows. a bolt's timing is its own rows as they start, and the
+-- effect's length reads the rows' own values, since a drawn one is not drawn yet
+const function timing(attrs: any, mine: any?, staying: boolean?)
+  const restrikes = if mine then sample(mine.Restrikes, 0) else attrs.Restrikes.value
+  const disappearTime = if mine then sample(mine.DisappearTime, 0) else attrs.DisappearTime.value
+
   return {
     appear = attrs.Appear,
     appearTime = if attrs.Appear == "Instant" then NO_TIME else attrs.AppearTime,
     hold = if staying then NO_TIME else attrs.Hold,
-    restrikes = if staying then 0 else math.floor(attrs.Restrikes),
+    restrikes = if staying then 0 else math.max(0, math.floor(restrikes)),
     disappear = attrs.Disappear,
-    disappearTime = attrs.DisappearTime,
+    disappearTime = math.max(0, disappearTime),
   }
 end
 
@@ -102,9 +136,18 @@ function effect.template(_: SDK.V1)
   return attachment
 end
 
+-- a row read again is a new Track even when nothing about it moved
+const function same(old: any, new: any): boolean
+  if type(old) == "table" and type(new) == "table" then
+    return old.value == new.value and old.animated == new.animated and old.duration == new.duration
+  end
+
+  return old == new
+end
+
 const function rebuilt(old: any, new: any): boolean
   for _, name in REBUILT do
-    if old[name] ~= new[name] then
+    if not same(old[name], new[name]) then
       return true
     end
   end
@@ -112,8 +155,21 @@ const function rebuilt(old: any, new: any): boolean
   return rows.glowing(old.Style, old.Glow) ~= rows.glowing(new.Style, new.Glow)
 end
 
-const function sample(track: any, elapsed: number)
-  return if track.animated then track:at(elapsed) else track.value
+const function apart(attrs: any): { [string]: any }
+  const mine = {}
+
+  for _, name in APART do
+    const track = attrs[name]
+
+    mine[name] = if track.animated then track:redraw() else track
+  end
+
+  return mine
+end
+
+-- a light is made for a bolt that may cast one
+const function lights(track: any): boolean
+  return track.animated or track.value > 0
 end
 
 const function endOf(ref: Instance, picked: Attachment?): Attachment?
@@ -281,7 +337,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
 
   const slots = nested.slots(ref)
   const join = sdk.join(ctx)
-  const count = math.floor(attrs.Count)
+  const count = math.max(1, math.floor(sample(attrs.Count, 0)))
   const riding, along = sortSlots(sdk, ctx, slots)
   const cover = if riding.highlight then highlight.make(sdk, ctx, riding.highlight, count) else nil
   const sprays = along.emitter
@@ -300,11 +356,13 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     return away or ref.Parent == nil
   end
 
-  -- each bolt's timing comes from a seed of its own, so the emit can read every plan before any bolt starts
+  -- each bolt's timing comes from a seed and rows of its own, so the emit can read every plan before any bolt starts
   const timings = {}
+  const mines = {}
 
   for i = 1, count do
     timings[i] = random:NextInteger(1, SEED_MAX)
+    mines[i] = apart(attrs)
   end
 
   -- one Highlight covers every bolt of the emit, so they all disappear together once the last hold is over, and none
@@ -314,20 +372,38 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
   if cover and not staying then
     local latest = 0
 
-    for _, seed in timings do
-      const own = timeline.plan(rng.generator(seed), timing(attrs))
+    for i, seed in timings do
+      const planned = timeline.plan(rng.generator(seed), timing(attrs, mines[i]))
 
-      latest = math.max(latest, own.still)
+      latest = math.max(latest, planned.still)
     end
 
     fadeAt = latest
   end
 
-  const function bolt(seed: number)
-    const start = ref.WorldCFrame
-    local taper = attrs.Taper
+  const function bolt(seed: number, given: { [string]: any })
+    local mine = given
+
+    -- the ref's frame moved by the bolt's StartOffset, which everything the bolt fits is measured from
+    const function placeOf(elapsed: number): CFrame
+      const shift = sample(mine.StartOffset, elapsed)
+
+      return if shift == Vector3.zero then ref.WorldCFrame else ref.WorldCFrame * CFrame.new(shift)
+    end
+
+    const function taperAt(elapsed: number): number
+      return math.clamp(sample(mine.Taper, elapsed), 0, 1)
+    end
+
+    const function periodAt(elapsed: number): number
+      const rate = sample(mine.Jitter, elapsed)
+
+      return if rate > 0 then 1 / rate else math.huge
+    end
+
+    const start = placeOf(0)
+    local taper = taperAt(0)
     const flowing = attrs.Motion == "Flow"
-    const jitter = if flowing then 0 else attrs.Jitter
     const b: strike.Bolt = {
       next = rng.generator(random:NextInteger(1, SEED_MAX)),
       shape = nil :: any,
@@ -342,17 +418,48 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       miss = nil,
       fitEnd = Vector3.zero,
       atFit = start,
-      width = sample(attrs.Width, 0),
+      width = sample(mine.Width, 0),
       longest = 0,
       middle = 1,
       length = 0,
     }
 
+    -- what a strike or an aim reads of the rows: this bolt's own, as they stand at elapsed
+    const function settle(elapsed: number)
+      return {
+        Target = attrs.Target,
+        Motion = attrs.Motion,
+        Length = math.max(0, sample(mine.Length, elapsed)),
+        Spread = sample(mine.Spread, elapsed),
+        Reach = math.max(1, sample(mine.Reach, elapsed)),
+        EndOffset = sample(mine.EndOffset, elapsed),
+        Jagged = math.clamp(sample(mine.Jagged, elapsed), 0, 0.5),
+        Detail = math.clamp(math.floor(sample(mine.Detail, elapsed)), 2, 32),
+        Forks = math.clamp(math.floor(sample(mine.Forks, elapsed)), 0, 8),
+        ForkLength = math.clamp(sample(mine.ForkLength, elapsed), 0.05, 1),
+        Latch = math.max(0, sample(mine.Latch, elapsed)),
+        Taper = taper,
+      }
+    end
+
     const surfacing = slots.EmitOnImpact ~= nil
-    const hits = strike.make(attrs, b, ref, start, finishAt, surfacing, 0)
+    const hits = strike.make(settle(0), b, ref, start, finishAt, surfacing, 0)
     const ends = strike.ends(b.fitted)
     local list = strike.impacts(b, start, hits, ends, finishAt)
-    const plan = timeline.plan(rng.generator(seed), timing(attrs, staying), fadeAt)
+    const plan = timeline.plan(rng.generator(seed), timing(attrs, mine, staying), fadeAt)
+
+    -- bolt lengths a Flow bolt's kinks have slid, summed frame by frame so a moving Speed never jumps them
+    local flowed = 0
+    local moved = 0
+
+    const function flowTo(elapsed: number): number
+      const moving = timeline.moving(plan, elapsed)
+
+      flowed += (moving - moved) * sample(mine.FlowSpeed, elapsed)
+      moved = moving
+
+      return flowed
+    end
 
     if staying then
       timeline.stay(plan)
@@ -381,13 +488,13 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
 
     geometry.reveal(b.joints, opening.head * b.longest, opening.tail * b.longest, shown)
 
-    local heat = sample(attrs.Heat, 0)
-    local sequence = sample(attrs.Gradient, 0)
+    local heat = sample(mine.Heat, 0)
+    local sequence = sample(mine.Gradient, 0)
     const holder = if cover then cover.model else cores.model(sdk, ctx)
     const looks = {
       glow = rows.glowing(attrs.Style, attrs.Glow),
       heat = heat,
-      strength = math.clamp(sample(attrs.Glow, 0) * opening.glow, 0, 1),
+      strength = math.clamp(sample(mine.Glow, 0) * opening.glow, 0, 1),
       keys = keysOf(sequence),
       longest = b.longest,
       restart = attrs.GradientRestart,
@@ -413,7 +520,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     local lamp: Attachment? = nil
     local light: PointLight? = nil
 
-    if attrs.Light > 0 then
+    if lights(mine.Light) then
       lamp, light = lightAt(sdk, ctx)
     end
 
@@ -426,13 +533,23 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     const lit = { brightness = -1, range = -1, color = nil :: Color3? }
     const spray: along = { children = sprays, host = nil, joint = 0, due = #sprays > 0 }
     const strikeAlong: along = { children = struck, host = nil, joint = 0, due = #struck > 0 }
-    const period = if jitter > 0 then 1 / jitter else math.huge
+    local period = if flowing then math.huge else periodAt(0)
     -- every ray after the strike's own is cast on this clock: a restrike or reshape forces an aim, Flow aims when it
     -- is due, and any other fit casts the walls only when it is due, so a moving End or a flowing bolt casts
     -- nothing on the frames between
-    const aimClock = walls.clock(attrs.Jitter)
+    const aimClock = walls.clock(sample(mine.Jitter, 0))
     local strikeIndex = 1
-    local nextReshape = period
+    -- the next reshape gap after from; a Jitter at 0 shapes nothing more, and one its modifiers may move off 0 is
+    -- looked at again
+    const function after(from: number, gap: number): number
+      if gap < math.huge then
+        return from + gap
+      end
+
+      return if mine.Jitter.animated and not flowing then from + GONE_CHECK else math.huge
+    end
+
+    local nextReshape = after(0, period)
     local nextSpray = FLOW_ALONG
     local placed = CFrame.identity
     local fresh = true
@@ -442,24 +559,21 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     local retaper = false
     local recolor = false
 
-    -- what an edit changes on a bolt as it stands: anything that changes how one is built strikes it anew instead
+    -- what an edit changes on a bolt as it stands: anything that changes how one is built strikes it anew instead.
+    -- its rows are its own again, drawn anew
     const function retune()
       took = attrs
+      mine = apart(attrs)
       recolor = true
-
-      if attrs.Taper ~= taper then
-        taper = attrs.Taper
-        retaper = true
-      end
 
       -- an open hold has not decided its disappearance yet
       if timeline.staying(plan) then
         plan.disappear = attrs.Disappear
-        plan.disappearTime = attrs.DisappearTime
+        plan.disappearTime = math.max(0, sample(mine.DisappearTime, 0))
         disappearCurve = sdk.curve(1, attrs.DisappearCurve)
       end
 
-      if attrs.Light > 0 and not lamp then
+      if lights(mine.Light) and not lamp then
         lamp, light = lightAt(sdk, ctx)
       end
     end
@@ -533,9 +647,9 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
 
     -- the shape aimed again from where the ref is, and while the first strike's impacts are still to fire, listed
     -- again from the surfaces this aim found
-    const function aimAgain(now: CFrame)
+    const function aimAgain(now: CFrame, elapsed: number)
       const surfaces = surfacing and strikeIndex == 1
-      const found = strike.aim(attrs, b, ref, now, finishAt, surfaces)
+      const found = strike.aim(settle(elapsed), b, ref, now, finishAt, surfaces)
 
       if not surfaces then
         return
@@ -603,9 +717,15 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
         timeline.release(plan, elapsed)
       end
 
-      const now = if lost then b.atFit else ref.WorldCFrame
+      const now = if lost then b.atFit else placeOf(elapsed)
       const state = timeline.at(plan, if lost then plan.total + 1 else elapsed, appearAt, disappearAt)
-      const width = sample(attrs.Width, elapsed)
+      const width = sample(mine.Width, elapsed)
+      const nowTaper = taperAt(elapsed)
+
+      if nowTaper ~= taper then
+        taper = nowTaper
+        retaper = true
+      end
       local shade = state.opacity
 
       if cover then
@@ -623,40 +743,49 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
 
         strikeIndex = state.strike
         b.width = width
-        strike.make(attrs, b, ref, now, finishAt, false, timeline.moving(plan, elapsed))
+        strike.make(settle(elapsed), b, ref, now, finishAt, false, if flowing then flowTo(elapsed) else 0)
         walls.due(aimClock, elapsed, true)
         -- the new shape shows for a whole period once its blink is over
-        nextReshape = elapsed + timeline.BLINK + period
+        period = if flowing then math.huge else periodAt(elapsed)
+        nextReshape = after(elapsed + timeline.BLINK, period)
         changed = true
         -- a restrike's frame falls in its blink, so the due flags wait for the bolt to show again
         spray.due = #sprays > 0
         strikeAlong.due = #struck > 0
       elseif state.visible and flowing and not timeline.waiting(plan, elapsed) then
-        path.flow(b.shape, timeline.moving(plan, elapsed), attrs.FlowSpeed, attrs.Jagged)
+        path.flow(b.shape, flowTo(elapsed), 1, math.clamp(sample(mine.Jagged, elapsed), 0, 0.5))
 
         -- aimed on a clock of its own, fitting the offsets this frame flowed to, so the bolt never jumps a pattern
         if not lost and walls.due(aimClock, elapsed) then
-          aimAgain(now)
+          aimAgain(now, elapsed)
           changed = true
         else
           refit = true
         end
       elseif state.visible and elapsed >= nextReshape and not timeline.waiting(plan, elapsed) then
-        nextReshape = (math.floor(elapsed / period) + 1) * period
-        path.jitter(b.shape, b.next, attrs.Jagged)
-        spray.due = #sprays > 0
+        period = periodAt(elapsed)
 
-        if lost then
-          refit = true
+        if period == math.huge then
+          nextReshape = after(elapsed, period)
         else
-          walls.due(aimClock, elapsed, true)
-          aimAgain(now)
-          changed = true
+          nextReshape = (math.floor(elapsed / period) + 1) * period
+          path.jitter(b.shape, b.next, math.clamp(sample(mine.Jagged, elapsed), 0, 0.5))
+          spray.due = #sprays > 0
+
+          if lost then
+            refit = true
+          else
+            walls.due(aimClock, elapsed, true)
+            aimAgain(now, elapsed)
+            changed = true
+          end
         end
       end
 
       const ending = if lost then nil else strike.live(finishAt)
-      const finish = if ending then now:PointToObjectSpace(ending.WorldPosition) else b.fitEnd
+      const finish = if ending
+        then now:PointToObjectSpace(ending.WorldPosition) + sample(mine.EndOffset, elapsed)
+        else b.fitEnd
 
       -- parts are placed in the world on every draw, so they follow a move by fitting again
       if refit or path.refits(b.fitEnd, finish) or (blocks ~= nil and now ~= b.atFit) then
@@ -678,7 +807,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
         mesh.move(drawn, toWorld)
       end
 
-      const glow = sample(attrs.Glow, elapsed)
+      const glow = sample(mine.Glow, elapsed)
       const head = if state.visible then state.head * b.longest else -math.huge
       const tail = state.tail * b.longest
 
@@ -710,11 +839,11 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
         highlight.refresh(cover)
       end
 
-      if recolor or attrs.Heat.animated or attrs.Gradient.animated then
+      if recolor or mine.Heat.animated or mine.Gradient.animated then
         recolor = false
 
-        const nowHeat = sample(attrs.Heat, elapsed)
-        const nowSequence = sample(attrs.Gradient, elapsed)
+        const nowHeat = sample(mine.Heat, elapsed)
+        const nowSequence = sample(mine.Gradient, elapsed)
 
         -- a sequence compares by its keypoints, so a held lane recolors nothing
         if nowHeat ~= heat or nowSequence ~= sequence then
@@ -741,7 +870,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
           lamp.WorldPosition = middle
         end
 
-        const brightness = if state.visible then attrs.Light * state.flash else 0
+        const brightness = if state.visible then math.max(0, sample(mine.Light, elapsed)) * state.flash else 0
         const range = math.min(b.length, LIGHT_RANGE)
 
         if brightness ~= lit.brightness then
@@ -754,7 +883,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
           light.Range = range
         end
 
-        const glow = sample(attrs.LightColor, elapsed)
+        const glow = sample(mine.LightColor, elapsed)
 
         if glow ~= lit.color then
           lit.color = glow
@@ -847,8 +976,8 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     end
   end
 
-  for _, seed in timings do
-    sdk.spawn(join, bolt, seed)
+  for i, seed in timings do
+    sdk.spawn(join, bolt, seed, mines[i])
   end
 
   sdk.await(join)

@@ -19,7 +19,7 @@ const ORIGIN = Vector3.new(-300, 80, -300)
 const WAIT_MAX = 3
 const LONG_LIFETIME = 2
 const DRAWING = { LightningCore = true, LightningCores = true, LightningGlow = true, LightningLight = true }
-const END_WARNING = "Lightning set to End needs an Attachment named End inside it."
+const END_WARNING = "Lightning set to End needs an End point attachment, or an Attachment named End inside it."
 const BOLT_WARNING = "This can't ride inside Bolt. Put it in EmitAlong to play it on the bolt."
 const LOCKED_WARNING = "Turn on Archivable for anything inside Bolt or EmitAlong so it can play."
 const SOUND_PLAYER = "VFXForgeSoundPlayer"
@@ -125,12 +125,12 @@ const function bolt(label: string, offset: number, withEnd: boolean, attributes:
   return attachment
 end
 
--- what this run's emits put in Terrain, in the order it arrived
+-- what this run's emits put under Terrain, in the effect's container too, in the order it arrived
 const added = {}
 
 table.insert(
   record.connections,
-  workspace.Terrain.ChildAdded:Connect(function(child)
+  workspace.Terrain.DescendantAdded:Connect(function(child)
     table.insert(added, { child = child, at = os.clock() })
   end)
 )
@@ -811,7 +811,7 @@ do
   local env: any = nil
   local last: Vector3? = nil
   local shapes = 0
-  const watch = workspace.Terrain.ChildAdded:Connect(function(child)
+  const watch = workspace.Terrain.DescendantAdded:Connect(function(child)
     if child.Name == "LightningCores" and not core then
       task.defer(function()
         core = child:FindFirstChildWhichIsA("MeshPart")
