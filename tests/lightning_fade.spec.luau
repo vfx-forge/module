@@ -398,8 +398,9 @@ harness.suite(function()
       expect(track.has("start")).toBe(true)
       expect(track.has("dissipate")).toBe(true)
 
-      -- the span the old format read for this row when the quad named none
-      local span = 0.5
+      -- v2.4.0 ran a quad naming no duration over the bolt's own duration, the
+      -- 1 this track is built over
+      local span = 1
 
       expect(near(track.at(0), 0)).toBe(true)
       expect(near(track.at(span), 0.5)).toBe(true)
@@ -408,7 +409,7 @@ harness.suite(function()
 
       expect(midway > 0 and midway < 0.5).toBe(true)
 
-      local fired = 0.6
+      local fired = 1.1
       local held = track.at(fired)
 
       expect(near(held, 0.5)).toBe(true)

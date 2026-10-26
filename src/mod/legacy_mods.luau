@@ -138,6 +138,20 @@ legacy_mods.SPANS = {
   SizeScaleOut = 0.5,
 }
 
+-- a Transparency quad ran 0.5 seconds by default only on a shockwave's
+-- pieces, every one a BasePart. a mesh's decal and the old lightning ran
+-- theirs over the effect's own length, and a 0.5 lent to them by the name
+-- alone cut a mesh decal's fade short from 2026-09-13 on
+local PART_SPANS = { Transparency = true }
+
+function legacy_mods.spanOf(ref: Instance, name: string): number?
+  if PART_SPANS[name] and not ref:IsA("BasePart") then
+    return nil
+  end
+
+  return legacy_mods.SPANS[name]
+end
+
 -- omitted rather than wrapped when absent, so evaluate sees no endpoint at
 -- all instead of a lit nil it would try to lerp
 local function litOrNil(v: any): value.Value?
@@ -416,7 +430,8 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: 
 
   local durationRaw = legacy_mods.alias(ref, keys.duration, nil, map)
   local curveRaw = legacy_mods.alias(ref, keys.curve, nil, map)
-  local key = `quad|{source}|{name}|{text(startV)}|{text(finishV)}|{text(durationRaw)}|{text(curveRaw)}`
+  local span = legacy_mods.spanOf(ref, name)
+  local key = `quad|{source}|{name}|{text(startV)}|{text(finishV)}|{text(durationRaw)}|{text(curveRaw)}|{text(span)}`
   local known = QUEUES[key]
 
   if known ~= nil then
@@ -438,7 +453,7 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: 
     finishV = startV
   end
 
-  local durationV = durationOf(durationRaw) or legacy_mods.SPANS[name]
+  local durationV = durationOf(durationRaw) or span
   local curveV = curveOf(curveRaw) or legacy_mods.defaultCurve(keys.curve)
 
   local drawn = legacy_mods.isDrawnRange(source, name)
@@ -550,14 +565,15 @@ function legacy_mods.readCurve(ref: Instance, _source: string, name: string, map
   end
 
   local durationRaw = legacy_mods.alias(ref, keys.duration, nil, map)
-  local key = `curve|{name}|{text(curveV)}|{text(durationRaw)}`
+  local span = legacy_mods.spanOf(ref, name)
+  local key = `curve|{name}|{text(curveV)}|{text(durationRaw)}|{text(span)}`
 
   return QUEUES[key]
     or remember(key, {
       {
         kind = "tween",
         chain = false,
-        duration = durationOf(durationRaw) or legacy_mods.SPANS[name],
+        duration = durationOf(durationRaw) or span,
         curve = curveV,
         partial = "both",
       },

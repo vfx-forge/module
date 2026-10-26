@@ -2638,9 +2638,10 @@ harness.suite(function()
     -- a mesh whose start is a MeshPart, emitted twice on the pool, its origin
     -- at a new height each time, and the piece each emit holds a frame in;
     -- `decal` gives the start and end a decal of differing colors, `rest` the
-    -- start's decal a Transparency attribute, and with `flush` off the mover
+    -- start's decal a Transparency attribute, `stored` more attributes on that
+    -- decal, `life` the model's EffectDuration, and with `flush` off the mover
     -- never lands a write
-    local function emitTwice(decal: boolean, flush: boolean, rest: number?)
+    local function emitTwice(decal: boolean, flush: boolean, rest: number?, stored: { [string]: any }?, life: number?)
       local built = fresh()
       local CFrame = harness.datatypes.CFrame
       local Color3 = harness.datatypes.Color3
@@ -2689,6 +2690,14 @@ harness.suite(function()
         if rest ~= nil then
           from:SetAttribute("Transparency", rest)
         end
+
+        for name, v in stored or {} do
+          from:SetAttribute(name, v)
+        end
+      end
+
+      if life ~= nil then
+        model:SetAttribute("EffectDuration", harness.datatypes.NumberRange.new(life, life))
       end
 
       local seen: { Seen } = {}
@@ -2766,6 +2775,26 @@ harness.suite(function()
       -- a Decal holds its transparency as a float
       expect(math.abs((half[1].transparency :: number) - 0.4) < 1e-6).toBe(true)
       expect(clear[1].transparency).toBe(1)
+    end)
+
+    -- the shockwaves' old 0.5 second fade, lent by the row's name alone, cut
+    -- this decal's fade short, where v2.4.0 ran it over the piece's life
+    test("a decal's old fade naming no duration runs over the piece's life", function()
+      local quad = { Transparency_Start = 0, Transparency_End = 1 }
+      local named = table.clone(quad)
+
+      named.Transparency_Duration = 2
+
+      local plain = emitTwice(true, true, nil, quad, 2)
+      local timed = emitTwice(true, true, nil, named, 2)
+      local short = table.clone(quad)
+
+      short.Transparency_Duration = 0.5
+
+      local cut = emitTwice(true, true, nil, short, 2)
+
+      expect(math.abs((plain[1].transparency :: number) - (timed[1].transparency :: number)) < 1e-6).toBe(true)
+      expect((plain[1].transparency :: number) < (cut[1].transparency :: number)).toBe(true)
     end)
 
     test("a piece plays from the start and end the emit found, though the model lost one in its delay", function()

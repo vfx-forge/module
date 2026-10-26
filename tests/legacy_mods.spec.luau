@@ -30,6 +30,23 @@ harness.suite(function()
     expect(queue[1].partial).toBe(nil)
   end)
 
+  test("a Transparency quad naming no duration runs 0.5 only on a shockwave's part", function()
+    local spans = {}
+
+    -- the part first, so a quad it cached is not handed to the others
+    for _, class in { "Part", "Decal", "Attachment" } do
+      local obj = Instance.new(class)
+      obj:SetAttribute("Transparency_Start", 0)
+      obj:SetAttribute("Transparency_End", 1)
+
+      spans[class] = legacy_mods.readQuad(obj, "attribute", "Transparency")[1].duration
+    end
+
+    expect(spans.Part).toBe(0.5)
+    expect(spans.Decal).toBe(nil)
+    expect(spans.Attachment).toBe(nil)
+  end)
+
   test("complete fills the missing half and clears the mark", function()
     local queue = { { kind = "tween", chain = false, start = value.lit(3), finish = value.lit(3), partial = "start" } }
     local filled = legacy_mods.complete(queue, value.lit(1), value.lit(9))
