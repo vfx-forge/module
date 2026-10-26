@@ -21,7 +21,7 @@ local WRITTEN_ATTRIBUTE = "ForgeShakeWritten"
 type Active = {
   shake: typeof(Shake.new()),
   ref: RayValue,
-  falloff: number,
+  falloff: number?,
   thread: thread,
   timeline: clock.Clock,
   done: boolean,
@@ -33,22 +33,48 @@ camera_shake.id = "camera_shake"
 camera_shake.display = { name = "Camera Shake", icon = "camera_shake", order = 30 }
 camera_shake.classifier = "RayValue.CameraShake"
 
+const function sustained(_, attrs: any)
+  return attrs.EmitDuration > 0
+end
+
+const function noFalloff(_, attrs: any)
+  return attrs.FalloffEnabled ~= true
+end
+
 camera_shake.attributes = {
   EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
-  EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
-  Falloff = knob(30)
-    :min(0)
-    :unit("studs")
-    :label("Falloff")
-    :hint("How quickly the shake intensity decreases over distance."),
-  Amplitude = knob(2.5):label("Amplitude"):hint("Intensity of the screen shake."),
-  Frequency = knob(0.2):label("Frequency"):hint("Speed of the screen shake oscillation."),
-  FadeInTime = knob(0.3):min(0):unit("seconds"):label("FadeIn"):hint("Duration to fade into the shake effect."),
-  FadeOutTime = knob(2):min(0):unit("seconds"):label("FadeOut"):hint("Duration to fade out of the shake effect."),
-  SustainTime = knob(1):min(0):unit("seconds"):label("Sustain"):hint("Duration to hold the shake at full intensity."),
-  PositionInfluence = knob(vector.one):label("Position"):hint("Per-axis multiplier for positional shake."),
-  RotationInfluence = knob(vector.one * 0.2):label("Rotation"):hint("Per-axis multiplier for rotational shake."),
+  EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint(
+    "Seconds the shake runs before it fades out. At 0 it runs its own fade in, sustain and fade out."
+  ),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the shake's clock."),
+  Amplitude = knob(2.5):label("Amplitude"):hint("How hard the camera shakes."),
+  Frequency = knob(0.2):label("Frequency"):hint("How fast the shake moves. Higher is jerkier."),
+  PositionInfluence = knob(vector.one):label("Position"):hint("How far the shake moves the camera along each axis."),
+  RotationInfluence = knob(vector.one * 0.2)
+    :label("Rotation")
+    :hint("How far the shake turns the camera about each axis."),
+  FadeInTime = knob(0.3)
+    :min(0)
+    :unit("seconds")
+    :label("Fade in")
+    :hint("Seconds the shake takes to reach full strength."),
+  SustainTime = knob(1)
+    :min(0)
+    :unit("seconds")
+    :hidden(sustained)
+    :label("Sustain")
+    :hint("Seconds the shake holds at full strength."),
+  FadeOutTime = knob(2):min(0):unit("seconds"):label("Fade out"):hint("Seconds the shake takes to die away."),
+  FalloffEnabled = knob(false):label("Enabled"):hint(
+    "Whether the shake weakens as the camera gets farther from it. Off, every camera shakes at full strength."
+  ),
+  FalloffDistance = knob(30)
+    :min(0)
+    :aliases("Falloff")
+    :unit("studs")
+    :hidden(noFalloff)
+    :label("Distance")
+    :hint("Studs from the shake at which it dies away completely, weakening evenly on the way."),
 }
 
 camera_shake.properties = {}
@@ -56,15 +82,15 @@ camera_shake.properties = {}
 camera_shake.layout = {
   { title = "Emit", entries = { "EmitDelay", "EmitDuration", "Speed" } },
   {
-    title = "Effect",
+    title = "Shake",
     entries = {
-      "Falloff",
       "Amplitude",
       "Frequency",
-      { title = "Time", entries = { "FadeInTime", "FadeOutTime", "SustainTime" } },
       { title = "Influence", entries = { "PositionInfluence", "RotationInfluence" } },
     },
   },
+  { title = "Envelope", entries = { "FadeInTime", "SustainTime", "FadeOutTime" } },
+  { title = "Falloff", entries = { "FalloffEnabled", "FalloffDistance" } },
 }
 
 -- how long the shake runs: its own envelope, or the emit window and the fade
@@ -124,13 +150,16 @@ local function advance(camera: any): (CFrame, { thread }?)
       isDone = true
     end
 
-    local origin = active.ref:FindFirstAncestorOfClass("Attachment") or active.ref:FindFirstAncestorWhichIsA("BasePart")
+    local falloff = active.falloff
+    local origin = if falloff
+      then active.ref:FindFirstAncestorOfClass("Attachment") or active.ref:FindFirstAncestorWhichIsA("BasePart")
+      else nil
 
-    if origin then
+    if falloff and origin then
       local originCFrame = utility.getTransformedOriginExtents(origin)
       local originPosition = originCFrame and originCFrame.Position or origin.Position
 
-      local alpha = 1 - math.clamp((camera.CFrame.Position - originPosition).Magnitude / active.falloff, 0, 1)
+      local alpha = 1 - math.clamp((camera.CFrame.Position - originPosition).Magnitude / falloff, 0, 1)
 
       pos *= alpha
       rot *= alpha
@@ -364,7 +393,7 @@ function camera_shake.emit(ctx: reader.Ctx, attrs: any)
   local active: Active = {
     shake = shake,
     ref = ref,
-    falloff = math.max(attrs.Falloff, MIN_FALLOFF),
+    falloff = if attrs.FalloffEnabled then math.max(attrs.FalloffDistance, MIN_FALLOFF) else nil,
     thread = coroutine.running(),
     timeline = scope.clock,
     done = false,

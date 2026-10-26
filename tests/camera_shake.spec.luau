@@ -29,12 +29,13 @@ local function unit()
 end
 
 -- the rows as the reader answers them, the influences as the Vector3 the
--- vendored Shake multiplies by
-local function rows(falloff: number)
+-- vendored Shake multiplies by. a falloff of nil leaves it off
+local function rows(falloff: number?)
   return {
     EmitDelay = 0,
     EmitDuration = 0,
-    Falloff = falloff,
+    FalloffEnabled = falloff ~= nil,
+    FalloffDistance = falloff or 30,
     Amplitude = 2.5,
     Frequency = 0.2,
     FadeInTime = 0.3,
@@ -61,7 +62,7 @@ end
 local otherScheduler = load("src/mod/scheduler.luau", {})
 local otherShake = load("src/effects/camera_shake.luau", { ["@mod/scheduler"] = otherScheduler })
 
-local function shakeWith(module: any, parent: Instance?, falloff: number): lifetime.effect
+local function shakeWith(module: any, parent: Instance?, falloff: number?): lifetime.effect
   local ref = Instance.new("RayValue")
   ref.Parent = parent
 
@@ -74,7 +75,7 @@ local function shakeWith(module: any, parent: Instance?, falloff: number): lifet
   return fx
 end
 
-local function shake(parent: Instance?, falloff: number): lifetime.effect
+local function shake(parent: Instance?, falloff: number?): lifetime.effect
   return shakeWith(camera_shake, parent, falloff)
 end
 
@@ -342,6 +343,35 @@ harness.suite(function()
 
       finish(fx)
     end)
+
+    test("a camera past the falloff distance stays still", function()
+      start(notRunning)
+
+      local part = Instance.new("Part")
+      part.CFrame = BASE + Vector3.new(500, 0, 0)
+
+      local fx = shake(part, 30)
+      frames(3)
+
+      expect(near(camera.CFrame, BASE)).toBe(true)
+
+      finish(fx)
+    end)
+
+    test("with falloff off a camera far from the shake shakes all the same", function()
+      start(notRunning)
+
+      local part = Instance.new("Part")
+      part.CFrame = BASE + Vector3.new(500, 0, 0)
+
+      local fx = shake(part, nil)
+      frames(3)
+
+      expect(near(camera.CFrame, BASE)).toBe(false)
+
+      finish(fx)
+    end)
+
     for _, duration in { 0, 5 } do
       test(
         `a Speed resting at 0 ends the shake outright and the camera goes back, with an emit duration of {duration}`,
