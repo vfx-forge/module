@@ -14,6 +14,11 @@ local containers = require("@srv/containers")
 local test, expect = harness.test, harness.expect
 local row = harness.row
 
+local mods = require("@mod/mods")
+local value = require("@mod/value")
+local codec = require("@mod/modifier_codec")
+local frame = require("@mod/modifier_frame")
+
 local facade = require("@root/sdk/v1/facade")
 
 local CFrame = harness.datatypes.CFrame
@@ -791,6 +796,113 @@ harness.suite(function()
       end
 
       expect(left).toBe(0)
+    end)
+  end)
+
+  harness.describe("track:redraw", function()
+    -- a Length row on a folder, its start lane a randomizer between the two ends when given, and what the emit and
+    -- ten redraws read of it at time 0
+    local function redrawn(low: number?, high: number?): (number, { number }, any)
+      fresh()
+      frame.configure(harness.fakeEncoding, harness.fakeCompression)
+
+      local first = 0
+      local picks = {}
+      local plain = nil
+
+      custom("redrawn", function(_, _, attrs: any)
+        first = attrs.Length:at(0)
+
+        for i = 1, 10 do
+          picks[i] = attrs.Length:redraw():at(0)
+        end
+
+        plain = attrs.Length:redraw()
+
+        -- the emit's own draw is left as it was
+        expect(attrs.Length:at(0)).toBe(first)
+      end, { Length = knob(10):mod() })
+
+      local folder = harness.make("Folder")
+
+      if low ~= nil and high ~= nil then
+        local lane = {
+          { kind = "randomizer", chain = false, start = value.lit(low), finish = value.lit(high) },
+        }
+
+        folder:SetAttribute(
+          mods.attrName("attribute", "Length"),
+          frame.frame(codec.encode({ v = 2, lanes = { start = lane } }))
+        )
+      end
+
+      effects.emit(0, folder)
+
+      return first, picks, plain
+    end
+
+    test("draws a random modifier again for each piece, inside its ends", function()
+      -- the harness's Random starts every generator alike, so each one here is
+      -- seeded apart, as Studio's are
+      local new = Random.new
+      local made = 0
+
+      Random.new = function(seed: number?)
+        made += 1
+
+        return new(seed or 7919 * made)
+      end
+
+      local ok, first, picks = pcall(redrawn, 0, 100)
+
+      Random.new = new
+
+      if not ok then
+        error(first, 0)
+      end
+
+      expect(first >= 0 and first <= 100).toBe(true)
+      local seen = {}
+      local distinct = 0
+
+      for _, pick in picks do
+        expect(pick >= 0 and pick <= 100).toBe(true)
+
+        if not seen[pick] then
+          seen[pick] = true
+          distinct += 1
+        end
+      end
+
+      expect(distinct > 1).toBe(true)
+    end)
+
+    test("answers a row nothing randomizes as it is", function()
+      local first, picks, plain = redrawn()
+
+      expect(first).toBe(10)
+      expect(plain.animated).toBe(false)
+      expect(plain.value).toBe(10)
+
+      for _, pick in picks do
+        expect(pick).toBe(10)
+      end
+    end)
+
+    test("is refused when called with a dot", function()
+      fresh()
+
+      local refused = false
+
+      custom("dotted", function(_, _, attrs: any)
+        refused = not pcall(function()
+          return attrs.Length.redraw()
+        end)
+      end, { Length = knob(1):mod() })
+
+      effects.emit(0, harness.make("Folder"))
+
+      expect(refused).toBe(true)
     end)
   end)
 

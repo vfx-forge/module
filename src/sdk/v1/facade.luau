@@ -137,6 +137,9 @@ local UNSCALED = table.freeze({
   end,
 })
 
+-- a redraw hands back a view, and views are made below
+local viewOfTrack: (inner: any) -> any
+
 local Track = {}
 Track.__index = Track
 
@@ -150,6 +153,33 @@ function Track.at(self: any, t: number)
   return inner.at(t)
 end
 
+-- a track's draws are made once per emit, so pieces of one emit share them;
+-- the reader's own track answers a call with a track of its own, drawn again
+-- when anything in it draws and shared when nothing does
+function Track.redraw(self: any)
+  local inner = TRACKS[self]
+
+  if inner == nil then
+    logger.error("call track:redraw(), not track.redraw()")
+  end
+
+  local meta = getmetatable(inner)
+
+  if type(meta) ~= "table" or meta.__call == nil then
+    return self
+  end
+
+  local fresh = inner()
+
+  -- a property an animator claims stays claimed on every track of it
+  if inner.claimed and not fresh.claimed then
+    fresh = table.clone(fresh)
+    fresh.claimed = true
+  end
+
+  return viewOfTrack(fresh)
+end
+
 table.freeze(Track)
 
 -- the reader's Track, told apart from an author's table by the lane reads only
@@ -158,7 +188,7 @@ local function isTrack(value: any): boolean
   return type(value) == "table" and type(value.at) == "function" and type(value.reach) == "function"
 end
 
-local function viewOfTrack(inner: any)
+viewOfTrack = function(inner: any)
   local view = VIEWED[inner]
 
   if view ~= nil then

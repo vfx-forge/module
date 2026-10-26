@@ -72,6 +72,8 @@ export type Track = {
   duration: number,
   -- the value at a time in seconds; call it as track:at(t)
   at: (self: Track, elapsed: number) -> any,
+  -- the same param with its random modifiers drawn again, for a piece that should not share the emit's draw
+  redraw: (self: Track) -> Track,
 }
 
 -- what emit is handed about the instance it plays
