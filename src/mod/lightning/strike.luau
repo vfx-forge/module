@@ -19,6 +19,9 @@ export type Bolt = {
   aim: Vector3,
   miss: Vector3?,
   fitEnd: Vector3,
+  -- a Direction or Ground bolt's end from its last aim, in the ref's own space with no StartOffset, so a moving start
+  -- leaves the end where it is
+  endAt: Vector3?,
   atFit: CFrame,
   width: number,
   longest: number,
@@ -140,7 +143,9 @@ end
 -- the main bolt's end in the ref's space, with the surface it struck when that makes an impact. Direction keeps the
 -- aim its strike drew in the ref's space and Ground the miss it drew, so a bolt aimed again follows the ref and what
 -- is around it without jumping to a new random end; surfaces is false once no impact is wanted, which spares End
--- the ray past its end. EndOffset moves the end along the ref's axes, and on Ground where the surface is looked for
+-- the ray past its end. now is the ref's frame moved by StartOffset, which moves the start alone: every end is
+-- found from the ref itself. EndOffset moves the end along the ref's axes, and on Ground where the surface is looked
+-- for
 const function resolve(
   attrs: any,
   b: Bolt,
@@ -150,7 +155,7 @@ const function resolve(
   surfaces: boolean
 ): (Vector3, Vector3?, Vector3?)
   const origin = now.Position
-  const offset = attrs.EndOffset
+  const offset = attrs.EndOffset - attrs.StartOffset
 
   if attrs.Target == "Direction" then
     const along = b.aim * attrs.Length + offset
@@ -192,7 +197,7 @@ const function resolve(
     return b.fitEnd, nil, nil
   end
 
-  const placed = now:PointToObjectSpace(ending.WorldPosition) + offset
+  const placed = now:PointToObjectSpace(ending.WorldPosition) + attrs.EndOffset
   const finish = now:PointToWorldSpace(placed)
   const travel = finish - origin
 
@@ -218,6 +223,8 @@ function strike.aim(
 ): { Hit }
   const params = world.params(ref)
   const finish, point, normal = resolve(attrs, b, now, params, finishAt, surfaces)
+
+  b.endAt = if attrs.Target == "End" then nil else finish + attrs.StartOffset
   const hits = {}
   const struck = {}
 

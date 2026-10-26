@@ -384,10 +384,9 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
   const function bolt(seed: number, given: { [string]: any })
     local mine = given
 
-    -- the ref's frame moved by the bolt's StartOffset, which everything the bolt fits is measured from
-    const function placeOf(elapsed: number): CFrame
-      const shift = sample(mine.StartOffset, elapsed)
-
+    -- the ref's frame moved by the bolt's StartOffset, which everything the bolt fits is measured from. it moves the
+    -- start alone: the end is found from the ref itself
+    const function placeOf(shift: Vector3): CFrame
       return if shift == Vector3.zero then ref.WorldCFrame else ref.WorldCFrame * CFrame.new(shift)
     end
 
@@ -401,7 +400,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       return if rate > 0 then 1 / rate else math.huge
     end
 
-    const start = placeOf(0)
+    const start = placeOf(sample(mine.StartOffset, 0))
     local taper = taperAt(0)
     const flowing = attrs.Motion == "Flow"
     const b: strike.Bolt = {
@@ -417,6 +416,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       aim = Vector3.yAxis,
       miss = nil,
       fitEnd = Vector3.zero,
+      endAt = nil,
       atFit = start,
       width = sample(mine.Width, 0),
       longest = 0,
@@ -432,6 +432,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
         Length = math.max(0, sample(mine.Length, elapsed)),
         Spread = sample(mine.Spread, elapsed),
         Reach = math.max(1, sample(mine.Reach, elapsed)),
+        StartOffset = sample(mine.StartOffset, elapsed),
         EndOffset = sample(mine.EndOffset, elapsed),
         Jagged = math.clamp(sample(mine.Jagged, elapsed), 0, 0.5),
         Detail = math.clamp(math.floor(sample(mine.Detail, elapsed)), 2, 32),
@@ -717,7 +718,8 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
         timeline.release(plan, elapsed)
       end
 
-      const now = if lost then b.atFit else placeOf(elapsed)
+      const shift = sample(mine.StartOffset, elapsed)
+      const now = if lost then b.atFit else placeOf(shift)
       const state = timeline.at(plan, if lost then plan.total + 1 else elapsed, appearAt, disappearAt)
       const width = sample(mine.Width, elapsed)
       const nowTaper = taperAt(elapsed)
@@ -785,6 +787,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       const ending = if lost then nil else strike.live(finishAt)
       const finish = if ending
         then now:PointToObjectSpace(ending.WorldPosition) + sample(mine.EndOffset, elapsed)
+        elseif not lost and b.endAt then b.endAt - shift
         else b.fitEnd
 
       -- parts are placed in the world on every draw, so they follow a move by fitting again

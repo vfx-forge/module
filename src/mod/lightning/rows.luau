@@ -138,10 +138,10 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         :label("Reach")
         :hint("How far below the attachment a surface is looked for. Nothing found, the bolt ends in the air."),
       StartOffset = sdk.knob(Vector3.zero):unit("studs"):mod():label("Start"):hint(
-        "Moves where the bolt starts, in studs along the attachment's axes. A random modifier starts each bolt somewhere else."
+        "Moves where the bolt starts, in studs along the attachment's axes, while its end stays put. A random modifier starts each bolt somewhere else."
       ),
       EndOffset = sdk.knob(Vector3.zero):unit("studs"):mod():label("End"):hint(
-        "Moves where the bolt ends, in studs along the attachment's axes. On Ground it moves where the surface is looked for. A random modifier scatters the ends."
+        "Moves where the bolt ends, in studs along the attachment's axes, whatever Start does. On Ground it moves where the surface is looked for. A random modifier scatters the ends."
       ),
       Jagged = sdk.knob(0.1):min(0):max(0.5):slider():mod():label("Jagged"):hint(
         "How far the zigzags stray, as a share of the bolt's length. 0 is straight, 0.05 to 0.2 reads as lightning."

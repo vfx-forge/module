@@ -1,8 +1,8 @@
 -- run through the Studio MCP's execute_luau with a plugin build that carries this lightning
 -- plays short bolts through the plugin's runtime (shared.vfx) and reads where each bolt's tip lands from its
--- EmitAtTip host: that a random Length draws again for every bolt of one emit, that a random EndOffset scatters
--- each bolt's end around End, that a StartOffset moves where the bolt starts, and that rows with no modifiers still
--- land every bolt where they say. modifiers are written through the plugin's own store (shared.forge_dev)
+-- EmitAtTip host and where it starts from its EmitOnStart host: that a random Length draws again for every bolt of
+-- one emit, that a random EndOffset scatters each bolt's end around End, that a StartOffset moves the start alone and
+-- leaves the end where it was, and that rows with no modifiers still land every bolt where they say. modifiers are written through the plugin's own store (shared.forge_dev)
 -- with CLEAN true it only removes what an earlier run left; any FAIL raises with the whole output
 const CLEAN = false
 
@@ -122,30 +122,34 @@ const function bolt(label: string, offset: number, attributes: { [string]: any }
   finish.CFrame = CFrame.new(0, -20, 0)
   finish.Parent = attachment
 
-  const tip = Instance.new("Folder")
-  const emitter = Instance.new("ParticleEmitter")
+  for _, slot in { "EmitAtTip", "EmitOnStart" } do
+    const holder = Instance.new("Folder")
+    const emitter = Instance.new("ParticleEmitter")
 
-  tip.Name = "EmitAtTip"
-  emitter.Enabled = false
-  emitter.Rate = 0
-  emitter.Lifetime = NumberRange.new(0.1)
-  emitter.Parent = tip
-  tip.Parent = attachment
+    holder.Name = slot
+    emitter.Enabled = false
+    emitter.Rate = 0
+    emitter.Lifetime = NumberRange.new(0.1)
+    emitter.Parent = holder
+    holder.Parent = attachment
+  end
 
   attachment.Parent = anchor
 
   return attachment
 end
 
--- each bolt's tip, in the ref's space, once the bolts have settled
-const function tips(ref: Attachment): { Vector3 }
-  const hosts = {}
+-- each bolt's tip and start, in the ref's space, once the bolts have settled
+const function tips(ref: Attachment): ({ Vector3 }, { Vector3 })
+  const hosts = { EmitAtTip = {}, EmitOnStart = {} }
 
   table.insert(
     record.connections,
     workspace.Terrain.DescendantAdded:Connect(function(child)
-      if child.Name == "EmitAtTip" and child:IsA("Attachment") then
-        table.insert(hosts, child)
+      const list = hosts[child.Name]
+
+      if list and child:IsA("Attachment") then
+        table.insert(list, child)
       end
     end)
   )
@@ -153,13 +157,17 @@ const function tips(ref: Attachment): { Vector3 }
   vfx.emit(ref)
   task.wait(SETTLE)
 
-  const out = {}
+  const function placed(list: { Attachment }): { Vector3 }
+    const out = {}
 
-  for _, host in hosts do
-    table.insert(out, ref.WorldCFrame:PointToObjectSpace(host.WorldPosition))
+    for _, host in list do
+      table.insert(out, ref.WorldCFrame:PointToObjectSpace(host.WorldPosition))
+    end
+
+    return out
   end
 
-  return out
+  return placed(hosts.EmitAtTip), placed(hosts.EmitOnStart)
 end
 
 const function spread(values: { number }): number
@@ -242,14 +250,45 @@ do
     EndOffset = Vector3.new(0, 0, 3),
   })
 
-  const found = tips(ref)
-  const want = Vector3.new(4, 10, 3)
+  const found, starts = tips(ref)
 
   check(
-    "a StartOffset moves the bolt and an EndOffset its end, in the attachment's axes",
-    #found == 1 and (found[1] - want).Magnitude < NEAR,
+    "a StartOffset moves the start alone, in the attachment's axes",
+    #starts == 1 and (starts[1] - Vector3.new(4, 0, 0)).Magnitude < NEAR,
+    list(starts)
+  )
+  check(
+    "and the end stays where Length and the EndOffset put it",
+    #found == 1 and (found[1] - Vector3.new(0, 10, 3)).Magnitude < NEAR,
     list(found)
   )
+end
+
+for _, target in { "Direction", "End" } do
+  const ref = bolt(`Starts{target}`, if target == "End" then 200 else 160, { Target = target, Count = 3, Length = 12 })
+  const box = Vector3.new(5, 0, 5)
+
+  store.write(ref, "attribute", "StartOffset", { v = 2, queue = { randomizer(-box, box, true) } })
+
+  const found, starts = tips(ref)
+  const want = if target == "End" then Vector3.new(0, -20, 0) else Vector3.new(0, 12, 0)
+  const xs = {}
+  local still = #found == 3
+
+  for _, p in found do
+    still = still and (p - want).Magnitude < NEAR
+  end
+
+  for _, p in starts do
+    table.insert(xs, p.X)
+  end
+
+  check(
+    `{target}: a random StartOffset starts each bolt of one emit apart`,
+    #starts == 3 and spread(xs) > 0.5,
+    list(starts)
+  )
+  check(`{target}: and every bolt still ends at the one end`, still, list(found))
 end
 
 task.wait(0.8)
