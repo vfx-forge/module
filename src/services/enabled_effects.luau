@@ -26,6 +26,10 @@ local Moves: { [Instance]: { any } } = {}
 -- threads are gone, and its bolts or parts would stay in the place for good
 local Tokens: { [lifetime.emit]: true } = {}
 
+-- the token of every loop and window still starting ticks, which a tick that
+-- stands until its loop stops reads
+local Ticking: { [lifetime.emit]: true } = setmetatable({}, { __mode = "k" }) :: any
+
 local service: any = nil
 
 -- the emit every tick of a passive loop is an effect of, never sealed: it lives
@@ -38,6 +42,11 @@ function enabled_effects.token(): lifetime.emit
   token.constant = true
 
   return token
+end
+
+-- whether the loop or window whose token this is still starts ticks
+function enabled_effects.ticking(token: lifetime.emit): boolean
+  return Ticking[token] == true
 end
 
 -- what an enabled instance runs every frame: a tick each `1 / Rate` seconds of
@@ -89,9 +98,11 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
       lifetime.clear(window)
     end
 
+    Ticking[window] = nil
     lifetime.seal(window)
   end)
 
+  Ticking[window] = true
   lifetime.speed(scope, speed, window.clock)
 
   local tick = enabled_effects.ticker(ctx.ref, module, window, scope.effects)
@@ -130,6 +141,7 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
   lifetime.wait(scope, duration)
 
   spawning = false
+  Ticking[window] = nil
   lifetime.seal(window)
   lifetime.await(window)
   handle:Disconnect()
@@ -226,7 +238,11 @@ function enabled_effects.add(obj: Instance)
 
     local tick = enabled_effects.ticker(obj, module, token, service)
 
+    Ticking[token] = true
     table.insert(tempScope, RunService.RenderStepped:Connect(tick))
+    table.insert(tempScope, function()
+      Ticking[token] = nil
+    end)
   end
 
   Wakes[obj] = onEnabled

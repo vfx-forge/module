@@ -179,6 +179,8 @@ export type V1 = {
   apply: (ctx: Ctx, row: any, write: (value: any) -> ()) -> (),
   -- the attrs and props as ctx.ref holds them now: the same tables while nothing changed, read once after any change
   refresh: (ctx: Ctx) -> (any, any),
+  -- whether the loop or window that started this tick still starts ticks; false for an emit that is no tick
+  looping: (ctx: Ctx) -> boolean,
   -- logs text once per module, instance and text; the effect plays on
   warn: (ctx: Ctx, text: string) -> (),
   -- plays this emit alone on ctx.ref: a later emit while it plays ends at its own lock, silently,

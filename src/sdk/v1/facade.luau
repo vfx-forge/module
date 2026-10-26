@@ -10,6 +10,7 @@ local shape = require("@mod/shape")
 local tween = require("@mod/tween")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
+local attr = require("@mod/attributes")
 local reader = require("@mod/reader")
 local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
@@ -84,11 +85,23 @@ local VIEWED: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
 local READS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
 local SOURCES: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
 
--- the rows an emit was handed, and what its latest refresh resolved with
--- whether the instance has changed since, which only the watch below sets
-local HANDED_ATTRS: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
-local HANDED_PROPS: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
-local LIVE: { [any]: { attrs: any, props: any, dirty: boolean } } = setmetatable({}, { __mode = "k" }) :: any
+-- the rows an emit was handed, weak both ways: a row's Track holds the ctx it
+-- was read for, and Luau keeps a weak key its own value reaches alive for good
+local HANDED_ATTRS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
+local HANDED_PROPS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
+
+-- what each emit's latest refresh read, whether the instance has changed since
+-- (its watch, or a write to a cached instance's table, which fires no signal),
+-- and the properties an animator claimed. nothing in it may reach the ctx
+type live = {
+  attrs: any,
+  props: any,
+  dirty: boolean,
+  generation: number,
+  claimed: { [string]: boolean }?,
+}
+
+local LIVE: { [any]: live } = setmetatable({}, { __mode = "k" }) :: any
 
 -- a host's sentence for a reported failure, which only the plugin sets
 local annotate: ((message: string) -> string?)? = nil
@@ -723,16 +736,28 @@ function seams.watch(ref: Instance, properties: { [string]: any }, touched: () -
   return connections
 end
 
+-- the properties an animator claimed in what an emit was handed
+local function claimsOf(handed: any): { [string]: boolean }?
+  local names = nil
+
+  for name, track in handed or {} do
+    if type(track) == "table" and track.claimed then
+      names = names or {}
+      names[name] = true
+    end
+  end
+
+  return names
+end
+
 -- a property an animator claims keeps its claim in every read after the first
-local function claimedLike(fresh: any, handed: any)
-  local out = nil
+local function claimedLike(fresh: any, names: { [string]: boolean })
+  local out = table.clone(fresh)
 
-  for name, track in handed do
-    local now = fresh[name]
+  for name in names do
+    local now = out[name]
 
-    if type(track) == "table" and track.claimed and type(now) == "table" and not now.claimed then
-      out = out or table.clone(fresh)
-
+    if type(now) == "table" and not now.claimed then
       local quiet = table.clone(now)
 
       quiet.claimed = true
@@ -740,21 +765,23 @@ local function claimedLike(fresh: any, handed: any)
     end
   end
 
-  return if out then table.freeze(out) else fresh
+  return table.freeze(out)
 end
 
 -- the rows as the instance holds them now: the same windows while nothing has
--- changed, so a call every frame costs two lookups, and one read the first
+-- changed, so a call every frame costs a few lookups, and one read the first
 -- call after any change, however many changes came between
 function v1.refresh(view: any)
   local ctx = ctxOf(view, "refresh")
   local live = LIVE[ctx]
 
   if live == nil then
-    local made = {
-      attrs = authored(HANDED_ATTRS[ctx]),
-      props = authored(HANDED_PROPS[ctx]),
+    local made: live = {
+      attrs = nil,
+      props = nil,
       dirty = true,
+      generation = attr.generation,
+      claimed = claimsOf(HANDED_PROPS[ctx]),
     }
 
     live = made
@@ -769,11 +796,14 @@ function v1.refresh(view: any)
     end
   end
 
-  if not live.dirty then
-    return live.attrs, live.props
+  local current = live :: live
+
+  if not current.dirty and current.generation == attr.generation then
+    return current.attrs, current.props
   end
 
-  live.dirty = false
+  current.dirty = false
+  current.generation = attr.generation
 
   -- read into a ctx of its own, since a read writes the duration and the
   -- piece it decided onto the ctx it is given
@@ -790,15 +820,28 @@ function v1.refresh(view: any)
   if not ok then
     v1.warn(view, "the rows could not be read again, so the last values are kept")
 
-    return live.attrs, live.props
+    if current.attrs == nil then
+      return authored(HANDED_ATTRS[ctx]), authored(HANDED_PROPS[ctx])
+    end
+
+    return current.attrs, current.props
   end
 
-  local handed = HANDED_PROPS[ctx]
+  local claimed = current.claimed
 
-  live.attrs = authored(attrs)
-  live.props = authored(if handed then claimedLike(props, handed) else props)
+  current.attrs = authored(attrs)
+  current.props = authored(if claimed then claimedLike(props, claimed) else props)
 
-  return live.attrs, live.props
+  return current.attrs, current.props
+end
+
+-- whether the loop or window that started this tick still starts ticks: false
+-- once Enabled goes off, the instance leaves where it may loop or its loop is
+-- stopped any other way, and for an emit that is no tick
+function v1.looping(view: any): boolean
+  local ctx = ctxOf(view, "looping")
+
+  return ctx.constant == true and enabled_effects.ticking(ctx.scope.emit)
 end
 
 function v1.warn(view: any, text: string)

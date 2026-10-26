@@ -1,5 +1,6 @@
 local fs = require("@lune/fs")
 local mod = require("@mod/mod")
+local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
 local curve = require("@mod/curve")
 local curves = require("@mod/curves")
@@ -721,6 +722,76 @@ harness.suite(function()
 
       expect(refused).toBe(true)
     end)
+
+    test("sees a write to a cached instance, which fires no signal", function()
+      fresh()
+
+      local seen = watching()
+      local got = {}
+
+      custom("live", function(sdk: any, ctx: any)
+        got.before = sdk.refresh(ctx).Size
+
+        attr.set(ctx.ref, "Size", 4)
+        got.after = sdk.refresh(ctx).Size
+      end, { Size = knob(1) })
+
+      local folder = harness.make("Folder")
+
+      -- caching takes what the instance holds, so it needs something to take
+      folder:SetAttribute("Size", 1)
+      attr.cache(folder)
+      expect(attr.isCached(folder)).toBe(true)
+      effects.emit(0, folder)
+      facade.seams.watch = real
+
+      expect(seen.watched).toBe(1)
+      expect(got.before).toBe(1)
+      expect(got.after).toBe(4)
+    end)
+
+    test("lets go of every emit it was handed once the emit is over", function()
+      fresh()
+
+      local kept = setmetatable({}, { __mode = "k" })
+
+      registry.register({
+        id = "kept",
+        display = { name = "kept" },
+        classifier = "Folder",
+        attributes = { Width = knob(1):mod() },
+        properties = {},
+        emit = function(ctx: any, attrs: any, props: any)
+          kept[ctx] = true
+
+          facade.run(function(sdk: any, view: any)
+            sdk.refresh(view)
+          end, ctx, attrs, props)
+        end,
+      })
+
+      for _ = 1, 20 do
+        play()
+      end
+
+      -- lune has no collectgarbage("collect"), so the collector is driven by
+      -- allocating until it has run its cycles
+      for _ = 1, 20 do
+        local junk = {}
+
+        for i = 1, 50000 do
+          junk[i] = {}
+        end
+      end
+
+      local left = 0
+
+      for _ in kept do
+        left += 1
+      end
+
+      expect(left).toBe(0)
+    end)
   end)
 
   harness.describe("sdk.window", function()
@@ -790,6 +861,46 @@ harness.suite(function()
       -- once as it opens, at 0.63 and again past 1.05, by when the window has closed
       expect(ticks).toBe(2)
       expect(ended(env)).toBe(true)
+    end)
+
+    test("a tick reads as looping while its window still starts ticks, and a single emit never does", function()
+      fresh()
+
+      local during = {}
+      local view = nil
+      local single = nil
+
+      looping(0.5, function(sdk: any, tick: any)
+        view = tick
+        table.insert(during, sdk.looping(tick))
+      end)
+
+      registry.register({
+        id = "single",
+        display = { name = "single" },
+        classifier = "Configuration",
+        attributes = {},
+        properties = {},
+        emit = function(ctx: any, attrs: any, props: any)
+          facade.run(function(sdk: any, given: any)
+            single = sdk.looping(given)
+          end, ctx, attrs, props)
+        end,
+      })
+
+      local env = play()
+
+      for _ = 1, 4 do
+        scheduler.frame(0.21)
+      end
+
+      effects.emit(0, harness.make("Configuration"))
+
+      expect(ended(env)).toBe(true)
+      expect(#during > 0).toBe(true)
+      expect(table.find(during, false)).toBe(nil)
+      expect(sdk.looping(view)).toBe(false)
+      expect(single).toBe(false)
     end)
 
     test("returns only once the last tick has ended", function()
