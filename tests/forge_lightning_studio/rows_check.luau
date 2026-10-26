@@ -2,7 +2,8 @@
 -- plays short bolts through the plugin's runtime (shared.vfx) and reads where each bolt's tip lands from its
 -- EmitAtTip host and where it starts from its EmitOnStart host: that a random Length draws again for every bolt of
 -- one emit, that a random EndOffset scatters each bolt's end around End, that a StartOffset moves the start alone and
--- leaves the end where it was, and that rows with no modifiers still land every bolt where they say. modifiers are written through the plugin's own store (shared.forge_dev)
+-- leaves the end where it was, that a tweened Length moves a bolt's end while it holds one shape and stops at a wall
+-- its line crosses, and that rows with no modifiers still land every bolt where they say. modifiers are written through the plugin's own store (shared.forge_dev)
 -- with CLEAN true it only removes what an earlier run left; any FAIL raises with the whole output
 const CLEAN = false
 
@@ -74,6 +75,10 @@ end
 
 const function lit(v: any)
   return { t = "lit", v = v }
+end
+
+const function tween(from: any, to: any, duration: number)
+  return { kind = "tween", chain = false, duration = duration, start = lit(from), finish = lit(to) }
 end
 
 const function randomizer(from: any, to: any, perComponent: boolean?)
@@ -289,6 +294,61 @@ for _, target in { "Direction", "End" } do
     list(starts)
   )
   check(`{target}: and every bolt still ends at the one end`, still, list(found))
+end
+
+do
+  -- Jitter 0 never aims again, so only the frame's own reading of Length can move the end
+  const free = bolt("Grows", 240, { Target = "Direction", Length = 2, Hold = NumberRange.new(1.2, 1.2) })
+  const walled = bolt("Walled", 280, { Target = "Direction", Length = 2, Hold = NumberRange.new(1.2, 1.2) })
+  const wall = Instance.new("Part")
+
+  wall.Anchored = true
+  wall.Size = Vector3.new(8, 1, 8)
+  wall.CFrame = CFrame.new(ORIGIN + Vector3.new(280, 15.5, 0))
+  wall.Parent = folder
+
+  for _, ref in { free, walled } do
+    store.write(ref, "attribute", "Length", { v = 2, queue = { tween(2, 30, 0.8) } })
+  end
+
+  const freeTips = tips(free)
+  const walledTips = tips(walled)
+  const early = { freeTips[1] and freeTips[1].Y, walledTips[1] and walledTips[1].Y }
+
+  task.wait(0.8)
+
+  -- a tip host keeps to its joint, so it is read again where it stands now
+  const hosts = {}
+
+  for _, child in workspace.Terrain:GetDescendants() do
+    if child.Name == "EmitAtTip" and child:IsA("Attachment") then
+      table.insert(hosts, child)
+    end
+  end
+
+  const function reached(ref: Attachment): number?
+    local best: number? = nil
+
+    for _, host in hosts do
+      const p = ref.WorldCFrame:PointToObjectSpace(host.WorldPosition)
+
+      if math.abs(p.X) < NEAR and math.abs(p.Z) < NEAR and (best == nil or p.Y > best) then
+        best = p.Y
+      end
+    end
+
+    return best
+  end
+
+  const late = { reached(free), reached(walled) }
+  const said = `early {early[1]} {early[2]}, late {late[1]} {late[2]}`
+
+  check(
+    "a tweened Length moves the end of a bolt that never aims again",
+    early[1] ~= nil and late[1] ~= nil and early[1] < 12 and math.abs(late[1] - 30) < NEAR,
+    said
+  )
+  check("and a wall its line crosses still stops it", late[2] ~= nil and math.abs(late[2] - 15) < NEAR, said)
 end
 
 task.wait(0.8)

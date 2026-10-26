@@ -16,6 +16,8 @@ export type Bolt = {
   cuts: { [number]: number },
   bends: { number },
   cast: walls.cast?,
+  -- the last aim's rays, which a frame between aims casts the end again with
+  params: RaycastParams?,
   aim: Vector3,
   miss: Vector3?,
   fitEnd: Vector3,
@@ -232,6 +234,7 @@ function strike.aim(
   const hits = {}
   const struck = {}
 
+  b.params = params
   b.cast = world.caster(params)
 
   if point and normal then
@@ -265,6 +268,18 @@ function strike.aim(
   end
 
   return hits
+end
+
+-- the end alone, resolved again from where the ref is now, for a frame between aims whose Length, EndOffset or Reach
+-- moves: the shape, the forks and the impacts keep the last aim's, and a wall the line crosses still stops it
+function strike.reach(attrs: any, b: Bolt, ref: Attachment, now: CFrame, finishAt: Attachment?): Vector3
+  const params = b.params or world.params(ref)
+  const finish = resolve(attrs, b, now, params, finishAt, false)
+
+  b.params = params
+  b.endAt = finish + b.shift
+
+  return finish
 end
 
 -- a new shape and its aim; flowed is how many bolt lengths a Flow bolt's kinks have slid so far

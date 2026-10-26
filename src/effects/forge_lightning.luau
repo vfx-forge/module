@@ -414,6 +414,7 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       cuts = {},
       bends = {},
       cast = nil,
+      params = nil,
       aim = Vector3.yAxis,
       miss = nil,
       fitEnd = Vector3.zero,
@@ -430,6 +431,17 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     -- the joints, the mesh and the riders are built once for the first strike, so a restrike keeps its counts
     const detail = math.clamp(math.floor(sample(mine.Detail, 0)), 2, 32)
     const forks = math.clamp(math.floor(sample(mine.Forks, 0)), 0, 8)
+
+    -- the rows that place a Direction or Ground bolt's end, which a tween moves between aims too
+    const reaching = { Target = attrs.Target, Length = 0, EndOffset = Vector3.zero, Reach = 1 }
+
+    const function reaches(): boolean
+      if attrs.Target == "End" then
+        return false
+      end
+
+      return mine.Length.animated or mine.EndOffset.animated or (attrs.Target == "Ground" and mine.Reach.animated)
+    end
 
     -- what a strike or an aim reads of the rows: this bolt's own, as they stand at elapsed
     const function settle(elapsed: number)
@@ -794,13 +806,19 @@ function effect.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       end
 
       const ending = if lost then nil else strike.live(finishAt)
-      const finish = if ending
-        then now:PointToObjectSpace(ending.WorldPosition) + sample(mine.EndOffset, elapsed)
-        elseif not lost and b.endAt then b.endAt - shift
-        else b.fitEnd
+      local finish = b.fitEnd
 
       if ending then
+        finish = now:PointToObjectSpace(ending.WorldPosition) + sample(mine.EndOffset, elapsed)
         b.endAt = finish + shift
+      elseif not lost and not changed and reaches() then
+        -- an aim this frame already placed the end from the rows as they stand
+        reaching.Length = math.max(0, sample(mine.Length, elapsed))
+        reaching.EndOffset = sample(mine.EndOffset, elapsed)
+        reaching.Reach = math.max(1, sample(mine.Reach, elapsed))
+        finish = strike.reach(reaching, b, ref, now, finishAt)
+      elseif not lost and b.endAt then
+        finish = b.endAt - shift
       end
 
       -- parts are placed in the world on every draw, so they follow a move by fitting again
