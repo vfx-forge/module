@@ -10,6 +10,7 @@ local shape = require("@mod/shape")
 local tween = require("@mod/tween")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
+local reader = require("@mod/reader")
 local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
@@ -82,6 +83,12 @@ local VIEWED: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
 -- reader filled, and the table behind each window
 local READS: { [any]: any } = setmetatable({}, { __mode = "kv" }) :: any
 local SOURCES: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
+
+-- the rows an emit was handed, and what its latest refresh resolved with
+-- whether the instance has changed since, which only the watch below sets
+local HANDED_ATTRS: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
+local HANDED_PROPS: { [any]: any } = setmetatable({}, { __mode = "k" }) :: any
+local LIVE: { [any]: { attrs: any, props: any, dirty: boolean } } = setmetatable({}, { __mode = "k" }) :: any
 
 -- a host's sentence for a reported failure, which only the plugin sets
 local annotate: ((message: string) -> string?)? = nil
@@ -697,6 +704,103 @@ function v1.apply(view: any, given: any, write: (value: any) -> ())
   written(given)
 end
 
+-- what marks an emit's rows stale: any attribute of its instance, and each
+-- property the module reads, never the rest, so a moving attachment marks
+-- nothing. a seam, since a spec's instances have no signals
+local seams = {}
+
+function seams.watch(ref: Instance, properties: { [string]: any }, touched: () -> ()): { RBXScriptConnection }
+  local connections = { ref.AttributeChanged:Connect(touched) }
+
+  for name in properties do
+    local ok, signal = pcall(ref.GetPropertyChangedSignal, ref, name)
+
+    if ok then
+      table.insert(connections, signal:Connect(touched))
+    end
+  end
+
+  return connections
+end
+
+-- a property an animator claims keeps its claim in every read after the first
+local function claimedLike(fresh: any, handed: any)
+  local out = nil
+
+  for name, track in handed do
+    local now = fresh[name]
+
+    if type(track) == "table" and track.claimed and type(now) == "table" and not now.claimed then
+      out = out or table.clone(fresh)
+
+      local quiet = table.clone(now)
+
+      quiet.claimed = true
+      out[name] = quiet
+    end
+  end
+
+  return if out then table.freeze(out) else fresh
+end
+
+-- the rows as the instance holds them now: the same windows while nothing has
+-- changed, so a call every frame costs two lookups, and one read the first
+-- call after any change, however many changes came between
+function v1.refresh(view: any)
+  local ctx = ctxOf(view, "refresh")
+  local live = LIVE[ctx]
+
+  if live == nil then
+    local made = {
+      attrs = authored(HANDED_ATTRS[ctx]),
+      props = authored(HANDED_PROPS[ctx]),
+      dirty = true,
+    }
+
+    live = made
+    LIVE[ctx] = made
+
+    local function touched()
+      made.dirty = true
+    end
+
+    for _, connection in seams.watch(ctx.ref, ctx.effect.properties, touched) do
+      lifetime.hold(ctx.scope, connection)
+    end
+  end
+
+  if not live.dirty then
+    return live.attrs, live.props
+  end
+
+  live.dirty = false
+
+  -- read into a ctx of its own, since a read writes the duration and the
+  -- piece it decided onto the ctx it is given
+  local scratch = {
+    ref = ctx.ref,
+    obj = ctx.obj,
+    scope = ctx.scope,
+    effect = ctx.effect,
+    shared = ctx.shared,
+    constant = ctx.constant,
+  }
+  local ok, attrs, props = pcall(reader.resolve, ctx.effect, scratch)
+
+  if not ok then
+    v1.warn(view, "the rows could not be read again, so the last values are kept")
+
+    return live.attrs, live.props
+  end
+
+  local handed = HANDED_PROPS[ctx]
+
+  live.attrs = authored(attrs)
+  live.props = authored(if handed then claimedLike(props, handed) else props)
+
+  return live.attrs, live.props
+end
+
 function v1.warn(view: any, text: string)
   local ctx = ctxOf(view, "warn")
 
@@ -913,6 +1017,7 @@ table.freeze(v1)
 local facade = {}
 
 facade.sdk = v1
+facade.seams = seams
 
 -- a module whose source runs under the name `from` reports its failures
 -- naming `to`, the path it really lives at
@@ -990,6 +1095,10 @@ end
 -- tweens, its nested emits and every join it made are through
 function facade.run(emit: any, ctx: any, attrs: any, props: any)
   local scope = ctx.scope
+
+  HANDED_ATTRS[ctx] = attrs
+  HANDED_PROPS[ctx] = props
+
   local ok, err = xpcall(emit, trace, v1, viewOf(ctx), authored(attrs), authored(props))
 
   if not ok then

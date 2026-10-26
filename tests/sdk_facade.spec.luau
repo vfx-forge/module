@@ -624,6 +624,105 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("sdk.refresh", function()
+    -- the watch a spec stands in: no signals, and every touch handed back to
+    -- the spec, which says when the instance changed
+    local function watching(): { touch: (() -> ())?, watched: number, properties: any }
+      local seen = { touch = nil, watched = 0, properties = nil }
+
+      facade.seams.watch = function(_: Instance, properties: any, touched: () -> ())
+        seen.touch = touched
+        seen.watched += 1
+        seen.properties = properties
+
+        return {}
+      end
+
+      return seen
+    end
+
+    local real = facade.seams.watch
+
+    test("answers the same tables while nothing changed, and new ones once after a change", function()
+      fresh()
+
+      local seen = watching()
+      local got = {}
+
+      custom("live", function(sdk: any, ctx: any, attrs: any)
+        got.handed = attrs.Size
+
+        local first = sdk.refresh(ctx)
+
+        got.again = sdk.refresh(ctx) == first
+        got.before = first.Size
+
+        ctx.ref:SetAttribute("Size", 3)
+
+        got.unseen = sdk.refresh(ctx) == first
+
+        -- several changes in one frame are read once
+        for _ = 1, 5 do
+          (seen.touch :: () -> ())()
+        end
+
+        local after = sdk.refresh(ctx)
+
+        got.moved = after ~= first
+        got.after = after.Size
+        got.settled = sdk.refresh(ctx) == after
+      end, { Size = knob(1) })
+
+      play()
+      facade.seams.watch = real
+
+      expect(seen.watched).toBe(1)
+      expect(got.handed).toBe(1)
+      expect(got.before).toBe(1)
+      expect(got.again).toBe(true)
+      expect(got.unseen).toBe(true)
+      expect(got.moved).toBe(true)
+      expect(got.after).toBe(3)
+      expect(got.settled).toBe(true)
+    end)
+
+    test("hands a param with modifiers back as a Track view, and watches the module's properties", function()
+      fresh()
+
+      local seen = watching()
+      local kind = nil
+
+      custom("live", function(sdk: any, ctx: any)
+        local attrs = sdk.refresh(ctx)
+
+        kind = kindOf(attrs.Width)
+      end, { Width = knob(2):mod() }, { Name = knob("") })
+
+      play()
+      facade.seams.watch = real
+
+      expect(kind).toBe("view")
+      expect(seen.properties.Name ~= nil).toBe(true)
+    end)
+
+    test("refuses a ctx it did not hand out", function()
+      fresh()
+
+      local refused = nil
+
+      custom("live", function(sdk: any, ctx: any)
+        local ok, err = pcall(sdk.refresh, { ref = ctx.ref, duration = ctx.duration })
+
+        refused = not ok
+          and string.find(tostring(err), "sdk.refresh takes the ctx your emit was handed", 1, true) ~= nil
+      end)
+
+      play()
+
+      expect(refused).toBe(true)
+    end)
+  end)
+
   harness.describe("sdk.window", function()
     -- a constant custom effect whose single emit opens a window of `seconds`
     -- and whose ticks are handed to `onTick`. the instance ticks at the
