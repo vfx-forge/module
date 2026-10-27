@@ -383,5 +383,92 @@ harness.suite(function()
         expect(set.frames[2].material.Parent).toBe(piece)
       end)
     end)
+
+    test("release twice restores once", function()
+      stored(function(applied)
+        local set, piece, start = worn("r1", 2)
+        local shown = frame_show.new(set, piece, start)
+
+        shown.show(2, Vector3.one)
+        shown.release()
+        shown.release()
+
+        expect(#applied).toBe(2)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("release before any show restores nothing", function()
+      stored(function(applied)
+        local set, piece, start = worn("r2", 2)
+        local own = harness.make("SurfaceAppearance", piece) :: any
+        local shown = frame_show.new(set, piece, start)
+
+        own.Parent = nil
+        shown.release()
+
+        expect(own.Parent).toBe(nil)
+        expect(#applied).toBe(0)
+      end)
+    end)
+
+    test("a glow set before a switch survives it", function()
+      stored(function()
+        local set, piece, start = worn("r3", 2)
+        local shown = frame_show.new(set, piece, start)
+
+        shown.glow(0.5, Color3.new(1, 1, 1))
+        shown.show(1, Vector3.one)
+        shown.show(2, Vector3.one)
+
+        expect(set.frames[2].material.EmissiveStrength).toBe(0.5)
+      end)
+    end)
+
+    test("a frame with no material in a materials set gives the piece its own appearances back", function()
+      stored(function()
+        local set, piece, start = worn("r4", 3)
+        local own = harness.make("SurfaceAppearance", piece) :: any
+
+        set.frames[2].source:FindFirstChildOfClass("SurfaceAppearance"):Destroy()
+        set.frames[2].material:Destroy()
+        set.frames[2].material = nil
+
+        local shown = frame_show.new(set, piece, start)
+
+        shown.show(1, Vector3.one)
+        expect(own.Parent).toBe(nil)
+
+        shown.show(2, Vector3.one)
+        expect(own.Parent).toBe(piece)
+        expect(set.entry.lent).toBe(0)
+
+        shown.show(3, Vector3.one)
+        expect(own.Parent).toBe(nil)
+      end)
+    end)
+
+    test("a special mesh piece restores the MeshId it had at new", function()
+      stored(function()
+        local _, _, set = decaled("r5")
+
+        frame_store.warm(set)
+
+        local piece, start = harness.make("Part") :: any, harness.make("Part") :: any
+        local special = harness.make("SpecialMesh", piece) :: any
+        local original = harness.make("SpecialMesh", start) :: any
+
+        special.MeshId = "rbxassetid://0"
+        original.MeshId = "rbxassetid://0"
+
+        local shown = frame_show.new(set, piece, start)
+
+        shown.show(2, Vector3.one)
+        original.MeshId = "rbxassetid://9"
+        shown.release()
+
+        expect(special.MeshId).toBe("rbxassetid://0")
+      end)
+    end)
   end)
 end)

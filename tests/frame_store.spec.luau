@@ -1,5 +1,6 @@
 local harness = require("@tests/harness")
 local utility = require("@mod/utility")
+local frames_common = require("@mod/common/frames")
 local frame_store = require("@srv/frame_store")
 
 local test, expect = harness.test, harness.expect
@@ -186,8 +187,8 @@ harness.suite(function()
         local set = frame_store.find(root, "e") :: any
 
         expect(set.union).toEqual({ size = Vector3.new(4, 4, 4), center = Vector3.new(0, 1, 0) })
-        expect(set.frames[1].size).toBe(Vector3.new(1, 2, 3))
-        expect(set.frames[2].size).toBe(nil)
+        expect(set.frames[1].bounds).toEqual({ size = Vector3.new(1, 2, 3), center = Vector3.new(0, 1, 0) })
+        expect(set.frames[2].bounds).toBe(nil)
       end)
     end)
 
@@ -544,6 +545,209 @@ harness.suite(function()
 
     test("the budget defaults to 128 textures", function()
       expect(frame_store.getBudget()).toBe(128)
+    end)
+
+    test("warm does not evict on a set already parked and within budget", function()
+      stored(function()
+        local set = warmed("w1", 1)
+        local evict, calls = frames_common.evict, 0
+
+        frames_common.evict = function(...)
+          calls += 1
+
+          return evict(...)
+        end
+
+        local ok, err = pcall(frame_store.warm, set)
+
+        frames_common.evict = evict
+
+        if not ok then
+          error(err, 0)
+        end
+
+        expect(calls).toBe(0)
+      end)
+    end)
+
+    test("a frame given back twice under one lend raises", function()
+      stored(function()
+        local root = model("w2", 1)
+        local set = frame_store.find(root, "w2") :: any
+
+        frame_store.warm(set)
+
+        local lent = frame_store.lend(set, 1) :: any
+
+        frame_store.giveBack(set, 1, lent)
+
+        expect(function()
+          frame_store.giveBack(set, 1, lent)
+        end).toThrow()
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("frame k is the part named k and a gap leaves the folder unregistered", function()
+      stored(function(stand: Stand)
+        stand.detach = true
+
+        local root, folder = model("w3", 0)
+
+        harness.make("MeshPart", folder).Name = "1"
+        harness.make("Folder", folder).Name = "2"
+        harness.make("MeshPart", folder).Name = "3"
+
+        expect(frame_store.find(root, "w3")).toBe(nil)
+        expect(folder.Parent).toBe(root)
+
+        local middle = harness.make("MeshPart", folder) :: any
+
+        middle.Name = "2"
+
+        local set = frame_store.find(root, "w3") :: any
+
+        expect(#set.frames).toBe(3)
+        expect(set.frames[2].source).toBe(middle)
+        expect(folder.Parent).toBe(nil)
+      end)
+    end)
+
+    test("a gap is refused whatever the FrameCount says", function()
+      stored(function()
+        local root, folder = model("w4", 0)
+
+        folder:SetAttribute("FrameCount", 2)
+        harness.make("MeshPart", folder).Name = "1"
+        harness.make("MeshPart", folder).Name = "3"
+
+        expect(frame_store.find(root, "w4")).toBe(nil)
+      end)
+    end)
+
+    test("init puts the budget back to its default", function()
+      stored(function()
+        frame_store.setBudget(7)
+        frame_store.init({})
+
+        expect(frame_store.getBudget()).toBe(128)
+      end)
+    end)
+
+    test("an Archivable=false set is not built again on every warm", function()
+      stored(function()
+        local root, folder = decaled("w5", { "rbxassetid://1", "rbxassetid://2" })
+        local decal = folder:FindFirstChild("2"):FindFirstChildOfClass("Decal") :: any
+        local clone, clones = frame_store.engine.clone, 0
+
+        decal.Archivable = false
+
+        frame_store.engine.clone = function(instance: Instance)
+          clones += 1
+
+          return clone(instance)
+        end
+
+        local set = frame_store.find(root, "w5") :: any
+
+        harness.captureWarnings(function()
+          frame_store.warm(set)
+        end)
+
+        local failed = clones
+
+        frame_store.warm(set)
+        frame_store.warm(set)
+
+        expect(clones).toBe(failed)
+
+        decal.Archivable = true
+        frame_store.warm(set)
+
+        expect(set.entry.parked).toBe(true)
+        expect(clones > failed).toBe(true)
+      end)
+    end)
+
+    test("a kept folder is replaced when a later folder under the same key is whole and different", function()
+      stored(function(stand: Stand)
+        stand.detach = true
+
+        local first, firstFolder = model("w6", 2)
+
+        expect(frame_store.find(first, "w6") ~= nil).toBe(true)
+        expect(firstFolder.Parent).toBe(nil)
+
+        local second, secondFolder = model("w6", 3)
+
+        frame_store.find(second, "w6")
+        expect(secondFolder.Parent).toBe(nil)
+
+        frame_store.init({})
+
+        local lone = harness.make("Model")
+        local set = frame_store.find(lone, "w6") :: any
+
+        expect(#set.frames).toBe(3)
+      end)
+    end)
+
+    -- lune holds no MeshContent, so the frames are stand-ins that answer what the store asks
+    local function stand(key: string, uris: { string }): (any, any)
+      local frames = {}
+
+      for index, uri in uris do
+        table.insert(frames, {
+          Name = tostring(index),
+          MeshContent = { Uri = uri },
+          IsA = function(_, class: string)
+            return class == "BasePart" or class == "MeshPart"
+          end,
+          GetAttribute = function()
+            return nil
+          end,
+          FindFirstChildOfClass = function()
+            return nil
+          end,
+        })
+      end
+
+      local folder = {
+        Name = "Frames",
+        IsA = function(_, class: string)
+          return class == "Folder"
+        end,
+        GetAttribute = function(_, name: string)
+          return if name == "FrameSet" then key else nil
+        end,
+        GetChildren = function()
+          return frames
+        end,
+      }
+
+      return {
+        GetChildren = function()
+          return { folder }
+        end,
+      }, folder
+    end
+
+    test("a MeshPart set whose frames differ by mesh content switches meshes", function()
+      stored(function()
+        local root = stand("w7", { "rbxassetid://1", "rbxassetid://2" })
+        local set = frame_store.find(root, "w7") :: any
+
+        expect(set.meshes).toBe(true)
+      end)
+    end)
+
+    test("a MeshPart set whose frames share one mesh content switches none", function()
+      stored(function()
+        local root = stand("w8", { "rbxassetid://1", "rbxassetid://1" })
+        local set = frame_store.find(root, "w8") :: any
+
+        expect(set.meshes).toBe(false)
+      end)
     end)
   end)
 end)

@@ -317,7 +317,7 @@ local function piece(
 
   -- while frames play on a piece with no special mesh, the frame's fit is the
   -- piece's size, so a size lands through the frame shown
-  const function resize(size: Vector3)
+  const function fitSize(size: Vector3)
     currentSize = size
 
     if shown == nil or objMesh ~= nil then
@@ -423,10 +423,10 @@ local function piece(
       end
 
       lastSizeAlpha = alpha
-      resize(sizeStart:Lerp(sizeEnd, alpha))
+      fitSize(sizeStart:Lerp(sizeEnd, alpha))
     end)
   else
-    resize(sizeStart)
+    fitSize(sizeStart)
   end
 
   local startMesh = start:FindFirstChildOfClass("SpecialMesh")

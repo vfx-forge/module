@@ -8,8 +8,7 @@ export type Frame = {
   source: BasePart,
   mesh: BasePart?,
   material: Instance?,
-  size: Vector3?,
-  center: Vector3?,
+  bounds: frames_common.Bounds?,
   strength: number?,
   tint: Color3?,
   transparency: number?,
@@ -63,7 +62,7 @@ local byEntry: { [frames_common.Entry]: Set } = {}
 local built: { [Set]: boolean } = {}
 local homes: { [Frame]: BasePart } = {}
 local out: { [Frame]: boolean } = {}
-local refused: { [string]: boolean } = {}
+const refused: { [string]: { any } } = {}
 local budget = DEFAULT_BUDGET
 local park: BasePart? = nil
 
@@ -98,40 +97,45 @@ local function bounds(from: Instance, size: string, center: string): frames_comm
   return { size = s, center = c }
 end
 
--- a folder naming a FrameCount it does not yet hold is still streaming in, or an apply is not done with it
-local function whole(folder: Instance): boolean
+-- frame k is the part named k, so a gap below the highest number is a folder still streaming in, as is one
+-- naming a FrameCount it does not yet hold, or an apply is not done with it
+const function whole(folder: Instance): boolean
   const count = folder:GetAttribute("FrameCount")
-
-  if type(count) ~= "number" or count ~= math.floor(count) then
-    return true
-  end
-
-  local parts = 0
+  const named = {}
+  local parts, highest = 0, 0
 
   for _, child in frames_common.order(folder:GetChildren()) do
-    if child:IsA("BasePart") then
+    const number = tonumber(child.Name) :: number
+
+    if child:IsA("BasePart") and not named[number] then
+      named[number] = true
       parts += 1
+      highest = math.max(highest, number)
     end
   end
 
-  return parts >= count
+  if parts ~= highest then
+    return false
+  end
+
+  return type(count) ~= "number" or count ~= math.floor(count) or parts >= count
 end
 
 local function register(folder: Instance, key: string): Set
   const frames = {}
   local meshes, materials = false, false
+  const named = {}
   local first: string? = nil
 
   for _, child in frames_common.order(folder:GetChildren()) do
-    if child:IsA("BasePart") then
-      const size, center = child:GetAttribute("FrameSize"), child:GetAttribute("FrameCenter")
+    const number = tonumber(child.Name) :: number
+
+    if child:IsA("BasePart") and not named[number] then
       const id = meshIdOf(child)
 
-      table.insert(frames, {
-        source = child,
-        size = if typeof(size) == "Vector3" then size else nil,
-        center = if typeof(center) == "Vector3" then center else nil,
-      })
+      named[number] = true
+
+      table.insert(frames, { source = child, bounds = bounds(child, "FrameSize", "FrameCenter") })
 
       if #frames == 1 then
         first = id
@@ -200,7 +204,36 @@ local function parked(source: BasePart, keep: boolean): BasePart?
   return copy
 end
 
-local function abandon(set: Set, made: { Instance })
+-- what a refused build read, so a set is built again only once something it was refused for has changed
+const function signature(set: Set): { any }
+  const read = {}
+
+  for _, frame in set.frames do
+    const material = materialOf(frame.source)
+
+    table.insert(read, frame.source.Archivable)
+    table.insert(read, material)
+    table.insert(read, if material then material.Archivable else false)
+  end
+
+  return read
+end
+
+const function same(a: { any }, b: { any }): boolean
+  if #a ~= #b then
+    return false
+  end
+
+  for index, value in a do
+    if b[index] ~= value then
+      return false
+    end
+  end
+
+  return true
+end
+
+const function abandon(set: Set, made: { Instance })
   for _, instance in made do
     instance:Destroy()
   end
@@ -211,10 +244,8 @@ local function abandon(set: Set, made: { Instance })
     homes[frame] = nil
   end
 
-  if not refused[set.key] then
-    refused[set.key] = true
-    logger.warn(`frame set {set.key} was not parked: a frame or its material is not Archivable, so it cannot be copied`)
-  end
+  refused[set.key] = signature(set)
+  logger.warn(`frame set {set.key} was not parked: a frame or its material is not Archivable, so it cannot be copied`)
 end
 
 -- every copy a set parks, or none of them: the engine clones nothing for an instance that is not Archivable
@@ -260,12 +291,13 @@ local function build(set: Set, holder: Instance): boolean
 
   set.entry.textures = textures
   built[set] = true
+  refused[set.key] = nil
 
   return true
 end
 
 -- a set's copies destroyed, to be built again: a material still lent is destroyed when it is given back
-local function drop(set: Set)
+const function drop(set: Set)
   for _, frame in set.frames do
     if frame.mesh then
       frame.mesh:Destroy()
@@ -299,7 +331,7 @@ local function let(set: Set)
   set.entry.parked = false
 end
 
-local function evict(keep: frames_common.Entry?)
+const function evict(keep: frames_common.Entry?)
   const entries = {}
 
   for _, set in sets do
@@ -315,6 +347,7 @@ function frame_store.init(scope: { any })
   const holder = containers.of("frames")
 
   park = holder
+  budget = DEFAULT_BUDGET
 
   table.clear(sets)
   table.clear(byEntry)
@@ -364,7 +397,7 @@ function frame_store.find(model: Instance, key: string): Set?
   end
 
   if detaches then
-    kept[key] = kept[key] or folder
+    kept[key] = folder
     folder.Parent = nil
   end
 
@@ -384,6 +417,8 @@ function frame_store.warm(set: Set)
     park = holder
   end
 
+  local changed = false
+
   if not entry.parked then
     if built[set] then
       for _, frame in set.frames do
@@ -395,15 +430,21 @@ function frame_store.warm(set: Set)
           homes[frame].Parent = holder
         end
       end
+    elseif refused[set.key] and same(refused[set.key], signature(set)) then
+      return
     elseif not build(set, holder) then
       return
     end
 
     entry.parked = true
+    changed = true
   end
 
   entry.used = frame_store.engine.now()
-  evict(entry)
+
+  if changed then
+    evict(entry)
+  end
 end
 
 function frame_store.lend(set: Set, index: number): Instance?
@@ -443,7 +484,11 @@ function frame_store.giveBack(set: Set, index: number, material: Instance)
     return
   end
 
-  set.entry.lent = math.max(set.entry.lent - 1, 0)
+  if set.entry.lent == 0 then
+    error("a frame was given back with none lent", 2)
+  end
+
+  set.entry.lent -= 1
 
   if material ~= frame.material then
     material:Destroy()

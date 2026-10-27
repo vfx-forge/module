@@ -60,8 +60,8 @@ local function staged(body: (applied: { { any } }, fake: fake_pool.Fake) -> ())
   }
 
   frame_show.engine = {
-    apply = function(piece: any, source: any)
-      table.insert(applied, { piece, source })
+    apply = function(shape: any, source: any)
+      table.insert(applied, { shape, source })
     end,
   }
 
@@ -107,11 +107,11 @@ local function model(options: Options): (any, any)
     from.MeshId, to.MeshId = "rbxassetid://0", "rbxassetid://0"
     from.Scale, to.Scale = Vector3.one, options.scale or Vector3.one
   else
-    const own = harness.make("SurfaceAppearance", start) :: any
+    const authored = harness.make("SurfaceAppearance", start) :: any
 
     start.MeshId, goal.MeshId = "rbxassetid://1", "rbxassetid://1"
-    own.EmissiveStrength = 2
-    own.EmissiveTint = Color3.new(1, 0.5, 1)
+    authored.EmissiveStrength = 2
+    authored.EmissiveTint = Color3.new(1, 0.5, 1)
   end
 
   if options.key then
@@ -179,10 +179,10 @@ harness.suite(function()
         const m = model({ key = "a", attributes = { DestroyDelay = 1 } })
         const set = found(m, "a")
         const env = effects.emit(0, m)
-        const piece = only(fake)
+        const placed = only(fake)
 
         expect(#applied).toBe(1)
-        expect(applied[1][1]).toBe(piece)
+        expect(applied[1][1]).toBe(placed)
         expect(applied[1][2]).toBe(set.frames[1].mesh)
 
         scheduler.frame(0.5)
@@ -205,10 +205,10 @@ harness.suite(function()
         found(m, "b")
 
         const env = effects.emit(0, m)
-        const piece = only(fake)
+        const placed = only(fake)
 
-        expect(piece.Size).toBe(Vector3.new(2, 4, 4))
-        expect(piece.CFrame.Position).toBe(Vector3.new(2, 0, 0))
+        expect(placed.Size).toBe(Vector3.new(2, 4, 4))
+        expect(placed.CFrame.Position).toBe(Vector3.new(2, 0, 0))
 
         env:Clear()
       end)
@@ -225,13 +225,13 @@ harness.suite(function()
         found(m, "c")
 
         const env = effects.emit(0, m)
-        const piece = only(fake)
+        const placed = only(fake)
 
         scheduler.frame(0.5)
         scheduler.frame(0.6)
 
-        expect(piece.Size).toBe(Vector3.new(4, 8, 8))
-        expect(piece.CFrame.Position).toBe(Vector3.new(4, 0, 0))
+        expect(placed.Size).toBe(Vector3.new(4, 8, 8))
+        expect(placed.CFrame.Position).toBe(Vector3.new(4, 0, 0))
 
         env:Clear()
       end)
@@ -250,8 +250,8 @@ harness.suite(function()
         frame_store.find(m, "d")
 
         const env = effects.emit(0, m)
-        const piece = only(fake)
-        const special = piece:FindFirstChildOfClass("SpecialMesh")
+        const placed = only(fake)
+        const special = placed:FindFirstChildOfClass("SpecialMesh")
 
         expect(special.MeshId).toBe("rbxassetid://1")
         expect(special.Offset).toBe(Vector3.new(1, 0, 0))
@@ -261,8 +261,8 @@ harness.suite(function()
 
         scheduler.frame(0.6)
         expect(special.Offset).toBe(Vector3.new(3, 0, 0))
-        expect(piece.Size).toBe(Vector3.new(4, 4, 4))
-        expect(piece.CFrame.Position).toBe(Vector3.zero)
+        expect(placed.Size).toBe(Vector3.new(4, 4, 4))
+        expect(placed.CFrame.Position).toBe(Vector3.zero)
 
         env:Clear()
       end)
@@ -302,16 +302,16 @@ harness.suite(function()
         const m, start = model({ key = "g" })
         const set = found(m, "g")
         const env = effects.emit(0, m)
-        const piece = only(fake)
+        const placed = only(fake)
         const material = set.frames[1].material
 
-        expect(material.Parent).toBe(piece)
+        expect(material.Parent).toBe(placed)
         expect(set.entry.lent).toBe(1)
 
         env:Clear()
 
         expect(set.entry.lent).toBe(0)
-        expect(material.Parent ~= nil and material.Parent ~= piece).toBe(true)
+        expect(material.Parent ~= nil and material.Parent ~= placed).toBe(true)
         expect(applied[#applied][2]).toBe(start)
       end)
     end)
@@ -337,10 +337,10 @@ harness.suite(function()
       staged(function(_, fake)
         const m = model({ attributes = { EmissiveStrength = 0.5, EmissiveTint = Color3.new(0.5, 1, 1) } })
         const env = effects.emit(0, m)
-        const own = only(fake):FindFirstChildOfClass("SurfaceAppearance")
+        const authored = only(fake):FindFirstChildOfClass("SurfaceAppearance")
 
-        expect(own.EmissiveStrength).toBe(1)
-        expect(own.EmissiveTint).toEqual(Color3.new(0.5, 0.5, 1))
+        expect(authored.EmissiveStrength).toBe(1)
+        expect(authored.EmissiveTint).toEqual(Color3.new(0.5, 0.5, 1))
 
         env:Clear()
       end)
@@ -383,11 +383,11 @@ harness.suite(function()
         found(m, "j")
 
         const env = effects.emit(0, m)
-        const piece = only(fake)
-        const along = piece.CFrame:VectorToWorldSpace(Vector3.new(2, 0, 0))
+        const placed = only(fake)
+        const along = placed.CFrame:VectorToWorldSpace(Vector3.new(2, 0, 0))
 
-        expect((piece.CFrame.Position - along).Magnitude < 1e-4).toBe(true)
-        expect((piece.CFrame.Position - Vector3.new(2, 0, 0)).Magnitude > 1).toBe(true)
+        expect((placed.CFrame.Position - along).Magnitude < 1e-4).toBe(true)
+        expect((placed.CFrame.Position - Vector3.new(2, 0, 0)).Magnitude > 1).toBe(true)
 
         env:Clear()
       end)
@@ -397,15 +397,29 @@ harness.suite(function()
       staged(function(applied, fake)
         const m = model({ goal = Vector3.new(8, 8, 8), attributes = { DestroyDelay = 1 } })
         const env = effects.emit(0, m)
-        const piece = only(fake)
+        const placed = only(fake)
 
-        expect(piece.Size).toBe(Vector3.new(4, 4, 4))
-        expect(piece.CFrame.Position).toBe(Vector3.zero)
+        expect(placed.Size).toBe(Vector3.new(4, 4, 4))
+        expect(placed.CFrame.Position).toBe(Vector3.zero)
 
         scheduler.frame(1.1)
 
-        expect(piece.Size).toBe(Vector3.new(8, 8, 8))
+        expect(placed.Size).toBe(Vector3.new(8, 8, 8))
         expect(#applied).toBe(0)
+
+        env:Clear()
+      end)
+    end)
+
+    test("glow at rest on a materials set leaves each frame's own glow alone", function()
+      staged(function(_, fake)
+        const m = model({ key = "i" })
+        const set = found(m, "i")
+        const env = effects.emit(0, m)
+        const material = set.frames[1].material
+
+        expect(material.Parent).toBe(only(fake))
+        expect(material.EmissiveStrength).toBe(2)
 
         env:Clear()
       end)

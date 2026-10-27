@@ -17,17 +17,10 @@ frame_show.engine = {
   end,
 }
 
-local function boundsOf(frame: frame_store.Frame): frames_common.Bounds?
-  if frame.size == nil or frame.center == nil then
-    return nil
-  end
-
-  return { size = frame.size, center = frame.center }
-end
-
 function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart): Show
   const special = piece:FindFirstChildOfClass("SpecialMesh")
   const startSpecial = start:FindFirstChildOfClass("SpecialMesh")
+  const startId = if startSpecial then startSpecial.MeshId else nil
   const own = {}
   const home = if special then special.Offset else Vector3.zero
 
@@ -76,6 +69,10 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
     const material = frame_store.lend(set, index)
 
     if material == nil then
+      for _, appearance in own do
+        appearance.Parent = piece
+      end
+
       return
     end
 
@@ -117,7 +114,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
       shown = index
     end
 
-    const bounds = boundsOf(frame)
+    const bounds = frame.bounds
     const fitted, shift = frames_common.fit(bounds, set.union, size)
 
     if special then
@@ -157,6 +154,10 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
   end
 
   const function release()
+    if shown == nil then
+      return
+    end
+
     if worn ~= nil and shown ~= nil then
       frame_store.giveBack(set, shown, worn)
     end
@@ -174,8 +175,8 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
 
     if switched then
       if special then
-        if startSpecial then
-          special.MeshId = startSpecial.MeshId
+        if startId then
+          special.MeshId = startId
         end
       elseif piece:IsA("MeshPart") then
         frame_show.engine.apply(piece, start)

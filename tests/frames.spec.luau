@@ -72,5 +72,35 @@ harness.suite(function()
       expect(frames_common.evict({ b, a, empty }, 64, nil)).toEqual({ a })
       expect(frames_common.evict({ empty }, 0, nil)).toEqual({})
     end)
+
+    test("order keeps a gap and drops nothing", function()
+      const root = harness.make("Model")
+      const one, three = harness.make("Part", root), harness.make("Part", root)
+
+      one.Name, three.Name = "1", "3"
+
+      expect(frames_common.order(root:GetChildren())).toEqual({ one, three })
+    end)
+
+    test("order is stable on a tie", function()
+      const root = harness.make("Model")
+      const padded, plain = harness.make("Part", root), harness.make("Part", root)
+
+      padded.Name, plain.Name = "01", "1"
+
+      const ordered = frames_common.order(root:GetChildren())
+      expect(ordered[1]).toBe(padded)
+      expect(ordered[2]).toBe(plain)
+    end)
+
+    test("evict breaks a tie in used by order seen", function()
+      const a = { textures = 48, used = 1, lent = 0, parked = true }
+      const b = { textures = 48, used = 1, lent = 0, parked = true }
+      const c = { textures = 48, used = 1, lent = 0, parked = true }
+      const gone = frames_common.evict({ a, b, c }, 48, nil)
+      expect(#gone).toBe(2)
+      expect(gone[1]).toBe(a)
+      expect(gone[2]).toBe(b)
+    end)
   end)
 end)
