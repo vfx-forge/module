@@ -1,0 +1,354 @@
+local harness = require("@tests/harness")
+local effects = require("@srv/effects")
+local utility = require("@mod/utility")
+local registry = require("@mod/registry")
+local scheduler = require("@mod/scheduler")
+local fake_pool = require("@tests/fake_pool")
+local frame_show = require("@mod/frame_show")
+local frame_store = require("@srv/frame_store")
+local test, expect = harness.test, harness.expect
+
+local mesh = require("@vfx/mesh")
+
+const Color3 = harness.datatypes.Color3
+const Vector3 = harness.datatypes.Vector3
+
+type Options = {
+  key: string?,
+  count: number?,
+  part: boolean?,
+  goal: Vector3?,
+  scale: Vector3?,
+  attributes: { [string]: any }?,
+}
+
+-- the mesh registered on the effects service and the pool, with the frame
+-- store started under a terrain of its own and both engine seams stood in,
+-- then put back once `body` ends. `applied` keeps every ApplyMesh
+local function staged(body: (applied: { { any } }, fake: fake_pool.Fake) -> ())
+  const protect, terrain = utility.protectParent, workspace.Terrain
+  const constructor, store, show = Instance, frame_store.engine, frame_show.engine
+  const applied = {}
+  const scope = {}
+
+  registry.clear()
+  registry.configure({ query = harness.query })
+  harness.reset()
+  effects.init({ setup = true } :: any)
+  registry.register(mesh)
+
+  utility.protectParent = function() end
+  workspace.Terrain = harness.make("Folder") :: any
+
+  -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+  Instance = harness.datatypes.Instance
+
+  frame_store.engine = {
+    now = function()
+      return 0
+    end,
+    detaches = function()
+      return false
+    end,
+    maps = function()
+      return 1
+    end,
+  }
+
+  frame_show.engine = {
+    apply = function(piece: any, source: any)
+      table.insert(applied, { piece, source })
+    end,
+  }
+
+  const fake = fake_pool.start({})
+  const ok, err = pcall(function()
+    frame_store.init(scope)
+    body(applied, fake)
+  end)
+
+  fake_pool.stop(fake)
+  utility.cleanupScope(scope)
+  registry.clear()
+  frame_store.engine, frame_show.engine = store, show
+  utility.protectParent, workspace.Terrain = protect, terrain
+
+  -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+  Instance = constructor
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- a mesh model whose start is a 4 stud MeshPart wearing a surface appearance,
+-- or with `part` a Part with a special mesh, and with `key` a Frames folder of
+-- `count` frames of the same kind, each a frame of half the union's width set
+-- one stud off its center
+local function model(options: Options): (any, any)
+  const m = harness.make("Model", harness.make("Folder")) :: any
+  const class = if options.part then "Part" else "MeshPart"
+  const start = harness.make(class, m) :: any
+  const goal = harness.make(class, m) :: any
+
+  start.Name, goal.Name = "Start", "End"
+  start.Size = Vector3.new(4, 4, 4)
+  goal.Size = options.goal or start.Size
+
+  if options.part then
+    const from = harness.make("SpecialMesh", start) :: any
+    const to = harness.make("SpecialMesh", goal) :: any
+
+    from.MeshId, to.MeshId = "rbxassetid://0", "rbxassetid://0"
+    from.Scale, to.Scale = Vector3.one, options.scale or Vector3.one
+  else
+    const own = harness.make("SurfaceAppearance", start) :: any
+
+    start.MeshId, goal.MeshId = "rbxassetid://1", "rbxassetid://1"
+    own.EmissiveStrength = 2
+    own.EmissiveTint = Color3.new(1, 0.5, 1)
+  end
+
+  if options.key then
+    const folder = harness.make("Folder", m) :: any
+
+    folder.Name = "Frames"
+    folder:SetAttribute("FrameSet", options.key)
+    folder:SetAttribute("UnionSize", Vector3.new(2, 2, 2))
+    folder:SetAttribute("UnionCenter", Vector3.zero)
+    m:SetAttribute("FrameSet", options.key)
+
+    for index = 1, options.count or 4 do
+      const frame = harness.make(class, folder) :: any
+
+      frame.Name = tostring(index)
+      frame:SetAttribute("FrameSize", Vector3.new(1, 2, 2))
+      frame:SetAttribute("FrameCenter", Vector3.new(1, 0, 0))
+
+      if options.part then
+        harness.make("SpecialMesh", frame).MeshId = `rbxassetid://{index}`
+      else
+        harness.make("SurfaceAppearance", frame).EmissiveStrength = 2
+      end
+    end
+  end
+
+  for name, v in options.attributes or {} do
+    m:SetAttribute(name, v)
+  end
+
+  return m, start
+end
+
+-- the emit's one piece, which the pool clones whole into its folder
+local function only(fake: fake_pool.Fake): any
+  const pieces = fake.folder:GetChildren()
+
+  expect(#pieces).toBe(1)
+
+  return pieces[1]
+end
+
+-- the set the emit will find, told its frames differ by mesh, which lune holds
+-- no content to tell
+local function found(m: Instance, key: string): any
+  const set = frame_store.find(m, key) :: any
+
+  set.meshes = true
+
+  return set
+end
+
+harness.suite(function()
+  harness.describe("a mesh's frames", function()
+    test("the frames play over the change duration on the piece", function()
+      staged(function(applied, fake)
+        const m = model({ key = "a", attributes = { DestroyDelay = 1 } })
+        const set = found(m, "a")
+        const env = effects.emit(0, m)
+        const piece = only(fake)
+
+        expect(#applied).toBe(1)
+        expect(applied[1][1]).toBe(piece)
+        expect(applied[1][2]).toBe(set.frames[1].mesh)
+
+        scheduler.frame(0.5)
+        expect(applied[#applied][2]).toBe(set.frames[2].mesh)
+
+        scheduler.frame(0.25)
+        expect(applied[#applied][2]).toBe(set.frames[3].mesh)
+
+        scheduler.frame(0.25)
+        expect(applied[#applied][2]).toBe(set.frames[4].mesh)
+
+        env:Clear()
+      end)
+    end)
+
+    test("the first pose and size are the first frame's", function()
+      staged(function(_, fake)
+        const m = model({ key = "b" })
+
+        found(m, "b")
+
+        const env = effects.emit(0, m)
+        const piece = only(fake)
+
+        expect(piece.Size).toBe(Vector3.new(2, 4, 4))
+        expect(piece.CFrame.Position).toBe(Vector3.new(2, 0, 0))
+
+        env:Clear()
+      end)
+    end)
+
+    test("a size tween after the frames end is fitted to the frame held", function()
+      staged(function(_, fake)
+        const m = model({
+          key = "c",
+          goal = Vector3.new(8, 8, 8),
+          attributes = { FlipbookChangeDuration = 0.25, DestroyDelay = 1 },
+        })
+
+        found(m, "c")
+
+        const env = effects.emit(0, m)
+        const piece = only(fake)
+
+        scheduler.frame(0.5)
+        scheduler.frame(0.6)
+
+        expect(piece.Size).toBe(Vector3.new(4, 8, 8))
+        expect(piece.CFrame.Position).toBe(Vector3.new(4, 0, 0))
+
+        env:Clear()
+      end)
+    end)
+
+    test("a special mesh's offset follows its scale tween after the frames end", function()
+      staged(function(_, fake)
+        const m = model({
+          key = "d",
+          part = true,
+          count = 2,
+          scale = Vector3.new(3, 3, 3),
+          attributes = { FlipbookChangeDuration = 0.25, DestroyDelay = 1 },
+        })
+
+        frame_store.find(m, "d")
+
+        const env = effects.emit(0, m)
+        const piece = only(fake)
+        const special = piece:FindFirstChildOfClass("SpecialMesh")
+
+        expect(special.MeshId).toBe("rbxassetid://1")
+        expect(special.Offset).toBe(Vector3.new(1, 0, 0))
+
+        scheduler.frame(0.5)
+        expect(special.MeshId).toBe("rbxassetid://2")
+
+        scheduler.frame(0.6)
+        expect(special.Offset).toBe(Vector3.new(3, 0, 0))
+        expect(piece.Size).toBe(Vector3.new(4, 4, 4))
+        expect(piece.CFrame.Position).toBe(Vector3.zero)
+
+        env:Clear()
+      end)
+    end)
+
+    test("SyncDuration plays the frames over the piece's duration", function()
+      staged(function(applied)
+        const m = model({ key = "e", attributes = { FlipbookChangeDuration = 4, SyncDuration = true } })
+        const set = found(m, "e")
+        const env = effects.emit(0, m)
+
+        scheduler.frame(0.5)
+        expect(applied[#applied][2]).toBe(set.frames[2].mesh)
+
+        env:Clear()
+      end)
+    end)
+
+    test("frames longer than the piece keep it until they end", function()
+      staged(function(applied, fake)
+        const m = model({ key = "f", attributes = { FlipbookChangeDuration = 2 } })
+        const set = found(m, "f")
+        const env = effects.emit(0, m)
+
+        scheduler.frame(1.5)
+
+        only(fake)
+        expect(applied[#applied][2]).toBe(set.frames[3].mesh)
+        expect(set.entry.lent).toBe(1)
+
+        env:Clear()
+      end)
+    end)
+
+    test("a clear gives the lent material back before the piece goes, and puts the start mesh back", function()
+      staged(function(applied, fake)
+        const m, start = model({ key = "g" })
+        const set = found(m, "g")
+        const env = effects.emit(0, m)
+        const piece = only(fake)
+        const material = set.frames[1].material
+
+        expect(material.Parent).toBe(piece)
+        expect(set.entry.lent).toBe(1)
+
+        env:Clear()
+
+        expect(set.entry.lent).toBe(0)
+        expect(material.Parent ~= nil and material.Parent ~= piece).toBe(true)
+        expect(applied[#applied][2]).toBe(start)
+      end)
+    end)
+
+    test("glow with a frame set dresses the lent material", function()
+      staged(function(_, fake)
+        const m = model({ key = "h", attributes = { EmissiveStrength = 0.5, EmissiveTint = Color3.new(0.5, 1, 1) } })
+        const set = found(m, "h")
+        const env = effects.emit(0, m)
+        const material = set.frames[1].material
+
+        expect(material.Parent).toBe(only(fake))
+        expect(material.EmissiveStrength).toBe(1)
+        expect(material.EmissiveTint).toEqual(Color3.new(0.5, 1, 1))
+
+        env:Clear()
+
+        expect(material.EmissiveStrength).toBe(2)
+      end)
+    end)
+
+    test("glow with no frame set multiplies the piece's own surface appearance", function()
+      staged(function(_, fake)
+        const m = model({ attributes = { EmissiveStrength = 0.5, EmissiveTint = Color3.new(0.5, 1, 1) } })
+        const env = effects.emit(0, m)
+        const own = only(fake):FindFirstChildOfClass("SurfaceAppearance")
+
+        expect(own.EmissiveStrength).toBe(1)
+        expect(own.EmissiveTint).toEqual(Color3.new(0.5, 0.5, 1))
+
+        env:Clear()
+      end)
+    end)
+
+    test("a mesh with no frame set sizes its piece as it did and applies nothing", function()
+      staged(function(applied, fake)
+        const m = model({ goal = Vector3.new(8, 8, 8), attributes = { DestroyDelay = 1 } })
+        const env = effects.emit(0, m)
+        const piece = only(fake)
+
+        expect(piece.Size).toBe(Vector3.new(4, 4, 4))
+        expect(piece.CFrame.Position).toBe(Vector3.zero)
+
+        scheduler.frame(1.1)
+
+        expect(piece.Size).toBe(Vector3.new(8, 8, 8))
+        expect(#applied).toBe(0)
+
+        env:Clear()
+      end)
+    end)
+  end)
+end)

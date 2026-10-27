@@ -376,6 +376,54 @@ harness.suite(function()
       expect(registry.read(made.beam).FlipbookChangeCurve).toBe(oldFlipbookCurve(made.beam))
       expect(registry.read(made.beam).FlipbookChangeCurve).toBe(curves.default())
     end)
+
+    test("a mesh reads its frame and glow rows at their defaults", function()
+      loadAll()
+
+      local _, made = scene()
+      local attrs = registry.read(made.mesh)
+      local strength = attrs.EmissiveStrength(nil, 1)
+      local tint = attrs.EmissiveTint(nil, 1)
+
+      expect(attrs.FrameSet).toBe("")
+      expect(attrs.FlipbookChangeDuration).toBe(1)
+      expect(attrs.FlipbookChangeCurve).toBe(curves.linear())
+      expect(attrs.SyncDuration).toBe(false)
+      expect(strength.animated).toBe(false)
+      expect(strength.at(0)).toBe(1)
+      expect(tint.animated).toBe(false)
+      expect(tint.at(0)).toEqual(Color3.new(1, 1, 1))
+    end)
+
+    test("a mesh lays its frame and glow rows out before its behavior", function()
+      loadAll()
+
+      local module = registry.get("mesh")
+      local rows = module.attributes
+      local titles = {}
+
+      for _, group in module.layout do
+        if type(group) == "table" and group.title ~= nil then
+          table.insert(titles, group.title)
+        end
+      end
+
+      local frames = table.find(titles, "Frames")
+      local glow = table.find(titles, "Glow")
+
+      expect(frames ~= nil and glow ~= nil).toBe(true)
+      expect(glow).toBe((frames :: number) + 1)
+      expect(titles[(glow :: number) + 1]).toBe("Behavior")
+      expect(module.layout[frames :: number].entries).toEqual({
+        { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
+        "SyncDuration",
+      })
+      expect(module.layout[glow :: number].entries).toEqual({ "EmissiveStrength", "EmissiveTint" })
+      expect(rows.FrameSet.hiddenRule ~= nil).toBe(true)
+      expect(rows.FlipbookChangeDuration.units).toBe("seconds")
+      expect(rows.EmissiveStrength.title).toBe("Strength")
+      expect(rows.EmissiveTint.title).toBe("Tint")
+    end)
   end)
 
   -- the modules whose pieces are authored where they emit: the plugin settles a

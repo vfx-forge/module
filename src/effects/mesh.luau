@@ -9,13 +9,18 @@ local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local frame_show = require("@mod/frame_show")
+local frames_common = require("@mod/common/frames")
 local flipbook_common = require("@mod/common/flipbook")
 
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
+local frame_store = require("@srv/frame_store")
 local enabled_effects = require("@srv/enabled_effects")
 
 local rng = Random.new()
+
+const WHITE = Color3.new(1, 1, 1)
 
 local function always()
   return true
@@ -23,6 +28,10 @@ end
 
 local function eased()
   return utility.default_bezier
+end
+
+const function linear()
+  return utility.linear_bezier
 end
 
 -- whether the oldest transparency pair, one StartTransparency and one
@@ -133,6 +142,22 @@ mesh.attributes = {
     end))
     :label("Transparency")
     :hint("Part transparency over the piece's duration."),
+  -- the key of the Frames folder the model plays, which the plugin writes
+  FrameSet = knob(""):hidden(always),
+  FlipbookChangeDuration = knob(function(ctx)
+      return ctx.duration
+    end)
+    :aliases("Flipbook_Change_Duration")
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the frames play over."),
+  FlipbookChangeCurve = knob(linear)
+    :aliases("Flipbook_Change_Curve")
+    :label("Curve")
+    :hint("Easing of the frames' playback."),
+  SyncDuration = knob(false):label("SyncDuration"):hint("Play the frames over the effect's duration."),
+  EmissiveStrength = knob(1):min(0):mod():label("Strength"):hint("Multiplier on the glow of the mesh's material."),
+  EmissiveTint = knob(WHITE):mod():label("Tint"):hint("Color the glow of the mesh's material is multiplied by."),
 }
 
 mesh.properties = {}
@@ -154,6 +179,11 @@ mesh.layout = {
     },
   },
   {
+    title = "Frames",
+    entries = { { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" }, "SyncDuration" },
+  },
+  { title = "Glow", entries = { "EmissiveStrength", "EmissiveTint" } },
+  {
     title = "Behavior",
     entries = {
       { action = "toggle_textures", label = "Load Textures" },
@@ -169,7 +199,15 @@ end
 -- the old effect body. `start` and `goal` are the ones the emit checked: the
 -- piece runs after the emit's delay, by which time the model may no longer
 -- hold them
-local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePart, obj: BasePart, duration: number)
+local function piece(
+  ctx: reader.Ctx,
+  attrs: any,
+  start: BasePart,
+  goal: BasePart,
+  obj: BasePart,
+  duration: number,
+  set: frame_store.Set?
+)
   local ref = ctx.ref :: Model
   local scope = ctx.scope
 
@@ -218,6 +256,23 @@ local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePar
     0
   )
 
+  local sizeStart, sizeEnd = start.Size, goal.Size
+
+  local objMesh = obj:FindFirstChildOfClass("SpecialMesh")
+  const surface = obj:FindFirstChildOfClass("SurfaceAppearance")
+
+  -- read before a frame's decal joins the piece, where it would pass for one
+  -- of the piece's own
+  local decals, flipbooks, fromToMap = utility.getMeshDecals(ref, obj)
+
+  const frameCount = if set then #set.frames else 0
+  const shown = if set and frameCount > 0 then frame_show.new(set, obj, start) else nil
+
+  local offset = Vector3.zero
+  local frameIndex = 1
+  local currentSize = sizeStart
+  local longestFlipbookDuration = 0
+
   local function pose(deltaTime: number)
     local o = sync and utility.getTransformedOriginExtents(parent) or origin
     local add = vector.sign(initRot) * currentRotSpeed * deltaTime
@@ -234,7 +289,41 @@ local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePar
 
     cf *= currentRot
 
+    -- the frame's center off the union's, along the piece's own axes
+    if shown then
+      cf *= CFrame.new(offset)
+    end
+
     return cf
+  end
+
+  -- while frames play on a piece with no special mesh, the frame's fit is the
+  -- piece's size, so a size lands through the frame shown
+  const function resize(size: Vector3)
+    currentSize = size
+
+    if shown == nil or objMesh ~= nil then
+      obj.Size = size
+    end
+
+    if shown then
+      offset = shown.show(frameIndex, size)
+    end
+  end
+
+  if shown then
+    -- a defer runs ahead of the clones, so the frame's material is given back
+    -- before a piece cloned whole is destroyed with it
+    lifetime.defer(scope, shown.release)
+
+    const changeDuration = if attrs.SyncDuration then duration else attrs.FlipbookChangeDuration
+
+    longestFlipbookDuration = changeDuration
+
+    tween.play(scope, curve.new(changeDuration, attrs.FlipbookChangeCurve), function(alpha: number)
+      frameIndex = frames_common.index(frameCount, alpha)
+      offset = shown.show(frameIndex, currentSize)
+    end)
   end
 
   -- the first pose is written at once, so a reused piece never shows a frame
@@ -265,7 +354,37 @@ local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePar
     obj.Transparency = v
   end)
 
-  local sizeStart, sizeEnd = start.Size, goal.Size
+  const strength = attrs.EmissiveStrength(nil, duration)
+  const tint = attrs.EmissiveTint(nil, duration)
+
+  -- a glow at rest writes nothing, so every material keeps its own
+  if strength.animated or tint.animated or strength.at(0) ~= 1 or tint.at(0) ~= WHITE then
+    const framed = set ~= nil and set.materials
+    const authored = start:FindFirstChildOfClass("SurfaceAppearance") :: any
+    const baseStrength = if authored then authored.EmissiveStrength else 1
+    const baseTint = if authored then authored.EmissiveTint else WHITE
+
+    local glowStrength, glowTint = strength.at(0), tint.at(0)
+
+    const function shine()
+      if shown and framed then
+        shown.glow(glowStrength, glowTint)
+      elseif surface and authored then
+        surface.EmissiveStrength = baseStrength * glowStrength
+        surface.EmissiveTint = Color3.new(baseTint.R * glowTint.R, baseTint.G * glowTint.G, baseTint.B * glowTint.B)
+      end
+    end
+
+    tween.drive(scope, strength, function(v: number)
+      glowStrength = v
+      shine()
+    end)
+
+    tween.drive(scope, tint, function(v: Color3)
+      glowTint = v
+      shine()
+    end)
+  end
 
   if sizeStart ~= sizeEnd then
     local lastSizeAlpha = -1
@@ -277,16 +396,14 @@ local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePar
       end
 
       lastSizeAlpha = alpha
-      obj.Size = sizeStart:Lerp(sizeEnd, alpha)
+      resize(sizeStart:Lerp(sizeEnd, alpha))
     end)
   else
-    obj.Size = sizeStart
+    resize(sizeStart)
   end
 
   local startMesh = start:FindFirstChildOfClass("SpecialMesh")
   local goalMesh = goal:FindFirstChildOfClass("SpecialMesh")
-
-  local objMesh = obj:FindFirstChildOfClass("SpecialMesh")
 
   if objMesh then
     if startMesh and goalMesh then
@@ -295,6 +412,10 @@ local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePar
       if scaleStart ~= scaleEnd then
         tween.play(scope, curve.new(duration, attrs.MeshScaleCurve), function(alpha: number)
           objMesh.Scale = utility.lerp(scaleStart, scaleEnd, alpha)
+
+          if shown then
+            offset = shown.show(frameIndex, currentSize)
+          end
         end)
       end
     else
@@ -305,10 +426,6 @@ local function piece(ctx: reader.Ctx, attrs: any, start: BasePart, goal: BasePar
       end)
     end
   end
-
-  local decals, flipbooks, fromToMap = utility.getMeshDecals(ref, obj)
-
-  local longestFlipbookDuration = 0
 
   if legacy_isFlipbook then
     table.sort(decals, function(a, b)
@@ -447,6 +564,12 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   -- every piece runs on the effect's clock, so one Speed track paces them all
   utility.speedFrom(scope, ctx.constant, attrs.Speed)
 
+  const set = if attrs.FrameSet ~= "" then frame_store.find(ref, attrs.FrameSet) else nil
+
+  if set then
+    frame_store.warm(set)
+  end
+
   -- each piece runs on a thread the effect holds, so a clear closes it
   local outstanding = lifetime.join(scope)
 
@@ -454,7 +577,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
     local duration = rng:NextNumber(range.Min, range.Max)
 
     lifetime.spawn(outstanding, function()
-      piece(ctx, attrs, start :: BasePart, goal :: BasePart, pool.take(scope, start) :: BasePart, duration)
+      piece(ctx, attrs, start :: BasePart, goal :: BasePart, pool.take(scope, start) :: BasePart, duration, set)
     end)
   end
 
