@@ -132,8 +132,9 @@ export function getBudget(): number | undefined;
 
 /**
  * How many textures the frame sets of mesh effects may keep loaded at once, 128 by default.
- * A texture is one map of one frame. The least recently played sets are let go first, and
- * the budget may be exceeded while a playing set needs it. Errors are logged, not thrown:
+ * A texture is one map of one frame. The least recently played sets are let go first, at once
+ * when the budget is lowered, and the budget may be exceeded while a playing set needs it.
+ * A set holding no textures is never let go. Errors are logged, not thrown:
  * anything but a finite number of 0 or more leaves the budget as it was.
  */
 export function setFrameBudget(textures: number): void;

@@ -71,7 +71,7 @@ function common.evict(entries: { Entry }, budget: number, keep: Entry?): { Entry
       break
     end
 
-    if entry.lent == 0 and entry ~= keep then
+    if entry.lent == 0 and entry.textures > 0 and entry ~= keep then
       table.insert(out, entry)
       total -= entry.textures
     end

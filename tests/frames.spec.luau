@@ -64,5 +64,13 @@ harness.suite(function()
       const c = { textures = 64, used = 3, lent = 0, parked = false }
       expect(frames_common.evict({ a, b, c }, 64, b)).toEqual({})
     end)
+
+    test("evict never lets go of an entry that holds no textures", function()
+      const empty = { textures = 0, used = 0, lent = 0, parked = true }
+      const a = { textures = 64, used = 1, lent = 0, parked = true }
+      const b = { textures = 64, used = 2, lent = 0, parked = true }
+      expect(frames_common.evict({ b, a, empty }, 64, nil)).toEqual({ a })
+      expect(frames_common.evict({ empty }, 0, nil)).toEqual({})
+    end)
   end)
 end)

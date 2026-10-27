@@ -1,5 +1,6 @@
 local RunService = game:GetService("RunService")
 
+local logger = require("@mod/logger")
 local containers = require("@srv/containers")
 local frames_common = require("@mod/common/frames")
 
@@ -11,6 +12,7 @@ export type Frame = {
   center: Vector3?,
   strength: number?,
   tint: Color3?,
+  transparency: number?,
 }
 
 export type Set = {
@@ -51,6 +53,9 @@ frame_store.engine = {
 
     return count
   end,
+  clone = function(instance: Instance): Instance?
+    return instance:Clone()
+  end,
 }
 
 local sets: { [string]: Set } = {}
@@ -58,8 +63,12 @@ local byEntry: { [frames_common.Entry]: Set } = {}
 local built: { [Set]: boolean } = {}
 local homes: { [Frame]: BasePart } = {}
 local out: { [Frame]: boolean } = {}
+local refused: { [string]: boolean } = {}
 local budget = DEFAULT_BUDGET
 local park: BasePart? = nil
+
+-- the folders a client detached, kept through a restart of the store, which would find none under their models
+const kept: { [string]: Instance } = {}
 
 local function materialOf(source: Instance): Instance?
   return source:FindFirstChildOfClass("SurfaceAppearance") or source:FindFirstChildOfClass("Decal")
@@ -87,6 +96,25 @@ local function bounds(from: Instance, size: string, center: string): frames_comm
   end
 
   return { size = s, center = c }
+end
+
+-- a folder naming a FrameCount it does not yet hold is still streaming in, or an apply is not done with it
+local function whole(folder: Instance): boolean
+  const count = folder:GetAttribute("FrameCount")
+
+  if type(count) ~= "number" or count ~= math.floor(count) then
+    return true
+  end
+
+  local parts = 0
+
+  for _, child in frames_common.order(folder:GetChildren()) do
+    if child:IsA("BasePart") then
+      parts += 1
+    end
+  end
+
+  return parts >= count
 end
 
 local function register(folder: Instance, key: string): Set
@@ -144,8 +172,12 @@ local function locate(model: Instance, key: string): Instance?
 end
 
 -- a copy of a frame part that draws nothing and sits out of view, holding only what its kind of mesh needs
-local function parked(source: BasePart, keep: boolean): BasePart
-  const copy = source:Clone()
+local function parked(source: BasePart, keep: boolean): BasePart?
+  const copy = frame_store.engine.clone(source) :: BasePart?
+
+  if copy == nil then
+    return nil
+  end
 
   for _, child in copy:GetChildren() do
     if not (keep and child:IsA("SpecialMesh")) then
@@ -168,22 +200,56 @@ local function parked(source: BasePart, keep: boolean): BasePart
   return copy
 end
 
-local function build(set: Set, holder: Instance)
+local function abandon(set: Set, made: { Instance })
+  for _, instance in made do
+    instance:Destroy()
+  end
+
+  for _, frame in set.frames do
+    frame.mesh = nil
+    frame.material = nil
+    homes[frame] = nil
+  end
+
+  if not refused[set.key] then
+    refused[set.key] = true
+    logger.warn(`frame set {set.key} was not parked: a frame or its material is not Archivable, so it cannot be copied`)
+  end
+end
+
+-- every copy a set parks, or none of them: the engine clones nothing for an instance that is not Archivable
+local function build(set: Set, holder: Instance): boolean
+  const made: { Instance } = {}
   local textures = 0
+
+  const function keep(instance: Instance?): any
+    if instance ~= nil then
+      table.insert(made, instance)
+    end
+
+    return instance
+  end
 
   for _, frame in set.frames do
     const material = materialOf(frame.source) :: any
+    const mesh = keep(parked(frame.source, true))
+    const home = if material then keep(parked(frame.source, false)) else nil
+    const copy = if material then keep(frame_store.engine.clone(material)) else nil
 
-    frame.mesh = parked(frame.source, true)
-    frame.mesh.Parent = holder
+    if mesh == nil or (material and (home == nil or copy == nil)) then
+      abandon(set, made)
+
+      return false
+    end
+
+    frame.mesh = mesh
+    mesh.Parent = holder
 
     if material then
       frame.strength = material.EmissiveStrength
       frame.tint = material.EmissiveTint
+      frame.transparency = if material:IsA("Decal") then material.Transparency else nil
       textures += frame_store.engine.maps(material)
-
-      const home = parked(frame.source, false)
-      const copy = material:Clone()
 
       copy.Parent = home
       home.Parent = holder
@@ -194,6 +260,29 @@ local function build(set: Set, holder: Instance)
 
   set.entry.textures = textures
   built[set] = true
+
+  return true
+end
+
+-- a set's copies destroyed, to be built again: a material still lent is destroyed when it is given back
+local function drop(set: Set)
+  for _, frame in set.frames do
+    if frame.mesh then
+      frame.mesh:Destroy()
+    end
+
+    if homes[frame] then
+      homes[frame]:Destroy()
+    end
+
+    frame.mesh = nil
+    frame.material = nil
+    homes[frame] = nil
+    out[frame] = nil
+  end
+
+  built[set] = nil
+  set.entry.parked = false
 end
 
 local function let(set: Set)
@@ -210,6 +299,18 @@ local function let(set: Set)
   set.entry.parked = false
 end
 
+local function evict(keep: frames_common.Entry?)
+  const entries = {}
+
+  for _, set in sets do
+    table.insert(entries, set.entry)
+  end
+
+  for _, gone in frames_common.evict(entries, budget, keep) do
+    let(byEntry[gone])
+  end
+end
+
 function frame_store.init(scope: { any })
   const holder = containers.of("frames")
 
@@ -220,6 +321,7 @@ function frame_store.init(scope: { any })
   table.clear(built)
   table.clear(homes)
   table.clear(out)
+  table.clear(refused)
 
   table.insert(scope, function()
     for _, set in sets do
@@ -244,14 +346,25 @@ function frame_store.init(scope: { any })
 end
 
 function frame_store.find(model: Instance, key: string): Set?
-  const folder = locate(model, key)
   local set = sets[key]
+  const folder = locate(model, key) or if set == nil then kept[key] else nil
 
-  if set == nil and folder ~= nil then
+  if folder == nil then
+    return set
+  end
+
+  const detaches = frame_store.engine.detaches()
+
+  if (set == nil or detaches) and not whole(folder) then
+    return set
+  end
+
+  if set == nil then
     set = register(folder, key)
   end
 
-  if folder ~= nil and frame_store.engine.detaches() then
+  if detaches then
+    kept[key] = kept[key] or folder
     folder.Parent = nil
   end
 
@@ -260,10 +373,18 @@ end
 
 function frame_store.warm(set: Set)
   const entry = set.entry
+  const holder = containers.of("frames")
+
+  -- the copies under a holder that was destroyed went with it
+  if holder ~= park then
+    for other in built do
+      drop(other)
+    end
+
+    park = holder
+  end
 
   if not entry.parked then
-    const holder = park or containers.of("frames")
-
     if built[set] then
       for _, frame in set.frames do
         if frame.mesh then
@@ -274,24 +395,15 @@ function frame_store.warm(set: Set)
           homes[frame].Parent = holder
         end
       end
-    else
-      build(set, holder)
+    elseif not build(set, holder) then
+      return
     end
 
     entry.parked = true
   end
 
   entry.used = frame_store.engine.now()
-
-  const entries = {}
-
-  for _, other in sets do
-    table.insert(entries, other.entry)
-  end
-
-  for _, gone in frames_common.evict(entries, budget, entry) do
-    let(byEntry[gone])
-  end
+  evict(entry)
 end
 
 function frame_store.lend(set: Set, index: number): Instance?
@@ -314,6 +426,10 @@ function frame_store.lend(set: Set, index: number): Instance?
 
   copy.EmissiveStrength = frame.strength
   copy.EmissiveTint = frame.tint
+
+  if frame.transparency ~= nil then
+    copy.Transparency = frame.transparency
+  end
 
   return copy
 end
@@ -339,12 +455,18 @@ function frame_store.giveBack(set: Set, index: number, material: Instance)
 
   held.EmissiveStrength = frame.strength
   held.EmissiveTint = frame.tint
+
+  if frame.transparency ~= nil then
+    held.Transparency = frame.transparency
+  end
+
   held.Parent = homes[frame]
   out[frame] = nil
 end
 
 function frame_store.setBudget(textures: number)
   budget = textures
+  evict(nil)
 end
 
 function frame_store.getBudget(): number

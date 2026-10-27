@@ -27,6 +27,9 @@ local function stored(body: (applied: { { any } }) -> ())
     maps = function()
       return 1
     end,
+    clone = function(instance: Instance)
+      return instance:Clone()
+    end,
   }
 
   frame_show.engine = {

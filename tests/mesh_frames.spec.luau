@@ -53,6 +53,9 @@ local function staged(body: (applied: { { any } }, fake: fake_pool.Fake) -> ())
     maps = function()
       return 1
     end,
+    clone = function(instance: Instance)
+      return instance:Clone()
+    end,
   }
 
   frame_show.engine = {

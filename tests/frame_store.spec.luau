@@ -35,6 +35,10 @@ local function stored(body: (stand: Stand) -> ())
     maps = function()
       return 1
     end,
+    -- the engine's Clone, which answers nil for an instance that is not Archivable; lune's clones one anyway
+    clone = function(instance: Instance)
+      return if instance.Archivable then instance:Clone() else nil
+    end,
   }
 
   local ok, err = pcall(function()
@@ -43,6 +47,7 @@ local function stored(body: (stand: Stand) -> ())
   end)
 
   utility.cleanupScope(scope)
+  frame_store.setBudget(128)
   frame_store.engine = engine
   utility.protectParent, workspace.Terrain = protect, terrain
 
@@ -270,7 +275,6 @@ harness.suite(function()
         expect(a.frames[1].material.Parent.Parent).toBe(nil)
         expect(b.entry.parked).toBe(true)
         expect(c.entry.parked).toBe(true)
-        frame_store.setBudget(128)
       end)
     end)
 
@@ -286,7 +290,6 @@ harness.suite(function()
         expect(b.entry.parked).toBe(false)
         expect(c.entry.parked).toBe(true)
         expect(lent ~= nil).toBe(true)
-        frame_store.setBudget(128)
       end)
     end)
 
@@ -304,7 +307,6 @@ harness.suite(function()
         expect(a.entry.parked).toBe(true)
         expect(a.frames[1].mesh.Parent ~= nil).toBe(true)
         expect(a.frames[1].material.Parent.Parent ~= nil).toBe(true)
-        frame_store.setBudget(128)
       end)
     end)
 
@@ -388,6 +390,155 @@ harness.suite(function()
         expect(set.frames[1].material.EmissiveStrength).toBe(3)
         expect(set.frames[1].material.EmissiveTint).toBe(Color3.new(1, 0, 0))
         expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("a folder short of its FrameCount answers nil and stays until it is whole", function()
+      stored(function(stand: Stand)
+        stand.detach = true
+
+        local root, folder = model("n1", 2)
+
+        folder:SetAttribute("FrameCount", 3)
+
+        expect(frame_store.find(root, "n1")).toBe(nil)
+        expect(folder.Parent).toBe(root)
+
+        harness.make("MeshPart", folder).Name = "3"
+
+        local set = frame_store.find(root, "n1") :: any
+
+        expect(#set.frames).toBe(3)
+        expect(folder.Parent).toBe(nil)
+      end)
+    end)
+
+    test("a folder holding its FrameCount registers at once", function()
+      stored(function()
+        local root, folder = model("n2", 2)
+
+        folder:SetAttribute("FrameCount", 2)
+
+        local set = frame_store.find(root, "n2") :: any
+
+        expect(#set.frames).toBe(2)
+      end)
+    end)
+
+    test("a folder detached before the store started again registers its set again", function()
+      stored(function(stand: Stand)
+        stand.detach = true
+
+        local root, folder = model("n3", 3)
+        local first = frame_store.find(root, "n3")
+        local again = {}
+
+        expect(folder.Parent).toBe(nil)
+
+        frame_store.init(again)
+
+        local set = frame_store.find(root, "n3") :: any
+
+        utility.cleanupScope(again)
+
+        expect(set ~= nil and set ~= first).toBe(true)
+        expect(#set.frames).toBe(3)
+      end)
+    end)
+
+    test("a new park holder parks every set again under it", function()
+      stored(function(stand: Stand)
+        local set = warmed("n4", 1)
+        local other = warmed("n5", 2)
+        local old = set.frames[1].mesh
+        local holder = old.Parent
+
+        holder:Destroy()
+        frame_store.warm(set)
+
+        local mesh = set.frames[1].mesh
+
+        expect(mesh ~= old).toBe(true)
+        expect(mesh.Parent ~= nil and mesh.Parent ~= holder).toBe(true)
+        expect(mesh:IsDescendantOf(stand.terrain)).toBe(true)
+        expect(set.frames[1].material.Parent.Parent).toBe(mesh.Parent)
+        expect(set.entry.parked).toBe(true)
+        expect(other.entry.parked).toBe(false)
+        expect(other.frames[1].mesh).toBe(nil)
+
+        frame_store.warm(other)
+
+        expect(other.entry.parked).toBe(true)
+        expect(other.frames[1].mesh.Parent).toBe(mesh.Parent)
+      end)
+    end)
+
+    test("a frame material that is not Archivable parks nothing of its set and warns once", function()
+      stored(function(stand: Stand)
+        local root, folder = decaled("n6", { "rbxassetid://1", "rbxassetid://2" })
+
+        folder:FindFirstChild("2"):FindFirstChildOfClass("Decal").Archivable = false
+
+        local set = frame_store.find(root, "n6") :: any
+        local warnings = harness.captureWarnings(function()
+          frame_store.warm(set)
+          frame_store.warm(set)
+        end)
+
+        local holder = stand.terrain:FindFirstChild("VFXForge"):FindFirstChild("frames")
+        local said = 0
+
+        for _, text in warnings do
+          if string.find(text, "n6", 1, true) then
+            said += 1
+          end
+        end
+
+        expect(#holder:GetChildren()).toBe(0)
+        expect(said).toBe(1)
+        expect(set.entry.parked).toBe(false)
+        expect(set.frames[1].mesh).toBe(nil)
+        expect(set.frames[1].material).toBe(nil)
+        expect(frame_store.lend(set, 1)).toBe(nil)
+      end)
+    end)
+
+    test("a lent decal's clone and its return carry the authored transparency", function()
+      stored(function()
+        local root, folder = decaled("n7", { "rbxassetid://1" })
+        local authored = folder:FindFirstChild("1"):FindFirstChildOfClass("Decal") :: any
+
+        authored.Transparency = 0.2
+
+        local set = frame_store.find(root, "n7") :: any
+
+        frame_store.warm(set)
+
+        local lent = frame_store.lend(set, 1) :: any
+
+        lent.Transparency = 0.7
+
+        local clone = frame_store.lend(set, 1) :: any
+
+        expect(clone.Transparency).toBe(authored.Transparency)
+
+        frame_store.giveBack(set, 1, lent)
+        frame_store.giveBack(set, 1, clone)
+
+        expect(set.frames[1].material.Transparency).toBe(authored.Transparency)
+      end)
+    end)
+
+    test("a lower budget lets sets go at once", function()
+      stored(function()
+        local a, b, c = warmed("n8", 1), warmed("n9", 2), warmed("n10", 3)
+
+        frame_store.setBudget(6)
+
+        expect(a.entry.parked).toBe(false)
+        expect(a.frames[1].mesh.Parent).toBe(nil)
+        expect(b.entry.parked).toBe(true)
+        expect(c.entry.parked).toBe(true)
       end)
     end)
 

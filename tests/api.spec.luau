@@ -30,20 +30,26 @@ harness.suite(function()
   harness.describe("the frame budget", function()
     test("setFrameBudget takes a finite count and refuses the rest", function()
       const vfx = api()
+      const ok, err = pcall(function()
+        expect(vfx.getFrameBudget()).toBe(128)
 
-      expect(vfx.getFrameBudget()).toBe(128)
+        vfx.setFrameBudget(-1)
+        vfx.setFrameBudget(0 / 0)
+        vfx.setFrameBudget(math.huge)
 
-      vfx.setFrameBudget(-1)
-      vfx.setFrameBudget(0 / 0)
-      vfx.setFrameBudget(math.huge)
+        expect(vfx.getFrameBudget()).toBe(128)
 
-      expect(vfx.getFrameBudget()).toBe(128)
+        vfx.setFrameBudget(40)
 
-      vfx.setFrameBudget(40)
+        expect(vfx.getFrameBudget()).toBe(40)
+      end)
 
-      expect(vfx.getFrameBudget()).toBe(40)
-
+      -- put back whatever the case did, so a failure leaks no budget into the next spec
       vfx.setFrameBudget(128)
+
+      if not ok then
+        error(err, 0)
+      end
     end)
   end)
 
