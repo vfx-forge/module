@@ -75,6 +75,26 @@ local function model(key: string, count: number): (Instance, Instance)
   return root, folder
 end
 
+-- a model whose frames are Parts wearing a SpecialMesh by id and a Decal each
+local function decaled(key: string, ids: { string }): (Instance, Instance)
+  local root = harness.make("Model") :: any
+  local folder = harness.make("Folder", root) :: any
+
+  root:SetAttribute("FrameSet", key)
+  folder.Name = "Frames"
+  folder:SetAttribute("FrameSet", key)
+
+  for index, id in ids do
+    local frame = harness.make("Part", folder) :: any
+
+    frame.Name = tostring(index)
+    harness.make("SpecialMesh", frame).MeshId = id
+    harness.make("Decal", frame)
+  end
+
+  return root, folder
+end
+
 local function warmed(key: string, now: number): any
   local root = model(key, 3)
   local set = frame_store.find(root, key) :: any
@@ -285,6 +305,89 @@ harness.suite(function()
         expect(a.frames[1].mesh.Parent ~= nil).toBe(true)
         expect(a.frames[1].material.Parent.Parent ~= nil).toBe(true)
         frame_store.setBudget(128)
+      end)
+    end)
+
+    test("frames with differing special meshes switch meshes", function()
+      stored(function()
+        local root = decaled("m1", { "rbxassetid://1", "rbxassetid://2" })
+        local set = frame_store.find(root, "m1") :: any
+
+        expect(set.meshes).toBe(true)
+        expect(set.materials).toBe(true)
+      end)
+    end)
+
+    test("frames sharing one special mesh switch none", function()
+      stored(function()
+        local root = decaled("m2", { "rbxassetid://1", "rbxassetid://1", "rbxassetid://1" })
+        local set = frame_store.find(root, "m2") :: any
+
+        expect(set.meshes).toBe(false)
+      end)
+    end)
+
+    test("a decal frame parks on a part copy that holds only the decal", function()
+      stored(function()
+        local root = decaled("m3", { "rbxassetid://1", "rbxassetid://2" })
+        local set = frame_store.find(root, "m3") :: any
+
+        frame_store.warm(set)
+
+        for _, frame in set.frames do
+          local home = frame.material.Parent
+
+          expect(frame.material.ClassName).toBe("Decal")
+          expect(home.ClassName).toBe("Part")
+          expect(home.CFrame).toBe(PARK)
+          expect(#home:GetChildren()).toBe(1)
+        end
+      end)
+    end)
+
+    test("a part frame's mesh copy keeps its special mesh", function()
+      stored(function()
+        local root = decaled("m4", { "rbxassetid://7" })
+        local set = frame_store.find(root, "m4") :: any
+
+        frame_store.warm(set)
+
+        local mesh = set.frames[1].mesh
+        local kept = mesh:FindFirstChildOfClass("SpecialMesh")
+
+        expect(#mesh:GetChildren()).toBe(1)
+        expect(kept.MeshId).toBe("rbxassetid://7")
+        expect(mesh:FindFirstChildOfClass("Decal")).toBe(nil)
+        expect(mesh.CFrame).toBe(PARK)
+      end)
+    end)
+
+    test("giveBack restores a decal's authored glow", function()
+      stored(function()
+        local root, folder = decaled("m5", { "rbxassetid://1" })
+        local authored = folder:FindFirstChild("1"):FindFirstChildOfClass("Decal") :: any
+
+        authored.EmissiveStrength = 3
+        authored.EmissiveTint = Color3.new(1, 0, 0)
+
+        local set = frame_store.find(root, "m5") :: any
+
+        frame_store.warm(set)
+
+        local lent = frame_store.lend(set, 1) :: any
+        local clone = frame_store.lend(set, 1) :: any
+
+        expect(clone.EmissiveStrength).toBe(3)
+        expect(clone.EmissiveTint).toBe(Color3.new(1, 0, 0))
+
+        lent.EmissiveStrength = 9
+        lent.EmissiveTint = Color3.new(0, 0, 1)
+        frame_store.giveBack(set, 1, lent)
+        frame_store.giveBack(set, 1, clone)
+
+        expect(set.frames[1].material.EmissiveStrength).toBe(3)
+        expect(set.frames[1].material.EmissiveTint).toBe(Color3.new(1, 0, 0))
+        expect(set.entry.lent).toBe(0)
       end)
     end)
 
