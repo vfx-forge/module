@@ -31,6 +31,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
   const home = if special then special.Offset else Vector3.zero
 
   local shown: number? = nil
+  local switched = false
   local worn: Instance? = nil
   local offset = Vector3.zero
   local strength: number? = nil
@@ -91,9 +92,11 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
 
           if source then
             special.MeshId = source.MeshId
+            switched = true
           end
-        elseif frame.mesh then
-          frame_show.engine.apply(piece :: MeshPart, frame.mesh)
+        elseif frame.mesh and piece:IsA("MeshPart") then
+          frame_show.engine.apply(piece, frame.mesh)
+          switched = true
         end
       end
 
@@ -144,12 +147,18 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
 
     if special then
       special.Offset = home
+    end
 
-      if startSpecial then
-        special.MeshId = startSpecial.MeshId
+    if switched then
+      if special then
+        if startSpecial then
+          special.MeshId = startSpecial.MeshId
+        end
+      elseif piece:IsA("MeshPart") then
+        frame_show.engine.apply(piece, start)
       end
-    else
-      frame_show.engine.apply(piece :: MeshPart, start)
+
+      switched = false
     end
   end
 

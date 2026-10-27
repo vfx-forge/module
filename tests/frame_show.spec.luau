@@ -218,6 +218,34 @@ harness.suite(function()
       end)
     end)
 
+    test("a plain part piece wears the material and releases with no apply", function()
+      stored(function(applied)
+        local set, _, start = worn("p", 2)
+        local piece = harness.make("Part") :: any
+        local shown = frame_show.new(set, piece, start)
+
+        shown.show(1, Vector3.one)
+        expect(set.frames[1].material.Parent).toBe(piece)
+
+        shown.release()
+        expect(#applied).toBe(0)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("a release with no mesh switched applies nothing", function()
+      stored(function(applied)
+        local set, piece, start = worn("q", 2)
+        local shown = frame_show.new(set, piece, start)
+
+        set.meshes = false
+        shown.show(1, Vector3.one)
+        shown.release()
+
+        expect(#applied).toBe(0)
+      end)
+    end)
+
     local function decaled(key: string): (any, any, any)
       local root = harness.make("Model") :: any
       local folder = harness.make("Folder", root) :: any
