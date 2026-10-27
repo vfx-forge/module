@@ -27,6 +27,26 @@ local function api()
 end
 
 harness.suite(function()
+  harness.describe("the frame budget", function()
+    test("setFrameBudget takes a finite count and refuses the rest", function()
+      const vfx = api()
+
+      expect(vfx.getFrameBudget()).toBe(128)
+
+      vfx.setFrameBudget(-1)
+      vfx.setFrameBudget(0 / 0)
+      vfx.setFrameBudget(math.huge)
+
+      expect(vfx.getFrameBudget()).toBe(128)
+
+      vfx.setFrameBudget(40)
+
+      expect(vfx.getFrameBudget()).toBe(40)
+
+      vfx.setFrameBudget(128)
+    end)
+  end)
+
   harness.describe("the global speed functions", function()
     test("read and write the global clock, a pause leaving the speed as it was", function()
       local vfx = api()

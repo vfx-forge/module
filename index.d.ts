@@ -131,6 +131,19 @@ export function setBudget(seconds?: number): void;
 export function getBudget(): number | undefined;
 
 /**
+ * How many textures the frame sets of mesh effects may keep loaded at once, 128 by default.
+ * A texture is one map of one frame. The least recently played sets are let go first, and
+ * the budget may be exceeded while a playing set needs it. Errors are logged, not thrown:
+ * anything but a finite number of 0 or more leaves the budget as it was.
+ */
+export function setFrameBudget(textures: number): void;
+
+/**
+ * The budget last set with setFrameBudget, 128 by default.
+ */
+export function getFrameBudget(): number;
+
+/**
  * The global speed last set with setSpeed, 1 by default. Pausing does not change it, and
  * Global controllers are not counted in it (see getEffectiveSpeed).
  */

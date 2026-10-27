@@ -120,6 +120,7 @@ local pool = require("@srv/pool")
 local mover = require("@srv/mover")
 local effects = require("@srv/effects")
 local containers = require("@srv/containers")
+local frame_store = require("@srv/frame_store")
 local texture_loader = require("@srv/texture_loader")
 local enabled_effects = require("@srv/enabled_effects")
 
@@ -221,6 +222,8 @@ function api.init(params: params?)
   -- init services
   effects.init(api)
 
+  -- before the loader, which warms every tagged instance inside its own init
+  frame_store.init(api.scope)
   texture_loader.init(api.scope)
   enabled_effects.init(api.scope, effects)
 
@@ -311,6 +314,21 @@ end
 
 function api.getBudget(): number?
   return effects.budget
+end
+
+-- the textures (one map of one frame) the authored frame sets of mesh effects may
+-- keep parked at once; the least recently played sets are let go first
+function api.setFrameBudget(textures: number)
+  if type(textures) ~= "number" or textures ~= textures or textures < 0 or textures == math.huge then
+    logger.warn(`setFrameBudget takes a finite number of textures of 0 or more, not {textures}`)
+    return
+  end
+
+  frame_store.setBudget(textures)
+end
+
+function api.getFrameBudget(): number
+  return frame_store.getBudget()
 end
 
 function api.cacheAttributes(obj: Instance, shallow: boolean)

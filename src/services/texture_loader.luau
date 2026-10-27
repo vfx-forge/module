@@ -2,6 +2,7 @@ local CollectionService = game:GetService("CollectionService")
 
 local utility = require("@mod/utility")
 local containers = require("@srv/containers")
+local frame_store = require("@srv/frame_store")
 local flipbook_common = require("@mod/common/flipbook")
 
 local texture_loader = {}
@@ -110,6 +111,13 @@ function texture_loader.init(scope: { any })
       and ref:FindFirstChild("End")
       and (ref :: any).End:IsA("BasePart")
     then
+      const key = ref:GetAttribute("FrameSet")
+      const set = if type(key) == "string" and key ~= "" then frame_store.find(ref, key) else nil
+
+      if set then
+        frame_store.warm(set)
+      end
+
       createLoader(ref, function(add)
         local decals, flipbooks = utility.getMeshDecals(ref :: Model, obj)
 
