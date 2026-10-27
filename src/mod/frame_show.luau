@@ -4,6 +4,7 @@ local frame_store = require("@srv/frame_store")
 export type Show = {
   show: (index: number, size: Vector3) -> Vector3,
   glow: (strength: number, tint: Color3) -> (),
+  fade: (transparency: number) -> (),
   release: () -> (),
 }
 
@@ -36,6 +37,8 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
   local offset = Vector3.zero
   local strength: number? = nil
   local tint = Color3.new(1, 1, 1)
+  local faded: number? = nil
+  local sized: Vector3? = nil
 
   for _, child in piece:GetChildren() do
     if child:IsA("SurfaceAppearance") then
@@ -46,15 +49,22 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
   const function dress(index: number)
     const frame = set.frames[index]
 
-    if frame == nil or strength == nil or worn == nil then
+    if frame == nil or worn == nil then
       return
     end
 
     const material = worn :: any
-    const base = frame.tint or Color3.new(1, 1, 1)
 
-    material.EmissiveStrength = (frame.strength or 1) * strength
-    material.EmissiveTint = Color3.new(base.R * tint.R, base.G * tint.G, base.B * tint.B)
+    if strength ~= nil then
+      const base = frame.tint or Color3.new(1, 1, 1)
+
+      material.EmissiveStrength = (frame.strength or 1) * strength
+      material.EmissiveTint = Color3.new(base.R * tint.R, base.G * tint.G, base.B * tint.B)
+    end
+
+    if faded ~= nil and material:IsA("Decal") then
+      material.Transparency = 1 - (1 - (frame.transparency or 0)) * (1 - faded)
+    end
   end
 
   const function swap(index: number)
@@ -112,12 +122,16 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
 
     if special then
       if bounds and set.union then
-        special.Offset = (bounds.center - set.union.center) * special.Scale
+        special.Offset = home + (bounds.center - set.union.center) * special.Scale
       end
 
       offset = Vector3.zero
     else
-      piece.Size = fitted
+      if fitted ~= sized then
+        piece.Size = fitted
+        sized = fitted
+      end
+
       offset = shift
     end
 
@@ -127,6 +141,15 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
   const function glow(by: number, color: Color3)
     strength = by
     tint = color
+
+    if shown ~= nil then
+      dress(shown)
+    end
+  end
+
+  -- a decal frame's own transparency, faded further by the effect's
+  const function fade(transparency: number)
+    faded = transparency
 
     if shown ~= nil then
       dress(shown)
@@ -162,7 +185,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
     end
   end
 
-  return { show = show, glow = glow, release = release }
+  return { show = show, glow = glow, fade = fade, release = release }
 end
 
 return frame_show

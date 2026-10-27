@@ -324,7 +324,8 @@ harness.suite(function()
       for _, module in registry.list() do
         for _, rows in { module.attributes, module.properties } do
           for name, row in rows do
-            if row.hiddenRule == nil or string.sub(name, -8) ~= "Duration" then
+            -- a switch named for a duration, such as SyncDuration, is no span
+            if row.hiddenRule == nil or string.sub(name, -8) ~= "Duration" or row.kind == "boolean" then
               continue
             end
 
@@ -384,8 +385,11 @@ harness.suite(function()
       local attrs = registry.read(made.mesh)
       local strength = attrs.EmissiveStrength(nil, 1)
       local tint = attrs.EmissiveTint(nil, 1)
+      local fade = attrs.FrameTransparency(nil, 1)
 
       expect(attrs.FrameSet).toBe("")
+      expect(fade.animated).toBe(false)
+      expect(fade.at(0)).toBe(0)
       expect(attrs.FlipbookChangeDuration).toBe(1)
       expect(attrs.FlipbookChangeCurve).toBe(curves.linear())
       expect(attrs.SyncDuration).toBe(false)
@@ -417,9 +421,23 @@ harness.suite(function()
       expect(module.layout[frames :: number].entries).toEqual({
         { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
         "SyncDuration",
+        "FrameTransparency",
       })
       expect(module.layout[glow :: number].entries).toEqual({ "EmissiveStrength", "EmissiveTint" })
       expect(rows.FrameSet.hiddenRule ~= nil).toBe(true)
+      expect(rows.FrameTransparency.title).toBe("Transparency")
+      expect(rows.FrameTransparency.upper).toBe(1)
+
+      -- the frame rows show only on a mesh that plays a frame set; its glow shows on every mesh
+      for _, name in { "FlipbookChangeCurve", "FlipbookChangeDuration", "SyncDuration", "FrameTransparency" } do
+        local rule = rows[name].hiddenRule
+
+        expect(rule ~= nil and rule(nil, { FrameSet = "" }) == true).toBe(true)
+        expect(rule ~= nil and rule(nil, { FrameSet = "walk" }) == false).toBe(true)
+      end
+
+      expect(rows.EmissiveStrength.hiddenRule).toBe(nil)
+      expect(rows.EmissiveTint.hiddenRule).toBe(nil)
       expect(rows.FlipbookChangeDuration.units).toBe("seconds")
       expect(rows.EmissiveStrength.title).toBe("Strength")
       expect(rows.EmissiveTint.title).toBe("Tint")

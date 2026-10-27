@@ -34,6 +34,10 @@ const function linear()
   return utility.linear_bezier
 end
 
+const function noFrames(_, attrs: any)
+  return attrs.FrameSet == ""
+end
+
 -- whether the oldest transparency pair, one StartTransparency and one
 -- EndTransparency for the whole model, meant the mesh or its decal: the decal
 -- when there is one and the model is not an old flipbook
@@ -149,13 +153,22 @@ mesh.attributes = {
     end)
     :aliases("Flipbook_Change_Duration")
     :unit("seconds")
+    :hidden(noFrames)
     :label("Duration")
     :hint("Seconds the frames play over."),
   FlipbookChangeCurve = knob(linear)
     :aliases("Flipbook_Change_Curve")
+    :hidden(noFrames)
     :label("Curve")
     :hint("Easing of the frames' playback."),
-  SyncDuration = knob(false):label("SyncDuration"):hint("Play the frames over the effect's duration."),
+  SyncDuration = knob(false):hidden(noFrames):label("SyncDuration"):hint("Play the frames over the effect's duration."),
+  FrameTransparency = knob(0)
+    :min(0)
+    :max(1)
+    :mod()
+    :hidden(noFrames)
+    :label("Transparency")
+    :hint("Transparency of the frames' decals over the piece's duration."),
   EmissiveStrength = knob(1):min(0):mod():label("Strength"):hint("Multiplier on the glow of the mesh's material."),
   EmissiveTint = knob(WHITE):mod():label("Tint"):hint("Color the glow of the mesh's material is multiplied by."),
 }
@@ -180,7 +193,11 @@ mesh.layout = {
   },
   {
     title = "Frames",
-    entries = { { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" }, "SyncDuration" },
+    entries = {
+      { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
+      "SyncDuration",
+      "FrameTransparency",
+    },
   },
   { title = "Glow", entries = { "EmissiveStrength", "EmissiveTint" } },
   {
@@ -234,10 +251,11 @@ local function piece(
   local minInitRot = attrs.MinInitRot
   local maxInitRot = attrs.MaxInitRot
 
+  -- upper case, the spelling a row's vector and an authored Vector3 both answer to under every host
   local initRot = vector.create(
-    rng:NextNumber(minInitRot.x, maxInitRot.x),
-    rng:NextNumber(minInitRot.y, maxInitRot.y),
-    rng:NextNumber(minInitRot.z, maxInitRot.z)
+    rng:NextNumber(minInitRot.X, maxInitRot.X),
+    rng:NextNumber(minInitRot.Y, maxInitRot.Y),
+    rng:NextNumber(minInitRot.Z, maxInitRot.Z)
   ) * utility.DEG_TO_RAD
 
   local parent = ref:FindFirstAncestorOfClass("Attachment") or start
@@ -324,6 +342,15 @@ local function piece(
       frameIndex = frames_common.index(frameCount, alpha)
       offset = shown.show(frameIndex, currentSize)
     end)
+
+    const fade = attrs.FrameTransparency(nil, duration)
+
+    -- a fade at rest leaves every decal frame at its own transparency
+    if fade.animated or fade.at(0) ~= 0 then
+      tween.drive(scope, fade, function(v: number)
+        shown.fade(v)
+      end)
+    end
   end
 
   -- the first pose is written at once, so a reused piece never shows a frame

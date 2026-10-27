@@ -19,6 +19,7 @@ type Options = {
   part: boolean?,
   goal: Vector3?,
   scale: Vector3?,
+  decal: number?,
   attributes: { [string]: any }?,
 }
 
@@ -87,7 +88,8 @@ end
 -- a mesh model whose start is a 4 stud MeshPart wearing a surface appearance,
 -- or with `part` a Part with a special mesh, and with `key` a Frames folder of
 -- `count` frames of the same kind, each a frame of half the union's width set
--- one stud off its center
+-- one stud off its center, and with `decal` each part frame wearing a decal of
+-- that transparency
 local function model(options: Options): (any, any)
   const m = harness.make("Model", harness.make("Folder")) :: any
   const class = if options.part then "Part" else "MeshPart"
@@ -130,6 +132,10 @@ local function model(options: Options): (any, any)
 
       if options.part then
         harness.make("SpecialMesh", frame).MeshId = `rbxassetid://{index}`
+
+        if options.decal then
+          harness.make("Decal", frame).Transparency = options.decal
+        end
       else
         harness.make("SurfaceAppearance", frame).EmissiveStrength = 2
       end
@@ -160,6 +166,10 @@ local function found(m: Instance, key: string): any
   set.meshes = true
 
   return set
+end
+
+local function near(value: number, expected: number)
+  expect(math.abs(value - expected) < 1e-6).toBe(true)
 end
 
 harness.suite(function()
@@ -331,6 +341,53 @@ harness.suite(function()
 
         expect(own.EmissiveStrength).toBe(1)
         expect(own.EmissiveTint).toEqual(Color3.new(0.5, 0.5, 1))
+
+        env:Clear()
+      end)
+    end)
+
+    test("FrameTransparency fades each decal frame from its own transparency", function()
+      staged(function(_, fake)
+        const m = model({
+          key = "i",
+          part = true,
+          count = 2,
+          decal = 0.2,
+          attributes = { FrameTransparency = 0.5, DestroyDelay = 1 },
+        })
+
+        const set = frame_store.find(m, "i") :: any
+        const env = effects.emit(0, m)
+        const first, second = set.frames[1].material, set.frames[2].material
+
+        expect(first.Parent).toBe(only(fake))
+        near(first.Transparency, 0.6)
+
+        scheduler.frame(0.8)
+
+        expect(second.Parent).toBe(only(fake))
+        near(second.Transparency, 0.6)
+        near(first.Transparency, 0.2)
+
+        env:Clear()
+
+        near(second.Transparency, 0.2)
+      end)
+    end)
+
+    test("a frame's offset runs along the piece's own axes when it starts turned", function()
+      staged(function(_, fake)
+        const turn = Vector3.new(0, 45, 0)
+        const m = model({ key = "j", attributes = { MinInitRot = turn, MaxInitRot = turn } })
+
+        found(m, "j")
+
+        const env = effects.emit(0, m)
+        const piece = only(fake)
+        const along = piece.CFrame:VectorToWorldSpace(Vector3.new(2, 0, 0))
+
+        expect((piece.CFrame.Position - along).Magnitude < 1e-4).toBe(true)
+        expect((piece.CFrame.Position - Vector3.new(2, 0, 0)).Magnitude > 1).toBe(true)
 
         env:Clear()
       end)

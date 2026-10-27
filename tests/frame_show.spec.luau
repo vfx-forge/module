@@ -207,6 +207,34 @@ harness.suite(function()
       end)
     end)
 
+    test("a fitted size the piece was last given is not written again", function()
+      stored(function()
+        local root, folder = meshes("r", 1)
+
+        folder:SetAttribute("UnionSize", Vector3.new(4, 4, 4))
+        folder:SetAttribute("UnionCenter", Vector3.zero)
+        folder:FindFirstChild("1"):SetAttribute("FrameSize", Vector3.new(2, 4, 4))
+        folder:FindFirstChild("1"):SetAttribute("FrameCenter", Vector3.zero)
+
+        local set = frame_store.find(root, "r") :: any
+
+        frame_store.warm(set)
+
+        local piece, start = harness.make("MeshPart") :: any, harness.make("MeshPart")
+        local shown = frame_show.new(set, piece, start)
+
+        shown.show(1, Vector3.new(8, 4, 4))
+        piece.Size = Vector3.new(9, 9, 9)
+        shown.show(1, Vector3.new(8, 4, 4))
+
+        expect(piece.Size).toBe(Vector3.new(9, 9, 9))
+
+        shown.show(1, Vector3.new(4, 4, 4))
+
+        expect(piece.Size).toBe(Vector3.new(2, 4, 4))
+      end)
+    end)
+
     test("release puts the start mesh back", function()
       stored(function(applied)
         local set, piece, start = worn("g", 2)
@@ -293,7 +321,7 @@ harness.suite(function()
         shown.show(2, Vector3.new(4, 4, 4))
 
         expect(special.MeshId).toBe("rbxassetid://2")
-        expect(special.Offset).toBe(Vector3.new(4, 0, 0))
+        expect(special.Offset).toBe(Vector3.new(4, 5, 0))
         expect(piece.Size).toBe(Vector3.new(3, 3, 3))
         expect(#applied).toBe(0)
 
@@ -304,6 +332,55 @@ harness.suite(function()
         expect(special.MeshId).toBe("rbxassetid://0")
         expect(special.Offset).toBe(Vector3.new(0, 5, 0))
         expect(#applied).toBe(0)
+      end)
+    end)
+
+    local function near(value: number, expected: number)
+      expect(math.abs(value - expected) < 1e-6).toBe(true)
+    end
+
+    test("fade lays the row over each decal frame's own transparency", function()
+      stored(function()
+        local _, folder, set = decaled("i")
+
+        folder:FindFirstChild("1"):FindFirstChildOfClass("Decal").Transparency = 0.2
+        folder:FindFirstChild("2"):FindFirstChildOfClass("Decal").Transparency = 0.4
+        frame_store.warm(set)
+
+        local piece, start = harness.make("Part") :: any, harness.make("Part") :: any
+
+        harness.make("SpecialMesh", piece).MeshId = "rbxassetid://0"
+        harness.make("SpecialMesh", start).MeshId = "rbxassetid://0"
+
+        local shown = frame_show.new(set, piece, start)
+        local first, second = set.frames[1].material, set.frames[2].material
+
+        shown.show(1, Vector3.new(4, 4, 4))
+        shown.fade(0.5)
+        near(first.Transparency, 0.6)
+
+        shown.show(2, Vector3.new(4, 4, 4))
+        near(second.Transparency, 0.7)
+        near(first.Transparency, 0.2)
+
+        shown.fade(1)
+        near(second.Transparency, 1)
+
+        shown.release()
+        near(second.Transparency, 0.4)
+      end)
+    end)
+
+    test("fade leaves a surface appearance alone", function()
+      stored(function()
+        local set, piece, start = worn("j", 2)
+        local shown = frame_show.new(set, piece, start)
+
+        shown.show(1, Vector3.one)
+        shown.fade(0.5)
+        shown.show(2, Vector3.one)
+
+        expect(set.frames[2].material.Parent).toBe(piece)
       end)
     end)
   end)
