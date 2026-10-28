@@ -74,6 +74,25 @@ local function meshes(key: string, count: number): (Instance, Instance)
   return root, folder
 end
 
+local function decaled(key: string, ids: { string }): (Instance, Instance)
+  local root = harness.make("Model") :: any
+  local folder = harness.make("Folder", root) :: any
+
+  root:SetAttribute("FrameSet", key)
+  folder.Name = "Frames"
+  folder:SetAttribute("FrameSet", key)
+
+  for index, id in ids do
+    local frame = harness.make("Part", folder) :: any
+
+    frame.Name = tostring(index)
+    harness.make("SpecialMesh", frame).MeshId = id
+    harness.make("Decal", frame)
+  end
+
+  return root, folder
+end
+
 local function worn(key: string, count: number): (any, any, any, any)
   local root, folder = meshes(key, count)
   local set = frame_store.find(root, key) :: any
@@ -170,7 +189,7 @@ harness.suite(function()
         local shown = frame_show.new(set, piece, start)
 
         shown.show(1, Vector3.one)
-        shown.glow(3, Color3.new(1, 0.5, 1))
+        shown.glow(3, Color3.new(1, 0.5, 1), Color3.new(1, 1, 1))
 
         local material = set.frames[1].material
 
@@ -179,6 +198,52 @@ harness.suite(function()
 
         shown.show(1, Vector3.one)
         expect(material.EmissiveStrength).toBe(6)
+      end)
+    end)
+
+    test("glow multiplies the frame's own color by the color row", function()
+      stored(function()
+        local root, folder = meshes("e2", 2)
+        local authored = folder:FindFirstChild("1"):FindFirstChildOfClass("SurfaceAppearance") :: any
+
+        authored.Color = Color3.new(0.5, 1, 1)
+        authored.EmissiveStrength = 2
+
+        local set = frame_store.find(root, "e2") :: any
+
+        frame_store.warm(set)
+
+        local piece, start = harness.make("MeshPart") :: any, harness.make("MeshPart")
+        local shown = frame_show.new(set, piece, start)
+
+        shown.show(1, Vector3.one)
+        shown.glow(1, Color3.new(1, 1, 1), Color3.new(1, 0.5, 1))
+
+        local material = set.frames[1].material
+
+        expect(material.Color).toEqual(Color3.new(0.5, 0.5, 1))
+        expect(material.EmissiveStrength).toBe(2)
+      end)
+    end)
+
+    test("glow multiplies a decal frame's Color3 by the color row", function()
+      stored(function()
+        local root, folder = decaled("e3", { "rbxassetid://1" })
+        local authored = folder:FindFirstChild("1"):FindFirstChildOfClass("Decal") :: any
+
+        authored.Color3 = Color3.new(0.5, 1, 1)
+
+        local set = frame_store.find(root, "e3") :: any
+
+        frame_store.warm(set)
+
+        local piece, start = harness.make("MeshPart") :: any, harness.make("MeshPart")
+        local shown = frame_show.new(set, piece, start)
+
+        shown.show(1, Vector3.one)
+        shown.glow(1, Color3.new(1, 1, 1), Color3.new(1, 0.5, 1))
+
+        expect(set.frames[1].material.Color3).toEqual(Color3.new(0.5, 0.5, 1))
       end)
     end)
 
@@ -417,7 +482,7 @@ harness.suite(function()
         local set, piece, start = worn("r3", 2)
         local shown = frame_show.new(set, piece, start)
 
-        shown.glow(0.5, Color3.new(1, 1, 1))
+        shown.glow(0.5, Color3.new(1, 1, 1), Color3.new(1, 1, 1))
         shown.show(1, Vector3.one)
         shown.show(2, Vector3.one)
 

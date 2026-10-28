@@ -11,6 +11,7 @@ export type Frame = {
   bounds: frames_common.Bounds?,
   strength: number?,
   tint: Color3?,
+  color: Color3?,
   transparency: number?,
 }
 
@@ -279,6 +280,7 @@ local function build(set: Set, holder: Instance): boolean
     if material then
       frame.strength = material.EmissiveStrength
       frame.tint = material.EmissiveTint
+      frame.color = if material:IsA("Decal") then material.Color3 else material.Color
       frame.transparency = if material:IsA("Decal") then material.Transparency else nil
       textures += frame_store.engine.maps(material)
 
@@ -468,6 +470,14 @@ function frame_store.lend(set: Set, index: number): Instance?
   copy.EmissiveStrength = frame.strength
   copy.EmissiveTint = frame.tint
 
+  if frame.color ~= nil then
+    if copy:IsA("Decal") then
+      copy.Color3 = frame.color
+    else
+      copy.Color = frame.color
+    end
+  end
+
   if frame.transparency ~= nil then
     copy.Transparency = frame.transparency
   end
@@ -500,6 +510,14 @@ function frame_store.giveBack(set: Set, index: number, material: Instance)
 
   held.EmissiveStrength = frame.strength
   held.EmissiveTint = frame.tint
+
+  if frame.color ~= nil then
+    if held:IsA("Decal") then
+      held.Color3 = frame.color
+    else
+      held.Color = frame.color
+    end
+  end
 
   if frame.transparency ~= nil then
     held.Transparency = frame.transparency

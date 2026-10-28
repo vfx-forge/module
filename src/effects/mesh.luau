@@ -170,6 +170,10 @@ mesh.attributes = {
     :label("Transparency")
     :hint("Transparency of the frames' decals over the piece's duration."),
   EmissiveStrength = knob(1):min(0):mod():label("Strength"):hint("Multiplier on the glow of the mesh's material."),
+  SurfaceColor = knob(WHITE)
+    :mod()
+    :label("Color")
+    :hint("Color the mesh's material is multiplied by, its glow included."),
   EmissiveTint = knob(WHITE):mod():label("Tint"):hint("Color the glow of the mesh's material is multiplied by."),
 }
 
@@ -199,7 +203,7 @@ mesh.layout = {
       "FrameTransparency",
     },
   },
-  { title = "Glow", entries = { "EmissiveStrength", "EmissiveTint" } },
+  { title = "Glow", entries = { "SurfaceColor", "EmissiveStrength", "EmissiveTint" } },
   {
     title = "Behavior",
     entries = {
@@ -383,22 +387,32 @@ local function piece(
 
   const strength = attrs.EmissiveStrength(nil, duration)
   const tint = attrs.EmissiveTint(nil, duration)
+  const surfaceColor = attrs.SurfaceColor(nil, duration)
 
   -- a glow at rest writes nothing, so every material keeps its own
-  if strength.animated or tint.animated or strength.at(0) ~= 1 or tint.at(0) ~= WHITE then
+  if
+    strength.animated
+    or tint.animated
+    or surfaceColor.animated
+    or strength.at(0) ~= 1
+    or tint.at(0) ~= WHITE
+    or surfaceColor.at(0) ~= WHITE
+  then
     const framed = set ~= nil and set.materials
     const authored = start:FindFirstChildOfClass("SurfaceAppearance") :: any
     const baseStrength = if authored then authored.EmissiveStrength else 1
     const baseTint = if authored then authored.EmissiveTint else WHITE
+    const baseColor = if authored then authored.Color else WHITE
 
-    local glowStrength, glowTint = strength.at(0), tint.at(0)
+    local glowStrength, glowTint, glowColor = strength.at(0), tint.at(0), surfaceColor.at(0)
 
     const function shine()
       if shown and framed then
-        shown.glow(glowStrength, glowTint)
+        shown.glow(glowStrength, glowTint, glowColor)
       elseif surface and authored then
         surface.EmissiveStrength = baseStrength * glowStrength
         surface.EmissiveTint = Color3.new(baseTint.R * glowTint.R, baseTint.G * glowTint.G, baseTint.B * glowTint.B)
+        surface.Color = Color3.new(baseColor.R * glowColor.R, baseColor.G * glowColor.G, baseColor.B * glowColor.B)
       end
     end
 
@@ -409,6 +423,11 @@ local function piece(
 
     tween.drive(scope, tint, function(v: Color3)
       glowTint = v
+      shine()
+    end)
+
+    tween.drive(scope, surfaceColor, function(v: Color3)
+      glowColor = v
       shine()
     end)
   end

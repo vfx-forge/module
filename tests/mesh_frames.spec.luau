@@ -411,6 +411,59 @@ harness.suite(function()
       end)
     end)
 
+    test("SurfaceColor multiplies each frame's color", function()
+      staged(function()
+        const m = model({ key = "j", attributes = { SurfaceColor = Color3.new(1, 0.5, 1) } })
+        const set = found(m, "j")
+        const env = effects.emit(0, m)
+        const material = set.frames[1].material
+
+        expect(material.Color).toEqual(Color3.new(1, 0.5, 1))
+        expect(material.EmissiveStrength).toBe(2)
+
+        env:Clear()
+
+        expect(material.Color).toEqual(Color3.new(1, 1, 1))
+      end)
+    end)
+
+    test("SurfaceColor with no frame set multiplies the piece's own surface appearance", function()
+      staged(function(_, fake)
+        const m = model({ attributes = { SurfaceColor = Color3.new(1, 0.5, 1) } })
+        const env = effects.emit(0, m)
+        const authored = only(fake):FindFirstChildOfClass("SurfaceAppearance")
+
+        expect(authored.Color).toEqual(Color3.new(1, 0.5, 1))
+
+        env:Clear()
+      end)
+    end)
+
+    test("every row at rest writes no material property", function()
+      staged(function()
+        const m = model({ key = "k" })
+        const set = found(m, "k")
+
+        frame_store.warm(set)
+
+        -- marks that a write of any of the three would replace
+        const material = set.frames[1].material
+        const mark = Color3.new(0.25, 0.25, 0.25)
+
+        material.Color = mark
+        material.EmissiveTint = mark
+        material.EmissiveStrength = 7
+
+        const env = effects.emit(0, m)
+
+        expect(material.Color).toEqual(mark)
+        expect(material.EmissiveTint).toEqual(mark)
+        expect(material.EmissiveStrength).toBe(7)
+
+        env:Clear()
+      end)
+    end)
+
     test("glow at rest on a materials set leaves each frame's own glow alone", function()
       staged(function(_, fake)
         const m = model({ key = "i" })

@@ -394,6 +394,32 @@ harness.suite(function()
       end)
     end)
 
+    test("a frame keeps its material's color, and giveBack restores it", function()
+      stored(function()
+        local root, folder = decaled("m6", { "rbxassetid://1" })
+        local authored = folder:FindFirstChild("1"):FindFirstChildOfClass("Decal") :: any
+
+        authored.Color3 = Color3.new(0.5, 1, 1)
+
+        local set = frame_store.find(root, "m6") :: any
+
+        frame_store.warm(set)
+
+        expect(set.frames[1].color).toBe(Color3.new(0.5, 1, 1))
+
+        local lent = frame_store.lend(set, 1) :: any
+        local clone = frame_store.lend(set, 1) :: any
+
+        expect(clone.Color3).toBe(Color3.new(0.5, 1, 1))
+
+        lent.Color3 = Color3.new(0, 0, 1)
+        frame_store.giveBack(set, 1, lent)
+        frame_store.giveBack(set, 1, clone)
+
+        expect(set.frames[1].material.Color3).toBe(Color3.new(0.5, 1, 1))
+      end)
+    end)
+
     test("a folder short of its FrameCount answers nil and stays until it is whole", function()
       stored(function(stand: Stand)
         stand.detach = true

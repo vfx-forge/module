@@ -3,7 +3,7 @@ local frame_store = require("@srv/frame_store")
 
 export type Show = {
   show: (index: number, size: Vector3) -> Vector3,
-  glow: (strength: number, tint: Color3) -> (),
+  glow: (strength: number, tint: Color3, color: Color3) -> (),
   fade: (transparency: number) -> (),
   release: () -> (),
 }
@@ -30,6 +30,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
   local offset = Vector3.zero
   local strength: number? = nil
   local tint = Color3.new(1, 1, 1)
+  local color = Color3.new(1, 1, 1)
   local faded: number? = nil
   local sized: Vector3? = nil
 
@@ -53,6 +54,15 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
 
       material.EmissiveStrength = (frame.strength or 1) * strength
       material.EmissiveTint = Color3.new(base.R * tint.R, base.G * tint.G, base.B * tint.B)
+
+      const own = frame.color or Color3.new(1, 1, 1)
+      const mixed = Color3.new(own.R * color.R, own.G * color.G, own.B * color.B)
+
+      if material:IsA("Decal") then
+        material.Color3 = mixed
+      else
+        material.Color = mixed
+      end
     end
 
     if faded ~= nil and material:IsA("Decal") then
@@ -135,9 +145,10 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
     return offset
   end
 
-  const function glow(by: number, color: Color3)
+  const function glow(by: number, shade: Color3, surface: Color3)
     strength = by
-    tint = color
+    tint = shade
+    color = surface
 
     if shown ~= nil then
       dress(shown)

@@ -423,7 +423,7 @@ harness.suite(function()
         "SyncDuration",
         "FrameTransparency",
       })
-      expect(module.layout[glow :: number].entries).toEqual({ "EmissiveStrength", "EmissiveTint" })
+      expect(module.layout[glow :: number].entries).toEqual({ "SurfaceColor", "EmissiveStrength", "EmissiveTint" })
       expect(rows.FrameSet.hiddenRule ~= nil).toBe(true)
       expect(rows.FrameTransparency.title).toBe("Transparency")
       expect(rows.FrameTransparency.upper).toBe(1)
