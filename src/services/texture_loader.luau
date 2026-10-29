@@ -112,10 +112,18 @@ function texture_loader.init(scope: { any })
       and (ref :: any).End:IsA("BasePart")
     then
       const key = ref:GetAttribute("FrameSet")
+      const textureKey = ref:GetAttribute("TextureSet")
       const set = if type(key) == "string" and key ~= "" then frame_store.find(ref, key) else nil
+      const textureSet = if type(textureKey) == "string" and textureKey ~= ""
+        then frame_store.findTextures(ref, textureKey)
+        else nil
 
       if set then
         frame_store.warm(set)
+      end
+
+      if textureSet then
+        frame_store.warm(textureSet)
       end
 
       createLoader(ref, function(add)

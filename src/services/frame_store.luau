@@ -25,11 +25,17 @@ export type Set = {
   entry: frames_common.Entry,
 }
 
+-- what tells a folder of frames from a folder of textures, and whether its frames are shapes to park
+type Kind = { folder: string, key: string, count: string, shaped: boolean }
+
 local DEFAULT_BUDGET = 128
 local PARK = CFrame.new(0, -20000, 0)
 
 local MAPS =
   { "ColorMapContent", "EmissiveMaskContent", "NormalMapContent", "RoughnessMapContent", "MetalnessMapContent" }
+
+const FRAMES: Kind = { folder = "Frames", key = "FrameSet", count = "FrameCount", shaped = true }
+const TEXTURES: Kind = { folder = "Textures", key = "TextureSet", count = "TextureCount", shaped = false }
 
 local frame_store = {}
 
@@ -65,6 +71,7 @@ local built: { [Set]: boolean } = {}
 local homes: { [Frame]: BasePart } = {}
 local out: { [Frame]: boolean } = {}
 const refused: { [string]: { any } } = {}
+const shapeless: { [Set]: boolean } = {}
 local budget = DEFAULT_BUDGET
 local park: BasePart? = nil
 
@@ -100,9 +107,9 @@ local function bounds(from: Instance, size: string, center: string): frames_comm
 end
 
 -- frame k is the part named k, so a gap below the highest number is a folder still streaming in, as is one
--- naming a FrameCount it does not yet hold, or an apply is not done with it
-const function whole(folder: Instance): boolean
-  const count = folder:GetAttribute("FrameCount")
+-- naming a count it does not yet hold, or an apply is not done with it
+const function whole(folder: Instance, kind: Kind): boolean
+  const count = folder:GetAttribute(kind.count)
   const named = {}
   local parts, highest = 0, 0
 
@@ -123,7 +130,7 @@ const function whole(folder: Instance): boolean
   return type(count) ~= "number" or count ~= math.floor(count) or parts >= count
 end
 
-local function register(folder: Instance, key: string): Set
+local function register(folder: Instance, key: string, kind: Kind): Set
   const frames = {}
   local meshes, materials = false, false
   const named = {}
@@ -133,16 +140,20 @@ local function register(folder: Instance, key: string): Set
     const number = tonumber(child.Name) :: number
 
     if child:IsA("BasePart") and not named[number] then
-      const id = meshIdOf(child)
-
       named[number] = true
 
-      table.insert(frames, { source = child, bounds = bounds(child, "FrameSize", "FrameCenter") })
+      if kind.shaped then
+        const id = meshIdOf(child)
 
-      if #frames == 1 then
-        first = id
-      elseif id ~= nil and id ~= first then
-        meshes = true
+        table.insert(frames, { source = child, bounds = bounds(child, "FrameSize", "FrameCenter") })
+
+        if #frames == 1 then
+          first = id
+        elseif id ~= nil and id ~= first then
+          meshes = true
+        end
+      else
+        table.insert(frames, { source = child })
       end
 
       if materialOf(child) then
@@ -155,7 +166,7 @@ local function register(folder: Instance, key: string): Set
   const set = {
     key = key,
     frames = frames,
-    union = bounds(folder, "UnionSize", "UnionCenter"),
+    union = if kind.shaped then bounds(folder, "UnionSize", "UnionCenter") else nil,
     meshes = meshes,
     materials = materials,
     entry = entry,
@@ -163,13 +174,14 @@ local function register(folder: Instance, key: string): Set
 
   sets[key] = set
   byEntry[entry] = set
+  shapeless[set] = not kind.shaped
 
   return set
 end
 
-local function locate(model: Instance, key: string): Instance?
+local function locate(model: Instance, key: string, kind: Kind): Instance?
   for _, child in model:GetChildren() do
-    if child:IsA("Folder") and child.Name == "Frames" and child:GetAttribute("FrameSet") == key then
+    if child:IsA("Folder") and child.Name == kind.folder and child:GetAttribute(kind.key) == key then
       return child
     end
   end
@@ -252,6 +264,7 @@ end
 
 -- every copy a set parks, or none of them: the engine clones nothing for an instance that is not Archivable
 local function build(set: Set, holder: Instance): boolean
+  const shaped = not shapeless[set]
   const made: { Instance } = {}
   local textures = 0
 
@@ -265,18 +278,20 @@ local function build(set: Set, holder: Instance): boolean
 
   for _, frame in set.frames do
     const material = materialOf(frame.source) :: any
-    const mesh = keep(parked(frame.source, true))
+    const mesh = if shaped then keep(parked(frame.source, true)) else nil
     const home = if material then keep(parked(frame.source, false)) else nil
     const copy = if material then keep(frame_store.engine.clone(material)) else nil
 
-    if mesh == nil or (material and (home == nil or copy == nil)) then
+    if (shaped and mesh == nil) or (material and (home == nil or copy == nil)) then
       abandon(set, made)
 
       return false
     end
 
-    frame.mesh = mesh
-    mesh.Parent = holder
+    if mesh then
+      frame.mesh = mesh
+      mesh.Parent = holder
+    end
 
     if material then
       frame.strength = material.EmissiveStrength
@@ -358,6 +373,7 @@ function frame_store.init(scope: { any })
   table.clear(homes)
   table.clear(out)
   table.clear(refused)
+  table.clear(shapeless)
 
   table.insert(scope, function()
     for _, set in sets do
@@ -377,13 +393,16 @@ function frame_store.init(scope: { any })
     table.clear(built)
     table.clear(homes)
     table.clear(out)
+    table.clear(shapeless)
     park = nil
   end)
 end
 
-function frame_store.find(model: Instance, key: string): Set?
+-- a folder of `kind` under the model registered by its key, and on a client detached from the model and
+-- from the template it was copied from, so later copies carry none
+const function found(model: Instance, key: string, kind: Kind): Set?
   local set = sets[key]
-  const folder = locate(model, key) or if set == nil then kept[key] else nil
+  const folder = locate(model, key, kind) or if set == nil then kept[key] else nil
 
   if folder == nil then
     return set
@@ -391,12 +410,12 @@ function frame_store.find(model: Instance, key: string): Set?
 
   const detaches = frame_store.engine.detaches()
 
-  if (set == nil or detaches) and not whole(folder) then
+  if (set == nil or detaches) and not whole(folder, kind) then
     return set
   end
 
   if set == nil then
-    set = register(folder, key)
+    set = register(folder, key, kind)
   end
 
   if detaches then
@@ -404,7 +423,7 @@ function frame_store.find(model: Instance, key: string): Set?
     folder.Parent = nil
 
     const template = pool.templateOf(model)
-    const original = if template then locate(template, key) else nil
+    const original = if template then locate(template, key, kind) else nil
 
     if original ~= nil then
       original.Parent = nil
@@ -412,6 +431,15 @@ function frame_store.find(model: Instance, key: string): Set?
   end
 
   return set
+end
+
+function frame_store.find(model: Instance, key: string): Set?
+  return found(model, key, FRAMES)
+end
+
+-- a set whose frames carry only a material, worn on a clock of its own beside any frame set
+function frame_store.findTextures(model: Instance, key: string): Set?
+  return found(model, key, TEXTURES)
 end
 
 function frame_store.warm(set: Set)

@@ -513,6 +513,30 @@ harness.suite(function()
       end)
     end)
 
+    test("materials = false never lends a frame's material", function()
+      stored(function(applied)
+        local set, piece, start = worn("s", 2)
+        local own = harness.make("SurfaceAppearance", piece) :: any
+        local shown = frame_show.new(set, piece, start, { materials = false })
+
+        shown.show(1, Vector3.one)
+        shown.glow(0.5, Color3.new(1, 1, 1), Color3.new(1, 1, 1))
+        shown.show(2, Vector3.one)
+
+        expect(#applied).toBe(2)
+        expect(set.entry.lent).toBe(0)
+        expect(own.Parent).toBe(piece)
+        expect(set.frames[1].material.Parent ~= piece).toBe(true)
+        expect(set.frames[2].material.Parent ~= piece).toBe(true)
+
+        own.Parent = nil
+        shown.release()
+
+        expect(own.Parent).toBe(nil)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
     test("a special mesh piece restores the MeshId it had at new", function()
       stored(function()
         local _, _, set = decaled("r5")

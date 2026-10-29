@@ -115,11 +115,17 @@ end
 
 -- the store's find and warm recording what they are asked, then put back
 local function store(set: any, body: (asked: { string }, warmed: { any }) -> ())
-  local find, warm = frame_store.find, frame_store.warm
+  local find, findTextures, warm = frame_store.find, frame_store.findTextures, frame_store.warm
   local asked, warmed = {}, {}
 
   frame_store.find = function(_: Instance, key: string)
     table.insert(asked, key)
+
+    return set
+  end
+
+  frame_store.findTextures = function(_: Instance, key: string)
+    table.insert(asked, `textures:{key}`)
 
     return set
   end
@@ -130,7 +136,7 @@ local function store(set: any, body: (asked: { string }, warmed: { any }) -> ())
 
   local ok, err = pcall(body, asked, warmed)
 
-  frame_store.find, frame_store.warm = find, warm
+  frame_store.find, frame_store.findTextures, frame_store.warm = find, findTextures, warm
 
   if not ok then
     error(err, 0)
@@ -145,6 +151,22 @@ harness.suite(function()
       store(set, function(asked, warmed)
         loader({ model("walk") }, function(stand: Stand)
           expect(asked).toEqual({ "walk" })
+          expect(#warmed).toBe(1)
+          expect(warmed[1]).toBe(set)
+          utility.cleanupScope(stand.scope)
+        end)
+      end)
+    end)
+
+    test("a tagged mesh model with a texture set is warmed", function()
+      const set = { key = "glow" }
+      const made = model(nil)
+
+      made:SetAttribute("TextureSet", "glow")
+
+      store(set, function(asked, warmed)
+        loader({ made }, function(stand: Stand)
+          expect(asked).toEqual({ "textures:glow" })
           expect(#warmed).toBe(1)
           expect(warmed[1]).toBe(set)
           utility.cleanupScope(stand.scope)

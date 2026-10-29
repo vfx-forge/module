@@ -1,4 +1,6 @@
 local frames_common = require("@mod/common/frames")
+local material_dress = require("@mod/material_dress")
+
 local frame_store = require("@srv/frame_store")
 
 export type Show = {
@@ -6,6 +8,10 @@ export type Show = {
   glow: (strength: number, tint: Color3, color: Color3) -> (),
   fade: (transparency: number) -> (),
   release: () -> (),
+}
+
+export type Options = {
+  materials: boolean?,
 }
 
 local frame_show = {}
@@ -17,7 +23,9 @@ frame_show.engine = {
   end,
 }
 
-function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart): Show
+-- with `materials` false the frames' meshes play and the piece keeps whatever surface it wears
+function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, opts: Options?): Show
+  const materials = set.materials and not (opts and opts.materials == false)
   const special = piece:FindFirstChildOfClass("SpecialMesh")
   const startSpecial = start:FindFirstChildOfClass("SpecialMesh")
   const startId = if startSpecial then startSpecial.MeshId else nil
@@ -35,7 +43,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
   local sized: Vector3? = nil
 
   for _, child in piece:GetChildren() do
-    if child:IsA("SurfaceAppearance") then
+    if materials and child:IsA("SurfaceAppearance") then
       table.insert(own, child)
     end
   end
@@ -47,27 +55,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
       return
     end
 
-    const material = worn :: any
-
-    if strength ~= nil then
-      const base = frame.tint or Color3.new(1, 1, 1)
-
-      material.EmissiveStrength = (frame.strength or 1) * strength
-      material.EmissiveTint = Color3.new(base.R * tint.R, base.G * tint.G, base.B * tint.B)
-
-      const own = frame.color or Color3.new(1, 1, 1)
-      const mixed = Color3.new(own.R * color.R, own.G * color.G, own.B * color.B)
-
-      if material:IsA("Decal") then
-        material.Color3 = mixed
-      else
-        material.Color = mixed
-      end
-    end
-
-    if faded ~= nil and material:IsA("Decal") then
-      material.Transparency = 1 - (1 - (frame.transparency or 0)) * (1 - faded)
-    end
+    material_dress.apply(worn, frame, strength, tint, color, faded)
   end
 
   const function swap(index: number)
@@ -117,7 +105,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart):
         end
       end
 
-      if set.materials then
+      if materials then
         swap(index)
       end
 

@@ -773,6 +773,89 @@ harness.suite(function()
       end)
     end)
 
+    -- a Textures folder of carriers, each holding one surface appearance
+    local function textured(key: string, count: number): (Instance, Instance)
+      local root = harness.make("Model") :: any
+      local folder = harness.make("Folder", root) :: any
+
+      root:SetAttribute("TextureSet", key)
+      folder.Name = "Textures"
+      folder:SetAttribute("TextureSet", key)
+      folder:SetAttribute("TextureCount", count)
+
+      for index = 1, count do
+        local carrier = harness.make("Part", folder) :: any
+
+        carrier.Name = tostring(index)
+        harness.make("SurfaceAppearance", carrier)
+      end
+
+      return root, folder
+    end
+
+    test("findTextures registers a Textures folder whose frames park only their material", function()
+      stored(function(stand: Stand)
+        local root = textured("x1", 2)
+        local set = frame_store.findTextures(root, "x1") :: any
+
+        expect(#set.frames).toBe(2)
+        expect(set.materials).toBe(true)
+        expect(set.meshes).toBe(false)
+        expect(set.union).toBe(nil)
+
+        frame_store.warm(set)
+
+        for _, frame in set.frames do
+          expect(frame.mesh).toBe(nil)
+          expect(frame.bounds).toBe(nil)
+          expect(frame.material.Parent.CFrame).toBe(PARK)
+        end
+
+        local holder = set.frames[1].material.Parent.Parent
+
+        expect(holder:IsDescendantOf(stand.terrain)).toBe(true)
+        expect(#holder:GetChildren()).toBe(2)
+        expect(frame_store.lend(set, 1)).toBe(set.frames[1].material)
+      end)
+    end)
+
+    test("findTextures ignores a Frames folder of the key and find a Textures one", function()
+      stored(function()
+        local root = model("x2", 2)
+        local other = textured("x3", 2)
+
+        expect(frame_store.findTextures(root, "x2")).toBe(nil)
+        expect(frame_store.find(other, "x3")).toBe(nil)
+      end)
+    end)
+
+    test("a Textures folder short of its TextureCount answers nil", function()
+      stored(function()
+        local root, folder = textured("x4", 2)
+
+        folder:SetAttribute("TextureCount", 3)
+
+        expect(frame_store.findTextures(root, "x4")).toBe(nil)
+      end)
+    end)
+
+    test("a copy's first findTextures detaches its template's Textures folder", function()
+      stored(function(stand: Stand)
+        stand.detach = true
+
+        local part = harness.make("Part")
+        local root, folder = textured("x5", 2)
+
+        root.Parent = part
+
+        local copy = pool.take({}, part)
+        local found = frame_store.findTextures(copy:FindFirstChildOfClass("Model") :: Instance, "x5")
+
+        expect(found ~= nil).toBe(true)
+        expect(folder.Parent).toBe(nil)
+      end)
+    end)
+
     -- lune holds no MeshContent, so the frames are stand-ins that answer what the store asks
     local function stand(key: string, uris: { string }): (any, any)
       local frames = {}

@@ -10,6 +10,7 @@ local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local frame_show = require("@mod/frame_show")
+local texture_show = require("@mod/texture_show")
 local frames_common = require("@mod/common/frames")
 local flipbook_common = require("@mod/common/flipbook")
 
@@ -36,6 +37,10 @@ end
 
 const function noFrames(_, attrs: any)
   return attrs.FrameSet == ""
+end
+
+const function noTextures(_, attrs: any)
+  return attrs.TextureSet == ""
 end
 
 -- whether the oldest transparency pair, one StartTransparency and one
@@ -169,6 +174,14 @@ mesh.attributes = {
     :hidden(noFrames)
     :label("Transparency")
     :hint("Transparency of the frames' decals over the piece's duration."),
+  -- the key of the Textures folder the piece wears, which the plugin writes
+  TextureSet = knob(""):hidden(always),
+  TextureFps = knob(24)
+    :min(1)
+    :unit("perSecond")
+    :hidden(noTextures)
+    :label("TextureFps")
+    :hint("Texture frames worn per second, looping for the piece's life."),
   EmissiveStrength = knob(1):min(0):mod():label("Strength"):hint("Multiplier on the glow of the mesh's material."),
   SurfaceColor = knob(WHITE)
     :mod()
@@ -201,6 +214,7 @@ mesh.layout = {
       { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
       "SyncDuration",
       "FrameTransparency",
+      "TextureFps",
     },
   },
   { title = "Glow", entries = { "SurfaceColor", "EmissiveStrength", "EmissiveTint" } },
@@ -227,7 +241,8 @@ local function piece(
   goal: BasePart,
   obj: BasePart,
   duration: number,
-  set: frame_store.Set?
+  set: frame_store.Set?,
+  textureSet: frame_store.Set?
 )
   local ref = ctx.ref :: Model
   local scope = ctx.scope
@@ -288,7 +303,13 @@ local function piece(
   local decals, flipbooks, fromToMap = utility.getMeshDecals(ref, obj)
 
   const frameCount = if set then #set.frames else 0
-  const shown = if set and frameCount > 0 then frame_show.new(set, obj, start) else nil
+  const textureCount = if textureSet then #textureSet.frames else 0
+  const textures = if textureSet and textureCount > 0 then texture_show.new(textureSet, obj) else nil
+
+  -- a texture set shown takes the surface, so the frames bring only their shapes
+  const shown = if set and frameCount > 0
+    then frame_show.new(set, obj, start, if textures then { materials = false } else nil)
+    else nil
 
   local offset = Vector3.zero
   local frameIndex = 1
@@ -398,7 +419,7 @@ local function piece(
     or tint.at(0) ~= WHITE
     or surfaceColor.at(0) ~= WHITE
   then
-    const framed = set ~= nil and set.materials
+    const framed = set ~= nil and set.materials and textures == nil
     const authored = start:FindFirstChildOfClass("SurfaceAppearance") :: any
     const baseStrength = if authored then authored.EmissiveStrength else 1
     const baseTint = if authored then authored.EmissiveTint else WHITE
@@ -407,7 +428,9 @@ local function piece(
     local glowStrength, glowTint, glowColor = strength.at(0), tint.at(0), surfaceColor.at(0)
 
     const function shine()
-      if shown and framed then
+      if textures then
+        textures.glow(glowStrength, glowTint, glowColor)
+      elseif shown and framed then
         shown.glow(glowStrength, glowTint, glowColor)
       elseif surface and authored then
         surface.EmissiveStrength = baseStrength * glowStrength
@@ -570,10 +593,26 @@ local function piece(
     end
   end
 
-  tween.wait(
-    scope,
-    curve.new(math.max(duration, longestFlipbookDuration) + legacy_flipbookFadeOffset + destroyDelay, "linear")
-  )
+  const life = math.max(duration, longestFlipbookDuration) + legacy_flipbookFadeOffset + destroyDelay
+
+  if textures then
+    lifetime.defer(scope, textures.release)
+
+    const fps = attrs.TextureFps
+    local textureIndex = 0
+
+    -- the textures loop on their own clock for as long as the piece is up
+    tween.play(scope, curve.new(life, "linear"), function(_, _, elapsed: number)
+      const index = math.floor(elapsed * fps) % textureCount + 1
+
+      if index ~= textureIndex then
+        textureIndex = index
+        textures.show(index)
+      end
+    end)
+  end
+
+  tween.wait(scope, curve.new(life, "linear"))
 
   lifetime.awaitJoin(children)
 
@@ -611,9 +650,14 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   utility.speedFrom(scope, ctx.constant, attrs.Speed)
 
   const set = if attrs.FrameSet ~= "" then frame_store.find(ref, attrs.FrameSet) else nil
+  const textureSet = if attrs.TextureSet ~= "" then frame_store.findTextures(ref, attrs.TextureSet) else nil
 
   if set then
     frame_store.warm(set)
+  end
+
+  if textureSet then
+    frame_store.warm(textureSet)
   end
 
   -- each piece runs on a thread the effect holds, so a clear closes it
@@ -623,7 +667,16 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
     local duration = rng:NextNumber(range.Min, range.Max)
 
     lifetime.spawn(outstanding, function()
-      piece(ctx, attrs, start :: BasePart, goal :: BasePart, pool.take(scope, start) :: BasePart, duration, set)
+      piece(
+        ctx,
+        attrs,
+        start :: BasePart,
+        goal :: BasePart,
+        pool.take(scope, start) :: BasePart,
+        duration,
+        set,
+        textureSet
+      )
     end)
   end
 

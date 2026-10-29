@@ -422,6 +422,7 @@ harness.suite(function()
         { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
         "SyncDuration",
         "FrameTransparency",
+        "TextureFps",
       })
       expect(module.layout[glow :: number].entries).toEqual({ "SurfaceColor", "EmissiveStrength", "EmissiveTint" })
       expect(rows.FrameSet.hiddenRule ~= nil).toBe(true)
@@ -435,6 +436,13 @@ harness.suite(function()
         expect(rule ~= nil and rule(nil, { FrameSet = "" }) == true).toBe(true)
         expect(rule ~= nil and rule(nil, { FrameSet = "walk" }) == false).toBe(true)
       end
+
+      -- the texture fps shows only on a mesh that wears a texture set
+      local textureRule = rows.TextureFps.hiddenRule
+
+      expect(rows.TextureSet.hiddenRule ~= nil).toBe(true)
+      expect(textureRule ~= nil and textureRule(nil, { TextureSet = "" }) == true).toBe(true)
+      expect(textureRule ~= nil and textureRule(nil, { TextureSet = "walk" }) == false).toBe(true)
 
       expect(rows.EmissiveStrength.hiddenRule).toBe(nil)
       expect(rows.EmissiveTint.hiddenRule).toBe(nil)
