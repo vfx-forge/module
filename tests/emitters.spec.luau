@@ -5,6 +5,7 @@ local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
 local curves = require("@mod/curves")
+local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
@@ -539,6 +540,62 @@ harness.suite(function()
       expect(trail.Lifetime).toBe(2)
       expect(trail.MaxLength).toBe(4)
       expect(trail.LightEmission).toBe(0.25)
+    end)
+  end)
+
+  harness.describe("a decal's glow", function()
+    test("claims names Color3 on a Color-mode decal", function()
+      harness.reset()
+
+      const decal = harness.make("Decal")
+
+      expect(emitters.claims(decal)).toBe(nil)
+
+      decal:SetAttribute("GlowMode", "Emissive")
+      expect(emitters.claims(decal)).toBe(nil)
+
+      decal:SetAttribute("GlowMode", "Color")
+      expect(emitters.claims(decal)).toEqual({ Color3 = true })
+
+      const animator = harness.make("RayValue", decal)
+
+      animator:AddTag(utility.PROPERTY_ANIMATOR_TAG)
+      animator:SetAttribute("Property", "Transparency")
+
+      expect(emitters.claims(decal)).toEqual({ Color3 = true, Transparency = true })
+    end)
+
+    test("a Color-mode decal's Color3 queue is left to its mesh, where a plain decal plays it", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      harness.reset()
+
+      const function played(mode: string?): Color3
+        const decal = harness.make("Decal") :: any
+        const white = harness.datatypes.Color3.new(1, 1, 1)
+        const black = harness.datatypes.Color3.new(0, 0, 0)
+
+        decal.Color3 = white
+        decal:SetAttribute("GlowMode", mode)
+
+        framed(decal, "property", "Color3", {
+          { kind = "tween", chain = false, duration = 1, start = value.lit(black), finish = value.lit(black) },
+        })
+
+        const em = lifetime.emit(nil)
+
+        lifetime.run(lifetime.effect(em, 0, nil), function(scope)
+          emitters.dispatch(decal, scope, { unc = {}, ref = {}, held = {} }, nil)
+        end)
+
+        lifetime.seal(em)
+        harness.render(0.25)
+
+        return decal.Color3
+      end
+
+      expect(played(nil).R).toBe(0)
+      expect(played("Color").R).toBe(1)
     end)
   end)
 end)

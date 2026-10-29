@@ -441,12 +441,17 @@ end
 
 -- the properties of `obj` that a Property Animator under it drives, which the
 -- effect on `obj` leaves to it: an animator is the explicit ask. one that
--- names another target in its Target row claims nothing here
+-- names another target in its Target row claims nothing here. a decal glowing
+-- by its color leaves Color3 to its mesh, which multiplies it by the strength
 function emitters.claims(obj: Instance): { [string]: boolean }?
   local claimed: { [string]: boolean }? = nil
 
+  if obj:IsA("Decal") and attr.get(obj, "GlowMode", "None", true) == "Color" then
+    claimed = { Color3 = true }
+  end
+
   if obj:FindFirstChildWhichIsA("RayValue") == nil then
-    return nil
+    return claimed
   end
 
   for _, child in obj:GetChildren() do
@@ -586,7 +591,9 @@ function emitters.dispatch(
     return
   end
 
-  emitters.applyMods(obj, scope, fallbackDuration(obj), nil)
+  const claimed = emitters.claims(obj)
+
+  emitters.applyMods(obj, scope, fallbackDuration(obj), if claimed ~= nil then { property = claimed } else nil)
 
   -- a legacy tween RayValue emitted on its own is the one effect left with no
   -- module: it drives what it targets. anything else nothing classifies is

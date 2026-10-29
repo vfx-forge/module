@@ -58,6 +58,87 @@ local function partDefault(ctx: reader.Ctx)
   return if start ~= nil and start:FindFirstChildOfClass("Decal") ~= nil then 1 else 0
 end
 
+-- the surface glow reaches only a surface appearance, one the start wears or
+-- one a texture or frame set brings
+const function bare(ctx: reader.Ctx, attrs: any)
+  const start = ctx.ref:FindFirstChild("Start")
+  const surfaced = start ~= nil and start:FindFirstChildOfClass("SurfaceAppearance") ~= nil
+
+  return not surfaced and attrs.TextureSet == "" and attrs.FrameSet == ""
+end
+
+-- a decal's own glow rows, which the decal's card writes on the decal
+const function glowStrength(decal: Decal, duration: number)
+  const rest = attr.get(decal, "GlowStrength", 1, true, function(v)
+    return if type(v) == "number" then math.max(v, 0) else 1
+  end)
+
+  return mods.track(decal, "attribute", "GlowStrength", rest, duration)
+end
+
+-- a track played on its own span, written once when it never moves
+const function play(scope: lifetime.effect, track: mods.Track, write: (v: any) -> ())
+  write(track.at(0))
+
+  if track.animated then
+    tween.play(scope, curve.new(track.span, "linear"), function(_, _, elapsed: number)
+      write(track.at(elapsed))
+    end)
+  end
+end
+
+-- the decal's color, blended toward its twin and run through its own Color3
+-- modifiers, times the strength. never clamped, so a strength past 1 brightens
+-- it past white. the decal claims Color3, so this is its one writer
+const function colorGlow(scope: lifetime.effect, decal: Decal, twin: Color3, duration: number)
+  const rest = decal.Color3
+  const blends = rest ~= twin
+  const eased = curve.new(duration, attr.get(decal, "Color_Curve", utility.default_bezier, true))
+  const tinted = mods.track(decal, "property", "Color3", rest, duration)
+  const strength = glowStrength(decal, duration)
+
+  const function at(elapsed: number)
+    const alpha = if duration > 0 then eased:at(math.min(elapsed / duration, 1)) else 1
+    const base = if blends then color.blend(rest, twin, alpha, true) else rest
+    const c = tinted.at(elapsed, base)
+    const s = math.max(strength.at(elapsed), 0)
+
+    return Color3.new(c.R * s, c.G * s, c.B * s)
+  end
+
+  decal.Color3 = at(0)
+
+  if not blends and not tinted.animated and not strength.animated then
+    return
+  end
+
+  local span = if blends then duration else 0
+
+  for _, track in { tinted, strength } do
+    if track.animated then
+      span = math.max(span, track.span)
+    end
+  end
+
+  tween.play(scope, curve.new(span, "linear"), function(_, _, elapsed: number)
+    decal.Color3 = at(elapsed)
+  end)
+end
+
+const function emissiveGlow(scope: lifetime.effect, decal: Decal, duration: number)
+  const rest = attr.get(decal, "GlowTint", WHITE, true, function(v)
+    return if typeof(v) == "Color3" then v else WHITE
+  end)
+
+  play(scope, glowStrength(decal, duration), function(v: number)
+    decal.EmissiveStrength = math.max(v, 0)
+  end)
+
+  play(scope, mods.track(decal, "attribute", "GlowTint", rest, duration), function(v: Color3)
+    decal.EmissiveTint = v
+  end)
+end
+
 local mesh = {}
 
 mesh.id = "mesh"
@@ -217,7 +298,7 @@ mesh.layout = {
       "TextureFps",
     },
   },
-  { title = "Glow", entries = { "SurfaceColor", "EmissiveStrength", "EmissiveTint" } },
+  { title = "Glow", entries = { "SurfaceColor", "EmissiveStrength", "EmissiveTint" }, hidden = bare },
   {
     title = "Behavior",
     entries = {
@@ -532,6 +613,10 @@ local function piece(
       end
     end)
   else
+    -- the list can name a decal twice, and a glow reads the color it multiplies
+    -- off the decal it writes, so each decal glows once
+    const glowing: { [Instance]: boolean } = {}
+
     for _, decal in decals do
       local from = decal
       local to = fromToMap[from]
@@ -557,12 +642,25 @@ local function piece(
         end)
       end
 
-      if from.Color3 ~= to.Color3 then
+      const glowMode = attr.get(from, "GlowMode", "None", true)
+      const first = not glowing[decal]
+
+      glowing[decal] = true
+
+      if glowMode == "Color" then
+        if first then
+          colorGlow(scope, decal, to.Color3, duration)
+        end
+      elseif from.Color3 ~= to.Color3 then
         local colorCurve = curve.new(duration, attr.get(from, "Color_Curve", utility.default_bezier, true))
 
         tween.play(scope, colorCurve, function(alpha: number)
           decal.Color3 = color.blend(from.Color3, to.Color3, alpha, true)
         end)
+      end
+
+      if glowMode == "Emissive" and first then
+        emissiveGlow(scope, decal, duration)
       end
 
       local flipbook = flipbooks[from]
