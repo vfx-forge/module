@@ -203,7 +203,7 @@ harness.suite(function()
       end)
     end)
 
-    test("the mesh card's Glow group hides on a decal-dressed mesh and shows on a SurfaceAppearance", function()
+    test("the mesh card's Glow group shows only where a SurfaceAppearance or a dressed frame can glow", function()
       const group = glowGroup()
       const plain = { TextureSet = "", FrameSet = "" }
 
@@ -214,7 +214,23 @@ harness.suite(function()
 
       expect(group.hidden({ ref = dressed }, plain)).toBe(true)
       expect(group.hidden({ ref = dressed }, { TextureSet = "a", FrameSet = "" })).toBe(false)
+      expect(group.hidden({ ref = dressed }, { TextureSet = "", FrameSet = "b" })).toBe(true)
+
+      const frames = harness.make("Folder", dressed)
+
+      frames.Name = "Frames"
+      frames:SetAttribute("FrameSet", "b")
+
+      for k = 1, 2 do
+        harness.make("MeshPart", frames).Name = tostring(k)
+      end
+
+      expect(group.hidden({ ref = dressed }, { TextureSet = "", FrameSet = "b" })).toBe(true)
+
+      harness.make("SurfaceAppearance", frames:FindFirstChild("2"))
+
       expect(group.hidden({ ref = dressed }, { TextureSet = "", FrameSet = "b" })).toBe(false)
+      expect(group.hidden({ ref = dressed }, { TextureSet = "", FrameSet = "c" })).toBe(true)
 
       const surfaced = model({})
 

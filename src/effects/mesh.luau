@@ -58,13 +58,35 @@ local function partDefault(ctx: reader.Ctx)
   return if start ~= nil and start:FindFirstChildOfClass("Decal") ~= nil then 1 else 0
 end
 
+-- whether any frame of the model's frame set wears a look; a shape-only set's
+-- frames wear none, so the glow has nothing to reach
+const function framesDressed(model: Instance, key: string): boolean
+  for _, folder in model:GetChildren() do
+    if not folder:IsA("Folder") or folder.Name ~= "Frames" or folder:GetAttribute("FrameSet") ~= key then
+      continue
+    end
+
+    for _, part in folder:GetChildren() do
+      if part:FindFirstChildOfClass("SurfaceAppearance") or part:FindFirstChildOfClass("Decal") then
+        return true
+      end
+    end
+  end
+
+  return false
+end
+
 -- the surface glow reaches only a surface appearance, one the start wears or
--- one a texture or frame set brings
+-- one a texture or dressed frame set brings
 const function bare(ctx: reader.Ctx, attrs: any)
   const start = ctx.ref:FindFirstChild("Start")
   const surfaced = start ~= nil and start:FindFirstChildOfClass("SurfaceAppearance") ~= nil
 
-  return not surfaced and attrs.TextureSet == "" and attrs.FrameSet == ""
+  if surfaced or attrs.TextureSet ~= "" then
+    return false
+  end
+
+  return attrs.FrameSet == "" or not framesDressed(ctx.ref, attrs.FrameSet)
 end
 
 -- a decal's own glow rows, which the decal's card writes on the decal
