@@ -1,6 +1,7 @@
 local RunService = game:GetService("RunService")
 
 local logger = require("@mod/logger")
+local pool = require("@srv/pool")
 local containers = require("@srv/containers")
 local frames_common = require("@mod/common/frames")
 
@@ -401,6 +402,13 @@ function frame_store.find(model: Instance, key: string): Set?
   if detaches then
     kept[key] = folder
     folder.Parent = nil
+
+    const template = pool.templateOf(model)
+    const original = if template then locate(template, key) else nil
+
+    if original ~= nil then
+      original.Parent = nil
+    end
   end
 
   return set

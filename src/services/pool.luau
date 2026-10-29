@@ -97,6 +97,7 @@ local taken: { [Instance]: Taken } = {}
 local storeOf: { [Instance]: Store } = {}
 local known: { [Instance]: any } = {}
 local loose: { [Instance]: true } = setmetatable({}, { __mode = "k" }) :: any
+local sources: { [Instance]: Instance } = setmetatable({}, { __mode = "k" }) :: any
 
 pool.engine = {
   folder = function(scope: { any })
@@ -413,9 +414,76 @@ local function fresh(holder: any, source: Instance)
   end
 
   loose[copy] = true
+  sources[copy] = source
+
+  if folder ~= nil then
+    pool.engine.destroying(copy, function()
+      sources[copy] = nil
+    end)
+  end
+
   holdIn(holder, copy)
 
   return copy
+end
+
+-- the instance at an instance's place in the source of the fresh copy holding it
+function pool.templateOf(inst: Instance): Instance?
+  const steps = {}
+  local at: Instance? = inst
+
+  while at ~= nil and sources[at] == nil do
+    const parent = at.Parent
+
+    if parent == nil then
+      return nil
+    end
+
+    local index = 0
+
+    for _, sibling in parent:GetChildren() do
+      if sibling.Name == at.Name then
+        index += 1
+      end
+
+      if sibling == at then
+        break
+      end
+    end
+
+    table.insert(steps, 1, { name = at.Name, index = index })
+    at = parent
+  end
+
+  if at == nil then
+    return nil
+  end
+
+  local found: Instance? = sources[at]
+
+  for _, step in steps do
+    if found == nil then
+      return nil
+    end
+
+    local seen = 0
+    local next: Instance? = nil
+
+    for _, child in found:GetChildren() do
+      if child.Name == step.name then
+        seen += 1
+
+        if seen == step.index then
+          next = child
+          break
+        end
+      end
+    end
+
+    found = next
+  end
+
+  return found
 end
 
 -- anything the pool owns goes back to the folder, so clearing a released
@@ -602,7 +670,7 @@ function pool.init(scope: { any })
 
     folder = nil
 
-    for _, map in { stacks, taken, storeOf, known, loose, lists, restorable, hiddenBy } :: { any } do
+    for _, map in { stacks, taken, storeOf, known, loose, sources, lists, restorable, hiddenBy } :: { any } do
       table.clear(map)
     end
 

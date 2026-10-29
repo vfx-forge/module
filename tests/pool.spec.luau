@@ -515,4 +515,48 @@ harness.suite(function()
       stop(again)
     end)
   end)
+
+  harness.describe("a fresh copy's template", function()
+    local function sourceTree(): (Instance, Instance, Instance)
+      local part = harness.make("Part") :: any
+      local first = harness.make("Model", part) :: any
+      local second = harness.make("Model", part) :: any
+
+      first.Name = "M"
+      second.Name = "M"
+
+      local frames = harness.make("Folder", second) :: any
+      frames.Name = "Frames"
+
+      return part, second, frames
+    end
+
+    test("templateOf resolves a fresh copy's descendant to its source's", function()
+      local fake = start()
+      local part, _, frames = sourceTree()
+      local holder = {}
+      local copy = pool.take(holder, part) :: any
+      local models = {}
+
+      for _, child in copy:GetChildren() do
+        table.insert(models, child)
+      end
+
+      expect(pool.templateOf(models[2]:FindFirstChild("Frames"))).toBe(frames)
+      expect(pool.templateOf(copy)).toBe(part)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("templateOf answers nil outside a copy", function()
+      local fake = start()
+      local part, _, frames = sourceTree()
+
+      expect(pool.templateOf(frames)).toBe(nil)
+      expect(pool.templateOf(part)).toBe(nil)
+
+      stop(fake)
+    end)
+  end)
 end)

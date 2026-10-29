@@ -1,6 +1,7 @@
 local harness = require("@tests/harness")
 local utility = require("@mod/utility")
 local frames_common = require("@mod/common/frames")
+local pool = require("@srv/pool")
 local frame_store = require("@srv/frame_store")
 
 local test, expect = harness.test, harness.expect
@@ -692,6 +693,60 @@ harness.suite(function()
 
         expect(set.entry.parked).toBe(true)
         expect(clones > failed).toBe(true)
+      end)
+    end)
+
+    -- a part holding a model that holds the frames, and a fresh copy of it
+    local function templated(key: string, name: string): (Instance, Instance, Instance, any)
+      local part = harness.make("Part")
+      local root, folder = model(key, 2)
+
+      root.Parent = part
+      folder.Name = name
+
+      local holder = {}
+
+      return part, folder, pool.take(holder, part) :: Instance, holder
+    end
+
+    test("a copy's first find detaches its template's folder of the same key", function()
+      stored(function(stand: Stand)
+        stand.detach = true
+
+        local part, folder, copy = templated("t1", "Frames")
+        local found = frame_store.find(copy:FindFirstChildOfClass("Model") :: Instance, "t1")
+
+        expect(found ~= nil).toBe(true)
+        expect(folder.Parent).toBe(nil)
+
+        local again = pool.take({}, part)
+
+        expect(#again:GetDescendants() < #copy:GetDescendants() + 1).toBe(true)
+        expect((again:FindFirstChildOfClass("Model") :: Instance):FindFirstChild("Frames")).toBe(nil)
+      end)
+    end)
+
+    test("a template folder of another key is left", function()
+      stored(function(stand: Stand)
+        stand.detach = true
+
+        local _, folder, copy = templated("t2", "Frames")
+        local model = copy:FindFirstChildOfClass("Model") :: Instance
+
+        folder:SetAttribute("FrameSet", "other")
+        frame_store.find(model, "t2")
+
+        expect(folder.Parent ~= nil).toBe(true)
+      end)
+    end)
+
+    test("nothing is detached in edit mode", function()
+      stored(function()
+        local _, folder, copy = templated("t3", "Frames")
+
+        frame_store.find(copy:FindFirstChildOfClass("Model") :: Instance, "t3")
+
+        expect(folder.Parent ~= nil).toBe(true)
       end)
     end)
 
