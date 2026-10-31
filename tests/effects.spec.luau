@@ -2639,9 +2639,16 @@ harness.suite(function()
     -- at a new height each time, and the piece each emit holds a frame in;
     -- `decal` gives the start and end a decal of differing colors, `rest` the
     -- start's decal a Transparency attribute, `stored` more attributes on that
-    -- decal, `life` the model's EffectDuration, and with `flush` off the mover
-    -- never lands a write
-    local function emitTwice(decal: boolean, flush: boolean, rest: number?, stored: { [string]: any }?, life: number?)
+    -- decal, `life` the model's EffectDuration, `onModel` attributes on the
+    -- model itself, and with `flush` off the mover never lands a write
+    local function emitTwice(
+      decal: boolean,
+      flush: boolean,
+      rest: number?,
+      stored: { [string]: any }?,
+      life: number?,
+      onModel: { [string]: any }?
+    )
       local built = fresh()
       local CFrame = harness.datatypes.CFrame
       local Color3 = harness.datatypes.Color3
@@ -2698,6 +2705,10 @@ harness.suite(function()
 
       if life ~= nil then
         model:SetAttribute("EffectDuration", harness.datatypes.NumberRange.new(life, life))
+      end
+
+      for name, v in onModel or {} do
+        model:SetAttribute(name, v)
       end
 
       local seen: { Seen } = {}
@@ -2775,6 +2786,44 @@ harness.suite(function()
       -- a Decal holds its transparency as a float
       expect(math.abs((half[1].transparency :: number) - 0.4) < 1e-6).toBe(true)
       expect(clear[1].transparency).toBe(1)
+    end)
+
+    -- an older emit renamed the model's StartTransparency to
+    -- Decal_StartTransparency and stored no end, which every release then read
+    -- as a fade to clear
+    test("a model storing only its decal's old start fades the decal to clear", function()
+      for _, name in { "Decal_StartTransparency", "DecalStartTransparency", "StartTransparency" } do
+        local seen = emitTwice(true, true, nil, nil, 0.2, { [name] = 0 })
+        local mid = seen[1].transparency :: number
+
+        expect(mid > 0 and mid < 1).toBe(true)
+      end
+    end)
+
+    test("a model storing its decal's start and an end of 0 holds the decal", function()
+      local seen = emitTwice(true, true, nil, nil, 0.2, { Decal_StartTransparency = 0, EndTransparency = 0 })
+      local named = emitTwice(true, true, nil, nil, 0.2, { DecalStartTransparency = 0, DecalEndTransparency = 0 })
+
+      expect(seen[1].transparency).toBe(0)
+      expect(named[1].transparency).toBe(0)
+    end)
+
+    test("a decal's own Transparency or stored lane leads the model's old start", function()
+      local start = { Decal_StartTransparency = 0 }
+      local quad = { Transparency_Start = 0, Transparency_End = 0.5 }
+
+      local clear = emitTwice(true, true, 1, nil, 0.2, start)
+      local half = emitTwice(true, true, 0.4, nil, 0.2, start)
+      local laned = emitTwice(true, true, nil, quad, 0.2, start)
+      local alone = emitTwice(true, true, nil, quad, 0.2)
+
+      local fromHalf = half[1].transparency :: number
+
+      expect(clear[1].transparency).toBe(1)
+      -- a Decal holds its transparency as a float, so the fade is told from a
+      -- hold by a margin
+      expect(fromHalf > 0.5 and fromHalf < 1).toBe(true)
+      expect(math.abs((laned[1].transparency :: number) - (alone[1].transparency :: number)) < 1e-6).toBe(true)
     end)
 
     -- the shockwaves' old 0.5 second fade, lent by the row's name alone, cut

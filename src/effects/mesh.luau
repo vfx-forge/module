@@ -231,13 +231,25 @@ mesh.attributes = {
   FlipbookFadeOffset = knob(0):min(0):unit("seconds"):hidden(always),
   StartTransparency = knob():hidden(always),
   EndTransparency = knob():hidden(always),
+  -- nil where the model stores no start for its decal, which the decal's end
+  -- reads to tell an old fade from a decal storing nothing
   DecalStartTransparency = knob(function(ctx, attrs)
-      return if stoneOnMesh(ctx, attrs) then 0 else attrs.StartTransparency or 0
+      return if stoneOnMesh(ctx, attrs) then nil else attrs.StartTransparency
     end)
     :aliases("Decal_StartTransparency")
     :hidden(always),
+  -- an old model storing a start for its decal and no end meant a fade to
+  -- clear, the end every release read before a decal storing nothing held
   DecalEndTransparency = knob(function(ctx, attrs)
-      return if stoneOnMesh(ctx, attrs) then 1 else attrs.EndTransparency
+      if stoneOnMesh(ctx, attrs) then
+        return 1
+      end
+
+      if attrs.EndTransparency ~= nil then
+        return attrs.EndTransparency
+      end
+
+      return if attrs.DecalStartTransparency ~= nil then 1 else nil
     end)
     :aliases("Decal_EndTransparency")
     :hidden(always),
@@ -365,7 +377,7 @@ local function piece(
   local legacy_isFlipbook = attrs.Flipbook
   local legacy_flipbookFadeOffset = attrs.FlipbookFadeOffset
 
-  local legacy_decalST = attrs.DecalStartTransparency
+  local legacy_decalST = attrs.DecalStartTransparency or 0
   -- no authored end holds the decal where it starts rather than fading it
   local legacy_decalET = if attrs.DecalEndTransparency ~= nil then attrs.DecalEndTransparency else legacy_decalST
 

@@ -399,6 +399,32 @@ harness.suite(function()
       expect(tint.at(0)).toEqual(Color3.new(1, 1, 1))
     end)
 
+    test("a mesh decal's end is clear only where the model stores an old start for it", function()
+      loadAll()
+
+      local function endOf(stored: { [string]: any }, decal: boolean?)
+        local _, made = scene()
+
+        if decal ~= false then
+          harness.make("Decal", made.mesh:FindFirstChild("Start"))
+        end
+
+        for name, v in stored do
+          made.mesh:SetAttribute(name, v)
+        end
+
+        return registry.read(made.mesh).DecalEndTransparency
+      end
+
+      expect(endOf({})).toBe(nil)
+      expect(endOf({ Decal_StartTransparency = 0 })).toBe(1)
+      expect(endOf({ DecalStartTransparency = 0.2 })).toBe(1)
+      expect(endOf({ StartTransparency = 0 })).toBe(1)
+      expect(endOf({ Decal_StartTransparency = 0, EndTransparency = 0 })).toBe(0)
+      expect(endOf({ Decal_StartTransparency = 0, Decal_EndTransparency = 0.5 })).toBe(0.5)
+      expect(endOf({}, false)).toBe(1)
+    end)
+
     test("a mesh lays its frame and glow rows out before its behavior", function()
       loadAll()
 
