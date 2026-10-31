@@ -4,6 +4,8 @@ local mods = require("@mod/mods")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
+local curve = require("@mod/curve")
+local tween = require("@mod/tween")
 local curves = require("@mod/curves")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
@@ -96,7 +98,6 @@ harness.suite(function()
       expect(part.Transparency).toBe(0)
 
       harness.render(0.5)
-      harness.render(0.5)
 
       expect(near(part.Transparency, 0.5)).toBe(true)
     end)
@@ -114,11 +115,11 @@ harness.suite(function()
 
       emit(root)
 
-      harness.render(0.5)
+      harness.render(0.25)
 
-      expect(near(trail.Lifetime, 1)).toBe(true)
+      expect(near(trail.Lifetime, 2)).toBe(true)
 
-      harness.render(0.5)
+      harness.render(0.25)
 
       expect(near(trail.Lifetime, 3)).toBe(true)
     end)
@@ -168,9 +169,9 @@ harness.suite(function()
 
       emit(root)
 
-      -- half a second of plain frames waits the delay out, and the ramp's
-      -- first doubled frame samples where the tween begins
-      for _ = 1, 3 do
+      -- half a second of plain frames waits the delay out, leaving the tween
+      -- where it begins, and the ramp's first doubled frame runs half of it
+      for _ = 1, 2 do
         harness.render(0.25)
       end
 
@@ -214,17 +215,22 @@ harness.suite(function()
 
       lifetime.seal(em)
 
-      -- the first second passes at plain frames: the first entry is half done
-      for _ = 1, 3 do
+      -- the first second passes at plain frames: half of it leaves the first
+      -- entry half done, the whole of it done
+      for _ = 1, 2 do
         harness.render(0.25)
       end
 
       expect(near(part.Transparency, 0.25)).toBe(true)
 
-      -- then the ramp doubles the clock over the second entry
-      for _ = 1, 3 do
+      for _ = 1, 2 do
         harness.render(0.25)
       end
+
+      expect(near(part.Transparency, 0.5)).toBe(true)
+
+      -- then the ramp doubles the clock over the second entry
+      harness.render(0.25)
 
       expect(near(part.Transparency, 0.75)).toBe(true)
     end)
@@ -301,7 +307,7 @@ harness.suite(function()
       local part = driven()
       local em = dispatchOn(part)
 
-      seconds(0.75)
+      seconds(0.5)
 
       expect(near(part.Transparency, 0.5)).toBe(true)
 
@@ -309,6 +315,37 @@ harness.suite(function()
 
       expect(em.done).toBe(true)
       expect(near(part.Transparency, 0.25)).toBe(true)
+    end)
+
+    test("a panel queue keeps time with the module's own tween over the same span", function()
+      const steps: { number } = {}
+      const piece = module("piece", "Part", {
+        emit = function(ctx: any)
+          tween.wait(ctx.scope, curve.new(1, "linear"), function(alpha: number)
+            table.insert(steps, alpha)
+          end)
+        end,
+      })
+
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(piece)
+      harness.reset()
+
+      const part = harness.make("Part")
+
+      framed(part, "property", "Transparency", {
+        { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(1) },
+      })
+
+      dispatchOn(part)
+
+      -- the tween's first value is written at the emit, every other one a frame
+      for k = 1, 59 do
+        harness.render(1 / 60)
+
+        expect(math.abs(part.Transparency - steps[k + 1]) < 1e-5).toBe(true)
+      end
     end)
 
     test("two overlapping emits of one panel queue hand the property over and the last puts it back", function()
@@ -319,7 +356,7 @@ harness.suite(function()
 
       local second = dispatchOn(part)
 
-      seconds(1)
+      seconds(0.75)
 
       -- the first has ended, and the second carries on from where it is
       expect(first.done).toBe(true)
@@ -418,7 +455,7 @@ harness.suite(function()
 
       expect(near(emitted.Transparency, 0.7)).toBe(true)
 
-      for _ = 1, 3 do
+      for _ = 1, 2 do
         harness.render(0.25)
       end
 
@@ -456,7 +493,7 @@ harness.suite(function()
 
       emit(root)
 
-      for _ = 1, 3 do
+      for _ = 1, 2 do
         harness.render(0.25)
       end
 

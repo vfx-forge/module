@@ -226,16 +226,8 @@ local function drive(
     local elapsed = 0
     local ticking
 
-    -- how far the ramp's own clock moves this frame, nil once it is over
-    local function advance(deltaTime: number): number?
-      local waiting = elapsed < lead
-
-      if not waiting then
-        wall += deltaTime
-      end
-
-      local v = sample(elapsed)
-
+    -- false once the target has refused too many writes to go on
+    local function write(v: any): boolean
       if v ~= nil and took ~= nil then
         lifetime.set(writer, v)
 
@@ -247,8 +239,19 @@ local function drive(
 
         if failures >= MAX_WRITE_FAILURES then
           logger.warn(`stopped driving {name} on {target:GetFullName()} after {failures} failed writes`)
-          return nil
+          return false
         end
+      end
+
+      return true
+    end
+
+    -- how far the ramp's own clock moves this frame, nil once it is over
+    local function advance(deltaTime: number): number?
+      local waiting = elapsed < lead
+
+      if not waiting then
+        wall += deltaTime
       end
 
       -- a delay ahead of the ramp is a wall-clock wait the ramp never touches.
@@ -280,15 +283,21 @@ local function drive(
       counted()
     end
 
+    -- each value at the end of its frame, as a tween samples, so a lane keeps
+    -- time with the effect's own tracks
     ticking = lifetime.step(driver, function(deltaTime: number)
       local moved = advance(deltaTime)
 
-      if moved == nil or timing_common.done(elapsed, length) then
+      if moved == nil then
         stop()
         return
       end
 
       elapsed = math.clamp(elapsed + moved, 0, math.max(length, 0.001))
+
+      if not write(sample(elapsed)) or timing_common.done(elapsed, length) then
+        stop()
+      end
     end)
 
     if opts ~= nil and opts.handle ~= nil then
