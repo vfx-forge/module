@@ -283,9 +283,19 @@ local function drive(
       counted()
     end
 
+    -- set on the step that writes the lane's last value, which is let go a
+    -- step later, so even a lane shorter than a frame is drawn before its end
+    -- rule puts the target back
+    local finished = false
+
     -- each value at the end of its frame, as a tween samples, so a lane keeps
     -- time with the effect's own tracks
     ticking = lifetime.step(driver, function(deltaTime: number)
+      if finished then
+        stop()
+        return
+      end
+
       local moved = advance(deltaTime)
 
       if moved == nil then
@@ -295,9 +305,12 @@ local function drive(
 
       elapsed = math.clamp(elapsed + moved, 0, math.max(length, 0.001))
 
-      if not write(sample(elapsed)) or timing_common.done(elapsed, length) then
+      if not write(sample(elapsed)) then
         stop()
+        return
       end
+
+      finished = timing_common.done(elapsed, length)
     end)
 
     if opts ~= nil and opts.handle ~= nil then

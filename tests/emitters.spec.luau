@@ -348,6 +348,31 @@ harness.suite(function()
       end
     end)
 
+    test("a lane shorter than a frame shows its value for a frame before it puts the property back", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(module("piece", "Part"))
+      harness.reset()
+
+      const part = harness.make("Part")
+
+      part.Transparency = 0.25
+
+      framed(part, "property", "Transparency", {
+        { kind = "tween", chain = false, duration = 0.01, start = value.lit(1), finish = value.lit(1) },
+      })
+
+      dispatchOn(part)
+
+      harness.render(1 / 60)
+
+      expect(near(part.Transparency, 1)).toBe(true)
+
+      harness.render(1 / 60)
+
+      expect(near(part.Transparency, 0.25)).toBe(true)
+    end)
+
     test("two overlapping emits of one panel queue hand the property over and the last puts it back", function()
       local part = driven()
       local first = dispatchOn(part)
