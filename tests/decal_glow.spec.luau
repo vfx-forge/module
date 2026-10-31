@@ -231,6 +231,26 @@ harness.suite(function()
       end)
     end
 
+    test("a Color3 lane that holds one color still writes it under None", function()
+      staged(function(fake)
+        const blue = Color3.new(0, 0, 1)
+        const m, decal = model({})
+
+        tweened(decal, "property", "Color3", blue, blue)
+
+        const env = effects.emit(0, m)
+        const face = worn(fake)
+
+        nearColor(face.Color3, blue)
+
+        scheduler.frame(0.5)
+
+        nearColor(face.Color3, blue)
+
+        env:Clear()
+      end)
+    end)
+
     test("a mesh decal's animator on Color3 keeps the color from its mesh", function()
       staged(function(fake)
         const m, decal = model({})

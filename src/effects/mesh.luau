@@ -136,15 +136,11 @@ const function decalColor(scope: lifetime.effect, decal: Decal, twin: Color3, du
     return Color3.new(c.R * s, c.G * s, c.B * s)
   end
 
-  const moves = blends or tinted.animated or (strength ~= nil and strength.animated)
-
-  if not moves and strength == nil then
-    return
-  end
-
+  -- written even when nothing moves, since a lane holding one color is not
+  -- animated and still sets it
   decal.Color3 = at(0)
 
-  if not moves then
+  if not blends and not tinted.animated and not (strength ~= nil and strength.animated) then
     return
   end
 
