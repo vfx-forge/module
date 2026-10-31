@@ -6,6 +6,7 @@ local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local curve = require("@mod/curve")
 local tween = require("@mod/tween")
+local value = require("@mod/value")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local curves = require("@mod/curves")
@@ -2824,6 +2825,21 @@ harness.suite(function()
       -- hold by a margin
       expect(fromHalf > 0.5 and fromHalf < 1).toBe(true)
       expect(math.abs((laned[1].transparency :: number) - (alone[1].transparency :: number)) < 1e-6).toBe(true)
+    end)
+
+    test("a decal's own modifier lane leads the model's old start", function()
+      local held = {
+        kind = "tween",
+        chain = false,
+        start = value.lit(0.3),
+        finish = value.lit(0.3),
+      }
+
+      local lane =
+        { [mods.attrName("attribute", "Transparency")] = frame.frame(codec.encode({ lanes = { start = { held } } })) }
+      local seen = emitTwice(true, true, nil, lane, 0.2, { Decal_StartTransparency = 0 })
+
+      expect(math.abs((seen[1].transparency :: number) - 0.3) < 1e-6).toBe(true)
     end)
 
     -- the shockwaves' old 0.5 second fade, lent by the row's name alone, cut

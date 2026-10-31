@@ -9,6 +9,7 @@ local tween = require("@mod/tween")
 local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
+local decal_fade = require("@mod/decal_fade")
 local frame_show = require("@mod/frame_show")
 local texture_show = require("@mod/texture_show")
 local frames_common = require("@mod/common/frames")
@@ -45,13 +46,20 @@ const function noTextures(_, attrs: any)
   return attrs.TextureSet == ""
 end
 
--- whether the oldest transparency pair, one StartTransparency and one
--- EndTransparency for the whole model, meant the mesh or its decal: the decal
--- when there is one and the model is not an old flipbook
 local function stoneOnMesh(ctx: reader.Ctx, attrs: any)
-  local start = ctx.ref:FindFirstChild("Start")
+  return decal_fade.onMesh(ctx.ref:FindFirstChild("Start"), attrs.Flipbook)
+end
 
-  return attrs.Flipbook or start == nil or start:FindFirstChildOfClass("Decal") == nil
+-- the decal's fade as the model stores it, the decal's own start taken as
+-- `decalStart` once its row has resolved
+const function decalFade(ctx: reader.Ctx, attrs: any, decalStart: number?)
+  return decal_fade.resolve(ctx.ref:FindFirstChild("Start"), {
+    flipbook = attrs.Flipbook,
+    start = attrs.StartTransparency,
+    finish = attrs.EndTransparency,
+    decalStart = decalStart,
+    decalEnd = nil,
+  })
 end
 
 local function partDefault(ctx: reader.Ctx)
@@ -234,22 +242,14 @@ mesh.attributes = {
   -- nil where the model stores no start for its decal, which the decal's end
   -- reads to tell an old fade from a decal storing nothing
   DecalStartTransparency = knob(function(ctx, attrs)
-      return if stoneOnMesh(ctx, attrs) then nil else attrs.StartTransparency
+      return (decalFade(ctx, attrs, nil))
     end)
     :aliases("Decal_StartTransparency")
     :hidden(always),
-  -- an old model storing a start for its decal and no end meant a fade to
-  -- clear, the end every release read before a decal storing nothing held
   DecalEndTransparency = knob(function(ctx, attrs)
-      if stoneOnMesh(ctx, attrs) then
-        return 1
-      end
+      const _, finish = decalFade(ctx, attrs, attrs.DecalStartTransparency)
 
-      if attrs.EndTransparency ~= nil then
-        return attrs.EndTransparency
-      end
-
-      return if attrs.DecalStartTransparency ~= nil then 1 else nil
+      return finish
     end)
     :aliases("Decal_EndTransparency")
     :hidden(always),
@@ -673,8 +673,8 @@ local function piece(
         return if type(v) == "number" then v else legacy_decalST
       end)
 
-      -- a decal storing nothing holds where it rests; only an end the model
-      -- authored makes it fade by default
+      -- a decal storing nothing holds where it rests unless its model stores
+      -- a fade for it, an end or an old start alone
       local decalET = if attrs.DecalEndTransparency ~= nil then legacy_decalET else decalST
       local decalTp = mods.track(from, "attribute", "Transparency", mods.ramp(decalST, decalET), duration)
 
