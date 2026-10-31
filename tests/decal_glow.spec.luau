@@ -7,6 +7,7 @@ local harness = require("@tests/harness")
 local effects = require("@srv/effects")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
+local emitters = require("@root/emitters")
 local scheduler = require("@mod/scheduler")
 local fake_pool = require("@tests/fake_pool")
 local test, expect = harness.test, harness.expect
@@ -198,6 +199,80 @@ harness.suite(function()
         nearColor(face.Color3, cyan)
         near(face.EmissiveStrength, 1)
         nearColor(face.EmissiveTint, Color3.new(1, 1, 1))
+
+        env:Clear()
+      end)
+    end)
+
+    for _, mode in { "None", "Emissive" } do
+      test(`{mode} mode plays a Color3 modifier on the mesh's clock and holds its end`, function()
+        staged(function(fake)
+          const from, to = Color3.new(1, 0, 0), Color3.new(0, 0, 1)
+          const m, decal = model({ GlowMode = mode })
+
+          m:SetAttribute("DestroyDelay", 1)
+          tweened(decal, "property", "Color3", from, to)
+
+          const env = effects.emit(0, m)
+          const face = worn(fake)
+
+          nearColor(face.Color3, from)
+
+          -- one frame behind would read a sixtieth of the blend short
+          for k = 1, 150 do
+            scheduler.frame(1 / 60)
+            nearColor(face.Color3, color.blend(from, to, math.min(k / 60, 1)))
+          end
+
+          expect(emitters.claims(face)).toEqual({ Color3 = true })
+
+          env:Clear()
+        end)
+      end)
+    end
+
+    test("a mesh decal's animator on Color3 keeps the color from its mesh", function()
+      staged(function(fake)
+        const m, decal = model({})
+        const animator = harness.make("RayValue", decal)
+
+        animator:AddTag(utility.PROPERTY_ANIMATOR_TAG)
+        animator:SetAttribute("Property", "Color3")
+        tweened(decal, "property", "Color3", Color3.new(1, 0, 0), Color3.new(0, 0, 1))
+        m.End.Face.Color3 = Color3.new(0, 1, 0)
+
+        const env = effects.emit(0, m)
+        const face = worn(fake)
+
+        scheduler.frame(0.5)
+
+        expect(emitters.claims(face)).toEqual({ Color3 = true })
+        nearColor(face.Color3, Color3.new(1, 1, 1))
+
+        env:Clear()
+      end)
+    end)
+
+    test("a plain decal and a mesh model's own decal keep the applier", function()
+      staged(function()
+        const from, to = Color3.new(1, 0, 0), Color3.new(0, 0, 1)
+        const part = harness.make("Part", harness.make("Folder"))
+        const plain = harness.make("Decal", part) :: any
+        const m, own = model({})
+
+        part.Name = "Start"
+        tweened(plain, "property", "Color3", from, to)
+
+        expect(emitters.claims(plain)).toBe(nil)
+        expect(emitters.claims(own)).toBe(nil)
+
+        const env = effects.emit(0, part)
+
+        scheduler.frame(0.25)
+        scheduler.frame(0.25)
+
+        expect(plain.Color3.B > 0).toBe(true)
+        expect(m:FindFirstChild("Start") ~= nil).toBe(true)
 
         env:Clear()
       end)

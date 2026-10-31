@@ -11,6 +11,8 @@ local registry = require("@mod/registry")
 local modifiers = require("@mod/modifiers")
 local legacy_mods = require("@mod/legacy_mods")
 
+local pool = require("@srv/pool")
+
 local timing_common = require("@mod/common/timing")
 
 -- how many throwing writes a driven target gets before the applier gives up on
@@ -441,18 +443,13 @@ end
 
 -- the properties of `obj` that a Property Animator under it drives, which the
 -- effect on `obj` leaves to it: an animator is the explicit ask. one that
--- names another target in its Target row claims nothing here. a decal glowing
--- by its color leaves Color3 to its mesh, which multiplies it by the strength
-function emitters.claims(obj: Instance): { [string]: boolean }?
-  local claimed: { [string]: boolean }? = nil
-
-  if obj:IsA("Decal") and attr.get(obj, "GlowMode", "None", true) == "Color" then
-    claimed = { Color3 = true }
-  end
-
+-- names another target in its Target row claims nothing here
+function emitters.animated(obj: Instance): { [string]: boolean }?
   if obj:FindFirstChildWhichIsA("RayValue") == nil then
-    return claimed
+    return nil
   end
+
+  local claimed: { [string]: boolean }? = nil
 
   for _, child in obj:GetChildren() do
     if not child:IsA("RayValue") or not child:HasTag(utility.PROPERTY_ANIMATOR_TAG) then
@@ -481,6 +478,58 @@ function emitters.claims(obj: Instance): { [string]: boolean }?
     claimed = claimed or {}
     (claimed :: any)[name] = true
   end
+
+  return claimed
+end
+
+-- whether `obj` is a mesh piece's copy of the Start side of its model's decal
+-- pair, the decal the mesh plays its color on. the pair's shape is checked
+-- before the registry is asked, and the model as the copy's template names it
+const function meshDecal(obj: Instance): boolean
+  const side = obj.Parent
+
+  if side == nil or side.Name ~= "Start" then
+    return false
+  end
+
+  const template = pool.templateOf(obj)
+  const start = if template ~= nil then template.Parent else nil
+  const model = if start ~= nil then start.Parent else nil
+
+  if template == nil or model == nil or not model:IsA("Model") or model.Parent == game then
+    return false
+  end
+
+  const goal = model:FindFirstChild("End")
+  const twin = if goal ~= nil then goal:FindFirstChild(template.Name) else nil
+
+  if twin == nil or not twin:IsA("Decal") or attr.get(model, "Flipbook", false, true) == true then
+    return false
+  end
+
+  const module = registry.of(model)
+
+  return module ~= nil and module.id == "mesh"
+end
+
+-- what the effect on `obj` leaves to another writer: whatever an animator
+-- under it drives, and a decal's Color3 where its mesh plays it, multiplying it
+-- by the strength when it glows by its color. a mesh plays its pair's color in
+-- every glow mode, so the color and the mesh's own tracks share one clock
+function emitters.claims(obj: Instance): { [string]: boolean }?
+  const animated = emitters.animated(obj)
+
+  if not obj:IsA("Decal") then
+    return animated
+  end
+
+  if attr.get(obj, "GlowMode", "None", true) ~= "Color" and not meshDecal(obj) then
+    return animated
+  end
+
+  const claimed = if animated ~= nil then animated else {}
+
+  claimed.Color3 = true
 
   return claimed
 end

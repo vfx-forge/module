@@ -14,6 +14,8 @@ local texture_show = require("@mod/texture_show")
 local frames_common = require("@mod/common/frames")
 local flipbook_common = require("@mod/common/flipbook")
 
+local emitters = require("@root/emitters")
+
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
 local frame_store = require("@srv/frame_store")
@@ -110,27 +112,39 @@ const function play(scope: lifetime.effect, track: mods.Track, write: (v: any) -
 end
 
 -- the decal's color, blended toward its twin and run through its own Color3
--- modifiers, times the strength. never clamped, so a strength past 1 brightens
--- it past white. the decal claims Color3, so this is its one writer
-const function colorGlow(scope: lifetime.effect, decal: Decal, twin: Color3, duration: number)
+-- modifiers, times the strength when it glows by its color. never clamped, so
+-- a strength past 1 brightens it past white. the mesh claims Color3 on its
+-- decal in every glow mode, so this is its one writer
+const function decalColor(scope: lifetime.effect, decal: Decal, twin: Color3, duration: number, glows: boolean)
   const rest = decal.Color3
   const blends = rest ~= twin
   const eased = curve.new(duration, attr.get(decal, "Color_Curve", utility.default_bezier, true))
   const tinted = mods.track(decal, "property", "Color3", rest, duration)
-  const strength = glowStrength(decal, duration)
+  const strength = if glows then glowStrength(decal, duration) else nil
 
   const function at(elapsed: number)
     const alpha = if duration > 0 then eased:at(math.min(elapsed / duration, 1)) else 1
     const base = if blends then color.blend(rest, twin, alpha, true) else rest
     const c = tinted.at(elapsed, base)
+
+    if strength == nil then
+      return c
+    end
+
     const s = math.max(strength.at(elapsed), 0)
 
     return Color3.new(c.R * s, c.G * s, c.B * s)
   end
 
+  const moves = blends or tinted.animated or (strength ~= nil and strength.animated)
+
+  if not moves and strength == nil then
+    return
+  end
+
   decal.Color3 = at(0)
 
-  if not blends and not tinted.animated and not strength.animated then
+  if not moves then
     return
   end
 
@@ -669,16 +683,12 @@ local function piece(
 
       glowing[decal] = true
 
-      if glowMode == "Color" then
-        if first then
-          colorGlow(scope, decal, to.Color3, duration)
-        end
-      elseif from.Color3 ~= to.Color3 then
-        local colorCurve = curve.new(duration, attr.get(from, "Color_Curve", utility.default_bezier, true))
+      -- an animator on the decal's Color3 is the explicit ask, so the mesh
+      -- leaves the color to it
+      const animated = emitters.animated(decal)
 
-        tween.play(scope, colorCurve, function(alpha: number)
-          decal.Color3 = color.blend(from.Color3, to.Color3, alpha, true)
-        end)
+      if first and not (animated ~= nil and animated.Color3) then
+        decalColor(scope, decal, to.Color3, duration, glowMode == "Color")
       end
 
       if glowMode == "Emissive" and first then
