@@ -44,25 +44,28 @@ function decal_fade.resolve(start: Instance?, stored: Stored): (number?, number?
 end
 
 -- a number stored as text reads as the number it spells, as a row reads it
-const function numberOf(model: Instance, name: string, alias: string?): number?
-  local v = attr.raw(model, name)
+const function numberOf(map: { [string]: any }, name: string, alias: string?): number?
+  local v = map[name]
 
   if v == nil and alias ~= nil then
-    v = attr.raw(model, alias)
+    v = map[alias]
   end
 
   return if type(v) == "number" then v elseif type(v) == "string" then tonumber(v) else nil
 end
 
 -- what the model stores for its decal's fade, under every spelling the
--- mesh's rows answer to
+-- mesh's rows answer to. one walk of its attributes rather than one read a
+-- name, since the plugin reads this on every read of the decal's rows
 function decal_fade.read(model: Instance): Stored
+  const map = attr.map(model)
+
   return {
-    flipbook = attr.raw(model, "Flipbook") == true,
-    start = numberOf(model, "StartTransparency"),
-    finish = numberOf(model, "EndTransparency"),
-    decalStart = numberOf(model, "DecalStartTransparency", "Decal_StartTransparency"),
-    decalEnd = numberOf(model, "DecalEndTransparency", "Decal_EndTransparency"),
+    flipbook = map.Flipbook == true,
+    start = numberOf(map, "StartTransparency"),
+    finish = numberOf(map, "EndTransparency"),
+    decalStart = numberOf(map, "DecalStartTransparency", "Decal_StartTransparency"),
+    decalEnd = numberOf(map, "DecalEndTransparency", "Decal_EndTransparency"),
   }
 end
 
