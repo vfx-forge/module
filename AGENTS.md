@@ -8,6 +8,10 @@ Follow this whether you are changing code here directly or preparing a PR. Code 
 
 `.agents/` is deliberately tool-agnostic. If your assistant discovers skills from its own directory, symlink to it rather than copying, e.g. `mkdir -p .claude/skills && ln -s ../../.agents/skills/forge-luau-style .claude/skills/forge-luau-style`. Tool-specific directories are gitignored, so a copy will drift and nobody will see it.
 
+## Tests
+
+Tests here are for what plays: an effect's timing, a modifier's value at a given time, a codec, a legacy format read. Write one when a bug there would change an effect silently. Do not write one that restates the implementation or would pass before and after the change, and delete a feature's tests with it. While working, run the specs near the change; run `lune run tests/run` once before a release. A flaky test is fixed or deleted, never rerun until it passes.
+
 ## Layout
 
 | Path | Contents |
