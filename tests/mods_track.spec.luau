@@ -262,6 +262,17 @@ harness.suite(function()
     expect(near(track.at(0), 5)).toBe(true)
   end)
 
+  test("a framed entry converted from an old quad yields its start as the old quad did", function()
+    local converted = tween(5, 8, 1)
+    converted.seedable = true
+
+    local obj = authored("Width", { converted })
+    local track = mods.track(obj, "attribute", "Width", mods.ramp(1, 8), 1, nil, { ownStart = true })
+
+    expect(near(track.at(0), 1)).toBe(true)
+    expect(near(track.at(1), 8)).toBe(true)
+  end)
+
   test("build takes the queue it is handed instead of reading one", function()
     local obj = Instance.new("Attachment")
     local track = mods.build(obj, "attribute", "Width", 3, 2, nil, { start = { tween(0, 10, 4) } }, true)

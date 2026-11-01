@@ -1030,13 +1030,15 @@ local function completed(
   -- completes from the default. a row that already named no finish gives up
   -- both ends and keeps only its duration and curve, which is what such a row
   -- did when the effect ran the other half itself. only the old format reads
-  -- this way: a framed lane was authored to mean exactly what it says
+  -- this way: a framed lane was authored to mean exactly what it says, save an
+  -- entry the plugin converted out of the old format, which keeps its reading
+  -- by naming itself seedable
   if
     seeded
     and #queue == 1
     and queue[1].kind == "tween"
     and (queue[1].partial == nil or queue[1].partial == "finish")
-    and not framed
+    and (not framed or queue[1].seedable == true)
   then
     local m = table.clone(queue[1])
 
