@@ -169,6 +169,12 @@ harness.suite(function()
       expect({ flipbook_common.cycles(0.5, 2, true, true, 0) }).toEqual({ 2, 1, 2 })
     end)
 
+    test("a loop switched off stops once the cycle playing then ends", function()
+      expect(flipbook_common.stopped(0, 0.5)).toBe(1)
+      expect(flipbook_common.stopped(3.1, 0.5)).toBe(7)
+      expect(flipbook_common.stopped(3.5, 0.5)).toBe(8)
+    end)
+
     test("a count is whole and never below 0", function()
       expect({ flipbook_common.cycles(0.5, 2, false, true, 2.7) }).toEqual({ 0.5, 2, 1 })
       expect({ flipbook_common.cycles(0.5, 2, false, true, -3) }).toEqual({ 0.5, 0, 0 })
@@ -363,16 +369,38 @@ harness.suite(function()
       end)
     end)
 
-    test("an endless loop cycles until the piece ends", function()
+    test("an endless loop keeps cycling past the piece's duration", function()
       staged(function(fake)
         const m = meshOf({ FlipbookLoop = true })
         const env = effects.emit(0, m)
 
         plays(function()
           return worn(fake)
-        end, { { 0, 1 }, { 0.25, 2 }, { 0.5, 1 }, { 0.75, 2 } })
+        end, { { 0, 1 }, { 0.25, 2 }, { 0.5, 1 }, { 2.75, 2 }, { 3, 1 }, { 3.25, 2 } })
 
-        scheduler.frame(0.5)
+        expect(env.Finished:getStatus()).toBe("Started")
+
+        env:Clear()
+      end)
+    end)
+
+    test("the decal's Loop switched off lets the cycle end, then the piece ends", function()
+      staged(function(fake)
+        const m = meshOf({ FlipbookLoop = true })
+        const decal = m.Start:FindFirstChildOfClass("Decal")
+        const env = effects.emit(0, m)
+
+        scheduler.frame(3.125)
+        attr.set(decal, "FlipbookLoop", false)
+        attr.trigger(decal, "FlipbookLoop", false)
+
+        plays(function()
+          return worn(fake)
+        end, { { 0.125, 2 }, { 0.25, 3 } })
+
+        expect(env.Finished:getStatus()).toBe("Started")
+
+        scheduler.frame(0.25)
         expect(env.Finished:getStatus()).toBe("Resolved")
       end)
     end)
@@ -391,13 +419,20 @@ harness.suite(function()
       end)
     end)
 
-    test("an endless loop longer than the piece ends with it", function()
+    test("switched off, an endless cycle longer than the piece plays out", function()
       staged(function()
         const m = meshOf({ FlipbookLoop = true, Flipbook_Change_Duration = 4 })
+        const decal = m.Start:FindFirstChildOfClass("Decal")
         const env = effects.emit(0, m)
 
-        scheduler.frame(1)
-        scheduler.frame(0.25)
+        scheduler.frame(1.25)
+        attr.set(decal, "FlipbookLoop", false)
+        attr.trigger(decal, "FlipbookLoop", false)
+
+        scheduler.frame(2.5)
+        expect(env.Finished:getStatus()).toBe("Started")
+
+        scheduler.frame(0.5)
         expect(env.Finished:getStatus()).toBe("Resolved")
       end)
     end)

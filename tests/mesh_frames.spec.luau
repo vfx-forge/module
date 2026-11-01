@@ -1,3 +1,4 @@
+local attr = require("@mod/attributes")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
 local utility = require("@mod/utility")
@@ -145,6 +146,10 @@ local function model(options: Options): (any, any)
   for name, v in options.attributes or {} do
     m:SetAttribute(name, v)
   end
+
+  -- through the cache, since lune's instances have no attribute signal for an
+  -- endless loop's switch to arrive on, and a spec switches it with attr.trigger
+  attr.cache(m)
 
   return m, start
 end
@@ -545,32 +550,61 @@ harness.suite(function()
       end)
     end)
 
-    test("an endless loop cycles until the piece ends, its destroy delay included", function()
+    test("an endless loop keeps cycling past the piece's duration", function()
       staged(function(applied)
         const m = model({
           key = "loop-d",
           attributes = { FlipbookChangeDuration = 0.5, FlipbookLoop = true, DestroyDelay = 1 },
         })
         const set = found(m, "loop-d")
+        const env = effects.emit(0, m)
 
-        effects.emit(0, m)
+        plays(applied, set, { { 0, 1 }, { 0.75, 2 }, { 1.5, 1 }, { 2.75, 2 }, { 3, 1 }, { 3.25, 2 } })
+        expect(set.entry.lent).toBe(1)
 
-        plays(applied, set, { { 0, 1 }, { 0.75, 2 }, { 1.25, 2 }, { 1.5, 1 }, { 1.75, 2 } })
-
-        scheduler.frame(0.5)
+        env:Clear()
         expect(set.entry.lent).toBe(0)
       end)
     end)
 
-    test("an endless loop longer than the piece ends with it", function()
-      staged(function()
-        const m = model({ key = "loop-e", attributes = { FlipbookChangeDuration = 4, FlipbookLoop = true } })
+    test("Loop switched off lets the cycle end, then the destroy delay runs", function()
+      staged(function(applied)
+        const m = model({
+          key = "loop-e",
+          attributes = { FlipbookChangeDuration = 0.5, FlipbookLoop = true, DestroyDelay = 1 },
+        })
         const set = found(m, "loop-e")
 
         effects.emit(0, m)
 
-        scheduler.frame(1)
-        scheduler.frame(0.25)
+        plays(applied, set, { { 0, 1 }, { 1.5, 1 }, { 3.125, 1 } })
+
+        attr.set(m, "FlipbookLoop", false)
+        attr.trigger(m, "FlipbookLoop", false)
+
+        plays(applied, set, { { 0.125, 2 }, { 0.375, 4 }, { 0.75, 4 } })
+        expect(set.entry.lent).toBe(1)
+
+        scheduler.frame(0.75)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("switched off, an endless cycle longer than the piece plays out", function()
+      staged(function()
+        const m = model({ key = "loop-g", attributes = { FlipbookChangeDuration = 4, FlipbookLoop = true } })
+        const set = found(m, "loop-g")
+
+        effects.emit(0, m)
+
+        scheduler.frame(1.25)
+        attr.set(m, "FlipbookLoop", false)
+        attr.trigger(m, "FlipbookLoop", false)
+
+        scheduler.frame(2.5)
+        expect(set.entry.lent).toBe(1)
+
+        scheduler.frame(0.5)
         expect(set.entry.lent).toBe(0)
       end)
     end)

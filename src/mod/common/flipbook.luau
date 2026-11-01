@@ -90,7 +90,7 @@ function common.getChangeDuration(config: FlipbookConfig)
 end
 
 -- one cycle's length, how many cycles play and how long they take, 0 cycles
--- repeating until the effect ends and taking no time of their own. `own` is
+-- repeating with no end and taking no time of their own. `own` is
 -- the flipbook's own cycle and `span` the effect's duration, which synced
 -- cycles share, so an endless loop counts as one there
 function common.cycles(own: number, span: number, sync: boolean, loop: boolean, count: number): (number, number, number)
@@ -119,6 +119,12 @@ function common.phase(elapsed: number, cycle: number, cycles: number): number
   end
 
   return t - math.floor(t)
+end
+
+-- the cycles an endless loop has played once the cycle playing `elapsed`
+-- seconds in ends, the count it stops at when it is switched off then
+function common.stopped(elapsed: number, cycle: number): number
+  return math.floor(elapsed / cycle) + 1
 end
 
 -- the frame of `count` shown `elapsed` seconds in at `rate` frames a second,

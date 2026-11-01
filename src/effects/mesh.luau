@@ -313,7 +313,7 @@ mesh.attributes = {
     :min(0)
     :hidden(noFrameLoop)
     :label("LoopCount")
-    :hint("Cycles of the frames to play, 0 repeating until the piece ends."),
+    :hint("Cycles of the frames to play, 0 repeating until Loop is switched off."),
   FrameTransparency = knob(0)
     :min(0)
     :max(1)
@@ -335,9 +335,10 @@ mesh.attributes = {
     :label("SyncDuration")
     :hint("Play the material frames' cycles over the piece's duration."),
   TextureLoop = knob(true):hidden(noTextures):label("Loop"):hint("Repeat the material frames' cycle."),
-  TextureLoopCount = knob(0):hidden(noTextureLoop):label("LoopCount"):hint(
-    "Cycles of the material frames to play, 0 or less repeating for as long as the piece is up."
-  ),
+  TextureLoopCount = knob(0)
+    :hidden(noTextureLoop)
+    :label("LoopCount")
+    :hint("Cycles of the material frames to play, 0 or less repeating until Loop is switched off."),
   EmissiveStrength = knob(1):min(0):mod():label("Strength"):hint("Multiplier on the glow of the mesh's material."),
   SurfaceColor = knob(WHITE)
     :mod()
@@ -477,20 +478,54 @@ local function piece(
   local currentSize = sizeStart
   local longestFlipbookDuration = 0
 
-  -- an endless loop plays for the piece's whole life, known only once every
-  -- flipbook has its length, so it shows its first frame now and starts then
-  const endless: { (life: number) -> () } = {}
+  -- every endless loop still playing, which the piece outlives
+  const looping = lifetime.join(scope)
 
-  const function loop(shape: any, cycle: number, cycles: number, length: number, write: (alpha: number) -> ())
+  -- an endless loop plays until `toggle` on `obj` is switched off, then to the
+  -- end of its cycle. the one read of an instance after its rows resolve, since
+  -- that switch while the loop plays is the only way the loop ends
+  const function endless(
+    obj: Instance,
+    toggle: string,
+    default: boolean,
+    cycle: number,
+    write: (elapsed: number, cycles: number) -> ()
+  )
+    -- a cycle of no length stands at its end from the start
+    if not (cycle > 0) then
+      write(0, 0)
+      return
+    end
+
+    const stop = flipbook_loop.endless(scope, cycle, write, lifetime.add(looping))
+
+    lifetime.hold(
+      scope,
+      attr.observe(obj, toggle, function(v: any)
+        if (if v == nil then default else v) ~= true then
+          stop()
+        end
+      end)
+    )
+  end
+
+  const function loop(
+    obj: Instance,
+    shape: any,
+    cycle: number,
+    cycles: number,
+    length: number,
+    write: (alpha: number) -> ()
+  )
     if cycles > 0 then
       flipbook_loop.play(scope, shape, cycle, cycles, length, write)
       return
     end
 
-    write(curve.new(1, shape):at(0))
+    const eased = curve.new(1, shape)
 
-    table.insert(endless, function(life: number)
-      flipbook_loop.play(scope, shape, cycle, 0, life, write)
+    endless(obj, "FlipbookLoop", false, cycle, function(elapsed: number, played: number)
+      write(eased:at(flipbook_common.phase(elapsed, cycle, played)))
     end)
   end
 
@@ -552,7 +587,7 @@ local function piece(
       )
 
       longestFlipbookDuration = length
-      loop(attrs.FlipbookChangeCurve, cycle, cycles, length, write)
+      loop(ref, attrs.FlipbookChangeCurve, cycle, cycles, length, write)
     else
       const changeDuration = if attrs.SyncDuration then duration else attrs.FlipbookChangeDuration
 
@@ -799,7 +834,8 @@ local function piece(
             flipbook_common.cycles(config.duration, duration, config.syncDuration, true, count)
 
           longestFlipbookDuration = math.max(longestFlipbookDuration, length)
-          loop(config.curve, cycle, cycles, length, write)
+          -- switched on the model's own decal, the one this piece's decal copies
+          loop(start:FindFirstChild(from.Name) or from, config.curve, cycle, cycles, length, write)
         else
           local changeDuration = flipbook_common.getChangeDuration(config)
 
@@ -820,33 +856,39 @@ local function piece(
 
   if textures then
     longestFlipbookDuration = math.max(longestFlipbookDuration, textureLength)
-  end
-
-  const life = math.max(duration, longestFlipbookDuration) + legacy_flipbookFadeOffset + destroyDelay
-
-  for _, begin in endless do
-    begin(life)
-  end
-
-  if textures then
     lifetime.defer(scope, textures.release)
 
     const rate = if textureSync then textureCount / textureCycle else fps
-    -- an endless loop wears the textures for as long as the piece is up
-    const worn = if textureCycles == 0 then life else textureLength
     local textureIndex = 0
 
-    tween.play(scope, curve.new(worn, "linear"), function(_, _, elapsed: number)
-      const index = flipbook_common.frame(elapsed, rate, textureCount, textureCycles)
+    const function wear(elapsed: number, cycles: number)
+      const index = flipbook_common.frame(elapsed, rate, textureCount, cycles)
 
       if index ~= textureIndex then
         textureIndex = index
         textures.show(index)
       end
-    end)
+    end
+
+    if textureCycles == 0 then
+      endless(ref, "TextureLoop", true, textureCycle, wear)
+    else
+      tween.play(scope, curve.new(textureLength, "linear"), function(_, _, elapsed: number)
+        wear(elapsed, textureCycles)
+      end)
+    end
   end
 
-  tween.wait(scope, curve.new(life, "linear"))
+  const life = math.max(duration, longestFlipbookDuration) + legacy_flipbookFadeOffset
+
+  -- the destroy delay runs once the last endless loop has stopped
+  if looping.count > 0 then
+    tween.wait(scope, curve.new(life, "linear"))
+    lifetime.awaitJoin(looping)
+    tween.wait(scope, curve.new(destroyDelay, "linear"))
+  else
+    tween.wait(scope, curve.new(life + destroyDelay, "linear"))
+  end
 
   lifetime.awaitJoin(children)
 

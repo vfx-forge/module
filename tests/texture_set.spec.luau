@@ -1,3 +1,4 @@
+local attr = require("@mod/attributes")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
 local utility = require("@mod/utility")
@@ -135,6 +136,10 @@ const function model(options: Options): any
   for name, v in options.attributes or {} do
     m:SetAttribute(name, v)
   end
+
+  -- through the cache, since lune's instances have no attribute signal for an
+  -- endless loop's switch to arrive on, and a spec switches it with attr.trigger
+  attr.cache(m)
 
   return m
 end
@@ -428,14 +433,36 @@ harness.suite(function()
       end)
     end)
 
-    test("the endless loop every set plays by default never outlasts the piece", function()
+    test("the endless loop every set plays by default keeps cycling past the piece's duration", function()
       staged(function(_, fake)
-        const m = model({ textures = "loop-g", attributes = { TextureFps = 1 } })
+        const m = model({ textures = "loop-g", attributes = { TextureFps = 10 } })
         const set = frame_store.findTextures(m, "loop-g") :: any
+        const env = effects.emit(0, m)
+
+        wears(set, only(fake), { { 0, 1 }, { 0.95, 1 }, { 2.95, 3 }, { 3.05, 1 }, { 3.15, 2 } })
+        expect(set.entry.lent).toBe(1)
+
+        env:Clear()
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("TextureLoop switched off lets the cycle end, then the destroy delay runs", function()
+      staged(function(_, fake)
+        const m = model({ textures = "loop-h", attributes = { TextureFps = 10, DestroyDelay = 0.5 } })
+        const set = frame_store.findTextures(m, "loop-h") :: any
 
         effects.emit(0, m)
 
-        wears(set, only(fake), { { 0, 1 }, { 0.95, 1 } })
+        const placed = only(fake)
+
+        wears(set, placed, { { 0, 1 }, { 3.05, 1 } })
+
+        attr.set(m, "TextureLoop", false)
+        attr.trigger(m, "TextureLoop", false)
+
+        wears(set, placed, { { 0.1, 2 }, { 0.2, 3 }, { 0.3, 3 }, { 0.6, 3 } })
+        expect(set.entry.lent).toBe(1)
 
         scheduler.frame(0.25)
         expect(set.entry.lent).toBe(0)
