@@ -478,4 +478,117 @@ harness.suite(function()
       end)
     end)
   end)
+
+  harness.describe("a mesh's frames looping", function()
+    -- the mesh the piece shows after each step, a time and the frame expected
+    -- once the clock reaches it
+    const function plays(applied: { { any } }, set: any, steps: { { number } })
+      local now = 0
+
+      for _, step in steps do
+        if step[1] > now then
+          scheduler.frame(step[1] - now)
+          now = step[1]
+        end
+
+        expect(applied[#applied][2]).toBe(set.frames[step[2]].mesh)
+      end
+    end
+
+    test("a counted loop plays the frames' cycles, then holds the last", function()
+      staged(function(applied)
+        const m = model({
+          key = "loop-a",
+          attributes = { FlipbookChangeDuration = 0.25, FlipbookLoop = true, FlipbookLoopCount = 2 },
+        })
+        const set = found(m, "loop-a")
+        const env = effects.emit(0, m)
+
+        plays(applied, set, { { 0, 1 }, { 0.125, 2 }, { 0.25, 1 }, { 0.375, 2 }, { 0.5, 4 }, { 0.75, 4 } })
+
+        env:Clear()
+      end)
+    end)
+
+    test("a counted loop longer than the piece keeps it for all its cycles", function()
+      staged(function(applied)
+        const m = model({
+          key = "loop-b",
+          attributes = { FlipbookChangeDuration = 0.5, FlipbookLoop = true, FlipbookLoopCount = 3 },
+        })
+        const set = found(m, "loop-b")
+
+        effects.emit(0, m)
+
+        plays(applied, set, { { 0, 1 }, { 0.25, 2 }, { 0.5, 1 }, { 1.25, 2 } })
+        expect(set.entry.lent).toBe(1)
+
+        scheduler.frame(0.5)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("a synced counted loop fits its cycles in the piece's duration", function()
+      staged(function(applied)
+        const m = model({
+          key = "loop-c",
+          attributes = { FlipbookChangeDuration = 4, SyncDuration = true, FlipbookLoop = true, FlipbookLoopCount = 4 },
+        })
+        const set = found(m, "loop-c")
+
+        effects.emit(0, m)
+
+        plays(applied, set, { { 0, 1 }, { 0.125, 2 }, { 0.25, 1 }, { 0.875, 2 } })
+
+        scheduler.frame(0.25)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("an endless loop cycles until the piece ends, its destroy delay included", function()
+      staged(function(applied)
+        const m = model({
+          key = "loop-d",
+          attributes = { FlipbookChangeDuration = 0.5, FlipbookLoop = true, DestroyDelay = 1 },
+        })
+        const set = found(m, "loop-d")
+
+        effects.emit(0, m)
+
+        plays(applied, set, { { 0, 1 }, { 0.75, 2 }, { 1.25, 2 }, { 1.5, 1 }, { 1.75, 2 } })
+
+        scheduler.frame(0.5)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("an endless loop longer than the piece ends with it", function()
+      staged(function()
+        const m = model({ key = "loop-e", attributes = { FlipbookChangeDuration = 4, FlipbookLoop = true } })
+        const set = found(m, "loop-e")
+
+        effects.emit(0, m)
+
+        scheduler.frame(1)
+        scheduler.frame(0.25)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("an endless loop's first pose and size are the first frame's", function()
+      staged(function(_, fake)
+        const m = model({ key = "loop-f", attributes = { FlipbookLoop = true } })
+
+        found(m, "loop-f")
+
+        const env = effects.emit(0, m)
+        const placed = only(fake)
+
+        expect(placed.Size).toBe(Vector3.new(2, 4, 4))
+        expect(placed.CFrame.Position).toBe(Vector3.new(2, 0, 0))
+
+        env:Clear()
+      end)
+    end)
+  end)
 end)

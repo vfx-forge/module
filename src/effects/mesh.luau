@@ -12,6 +12,7 @@ local lifetime = require("@mod/lifetime")
 local decal_fade = require("@mod/decal_fade")
 local frame_show = require("@mod/frame_show")
 local texture_show = require("@mod/texture_show")
+local flipbook_loop = require("@mod/flipbook_loop")
 local frames_common = require("@mod/common/frames")
 local flipbook_common = require("@mod/common/flipbook")
 
@@ -44,6 +45,14 @@ end
 
 const function noTextures(_, attrs: any)
   return attrs.TextureSet == ""
+end
+
+const function noFrameLoop(_, attrs: any)
+  return attrs.FrameSet == "" or not attrs.FlipbookLoop
+end
+
+const function noTextureLoop(_, attrs: any)
+  return attrs.TextureSet == "" or not attrs.TextureLoop
 end
 
 local function stoneOnMesh(ctx: reader.Ctx, attrs: any)
@@ -291,7 +300,16 @@ mesh.attributes = {
     :hidden(noFrames)
     :label("Curve")
     :hint("Easing of the frames' playback."),
-  SyncDuration = knob(false):hidden(noFrames):label("SyncDuration"):hint("Play the frames over the effect's duration."),
+  SyncDuration = knob(false)
+    :hidden(noFrames)
+    :label("SyncDuration")
+    :hint("Play the frames' cycles over the piece's duration."),
+  FlipbookLoop = knob(false):hidden(noFrames):label("Loop"):hint("Repeat the frames' cycle."),
+  FlipbookLoopCount = knob(0)
+    :min(0)
+    :hidden(noFrameLoop)
+    :label("LoopCount")
+    :hint("Cycles of the frames to play, 0 repeating until the piece ends."),
   FrameTransparency = knob(0)
     :min(0)
     :max(1)
@@ -306,7 +324,17 @@ mesh.attributes = {
     :unit("perSecond")
     :hidden(noTextures)
     :label("TextureFps")
-    :hint("Texture frames worn per second, looping for the piece's life."),
+    :hint("Texture frames worn per second."),
+  TextureSyncDuration = knob(false)
+    :hidden(noTextures)
+    :label("TextureSyncDuration")
+    :hint("Play the texture frames' cycles over the piece's duration."),
+  TextureLoop = knob(true):hidden(noTextures):label("TextureLoop"):hint("Repeat the texture frames' cycle."),
+  TextureLoopCount = knob(0)
+    :min(0)
+    :hidden(noTextureLoop)
+    :label("TextureLoopCount")
+    :hint("Cycles of the texture frames to play, 0 repeating until the piece ends."),
   EmissiveStrength = knob(1):min(0):mod():label("Strength"):hint("Multiplier on the glow of the mesh's material."),
   SurfaceColor = knob(WHITE)
     :mod()
@@ -338,8 +366,13 @@ mesh.layout = {
     entries = {
       { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
       "SyncDuration",
+      "FlipbookLoop",
+      "FlipbookLoopCount",
       "FrameTransparency",
       "TextureFps",
+      "TextureSyncDuration",
+      "TextureLoop",
+      "TextureLoopCount",
     },
   },
   { title = "Glow", entries = { "SurfaceColor", "EmissiveStrength", "EmissiveTint" }, hidden = bare },
@@ -441,6 +474,23 @@ local function piece(
   local currentSize = sizeStart
   local longestFlipbookDuration = 0
 
+  -- an endless loop plays for the piece's whole life, known only once every
+  -- flipbook has its length, so it shows its first frame now and starts then
+  const endless: { (life: number) -> () } = {}
+
+  const function loop(shape: any, cycle: number, cycles: number, length: number, write: (alpha: number) -> ())
+    if cycles > 0 then
+      flipbook_loop.play(scope, shape, cycle, cycles, length, write)
+      return
+    end
+
+    write(curve.new(1, shape):at(0))
+
+    table.insert(endless, function(life: number)
+      flipbook_loop.play(scope, shape, cycle, 0, life, write)
+    end)
+  end
+
   local function pose(deltaTime: number)
     local o = sync and utility.getTransformedOriginExtents(parent) or origin
     local add = vector.sign(initRot) * currentRotSpeed * deltaTime
@@ -484,14 +534,29 @@ local function piece(
     -- before a piece cloned whole is destroyed with it
     lifetime.defer(scope, shown.release)
 
-    const changeDuration = if attrs.SyncDuration then duration else attrs.FlipbookChangeDuration
-
-    longestFlipbookDuration = changeDuration
-
-    tween.play(scope, curve.new(changeDuration, attrs.FlipbookChangeCurve), function(alpha: number)
+    const function write(alpha: number)
       frameIndex = frames_common.index(frameCount, alpha)
       offset = shown.show(frameIndex, currentSize)
-    end)
+    end
+
+    if attrs.FlipbookLoop then
+      const cycle, cycles, length = flipbook_common.cycles(
+        attrs.FlipbookChangeDuration,
+        duration,
+        attrs.SyncDuration,
+        true,
+        attrs.FlipbookLoopCount
+      )
+
+      longestFlipbookDuration = length
+      loop(attrs.FlipbookChangeCurve, cycle, cycles, length, write)
+    else
+      const changeDuration = if attrs.SyncDuration then duration else attrs.FlipbookChangeDuration
+
+      longestFlipbookDuration = changeDuration
+
+      tween.play(scope, curve.new(changeDuration, attrs.FlipbookChangeCurve), write)
+    end
 
     const fade = attrs.FrameTransparency(nil, duration)
 
@@ -720,28 +785,56 @@ local function piece(
           end,
         }
 
-        local changeDuration = flipbook_common.getChangeDuration(config)
+        const write = flipbook_common.createUpdateCallback(config)
 
-        if changeDuration > longestFlipbookDuration then
-          longestFlipbookDuration = changeDuration
+        if attr.get(from, "FlipbookLoop", false, true) == true then
+          const count = attr.get(from, "FlipbookLoopCount", 0, true, function(v)
+            return if type(v) == "number" and v == v then v else 0
+          end)
+
+          const cycle, cycles, length =
+            flipbook_common.cycles(config.duration, duration, config.syncDuration, true, count)
+
+          longestFlipbookDuration = math.max(longestFlipbookDuration, length)
+          loop(config.curve, cycle, cycles, length, write)
+        else
+          local changeDuration = flipbook_common.getChangeDuration(config)
+
+          if changeDuration > longestFlipbookDuration then
+            longestFlipbookDuration = changeDuration
+          end
+
+          tween.play(scope, curve.new(changeDuration, config.curve), write)
         end
-
-        tween.play(scope, curve.new(changeDuration, config.curve), flipbook_common.createUpdateCallback(config))
       end
     end
   end
 
+  const fps = attrs.TextureFps
+  const textureSync = attrs.TextureSyncDuration
+  const textureCycle, textureCycles, textureLength =
+    flipbook_common.cycles(textureCount / fps, duration, textureSync, attrs.TextureLoop, attrs.TextureLoopCount)
+
+  if textures then
+    longestFlipbookDuration = math.max(longestFlipbookDuration, textureLength)
+  end
+
   const life = math.max(duration, longestFlipbookDuration) + legacy_flipbookFadeOffset + destroyDelay
+
+  for _, begin in endless do
+    begin(life)
+  end
 
   if textures then
     lifetime.defer(scope, textures.release)
 
-    const fps = attrs.TextureFps
+    const rate = if textureSync then textureCount / textureCycle else fps
+    -- an endless loop wears the textures for as long as the piece is up
+    const worn = if textureCycles == 0 then life else textureLength
     local textureIndex = 0
 
-    -- the textures loop on their own clock for as long as the piece is up
-    tween.play(scope, curve.new(life, "linear"), function(_, _, elapsed: number)
-      const index = math.floor(elapsed * fps) % textureCount + 1
+    tween.play(scope, curve.new(worn, "linear"), function(_, _, elapsed: number)
+      const index = flipbook_common.frame(elapsed, rate, textureCount, textureCycles)
 
       if index ~= textureIndex then
         textureIndex = index
