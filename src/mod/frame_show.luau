@@ -32,6 +32,10 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, 
   const own = {}
   const home = if special then special.Offset else Vector3.zero
 
+  -- a frame applied before its mesh is loaded blocks the frame it lands on, so until it is the last one
+  -- shown holds, or the start before any has
+  const gated = set.meshes and special == nil and piece:IsA("MeshPart")
+
   local shown: number? = nil
   local switched = false
   local worn: Instance? = nil
@@ -84,13 +88,15 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, 
   end
 
   const function show(index: number, size: Vector3): Vector3
-    const frame = set.frames[index]
+    local frame = set.frames[index]
 
     if frame == nil then
       return offset
     end
 
-    if index ~= shown then
+    if index ~= shown and gated and not frame_store.ready(set, index) then
+      frame = if shown then set.frames[shown] else nil
+    elseif index ~= shown then
       if set.meshes then
         if special then
           const source = frame.source:FindFirstChildOfClass("SpecialMesh")
@@ -112,7 +118,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, 
       shown = index
     end
 
-    const bounds = frame.bounds
+    const bounds = if frame then frame.bounds else nil
     const fitted, shift = frames_common.fit(bounds, set.union, size)
 
     if special then

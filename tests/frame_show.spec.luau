@@ -3,7 +3,12 @@ local utility = require("@mod/utility")
 local frame_show = require("@mod/frame_show")
 local frame_store = require("@srv/frame_store")
 
+local roblox = require("@lune/roblox") :: any
+
 local test, expect = harness.test, harness.expect
+
+-- each preload the store asked for, settled by hand
+const preloads: { { parts: { Instance }, each: (id: string) -> (), done: () -> () } } = {}
 
 -- the store started under a terrain of its own with both engine seams stood in, then put back once `body` ends
 local function stored(body: (applied: { { any } }) -> ())
@@ -30,7 +35,12 @@ local function stored(body: (applied: { { any } }) -> ())
     clone = function(instance: Instance)
       return instance:Clone()
     end,
+    preload = function(parts: { Instance }, each: (id: string) -> (), done: () -> ())
+      table.insert(preloads, { parts = parts, each = each, done = done })
+    end,
   }
+
+  table.clear(preloads)
 
   frame_show.engine = {
     apply = function(piece: any, source: any)
@@ -557,6 +567,119 @@ harness.suite(function()
         shown.release()
 
         expect(special.MeshId).toBe("rbxassetid://0")
+      end)
+    end)
+
+    -- frames whose meshes the store loads before any may be applied, under a model holding a start
+    local function loading(key: string, count: number): (any, any)
+      local root, folder = meshes(key, count)
+      local start = harness.make("MeshPart", root) :: any
+
+      start.Name = "Start"
+      start.MeshContent = roblox.Content.fromUri("rbxassetid://900")
+
+      for index = 1, count do
+        folder:FindFirstChild(tostring(index)).MeshContent = roblox.Content.fromUri(`rbxassetid://{index}`)
+      end
+
+      local set = frame_store.find(root, key) :: any
+
+      frame_store.warm(set)
+
+      return set, start
+    end
+
+    test("warm loads the start and every frame mesh once", function()
+      stored(function()
+        local set, start = loading("l1", 3)
+
+        frame_store.warm(set)
+
+        expect(#preloads).toBe(1)
+        expect(#preloads[1].parts).toBe(4)
+        expect(preloads[1].parts[1]).toBe(start)
+        expect(preloads[1].parts[3]).toBe(set.frames[2].source)
+      end)
+    end)
+
+    test("a frame still loading holds the last ready frame, then the piece catches up", function()
+      stored(function(applied)
+        local set, start = loading("l2", 3)
+        local piece = harness.make("MeshPart") :: any
+        local shown = frame_show.new(set, piece, start)
+        local preload = preloads[1]
+
+        preload.each("rbxassetid://1")
+        shown.show(1, Vector3.one)
+
+        expect(#applied).toBe(1)
+        expect(applied[1][2]).toBe(set.frames[1].mesh)
+
+        shown.show(2, Vector3.one)
+        shown.show(3, Vector3.one)
+
+        expect(#applied).toBe(1)
+        expect(set.frames[1].material.Parent).toBe(piece)
+
+        preload.each("rbxassetid://3")
+        shown.show(3, Vector3.one)
+
+        expect(#applied).toBe(2)
+        expect(applied[2][2]).toBe(set.frames[3].mesh)
+        expect(set.frames[3].material.Parent).toBe(piece)
+
+        preload.done()
+        shown.show(2, Vector3.one)
+
+        expect(#applied).toBe(3)
+        expect(applied[3][2]).toBe(set.frames[2].mesh)
+        expect(set.entry.lent).toBe(1)
+      end)
+    end)
+
+    test("a held frame keeps the shape its bounds fit", function()
+      stored(function()
+        local set, start = loading("l3", 2)
+
+        set.union = { size = Vector3.new(4, 4, 4), center = Vector3.zero }
+        set.frames[1].bounds = { size = Vector3.new(2, 4, 4), center = Vector3.new(1, 0, 0) }
+        set.frames[2].bounds = { size = Vector3.new(4, 4, 4), center = Vector3.zero }
+
+        local piece = harness.make("MeshPart") :: any
+        local shown = frame_show.new(set, piece, start)
+
+        preloads[1].each("rbxassetid://1")
+        shown.show(1, Vector3.new(4, 4, 4))
+
+        local offset = shown.show(2, Vector3.new(8, 8, 8))
+
+        expect(piece.Size).toBe(Vector3.new(4, 8, 8))
+        expect(offset).toBe(Vector3.new(2, 0, 0))
+      end)
+    end)
+
+    test("before any frame is ready the piece keeps its start mesh and surface", function()
+      stored(function(applied)
+        local set, start = loading("l4", 2)
+        local piece = harness.make("MeshPart") :: any
+        local own = harness.make("SurfaceAppearance", piece) :: any
+        local shown = frame_show.new(set, piece, start)
+        local offset = shown.show(1, Vector3.new(3, 3, 3))
+
+        expect(#applied).toBe(0)
+        expect(own.Parent).toBe(piece)
+        expect(set.entry.lent).toBe(0)
+        expect(piece.Size).toBe(Vector3.new(3, 3, 3))
+        expect(offset).toBe(Vector3.zero)
+
+        shown.release()
+        expect(#applied).toBe(0)
+
+        preloads[1].done()
+        shown.show(1, Vector3.one)
+
+        expect(#applied).toBe(1)
+        expect(own.Parent).toBe(nil)
       end)
     end)
   end)

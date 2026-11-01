@@ -1,4 +1,5 @@
 local RunService = game:GetService("RunService")
+local ContentProvider = game:GetService("ContentProvider")
 
 local logger = require("@mod/logger")
 local pool = require("@srv/pool")
@@ -8,6 +9,7 @@ local frames_common = require("@mod/common/frames")
 export type Frame = {
   source: BasePart,
   mesh: BasePart?,
+  meshId: string?,
   material: Instance?,
   bounds: frames_common.Bounds?,
   strength: number?,
@@ -63,6 +65,16 @@ frame_store.engine = {
   clone = function(instance: Instance): Instance?
     return instance:Clone()
   end,
+  -- loads what the parts hold off the frame, calling `each` as each asset settles and `done` once all have
+  preload = function(parts: { Instance }, each: (id: string) -> (), done: () -> ())
+    task.spawn(function()
+      pcall(function()
+        ContentProvider:PreloadAsync(parts, each)
+      end)
+
+      done()
+    end)
+  end,
 }
 
 local sets: { [string]: Set } = {}
@@ -72,6 +84,15 @@ local homes: { [Frame]: BasePart } = {}
 local out: { [Frame]: boolean } = {}
 const refused: { [string]: { any } } = {}
 const shapeless: { [Set]: boolean } = {}
+const starts: { [Set]: BasePart } = {}
+const requested: { [Set]: boolean } = {}
+
+-- a mesh's first ApplyMesh onto a part in the world blocks until the engine holds the mesh, so a frame is
+-- applied only once its mesh has settled from a preload. a fetch status of Success is not that: a mesh
+-- only drawn has it and still blocks
+const settled: { [string]: boolean } = {}
+const asked: { [string]: boolean } = {}
+
 local budget = DEFAULT_BUDGET
 local park: BasePart? = nil
 
@@ -144,8 +165,9 @@ local function register(folder: Instance, key: string, kind: Kind): Set
 
       if kind.shaped then
         const id = meshIdOf(child)
+        const meshId = if child:IsA("MeshPart") and id ~= "" then id else nil
 
-        table.insert(frames, { source = child, bounds = bounds(child, "FrameSize", "FrameCenter") })
+        table.insert(frames, { source = child, meshId = meshId, bounds = bounds(child, "FrameSize", "FrameCenter") })
 
         if #frames == 1 then
           first = id
@@ -175,6 +197,12 @@ local function register(folder: Instance, key: string, kind: Kind): Set
   sets[key] = set
   byEntry[entry] = set
   shapeless[set] = not kind.shaped
+
+  const start = folder.Parent and folder.Parent:FindFirstChild("Start")
+
+  if kind.shaped and start and start:IsA("MeshPart") then
+    starts[set] = start
+  end
 
   return set
 end
@@ -361,6 +389,46 @@ const function evict(keep: frames_common.Entry?)
   end
 end
 
+-- the meshes a set may apply, loaded off the frame before playback reaches them
+const function request(set: Set)
+  requested[set] = true
+
+  const parts: { Instance } = {}
+  const ids: { string } = {}
+
+  const function ask(part: Instance, id: string?)
+    if id == nil or id == "" or asked[id] then
+      return
+    end
+
+    asked[id] = true
+    table.insert(parts, part)
+    table.insert(ids, id)
+  end
+
+  if starts[set] then
+    ask(starts[set], meshIdOf(starts[set]))
+  end
+
+  for _, frame in set.frames do
+    ask(frame.source, frame.meshId)
+  end
+
+  if #parts == 0 then
+    return
+  end
+
+  frame_store.engine.preload(parts, function(id: string)
+    if asked[id] then
+      settled[id] = true
+    end
+  end, function()
+    for _, id in ids do
+      settled[id] = true
+    end
+  end)
+end
+
 function frame_store.init(scope: { any })
   const holder = containers.of("frames")
 
@@ -374,6 +442,10 @@ function frame_store.init(scope: { any })
   table.clear(out)
   table.clear(refused)
   table.clear(shapeless)
+  table.clear(starts)
+  table.clear(requested)
+  table.clear(settled)
+  table.clear(asked)
 
   table.insert(scope, function()
     for _, set in sets do
@@ -394,6 +466,8 @@ function frame_store.init(scope: { any })
     table.clear(homes)
     table.clear(out)
     table.clear(shapeless)
+    table.clear(starts)
+    table.clear(requested)
     park = nil
   end)
 end
@@ -446,6 +520,10 @@ function frame_store.warm(set: Set)
   const entry = set.entry
   const holder = containers.of("frames")
 
+  if set.meshes and not requested[set] then
+    request(set)
+  end
+
   -- the copies under a holder that was destroyed went with it
   if holder ~= park then
     for other in built do
@@ -483,6 +561,14 @@ function frame_store.warm(set: Set)
   if changed then
     evict(entry)
   end
+end
+
+-- whether frame `index` applies without blocking on its mesh: one never asked for is applied as it is
+function frame_store.ready(set: Set, index: number): boolean
+  const frame = set.frames[index]
+  const id = if frame then frame.meshId else nil
+
+  return id == nil or not asked[id] or settled[id] == true
 end
 
 function frame_store.lend(set: Set, index: number): Instance?
