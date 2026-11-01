@@ -433,10 +433,24 @@ harness.suite(function()
       end)
     end)
 
-    test("the endless loop every set plays by default keeps cycling past the piece's duration", function()
+    test("the endless loop every set plays by default never outlasts the piece", function()
       staged(function(_, fake)
-        const m = model({ textures = "loop-g", attributes = { TextureFps = 10 } })
+        const m = model({ textures = "loop-g", attributes = { TextureFps = 1 } })
         const set = frame_store.findTextures(m, "loop-g") :: any
+
+        effects.emit(0, m)
+
+        wears(set, only(fake), { { 0, 1 }, { 0.95, 1 } })
+
+        scheduler.frame(0.25)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("a loop counting below 0 keeps cycling past the piece's duration", function()
+      staged(function(_, fake)
+        const m = model({ textures = "loop-i", attributes = { TextureFps = 10, TextureLoopCount = -1 } })
+        const set = frame_store.findTextures(m, "loop-i") :: any
         const env = effects.emit(0, m)
 
         wears(set, only(fake), { { 0, 1 }, { 0.95, 1 }, { 2.95, 3 }, { 3.05, 1 }, { 3.15, 2 } })
@@ -447,9 +461,10 @@ harness.suite(function()
       end)
     end)
 
-    test("TextureLoop switched off lets the cycle end, then the destroy delay runs", function()
+    test("TextureLoop switched off under a count below 0 lets the cycle end, then the destroy delay runs", function()
       staged(function(_, fake)
-        const m = model({ textures = "loop-h", attributes = { TextureFps = 10, DestroyDelay = 0.5 } })
+        const m =
+          model({ textures = "loop-h", attributes = { TextureFps = 10, TextureLoopCount = -1, DestroyDelay = 0.5 } })
         const set = frame_store.findTextures(m, "loop-h") :: any
 
         effects.emit(0, m)

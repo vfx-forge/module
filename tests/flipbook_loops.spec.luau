@@ -369,9 +369,23 @@ harness.suite(function()
       end)
     end)
 
-    test("an endless loop keeps cycling past the piece's duration", function()
+    test("an endless loop cycles until the piece ends", function()
       staged(function(fake)
         const m = meshOf({ FlipbookLoop = true })
+        const env = effects.emit(0, m)
+
+        plays(function()
+          return worn(fake)
+        end, { { 0, 1 }, { 0.25, 2 }, { 0.5, 1 }, { 0.75, 2 } })
+
+        scheduler.frame(0.5)
+        expect(env.Finished:getStatus()).toBe("Resolved")
+      end)
+    end)
+
+    test("a loop counting below 0 keeps cycling past the piece's duration", function()
+      staged(function(fake)
+        const m = meshOf({ FlipbookLoop = true, FlipbookLoopCount = -1 })
         const env = effects.emit(0, m)
 
         plays(function()
@@ -384,9 +398,9 @@ harness.suite(function()
       end)
     end)
 
-    test("the decal's Loop switched off lets the cycle end, then the piece ends", function()
+    test("the decal's Loop switched off under a count below 0 lets the cycle end, then the piece ends", function()
       staged(function(fake)
-        const m = meshOf({ FlipbookLoop = true })
+        const m = meshOf({ FlipbookLoop = true, FlipbookLoopCount = -1 })
         const decal = m.Start:FindFirstChildOfClass("Decal")
         const env = effects.emit(0, m)
 
@@ -419,9 +433,20 @@ harness.suite(function()
       end)
     end)
 
-    test("switched off, an endless cycle longer than the piece plays out", function()
+    test("an endless loop longer than the piece ends with it", function()
       staged(function()
         const m = meshOf({ FlipbookLoop = true, Flipbook_Change_Duration = 4 })
+        const env = effects.emit(0, m)
+
+        scheduler.frame(1)
+        scheduler.frame(0.25)
+        expect(env.Finished:getStatus()).toBe("Resolved")
+      end)
+    end)
+
+    test("switched off, a cycle counting below 0 and longer than the piece plays out", function()
+      staged(function()
+        const m = meshOf({ FlipbookLoop = true, FlipbookLoopCount = -1, Flipbook_Change_Duration = 4 })
         const decal = m.Start:FindFirstChildOfClass("Decal")
         const env = effects.emit(0, m)
 

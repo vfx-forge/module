@@ -550,13 +550,43 @@ harness.suite(function()
       end)
     end)
 
-    test("an endless loop keeps cycling past the piece's duration", function()
+    test("an endless loop cycles until the piece ends, its destroy delay included", function()
       staged(function(applied)
         const m = model({
           key = "loop-d",
           attributes = { FlipbookChangeDuration = 0.5, FlipbookLoop = true, DestroyDelay = 1 },
         })
         const set = found(m, "loop-d")
+
+        effects.emit(0, m)
+
+        plays(applied, set, { { 0, 1 }, { 0.75, 2 }, { 1.25, 2 }, { 1.5, 1 }, { 1.75, 2 } })
+
+        scheduler.frame(0.5)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("an endless loop longer than the piece ends with it", function()
+      staged(function()
+        const m = model({ key = "loop-e", attributes = { FlipbookChangeDuration = 4, FlipbookLoop = true } })
+        const set = found(m, "loop-e")
+
+        effects.emit(0, m)
+
+        scheduler.frame(1)
+        scheduler.frame(0.25)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("a loop counting below 0 keeps cycling past the piece's duration", function()
+      staged(function(applied)
+        const m = model({
+          key = "loop-h",
+          attributes = { FlipbookChangeDuration = 0.5, FlipbookLoop = true, FlipbookLoopCount = -1, DestroyDelay = 1 },
+        })
+        const set = found(m, "loop-h")
         const env = effects.emit(0, m)
 
         plays(applied, set, { { 0, 1 }, { 0.75, 2 }, { 1.5, 1 }, { 2.75, 2 }, { 3, 1 }, { 3.25, 2 } })
@@ -567,13 +597,13 @@ harness.suite(function()
       end)
     end)
 
-    test("Loop switched off lets the cycle end, then the destroy delay runs", function()
+    test("Loop switched off under a count below 0 lets the cycle end, then the destroy delay runs", function()
       staged(function(applied)
         const m = model({
-          key = "loop-e",
-          attributes = { FlipbookChangeDuration = 0.5, FlipbookLoop = true, DestroyDelay = 1 },
+          key = "loop-i",
+          attributes = { FlipbookChangeDuration = 0.5, FlipbookLoop = true, FlipbookLoopCount = -1, DestroyDelay = 1 },
         })
-        const set = found(m, "loop-e")
+        const set = found(m, "loop-i")
 
         effects.emit(0, m)
 
@@ -590,9 +620,12 @@ harness.suite(function()
       end)
     end)
 
-    test("switched off, an endless cycle longer than the piece plays out", function()
+    test("switched off, a cycle counting below 0 and longer than the piece plays out", function()
       staged(function()
-        const m = model({ key = "loop-g", attributes = { FlipbookChangeDuration = 4, FlipbookLoop = true } })
+        const m = model({
+          key = "loop-g",
+          attributes = { FlipbookChangeDuration = 4, FlipbookLoop = true, FlipbookLoopCount = -1 },
+        })
         const set = found(m, "loop-g")
 
         effects.emit(0, m)
