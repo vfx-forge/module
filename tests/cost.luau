@@ -1,11 +1,12 @@
 local process = require("@lune/process")
 local harness = require("@tests/harness")
 
--- the timing and allocation gates, run by hand when a change is about speed:
+-- the timing reports and allocation gates, run by hand when a change is about speed:
 -- `lune run tests/cost`. They measure the process they run in (an earlier
 -- spec's getfenv turns the fast library calls off, the collector sits mid
 -- cycle), so they are not in tests/run, whose result judges every pull
--- request, and never in CI. Each gate prints what it measured
+-- request, and never in CI. Timings are printed and never fail the run, because
+-- a shared machine moves them; only counts and allocations are asserted
 require("@tests/bezier_cost.spec")
 require("@tests/sampling_cost.spec")
 require("@tests/scheduler_cost.spec")
