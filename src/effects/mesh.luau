@@ -55,6 +55,10 @@ const function noTextureLoop(_, attrs: any)
   return attrs.TextureSet == "" or not attrs.TextureLoop
 end
 
+const function textureSynced(_, attrs: any)
+  return attrs.TextureSyncDuration == true
+end
+
 local function stoneOnMesh(ctx: reader.Ctx, attrs: any)
   return decal_fade.onMesh(ctx.ref:FindFirstChild("Start"), attrs.Flipbook)
 end
@@ -323,18 +327,17 @@ mesh.attributes = {
     :min(1)
     :unit("perSecond")
     :hidden(noTextures)
-    :label("TextureFps")
-    :hint("Texture frames worn per second."),
+    :readonly(textureSynced)
+    :label("Fps")
+    :hint("Material frames worn per second, set by the piece's duration while synced."),
   TextureSyncDuration = knob(false)
     :hidden(noTextures)
-    :label("TextureSyncDuration")
-    :hint("Play the texture frames' cycles over the piece's duration."),
-  TextureLoop = knob(true):hidden(noTextures):label("TextureLoop"):hint("Repeat the texture frames' cycle."),
-  TextureLoopCount = knob(0)
-    :min(0)
-    :hidden(noTextureLoop)
-    :label("TextureLoopCount")
-    :hint("Cycles of the texture frames to play, 0 repeating until the piece ends."),
+    :label("SyncDuration")
+    :hint("Play the material frames' cycles over the piece's duration."),
+  TextureLoop = knob(true):hidden(noTextures):label("Loop"):hint("Repeat the material frames' cycle."),
+  TextureLoopCount = knob(0):hidden(noTextureLoop):label("LoopCount"):hint(
+    "Cycles of the material frames to play, 0 or less repeating for as long as the piece is up."
+  ),
   EmissiveStrength = knob(1):min(0):mod():label("Strength"):hint("Multiplier on the glow of the mesh's material."),
   SurfaceColor = knob(WHITE)
     :mod()
@@ -369,11 +372,11 @@ mesh.layout = {
       "FlipbookLoop",
       "FlipbookLoopCount",
       "FrameTransparency",
-      "TextureFps",
-      "TextureSyncDuration",
-      "TextureLoop",
-      "TextureLoopCount",
     },
+  },
+  {
+    title = "Material Frames",
+    entries = { "TextureFps", "TextureSyncDuration", "TextureLoop", "TextureLoopCount" },
   },
   { title = "Glow", entries = { "SurfaceColor", "EmissiveStrength", "EmissiveTint" }, hidden = bare },
   {

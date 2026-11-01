@@ -445,9 +445,11 @@ harness.suite(function()
 
       local frames = table.find(titles, "Frames")
       local glow = table.find(titles, "Glow")
+      const materialFrames = table.find(titles, "Material Frames")
 
       expect(frames ~= nil and glow ~= nil).toBe(true)
-      expect(glow).toBe((frames :: number) + 1)
+      expect(materialFrames).toBe((frames :: number) + 1)
+      expect(glow).toBe((frames :: number) + 2)
       expect(titles[(glow :: number) + 1]).toBe("Behavior")
       expect(module.layout[frames :: number].entries).toEqual({
         { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
@@ -455,6 +457,8 @@ harness.suite(function()
         "FlipbookLoop",
         "FlipbookLoopCount",
         "FrameTransparency",
+      })
+      expect(module.layout[materialFrames :: number].entries).toEqual({
         "TextureFps",
         "TextureSyncDuration",
         "TextureLoop",
