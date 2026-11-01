@@ -393,6 +393,11 @@ harness.suite(function()
       expect(attrs.FlipbookChangeDuration).toBe(1)
       expect(attrs.FlipbookChangeCurve).toBe(curves.linear())
       expect(attrs.SyncDuration).toBe(false)
+      expect(attrs.FlipbookLoop).toBe(false)
+      expect(attrs.FlipbookLoopCount).toBe(0)
+      expect(attrs.TextureLoop).toBe(true)
+      expect(attrs.TextureLoopCount).toBe(0)
+      expect(attrs.TextureSyncDuration).toBe(false)
       expect(strength.animated).toBe(false)
       expect(strength.at(0)).toBe(1)
       expect(tint.animated).toBe(false)
@@ -447,8 +452,13 @@ harness.suite(function()
       expect(module.layout[frames :: number].entries).toEqual({
         { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
         "SyncDuration",
+        "FlipbookLoop",
+        "FlipbookLoopCount",
         "FrameTransparency",
         "TextureFps",
+        "TextureSyncDuration",
+        "TextureLoop",
+        "TextureLoopCount",
       })
       expect(module.layout[glow :: number].entries).toEqual({ "SurfaceColor", "EmissiveStrength", "EmissiveTint" })
       expect(rows.FrameSet.hiddenRule ~= nil).toBe(true)
@@ -456,19 +466,35 @@ harness.suite(function()
       expect(rows.FrameTransparency.upper).toBe(1)
 
       -- the frame rows show only on a mesh that plays a frame set; its glow shows on every mesh
-      for _, name in { "FlipbookChangeCurve", "FlipbookChangeDuration", "SyncDuration", "FrameTransparency" } do
+      for _, name in
+        { "FlipbookChangeCurve", "FlipbookChangeDuration", "SyncDuration", "FlipbookLoop", "FrameTransparency" }
+      do
         local rule = rows[name].hiddenRule
 
         expect(rule ~= nil and rule(nil, { FrameSet = "" }) == true).toBe(true)
         expect(rule ~= nil and rule(nil, { FrameSet = "walk" }) == false).toBe(true)
       end
 
-      -- the texture fps shows only on a mesh that wears a texture set
-      local textureRule = rows.TextureFps.hiddenRule
+      -- the texture rows show only on a mesh that wears a texture set
+      for _, name in { "TextureFps", "TextureSyncDuration", "TextureLoop" } do
+        local textureRule = rows[name].hiddenRule
+
+        expect(textureRule ~= nil and textureRule(nil, { TextureSet = "" }) == true).toBe(true)
+        expect(textureRule ~= nil and textureRule(nil, { TextureSet = "walk" }) == false).toBe(true)
+      end
 
       expect(rows.TextureSet.hiddenRule ~= nil).toBe(true)
-      expect(textureRule ~= nil and textureRule(nil, { TextureSet = "" }) == true).toBe(true)
-      expect(textureRule ~= nil and textureRule(nil, { TextureSet = "walk" }) == false).toBe(true)
+
+      -- a loop count shows only while its set plays and loops
+      local frameCount = rows.FlipbookLoopCount.hiddenRule
+      local textureCount = rows.TextureLoopCount.hiddenRule
+
+      expect(frameCount(nil, { FrameSet = "walk", FlipbookLoop = true })).toBe(false)
+      expect(frameCount(nil, { FrameSet = "walk", FlipbookLoop = false })).toBe(true)
+      expect(frameCount(nil, { FrameSet = "", FlipbookLoop = true })).toBe(true)
+      expect(textureCount(nil, { TextureSet = "walk", TextureLoop = true })).toBe(false)
+      expect(textureCount(nil, { TextureSet = "walk", TextureLoop = false })).toBe(true)
+      expect(textureCount(nil, { TextureSet = "", TextureLoop = true })).toBe(true)
 
       expect(rows.EmissiveStrength.hiddenRule).toBe(nil)
       expect(rows.EmissiveTint.hiddenRule).toBe(nil)

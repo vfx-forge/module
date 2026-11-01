@@ -325,4 +325,121 @@ harness.suite(function()
       end)
     end)
   end)
+
+  harness.describe("a mesh's texture set looping", function()
+    -- the texture the piece wears after each step, a time and the frame
+    -- expected once the clock reaches it
+    const function wears(set: any, placed: Instance, steps: { { number } })
+      local now = 0
+
+      for _, step in steps do
+        if step[1] > now then
+          scheduler.frame(step[1] - now)
+          now = step[1]
+        end
+
+        expect(set.frames[step[2]].material.Parent).toBe(placed)
+        expect(#surfaces(placed)).toBe(1)
+      end
+    end
+
+    test("a set that does not loop plays one cycle and holds the last", function()
+      staged(function(_, fake)
+        const m = model({ textures = "loop-a", attributes = { TextureFps = 10, TextureLoop = false } })
+        const set = frame_store.findTextures(m, "loop-a") :: any
+        const env = effects.emit(0, m)
+
+        wears(set, only(fake), { { 0, 1 }, { 0.15, 2 }, { 0.25, 3 }, { 0.35, 3 }, { 0.65, 3 } })
+
+        env:Clear()
+      end)
+    end)
+
+    test("a cycle that does not loop and outlasts the piece keeps it until it ends", function()
+      staged(function(_, fake)
+        const m = model({ textures = "loop-b", attributes = { TextureFps = 1, TextureLoop = false } })
+        const set = frame_store.findTextures(m, "loop-b") :: any
+
+        effects.emit(0, m)
+
+        wears(set, only(fake), { { 0, 1 }, { 1.5, 2 }, { 2.5, 3 } })
+        expect(set.entry.lent).toBe(1)
+
+        scheduler.frame(0.75)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("a counted loop plays its cycles, then holds the last", function()
+      staged(function(_, fake)
+        const m = model({ textures = "loop-c", attributes = { TextureFps = 10, TextureLoopCount = 2 } })
+        const set = frame_store.findTextures(m, "loop-c") :: any
+        const env = effects.emit(0, m)
+
+        wears(set, only(fake), { { 0, 1 }, { 0.15, 2 }, { 0.35, 1 }, { 0.55, 3 }, { 0.65, 3 }, { 0.75, 3 } })
+
+        env:Clear()
+      end)
+    end)
+
+    test("a counted loop longer than the piece keeps it for all its cycles", function()
+      staged(function(_, fake)
+        const m = model({ textures = "loop-d", attributes = { TextureFps = 2, TextureLoopCount = 2 } })
+        const set = frame_store.findTextures(m, "loop-d") :: any
+
+        effects.emit(0, m)
+
+        wears(set, only(fake), { { 0, 1 }, { 1.75, 1 }, { 2.75, 3 } })
+        expect(set.entry.lent).toBe(1)
+
+        scheduler.frame(0.5)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("a synced set plays one cycle over the piece's duration, whatever its fps", function()
+      staged(function(_, fake)
+        const m = model({ textures = "loop-e", attributes = { TextureFps = 1, TextureSyncDuration = true } })
+        const set = frame_store.findTextures(m, "loop-e") :: any
+
+        effects.emit(0, m)
+
+        wears(set, only(fake), { { 0, 1 }, { 0.4, 2 }, { 0.7, 3 }, { 0.95, 3 } })
+
+        scheduler.frame(0.25)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("a synced counted loop fits its cycles in the piece's duration", function()
+      staged(function(_, fake)
+        const m = model({
+          textures = "loop-f",
+          attributes = { TextureFps = 1, TextureSyncDuration = true, TextureLoopCount = 2 },
+        })
+        const set = frame_store.findTextures(m, "loop-f") :: any
+
+        effects.emit(0, m)
+
+        wears(set, only(fake), { { 0, 1 }, { 0.2, 2 }, { 0.6, 1 }, { 0.95, 3 } })
+
+        scheduler.frame(0.25)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+
+    test("the endless loop every set plays by default never outlasts the piece", function()
+      staged(function(_, fake)
+        const m = model({ textures = "loop-g", attributes = { TextureFps = 1 } })
+        const set = frame_store.findTextures(m, "loop-g") :: any
+
+        effects.emit(0, m)
+
+        wears(set, only(fake), { { 0, 1 }, { 0.95, 1 } })
+
+        scheduler.frame(0.25)
+        expect(set.entry.lent).toBe(0)
+      end)
+    end)
+  end)
 end)

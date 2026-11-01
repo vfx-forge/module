@@ -89,6 +89,55 @@ function common.getChangeDuration(config: FlipbookConfig)
   return changeDuration
 end
 
+-- one cycle's length, how many cycles play and how long they take, 0 cycles
+-- repeating until the effect ends and taking no time of their own. `own` is
+-- the flipbook's own cycle and `span` the effect's duration, which synced
+-- cycles share, so an endless loop counts as one there
+function common.cycles(own: number, span: number, sync: boolean, loop: boolean, count: number): (number, number, number)
+  const cycles = if loop then math.max(math.floor(count), 0) else 1
+
+  if not sync then
+    return own, cycles, own * cycles
+  end
+
+  const shared = math.max(cycles, 1)
+
+  return span / shared, shared, span
+end
+
+-- where in its cycle a flipbook stands `elapsed` seconds in, 0 to 1, held at
+-- 1 once the last of `cycles` ends
+function common.phase(elapsed: number, cycle: number, cycles: number): number
+  if cycle <= 0 then
+    return 1
+  end
+
+  const t = elapsed / cycle
+
+  if cycles > 0 and t >= cycles then
+    return 1
+  end
+
+  return t - math.floor(t)
+end
+
+-- the frame of `count` shown `elapsed` seconds in at `rate` frames a second,
+-- held at the last once `cycles` cycles have played
+function common.frame(elapsed: number, rate: number, count: number, cycles: number): number
+  -- a cycle of no length, such as one synced to an instant effect
+  if not (rate < math.huge) then
+    return count
+  end
+
+  const played = math.floor(elapsed * rate)
+
+  if cycles > 0 and played >= count * cycles then
+    return count
+  end
+
+  return played % count + 1
+end
+
 function common.createUpdateCallback(config: FlipbookConfig)
   local prefix = common.getTexturePrefix(config.ref)
 
