@@ -1,4 +1,5 @@
 const attr = require("@mod/attributes")
+const color = require("@mod/color/color")
 const knob = require("@mod/knob")
 const curve = require("@mod/curve")
 const tween = require("@mod/tween")
@@ -132,10 +133,6 @@ const function isVector(v: any)
   const kind = typeof(v)
 
   return kind == "Vector3" or kind == "vector"
-end
-
-const function scaled(size: Vector3, factor: Vector3)
-  return Vector3.new(size.X * factor.X, size.Y * factor.Y, size.Z * factor.Z)
 end
 
 -- upper case, the spelling a row's vector and an authored Vector3 both answer
@@ -492,18 +489,41 @@ const function piece(
     ownDefault = true,
   })
 
-  -- the size and transparency where each piece's life starts
-  const size = value_curve.at(attrs.Size, 0)
-  const factor = Vector3.new(size[1], size[2], size[3])
+  -- one draw per curve for the piece's whole life, read through samplers built
+  -- once, so a frame allocates nothing for them
+  const sizeAt = value_curve.sampler(attrs.Size, value_curve.draw(attrs.Size, flight.rng))
+  const squashAt = value_curve.sampler(attrs.Squash, value_curve.draw(attrs.Squash, flight.rng))
+  const clearAt = value_curve.sampler(attrs.Transparency, value_curve.draw(attrs.Transparency, flight.rng))
 
-  if objMesh and templateMesh then
-    objMesh.Scale = scaled(templateMesh.Scale, factor)
-    look.refit()
-  else
-    look.size(scaled(template.Size, factor))
+  const tint = attrs.Color :: ColorSequence
+  const tinted = #tint.Keypoints > 1
+  const mode = attrs.Orientation :: orient_common.Mode
+
+  -- a template's special mesh carries the size when the piece has one too
+  const meshed = objMesh ~= nil and templateMesh ~= nil
+  const rest = if meshed then (templateMesh :: SpecialMesh).Scale else template.Size
+
+  -- the piece's size, color and transparency at `t` of its life
+  const function appear(t: number)
+    const size = sizeAt(t)
+    const x, y, z = size[1], size[2], size[3]
+    const stretched = orient_common.squash(Vector3.new(rest.X * x, rest.Y * y, rest.Z * z), squashAt(t)[1])
+
+    if meshed then
+      (objMesh :: SpecialMesh).Scale = stretched
+      look.refit()
+    else
+      look.size(stretched)
+    end
+
+    obj.Transparency = clearAt(t)[1]
+
+    if tinted or t == 0 then
+      obj.Color = color.sequenceAt(tint, t)
+    end
   end
 
-  obj.Transparency = value_curve.at(attrs.Transparency, 0)[1]
+  appear(0)
 
   const locked = attrs.LockedToPart
   const windy = attrs.WindAffectsDrag
@@ -558,7 +578,9 @@ const function piece(
   end
 
   const function pose()
-    const cf = CFrame.new(position.x, position.y, position.z) * facing * rotation
+    const camera = workspace.CurrentCamera
+    const turned = orient_common.rotation(mode, facing, position, velocity, if camera then camera.CFrame else nil)
+    const cf = CFrame.new(position.x, position.y, position.z) * turned * rotation
 
     return placed(cf) * look.offset()
   end
@@ -629,6 +651,7 @@ const function piece(
       end
     end
 
+    appear(if duration > 0 then age / duration else 1)
     place()
 
     if age >= duration then

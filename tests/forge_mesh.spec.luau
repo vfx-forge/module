@@ -232,6 +232,66 @@ const function finite(cframe: CFrame)
   return true
 end
 
+-- the stored rows of `part` replaced by `rows` for as long as `body` runs; lune
+-- refuses a non utf-8 attribute string, so a curve is stubbed in, not set
+const function stubbed(part: BasePart, rows: { [string]: any }, body: () -> ())
+  reader.source = function(inst: Instance)
+    const map = table.clone(reader.defaultSource(inst))
+
+    if inst == part then
+      for name, row in rows do
+        map[name] = row
+      end
+    end
+
+    return map
+  end
+
+  const ok, err = pcall(body)
+
+  reader.source = reader.defaultSource
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- a curve of `channels` from keys given as { time, value, envelope? }
+const function curveOf(channels: number, keys: { { any } }, linked: boolean?)
+  const made = value_curve.flat(1, channels)
+
+  made.linked = linked ~= false
+  made.keys = {}
+
+  for i, key in keys do
+    made.keys[i] = { time = key[1], value = key[2], envelope = key[3] or 0, left = vector.zero, right = vector.zero }
+  end
+
+  return value_curve.encode(made)
+end
+
+-- a template with `rows` stubbed in, one piece of a second's life standing
+-- where it spawned
+const function lived(rows: { [string]: any }, attributes: { [string]: any }?, body: (piece: BasePart, env: any) -> ())
+  staged(function(fake)
+    const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+    const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(1, 1) })
+
+    for name, value in attributes or {} do
+      part:SetAttribute(name, value)
+    end
+
+    part.Size = Vector3.new(2, 2, 2)
+
+    stubbed(part, rows, function()
+      const env = effects.emit(0, part)
+
+      body(pieces(fake)[1], env)
+      env:Clear()
+    end)
+  end)
+end
+
 const function tagged(roots: { Instance }): { Instance }
   const found = {}
 
@@ -430,6 +490,104 @@ harness.suite(function()
         if not ok then
           error(err, 0)
         end
+      end)
+    end)
+
+    test("Size follows its curve per axis", function()
+      lived({ Size = curveOf(3, { { 0, { 1, 1, 1 } }, { 1, { 2, 1, 3 } } }, false) }, nil, function(piece)
+        frames(30)
+
+        expect(near(piece.Size, Vector3.new(3, 2, 4), LOOSE)).toBe(true)
+      end)
+    end)
+
+    test("Squash stretches up and keeps volume", function()
+      lived({ Squash = curveOf(1, { { 0, { 1 } } }) }, nil, function(piece)
+        frames(1)
+
+        expect(near(piece.Size, Vector3.new(2 / math.sqrt(2), 4, 2 / math.sqrt(2)), LOOSE)).toBe(true)
+        expect(math.abs(piece.Size.X * piece.Size.Y * piece.Size.Z - 8) < LOOSE).toBe(true)
+      end)
+    end)
+
+    test("Transparency follows its curve", function()
+      lived({ Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }, nil, function(piece)
+        frames(30)
+
+        expect(math.abs(piece.Transparency - 0.5) < LOOSE).toBe(true)
+      end)
+    end)
+
+    test("Color follows its gradient", function()
+      const red, blue = Color3.new(1, 0, 0), Color3.new(0, 0, 1)
+      const gradient = ColorSequence.new(red, blue)
+
+      lived({}, { Color = gradient }, function(piece)
+        expect(piece.Color).toBe(red)
+
+        frames(30)
+
+        expect(piece.Color.R < 1 and piece.Color.R > 0).toBe(true)
+        expect(piece.Color.B < 1 and piece.Color.B > 0).toBe(true)
+      end)
+    end)
+
+    test("an envelope draws once per piece", function()
+      seeding(function()
+        staged(function(fake)
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { EmitCount = 2, Speed = STILL, Lifetime = NumberRange.new(1, 1) })
+
+          part.Size = Vector3.new(2, 2, 2)
+
+          stubbed(part, { Size = curveOf(3, { { 0, { 1, 1, 1 }, 0.5 } }) }, function()
+            const env = effects.emit(0, part)
+            const list = pieces(fake)
+            const first = list[1].Size
+
+            frames(5)
+
+            expect(list[1].Size).toBe(first)
+            expect(list[1].Size ~= list[2].Size).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("FacingCamera points at the camera", function()
+      const camera = workspace.CurrentCamera
+      const before = camera.CFrame
+
+      camera.CFrame = CFrame.new(0, 10, 50)
+
+      lived({}, { Orientation = "FacingCamera" }, function(piece)
+        frames(2)
+
+        expect(near(piece.CFrame.LookVector, (Vector3.new(0, 10, 50) - piece.CFrame.Position).Unit, LOOSE)).toBe(true)
+      end)
+
+      camera.CFrame = before
+    end)
+
+    test("VelocityPerpendicular turns along the flight", function()
+      staged(function(fake)
+        const part = attached({ Speed = NumberRange.new(10, 10), Orientation = "VelocityPerpendicular" })
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+
+        frames(2)
+
+        const at = piece.CFrame.Position
+
+        frames(2)
+
+        const heading = (piece.CFrame.Position - at).Unit
+
+        expect(near(piece.CFrame.LookVector, heading, LOOSE)).toBe(true)
+
+        env:Clear()
       end)
     end)
 
@@ -754,6 +912,23 @@ harness.suite(function()
 
           env:Clear()
         end)
+      end)
+    end)
+
+    test("an unsynced frame set ends with each piece's own Lifetime", function()
+      framed(function(fake)
+        const part = attached({ Lifetime = NumberRange.new(0.25, 0.25), SyncDuration = false })
+
+        frameSet(part, "own", 4)
+
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+
+        frames(24)
+
+        expect(piece.Parent).toBe(nil)
+
+        env:Clear()
       end)
     end)
 
