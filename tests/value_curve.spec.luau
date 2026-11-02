@@ -11,13 +11,14 @@ const function near(a: number, b: number): boolean
   return math.abs(a - b) < EPSILON
 end
 
-const function key(time: number, value: { number }, envelope: number?, left: vector?, right: vector?)
+-- handles per channel, flat when left out
+const function key(time: number, value: { number }, envelope: number?, left: { vector }?, right: { vector }?)
   return {
     time = time,
     value = value,
     envelope = envelope or 0,
-    left = left or vector.create(0, 0),
-    right = right or vector.create(0, 0),
+    left = left or table.create(#value, vector.create(0, 0)),
+    right = right or table.create(#value, vector.create(0, 0)),
   }
 end
 
@@ -26,9 +27,27 @@ const function sample()
     channels = 3,
     linked = false,
     keys = {
-      key(0, { 1, 2, 3 }, 0.25, vector.create(0, 0), vector.create(0.125, 0.5)),
-      key(0.5, { 4, 0.5, -1 }, 0, vector.create(-0.125, 0.25), vector.create(0.25, -0.75)),
-      key(1, { 0, 8, 2 }, 1.5, vector.create(-0.25, 0), vector.create(0, 0)),
+      key(
+        0,
+        { 1, 2, 3 },
+        0.25,
+        { vector.create(0, 0), vector.create(0, 0), vector.create(0, 0) },
+        { vector.create(0.125, 0.5), vector.create(0.25, -1), vector.create(0, 2) }
+      ),
+      key(
+        0.5,
+        { 4, 0.5, -1 },
+        0,
+        { vector.create(-0.125, 0.25), vector.create(-0.25, 0), vector.create(-0.5, 1) },
+        { vector.create(0.25, -0.75), vector.create(0.125, 0.125), vector.create(0, 0) }
+      ),
+      key(
+        1,
+        { 0, 8, 2 },
+        1.5,
+        { vector.create(-0.25, 0), vector.create(-0.125, 4), vector.create(0, 0) },
+        { vector.create(0, 0), vector.create(0, 0), vector.create(0, 0) }
+      ),
     },
   }
 end
@@ -55,7 +74,7 @@ harness.suite(function()
 
       c.linked = true
       c.channels = 1
-      c.keys = { key(0.25, { 3 }, 0.5, vector.create(-0.5, 1), vector.create(0.5, -1)) }
+      c.keys = { key(0.25, { 3 }, 0.5, { vector.create(-0.5, 1) }, { vector.create(0.5, -1) }) }
 
       expect(value_curve.decode(value_curve.encode(c))).toEqual(c)
     end)
@@ -83,8 +102,8 @@ harness.suite(function()
         channels = 1,
         linked = true,
         keys = {
-          key(0, { 0 }, 0, nil, vector.create(0.5, 0)),
-          key(1, { 10 }, 0, vector.create(-0.5, 0), nil),
+          key(0, { 0 }, 0, nil, { vector.create(0.5, 0) }),
+          key(1, { 10 }, 0, { vector.create(-0.5, 0) }, nil),
         },
       }
 
@@ -98,8 +117,8 @@ harness.suite(function()
         channels = 1,
         linked = true,
         keys = {
-          key(0, { 0 }, 0, nil, vector.create(5, 0)),
-          key(1, { 10 }, 0, vector.create(-5, 0), nil),
+          key(0, { 0 }, 0, nil, { vector.create(5, 0) }),
+          key(1, { 10 }, 0, { vector.create(-5, 0) }, nil),
         },
       }
 
@@ -118,7 +137,7 @@ harness.suite(function()
         return {
           channels = 1,
           linked = true,
-          keys = { key(0, { 0 }, 0, nil, right), key(1, { 10 }, 0, left, nil) },
+          keys = { key(0, { 0 }, 0, nil, { right }), key(1, { 10 }, 0, { left }, nil) },
         }
       end
 
@@ -130,13 +149,55 @@ harness.suite(function()
       end
     end)
 
+    test("each channel bends by its own handles", function()
+      const flat = vector.create(0, 0)
+      const c = {
+        channels = 3,
+        linked = false,
+        keys = {
+          key(0, { 0, 0, 0 }, 0, nil, { flat, vector.create(0.5, 0), flat }),
+          key(1, { 10, 10, 10 }, 0, { flat, vector.create(-0.5, 0), flat }, nil),
+        },
+      }
+
+      const v = value_curve.at(c, 0.25)
+
+      expect(near(v[1], 2.5)).ok()
+      expect(near(v[3], 2.5)).ok()
+      expect(v[2] < 2.5 - 0.1).ok()
+    end)
+
+    test("a handle is cut to its segment on its own channel", function()
+      const flat = vector.create(0, 0)
+      const function curve(right: vector)
+        return {
+          channels = 2,
+          linked = false,
+          keys = {
+            key(0, { 0, 0 }, 0, nil, { right, flat }),
+            key(1, { 10, 10 }, 0, { flat, vector.create(-0.25, 2) }, nil),
+          },
+        }
+      end
+
+      const cut = curve(vector.create(2, 1))
+      const authored = curve(vector.create(1, 0.5))
+
+      for _, t in { 0.1, 0.25, 0.5, 0.75, 0.9 } do
+        const a, b = value_curve.at(cut, t), value_curve.at(authored, t)
+
+        expect(near(a[1], b[1])).ok()
+        expect(near(a[2], b[2])).ok()
+      end
+    end)
+
     test("a vertical handle keeps its value offset", function()
       const c = {
         channels = 1,
         linked = true,
         keys = {
-          key(0, { 0 }, 0, nil, vector.create(0, 4)),
-          key(1, { 0 }, 0, vector.create(0, 0), nil),
+          key(0, { 0 }, 0, nil, { vector.create(0, 4) }),
+          key(1, { 0 }, 0, { vector.create(0, 0) }, nil),
         },
       }
 
@@ -230,6 +291,12 @@ harness.suite(function()
       buffer.writef32(nan, 7, 0 / 0)
 
       expect(value_curve.decode(buffer.tostring(nan))).toBe(nil)
+
+      -- a 3 channel key's handles read as a 1 channel curve's
+      const fewer = buffer.fromstring(good)
+      buffer.writeu8(fewer, 1, 1)
+
+      expect(value_curve.decode(buffer.tostring(fewer))).toBe(nil)
 
       const huge = buffer.fromstring(good)
       buffer.writeu32(huge, 3, 0xFFFFFFFF)

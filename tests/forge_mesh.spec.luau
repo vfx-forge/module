@@ -267,7 +267,13 @@ const function curveOf(channels: number, keys: { { any } }, linked: boolean?)
   made.keys = {}
 
   for i, key in keys do
-    made.keys[i] = { time = key[1], value = key[2], envelope = key[3] or 0, left = vector.zero, right = vector.zero }
+    made.keys[i] = {
+      time = key[1],
+      value = key[2],
+      envelope = key[3] or 0,
+      left = table.create(channels, vector.zero),
+      right = table.create(channels, vector.zero),
+    }
   end
 
   return value_curve.encode(made)

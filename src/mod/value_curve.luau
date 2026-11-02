@@ -6,12 +6,13 @@ const VERSION = 1
 const HEADER = 7
 const MAX_CHANNELS = 3
 
+-- each channel has its own value and its own handles
 export type Key = {
   time: number,
   value: { number },
   envelope: number,
-  left: vector,
-  right: vector,
+  left: { vector },
+  right: { vector },
 }
 
 export type Curve = {
@@ -20,18 +21,25 @@ export type Curve = {
   keys: { Key },
 }
 
--- time, the channels, the envelope, then both handles as an x and a y each
+-- time, the channels, the envelope, then each channel's two handles as an x
+-- and a y each
 const function keySize(channels: number)
-  return 4 + channels * 4 + 4 + 16
+  return 4 + channels * 4 + 4 + channels * 16
 end
 
 function value_curve.flat(value: number, channels: number): Curve
-  const values = table.create(channels, value)
-
   return {
     channels = channels,
     linked = true,
-    keys = { { time = 0, value = values, envelope = 0, left = vector.zero, right = vector.zero } },
+    keys = {
+      {
+        time = 0,
+        value = table.create(channels, value),
+        envelope = 0,
+        left = table.create(channels, vector.zero),
+        right = table.create(channels, vector.zero),
+      },
+    },
   }
 end
 
@@ -57,10 +65,15 @@ function value_curve.encode(curve: Curve): string
     at += 4 + channels * 4
 
     buffer.writef32(buf, at, k.envelope)
-    buffer.writef32(buf, at + 4, k.left.x)
-    buffer.writef32(buf, at + 8, k.left.y)
-    buffer.writef32(buf, at + 12, k.right.x)
-    buffer.writef32(buf, at + 16, k.right.y)
+
+    for c = 1, channels do
+      const handle = at + 4 + (c - 1) * 16
+
+      buffer.writef32(buf, handle, k.left[c].x)
+      buffer.writef32(buf, handle + 4, k.left[c].y)
+      buffer.writef32(buf, handle + 8, k.right[c].x)
+      buffer.writef32(buf, handle + 12, k.right[c].y)
+    end
   end
 
   return buffer.tostring(buf)
@@ -121,21 +134,34 @@ function value_curve.decode(data: string?): Curve?
     at += 4 + channels * 4
 
     const envelope = buffer.readf32(buf, at)
-    const lx = buffer.readf32(buf, at + 4)
-    const ly = buffer.readf32(buf, at + 8)
-    const rx = buffer.readf32(buf, at + 12)
-    const ry = buffer.readf32(buf, at + 16)
+    const left = table.create(channels)
+    const right = table.create(channels)
 
-    if not (finite(envelope) and finite(lx) and finite(ly) and finite(rx) and finite(ry)) then
+    if not finite(envelope) then
       return nil
+    end
+
+    for c = 1, channels do
+      const handle = at + 4 + (c - 1) * 16
+      const lx = buffer.readf32(buf, handle)
+      const ly = buffer.readf32(buf, handle + 4)
+      const rx = buffer.readf32(buf, handle + 8)
+      const ry = buffer.readf32(buf, handle + 12)
+
+      if not (finite(lx) and finite(ly) and finite(rx) and finite(ry)) then
+        return nil
+      end
+
+      left[c] = vector.create(lx, ly, 0)
+      right[c] = vector.create(rx, ry, 0)
     end
 
     keys[i] = {
       time = time,
       value = values,
       envelope = envelope,
-      left = vector.create(lx, ly, 0),
-      right = vector.create(rx, ry, 0),
+      left = left,
+      right = right,
     }
   end
 
@@ -232,12 +258,12 @@ function value_curve.sampler(curve: Curve, draws: { number }?): (t: number) -> {
   const values = table.create(count * channels)
   const out = table.create(channels, 0)
 
-  -- per segment: the two time control points, clamped inside the segment so
-  -- time never folds back, and the handle offsets in value
-  const tx1 = table.create(count)
-  const tx2 = table.create(count)
-  const ty1 = table.create(count)
-  const ty2 = table.create(count)
+  -- per segment and channel: the two time control points, clamped inside the
+  -- segment so time never folds back, and the handle offsets in value
+  const tx1 = table.create(count * channels)
+  const tx2 = table.create(count * channels)
+  const ty1 = table.create(count * channels)
+  const ty2 = table.create(count * channels)
 
   for i, k in keys do
     const widen = k.envelope * (if draws then draws[i] or 0 else 0)
@@ -251,17 +277,21 @@ function value_curve.sampler(curve: Curve, draws: { number }?): (t: number) -> {
 
   for i = 1, count - 1 do
     const a, b = keys[i], keys[i + 1]
-
     const width = b.time - a.time
-    const rx = math.clamp(a.right.x, 0, width)
-    const lx = math.clamp(b.left.x, -width, 0)
 
-    tx1[i] = a.time + rx
-    tx2[i] = b.time + lx
+    for c = 1, channels do
+      const at = (i - 1) * channels + c
+      const leave, enter = a.right[c], b.left[c]
+      const rx = math.clamp(leave.x, 0, width)
+      const lx = math.clamp(enter.x, -width, 0)
 
-    -- a handle cut short keeps its direction
-    ty1[i] = if a.right.x ~= 0 then a.right.y * rx / a.right.x else a.right.y
-    ty2[i] = if b.left.x ~= 0 then b.left.y * lx / b.left.x else b.left.y
+      tx1[at] = a.time + rx
+      tx2[at] = b.time + lx
+
+      -- a handle cut short keeps its direction
+      ty1[at] = if leave.x ~= 0 then leave.y * rx / leave.x else leave.y
+      ty2[at] = if enter.x ~= 0 then enter.y * lx / enter.x else enter.y
+    end
   end
 
   const last = count * channels - channels
@@ -295,14 +325,15 @@ function value_curve.sampler(curve: Curve, draws: { number }?): (t: number) -> {
     end
 
     const t0, t1 = times[i], times[i + 1]
-    const s = solve(t0, tx1[i], tx2[i], t1, t)
     const from = (i - 1) * channels
     const to = i * channels
 
     for c = 1, channels do
-      const v0, v1 = values[from + c], values[to + c]
+      const at = from + c
+      const s = solve(t0, tx1[at], tx2[at], t1, t)
+      const v0, v1 = values[at], values[to + c]
 
-      out[c] = cubic(v0, v0 + ty1[i], v1 + ty2[i], v1, s)
+      out[c] = cubic(v0, v0 + ty1[at], v1 + ty2[at], v1, s)
     end
 
     return out
