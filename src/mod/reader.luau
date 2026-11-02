@@ -19,6 +19,7 @@ export type Module = {
   attributes: { [string]: knob.Knob },
   properties: { [string]: knob.Knob },
   layout: { any }?,
+  companions: { { [string]: knob.Knob } }?,
   duration: knob.Rule?,
   constant: boolean?,
   events: { string }?,

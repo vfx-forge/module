@@ -9,8 +9,8 @@ const tween = require("@mod/tween")
 const reader = require("@mod/reader")
 const utility = require("@mod/utility")
 const lifetime = require("@mod/lifetime")
-const scheduler = require("@mod/scheduler")
 const value_curve = require("@mod/value_curve")
+const force_rows = require("@mod/common/force_rows")
 const look_common = require("@mod/common/look")
 const launch_common = require("@mod/common/launch")
 const material_rows = require("@mod/common/material_rows")
@@ -77,43 +77,6 @@ const function textureSynced(_, attrs: any)
   return attrs.TextureSyncDuration == true
 end
 
-const function forceless(_, attrs: any)
-  return attrs.Force == "None"
-end
-
-const function gravityless(_, attrs: any)
-  return attrs.Force ~= "Gravity"
-end
-
-const function vortexless(_, attrs: any)
-  return attrs.Force ~= "Vortex"
-end
-
-const function orbitless(_, attrs: any)
-  return attrs.Force ~= "Orbit"
-end
-
--- the funnel's eased radius, wide at the top: a trumpet 1.5 studs across at
--- the foot flaring to 9
-const FUNNEL: value_curve.Curve = {
-  channels = 1,
-  linked = true,
-  keys = {
-    { time = 0, value = { 1.5 }, envelope = 0, left = { vector.zero }, right = { vector.create(0.5, 0) } },
-    { time = 1, value = { 9 }, envelope = 0, left = { vector.create(-0.25, -4) }, right = { vector.zero } },
-  },
-}
-
--- none of the sway at the foot, all of it at the top
-const RAMP: value_curve.Curve = {
-  channels = 1,
-  linked = true,
-  keys = {
-    { time = 0, value = { 0 }, envelope = 0, left = { vector.zero }, right = { vector.zero } },
-    { time = 1, value = { 1 }, envelope = 0, left = { vector.zero }, right = { vector.zero } },
-  },
-}
-
 -- a mod row reaches a rule as its track
 const function dragless(_, attrs: any)
   return attrs.Drag.value <= 0
@@ -132,14 +95,6 @@ end
 
 const function calm(_, attrs: any)
   return not turbulent(attrs.Turbulence)
-end
-
-const function steady(_, attrs: any)
-  return attrs.Force ~= "Vortex" or not turbulent(attrs.VortexSway)
-end
-
-const function unshaped(_, attrs: any)
-  return attrs.Force ~= "Vortex" or attrs.VortexShaping ~= true
 end
 
 -- a piece locked to its parent never meets the world
@@ -336,25 +291,6 @@ end
 
 const forge_mesh = {}
 
--- each emitter's trunk seeds, drawn the first time it emits a vortex
-const Trunks: { [Instance]: vector } = setmetatable({}, { __mode = "k" }) :: any
-
--- the two noise channels an emitter's trunk sways on
-const function trunkOf(template: BasePart): vector
-  const known = Trunks[template]
-
-  if known ~= nil then
-    return known
-  end
-
-  const rng = Random.new()
-  const seeds = vector.create(rng:NextNumber(0, 1000), rng:NextNumber(0, 1000), 0)
-
-  Trunks[template] = seeds
-
-  return seeds
-end
-
 -- the force's center and up axis this frame, read from the engine by the
 -- first piece to ask and kept for the rest of the emit's pieces. with no
 -- target it is the emitter, whose last pose is held once the template leaves
@@ -545,120 +481,6 @@ forge_mesh.attributes = {
     :label("TurbulenceFrequency")
     :hint("How fast each piece's wander changes."),
 
-  Force = knob("None")
-    :options({ "None", "Gravity", "Vortex", "Orbit" })
-    :label("Force")
-    :hint("What moves each piece around the emitter or a target: a pull, a funnel or a ring."),
-  ForceTarget = knob()
-    :instance({ "Attachment", "BasePart", "Model" })
-    :hidden(forceless)
-    :label("ForceTarget")
-    :hint("Optional. The force centers on the emitter unless a target is set."),
-  GravityMass = knob(1000):min(0):mod():hidden(gravityless):label("GravityMass"):hint(
-    "How hard the center pulls. At distance d the pull is Mass / d squared, in studs per second squared."
-  ),
-  GravitySoftening = knob(1)
-    :min(0)
-    :unit("studs")
-    :hidden(gravityless)
-    :label("GravitySoftening")
-    :hint("Smooths the pull close to the center, so a piece passing through it is not flung away."),
-  OrbitLaunch = knob(false)
-    :hidden(gravityless)
-    :label("OrbitLaunch")
-    :hint("Launch each piece sideways at the speed of a circular orbit around the center."),
-  VortexHeight = knob(20)
-    :min(0.01)
-    :unit("studs")
-    :hidden(vortexless)
-    :label("VortexHeight")
-    :hint("How tall the funnel is along the axis. Its curves run from its foot to this height."),
-  VortexRadius = knob(FUNNEL)
-    :valueCurve(1)
-    :hidden(vortexless)
-    :label("VortexRadius")
-    :hint("The funnel's radius in studs from its foot (left) to its top (right), held above the top."),
-  VortexThickness = knob(1)
-    :min(0)
-    :unit("studs")
-    :mod()
-    :hidden(vortexless)
-    :label("VortexThickness")
-    :hint("How thick the funnel's wall is. Each piece keeps its own place across it."),
-  VortexSpin = knob(0.5)
-    :unit("perSecond")
-    :mod()
-    :hidden(vortexless)
-    :label("VortexSpin")
-    :hint("Turns per second at the funnel's widest part. Negative spins the other way."),
-  VortexTighten = knob(1):min(0):max(2):slider():mod():hidden(vortexless):label("VortexTighten"):hint(
-    "How much faster narrow parts and inner pieces spin. 0 turns the funnel as one, 1 keeps one wall speed so a part half as wide turns twice as fast, 2 four times as fast."
-  ),
-  VortexRise = knob(6)
-    :unit("studsPerSecond")
-    :mod()
-    :hidden(vortexless)
-    :label("VortexRise")
-    :hint("Climb speed along the axis. Negative sinks, for a drain."),
-  VortexPull = knob(3)
-    :min(0)
-    :unit("perSecond")
-    :mod()
-    :hidden(vortexless)
-    :label("VortexPull")
-    :hint("How tightly pieces hold to the funnel's wall. Low lets them drift in from far away."),
-  VortexSway = knob(0)
-    :min(0)
-    :unit("studs")
-    :mod()
-    :hidden(vortexless)
-    :label("VortexSway")
-    :hint("How far the funnel's centerline swings off the axis. The bend travels up the trunk."),
-  VortexSwaySpeed = knob(0.3)
-    :min(0)
-    :unit("perSecond")
-    :hidden(steady)
-    :label("VortexSwaySpeed")
-    :hint("How fast the sway changes."),
-  VortexShaping = knob(false)
-    :hidden(vortexless)
-    :label("VortexShaping")
-    :hint("Show the curves that shape spin, rise and sway along the height, the inflow and the top."),
-  VortexSpinOverHeight = knob(value_curve.flat(1, 1))
-    :valueCurve(1)
-    :hidden(unshaped)
-    :label("VortexSpinOverHeight")
-    :hint("Multiplies Spin along the height, from the foot (left) to the top (right)."),
-  VortexRiseOverHeight = knob(value_curve.flat(1, 1))
-    :valueCurve(1)
-    :hidden(unshaped)
-    :label("VortexRiseOverHeight")
-    :hint("Multiplies Rise along the height: slow at the foot, fast in the trunk, slowing at the top."),
-  VortexSwayOverHeight = knob(RAMP)
-    :valueCurve(1)
-    :hidden(unshaped)
-    :label("VortexSwayOverHeight")
-    :hint("How much of the sway each height takes. 0 at the foot keeps the base planted."),
-  VortexInflow = knob(0):min(0):max(1):slider():hidden(unshaped):label("VortexInflow"):hint(
-    "How long pieces outside the wall skim inward before they climb. 0 climbs at once, 1 waits for the wall."
-  ),
-  VortexTop = knob("Hold"):options({ "Hold", "Release" }):hidden(unshaped):label("VortexTop"):hint(
-    "What a piece does above the height. Hold keeps it rising at the top radius, Release lets it fly off with its speed under Acceleration and Drag."
-  ),
-  OrbitRadius = knob(10):min(0):unit("studs"):mod():hidden(orbitless):label("OrbitRadius"):hint("The ring's radius."),
-  OrbitSpin = knob(0.25)
-    :unit("perSecond")
-    :mod()
-    :hidden(orbitless)
-    :label("OrbitSpin")
-    :hint("Turns per second around the ring. Negative goes the other way."),
-  OrbitCapture = knob(2)
-    :min(0)
-    :unit("perSecond")
-    :hidden(orbitless)
-    :label("OrbitCapture")
-    :hint("How quickly a piece settles onto the ring, per second."),
-
   Drag = knob(0):min(0):mod():label("Drag"):hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
   LockedToPart = knob(false):label("LockedToPart"):hint("Whether pieces move with the parent after they spawn."),
   TimeScale = knob(1):min(0):mod():label("TimeScale"):hint("Multiplier on the effect's clock, 0 freezing it."),
@@ -769,34 +591,6 @@ forge_mesh.layout = {
     },
   },
   {
-    title = "Force",
-    entries = {
-      "Force",
-      "ForceTarget",
-      "GravityMass",
-      "GravitySoftening",
-      "OrbitLaunch",
-      "VortexHeight",
-      "VortexRadius",
-      "VortexThickness",
-      "VortexSpin",
-      "VortexTighten",
-      "VortexRise",
-      "VortexPull",
-      "VortexSway",
-      "VortexSwaySpeed",
-      "OrbitRadius",
-      "OrbitSpin",
-      "OrbitCapture",
-      "VortexShaping",
-      "VortexSpinOverHeight",
-      "VortexRiseOverHeight",
-      "VortexSwayOverHeight",
-      "VortexInflow",
-      "VortexTop",
-    },
-  },
-  {
     title = "Particles",
     entries = { "Drag", "LockedToPart", "TimeScale", "VelocityInheritance", "WindAffectsDrag" },
   },
@@ -822,6 +616,10 @@ forge_mesh.layout = {
   },
 }
 
+-- the rows of the cards beside the effect's own, held on its instance and
+-- read at emit, which the applier, retime and resize treat as its own
+forge_mesh.companions = { force_rows.rows, material_rows.rows }
+
 function forge_mesh.duration(_, attrs: any)
   return attrs.Lifetime.value.Max
 end
@@ -837,7 +635,6 @@ forge_mesh.pieces = { live = 0, max = 500 }
 const function piece(
   ctx: reader.Ctx,
   attrs: any,
-  looks: any,
   template: BasePart,
   launch: Launch,
   flight: Flight,
@@ -883,7 +680,7 @@ const function piece(
   -- of the piece's own
   const decals = decalsOf(obj)
 
-  const look = look_common.start(scope, obj, template, looks, duration, sets, {
+  const look = look_common.start(scope, obj, template, attrs, duration, sets, {
     owner = template,
     decals = decals,
     modes = true,
@@ -1018,13 +815,6 @@ const function piece(
   tween.drive(scope, attrs.Drag(nil, duration), function(v: number)
     drag = v
   end)
-
-  -- a funnel piece draws its place across the wall, and its trunk sways on
-  -- the frame clock from where it spawns
-  if pull ~= nil and pull.kind == "Vortex" then
-    launch_common.wall(attrs, pull, flight.rng)
-    pull.time = scheduler.now
-  end
 
   if pull ~= nil then
     for row, field in launch_common.DRIVEN[pull.kind] do
@@ -1334,13 +1124,23 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     return
   end
 
+  -- the force and the material's glow are rows of cards of their own, read
+  -- here beside the effect's, so the pieces and the look take them as one
+  const rows = table.clone(attrs)
+
+  for _, companion in { force_rows, material_rows } do
+    for name, track in companion.resolve(ctx, template) do
+      rows[name] = track
+    end
+  end
+
   -- every piece runs on the effect's clock, so one TimeScale track paces them
   -- all
-  utility.speedFrom(scope, ctx.constant, attrs.TimeScale)
+  utility.speedFrom(scope, ctx.constant, rows.TimeScale)
 
   const sets: look_common.Sets = {
-    frames = if attrs.FrameSet ~= "" then frame_store.find(template, attrs.FrameSet) else nil,
-    textures = if attrs.TextureSet ~= "" then frame_store.findTextures(template, attrs.TextureSet) else nil,
+    frames = if rows.FrameSet ~= "" then frame_store.find(template, rows.FrameSet) else nil,
+    textures = if rows.TextureSet ~= "" then frame_store.findTextures(template, rows.TextureSet) else nil,
   }
 
   if sets.frames then
@@ -1351,13 +1151,6 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     frame_store.warm(sets.textures)
   end
 
-  -- the look reads the material's glow rows beside the effect's own
-  const looks = table.clone(attrs)
-
-  for name, track in material_rows.resolve(ctx, template) do
-    looks[name] = track
-  end
-
   const origin, size = originOf(template)
   const parent = template.Parent
 
@@ -1365,11 +1158,11 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   const moved = parent ~= nil and parent:IsA("BasePart")
 
   const config: particle_motion.Config = {
-    shape = attrs.Shape,
-    surface = attrs.ShapeStyle == "Surface",
-    partial = attrs.ShapePartial,
-    normal = Enum.NormalId[attrs.EmissionDirection],
-    face = attrs.ShapeFace,
+    shape = rows.Shape,
+    surface = rows.ShapeStyle == "Surface",
+    partial = rows.ShapePartial,
+    normal = Enum.NormalId[rows.EmissionDirection],
+    face = rows.ShapeFace,
     spread = vector.zero,
   }
 
@@ -1378,21 +1171,16 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     rotation = template.CFrame.Rotation,
     rng = Random.new(),
     collision = nil,
-    target = launch_common.target(attrs),
+    target = launch_common.target(rows),
     anchor = parent,
     standing = toVector(origin.Position),
     up = toVector(origin.UpVector),
     read = -1,
-    force = launch_common.force(attrs),
-    keypoints = (attrs.Color.value :: ColorSequence).Keypoints,
+    force = launch_common.force(rows),
+    keypoints = (rows.Color.value :: ColorSequence).Keypoints,
   }
 
-  -- every emit of one emitter sways the same trunk
-  if flight.force ~= nil and flight.force.kind == "Vortex" then
-    flight.force.seeds = trunkOf(template)
-  end
-
-  if attrs.CollisionMode ~= "Off" then
+  if rows.CollisionMode ~= "Off" then
     const exclude = { containers.root(), template }
 
     -- the workspace and its terrain are the world the rays are for
@@ -1400,16 +1188,16 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
       table.insert(exclude, parent)
     end
 
-    const filterType, filterTag = collision_common.filter(attrs.CollisionFilter, attrs.CollisionFilterTag)
+    const filterType, filterTag = collision_common.filter(rows.CollisionFilter, rows.CollisionFilterTag)
 
     const collision: collision_common.Config = {
-      mode = attrs.CollisionMode,
+      mode = rows.CollisionMode,
       bounce = 0,
       friction = 0,
       filterType = filterType,
       filterTag = filterTag,
-      group = attrs.CollisionGroup,
-      respectCanCollide = attrs.CollisionRespectCanCollide,
+      group = rows.CollisionGroup,
+      respectCanCollide = rows.CollisionRespectCanCollide,
     }
 
     flight.collision = { params = collision_common.params(collision, exclude), config = collision }
@@ -1426,19 +1214,19 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
 
   -- an appearance row with no modifier hands every piece the value it rests
   -- at, read here once rather than per piece
-  const sizeRest = attrs.Size.value :: value_curve.Curve
-  const squashRest = attrs.Squash.value :: value_curve.Curve
-  const clearRest = attrs.Transparency.value :: value_curve.Curve
-  const tintRest = attrs.Color.value :: ColorSequence
+  const sizeRest = rows.Size.value :: value_curve.Curve
+  const squashRest = rows.Squash.value :: value_curve.Curve
+  const clearRest = rows.Transparency.value :: value_curve.Curve
+  const tintRest = rows.Color.value :: ColorSequence
 
-  const sized = modified(attrs.Size)
-  const squashed = modified(attrs.Squash)
-  const cleared = modified(attrs.Transparency)
-  const colored = modified(attrs.Color)
+  const sized = modified(rows.Size)
+  const squashed = modified(rows.Squash)
+  const cleared = modified(rows.Transparency)
+  const colored = modified(rows.Color)
 
-  for _ = 1, attrs.EmitCount do
-    const speed, duration, spread, turn, inheritance = launch_common.draw(attrs, spawned)
-    const tint = if colored then gradientOr(attrs.Color().at(spawned), tintRest) else tintRest
+  for _ = 1, rows.EmitCount do
+    const speed, duration, spread, turn, inheritance = launch_common.draw(rows, spawned)
+    const tint = if colored then gradientOr(rows.Color().at(spawned), tintRest) else tintRest
 
     config.spread = spread
 
@@ -1450,14 +1238,14 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
       inherited = if inheritance ~= 0 and moved
         then toVector((parent :: BasePart).AssemblyLinearVelocity) * inheritance
         else vector.zero,
-      size = if sized then curveOr(attrs.Size().at(spawned), sizeRest) else sizeRest,
-      squash = if squashed then curveOr(attrs.Squash().at(spawned), squashRest) else squashRest,
-      clear = if cleared then curveOr(attrs.Transparency().at(spawned), clearRest) else clearRest,
+      size = if sized then curveOr(rows.Size().at(spawned), sizeRest) else sizeRest,
+      squash = if squashed then curveOr(rows.Squash().at(spawned), squashRest) else squashRest,
+      clear = if cleared then curveOr(rows.Transparency().at(spawned), clearRest) else clearRest,
       tint = tint,
       keypoints = if colored then tint.Keypoints else flight.keypoints,
     }
 
-    lifetime.spawn(outstanding, piece, ctx, attrs, looks, template, launch, flight, sets)
+    lifetime.spawn(outstanding, piece, ctx, rows, template, launch, flight, sets)
   end
 
   lifetime.awaitJoin(outstanding)

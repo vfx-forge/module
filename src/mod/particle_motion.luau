@@ -4,58 +4,21 @@ local shape = require("@mod/shape")
 
 export type Gravity = { kind: "Gravity", target: vector, mass: number, softening: number }
 
--- a value along a funnel's height, bottom to top: one number where it is
--- flat, else samples taken evenly over the height
-export type Shape = number | { number }
-
--- a funnel about the axis, `height` tall, its curves read at the share of
--- the height a piece stands at and held past either end. `spin` is in turns
--- per second at `widest`, the radius curve's widest, and `tighten` the power
--- narrower parts and inner pieces turn faster by; `rise` is in studs per
--- second, `pull` per second and `sway` in studs. `wall` is the piece's own
--- place across a wall `thickness` studs thick, -0.5 to 0.5. the trunk sways
--- on `time`, the effect's clock where the piece stands, from two noise
--- channels `seeds` picks; `swayed` is where the trunk stood as the piece was
--- last placed, and a piece past the top flags `released` when `release` is set
-export type Vortex = {
-  kind: "Vortex",
-  center: vector,
-  axis: vector,
-  height: number,
-  radius: Shape,
-  widest: number,
-  wall: number,
-  thickness: number,
-  spin: number,
-  tighten: number,
-  rise: number,
-  pull: number,
-  sway: number,
-  swaySpeed: number,
-  spinOver: Shape,
-  riseOver: Shape,
-  swayOver: Shape,
-  inflow: number,
-  release: boolean,
-  seeds: vector,
-  time: number,
-  swayed: vector?,
-  released: boolean,
-}
-
--- `height` is where the piece's own ring sits along the axis, the height it
--- spawned at; a path left without one takes it from where it starts
+-- `height` is where the piece's own ring sits along the axis, from the height
+-- it spawned at climbing at `rise` studs per second; a path left without one
+-- takes it from where it starts. `spin` is in turns per second
 export type Orbit = {
   kind: "Orbit",
   center: vector,
   axis: vector,
   radius: number,
   spin: number,
+  rise: number,
   capture: number,
   height: number?,
 }
 
-export type Force = Gravity | Vortex | Orbit
+export type Force = Gravity | Orbit
 
 -- a piece's rows over its life for a caller holding no track: each list
 -- samples one row evenly from age 0 to `span`, keyed by what it drives,
@@ -86,16 +49,6 @@ const WORLD_X = vector.create(1, 0, 0)
 const WORLD_Z = vector.create(0, 0, 1)
 
 const TAU = 2 * math.pi
-
--- how close to the trunk a piece counts its distance from, as a share of the
--- widest radius, and the most a tightened spin is sped up by, so a piece on
--- the axis never turns infinitely fast
-const CORE = 0.05
-const MAX_BOOST = 8
-
--- how far behind the foot the top's sway runs, in noise units: one bend over
--- the height, traveling upward
-const LAG = 1
 
 -- the turn a thinned path keeps a point at, at the least, and the points it
 -- keeps for time alone: one every eighth of the path, then the two ends
@@ -167,19 +120,6 @@ const function sampledOf(list: { any }, t: number): any
   return a + (b - a) * (at - i)
 end
 
-const function shapeAt(curve: Shape, u: number): number
-  if type(curve) == "number" then
-    return curve
-  end
-
-  return sampledOf(curve, u)
-end
-
--- the share of a funnel's height `h` stands at, held at its ends past them
-const function shareOf(height: number, h: number)
-  return if height > 0 then math.clamp(h / height, 0, 1) elseif h > 0 then 1 else 0
-end
-
 -- the angle between two steps, 0 when either has no length
 const function turnOf(a: vector, b: vector)
   const lengths = vector.magnitude(a) * vector.magnitude(b)
@@ -192,34 +132,6 @@ const function turnOf(a: vector, b: vector)
 end
 
 const particle_motion = {}
-
--- what an orbit hands the funnel's step: a flat radius, no rise, no tighten
--- and no sway, rewritten every step
-const RING: Vortex = {
-  kind = "Vortex",
-  center = vector.zero,
-  axis = WORLD_UP,
-  height = 1,
-  radius = 0,
-  widest = 0,
-  wall = 0,
-  thickness = 0,
-  spin = 0,
-  tighten = 0,
-  rise = 0,
-  pull = 0,
-  sway = 0,
-  swaySpeed = 0,
-  spinOver = 1,
-  riseOver = 1,
-  swayOver = 0,
-  inflow = 0,
-  release = false,
-  seeds = vector.zero,
-  time = 0,
-  swayed = vector.zero,
-  released = false,
-}
 
 -- a spawn frame whose look vector is the launch direction. draws shape point,
 -- spread x, spread y, then the InAndOut coin, so a caller replaying a
@@ -339,113 +251,31 @@ function particle_motion.verlet(
   return nextPosition, nextVelocity
 end
 
--- the funnel's radius for the piece at share `u` of its height, its own
--- place across the wall added
-function particle_motion.width(vortex: Vortex, u: number)
-  return math.max(shapeAt(vortex.radius, u) + vortex.wall * vortex.thickness, 0)
-end
+-- one step of an orbiting piece, worked out from where it stands: its angle
+-- carried on at the spin, its ring climbing at the rise, and its gaps from the
+-- ring's radius and height eased away at the capture's rate, so a piece on the
+-- ring climbs at the rise exactly. the velocity is what the move took
+function particle_motion.ring(position: vector, velocity: vector, orbit: Orbit, dt: number): (vector, vector)
+  const axis = orbit.axis
+  const center = orbit.center
+  const along, distance, angle, first, second = aroundOf(position, velocity, center, axis)
+  const settle = math.exp(-math.max(orbit.capture, 0) * dt)
+  const climb = orbit.rise * dt
+  const rest = (orbit.height or along) + climb
+  const height = rest + (along + climb - rest) * settle
+  const radius = math.max(orbit.radius, 0)
+  const reach = math.max(radius + (distance - radius) * settle, 0)
+  const turned = angle + orbit.spin * TAU * dt
 
--- radians per second a piece `distance` from the trunk at share `u` of the
--- height turns at: the spin at the widest part, sped up by the widest over
--- the distance to the power of tighten, capped
-function particle_motion.turning(vortex: Vortex, distance: number, u: number)
-  const tighten = vortex.tighten
-  const widest = vortex.widest
+  orbit.height = rest
 
-  local boost = 1
-
-  if tighten ~= 0 and widest > 0 then
-    boost = math.min((widest / math.max(distance, CORE * widest)) ^ tighten, MAX_BOOST)
-  end
-
-  return vortex.spin * TAU * shapeAt(vortex.spinOver, u) * boost
-end
-
--- the trunk's offset across the axis at share `u` of the height at `time`:
--- one centerline every piece of the effect rides, the bend at the top
--- running behind the foot's so it travels up
-function particle_motion.trunk(vortex: Vortex, u: number, time: number): vector
-  const sway = vortex.sway * shapeAt(vortex.swayOver, u)
-
-  if sway == 0 then
-    return vector.zero
-  end
-
-  const phase = time * vortex.swaySpeed - u * LAG
-  const seeds = vortex.seeds
-  const first, second = basisOf(vortex.axis)
-
-  -- math.noise rarely leaves -0.5 to 0.5
-  return (first * math.noise(phase, seeds.x) + second * math.noise(phase, seeds.y)) * (2 * sway)
-end
-
--- one step of a piece about a swaying trunk, worked out from where it stands
--- against where the trunk stood as it was last placed: its angle carried on
--- at its turning, its height moved by the rise, or eased toward `rest` when
--- one is given, and its gap from the wall eased away at the pull's rate, so a
--- piece drawn on keeps to the wall as it climbs and as the trunk sways. the
--- velocity is what the move took
-const function swirl(position: vector, velocity: vector, vortex: Vortex, rest: number?, dt: number): (vector, vector)
-  const axis = vortex.axis
-  const center = vortex.center
-  const height = vortex.height
-  const along = vector.dot(position - center, axis)
-  const u = shareOf(height, along)
-  const swayed = vortex.swayed or particle_motion.trunk(vortex, u, vortex.time)
-  const _, distance, angle, first, second = aroundOf(position, velocity, center + swayed, axis)
-  const turned = angle + particle_motion.turning(vortex, distance, u) * dt
-  const settle = math.exp(-math.max(vortex.pull, 0) * dt)
-  const wall = particle_motion.width(vortex, u)
-
-  local climbed: number
-
-  if rest ~= nil then
-    climbed = rest + (along - rest) * settle
-  else
-    -- a piece outside the wall is held back by the square of how far in it is
-    const inflow = vortex.inflow
-    const reach = if inflow ~= 0 and distance > wall then (wall / distance) ^ 2 else 1
-
-    climbed = along + vortex.rise * shapeAt(vortex.riseOver, u) * (1 + (reach - 1) * inflow) * dt
-  end
-
-  const next = shareOf(height, climbed)
-  const radius = math.max(particle_motion.width(vortex, next) + (distance - wall) * settle, 0)
-  const time = vortex.time + dt
-  const trunk = particle_motion.trunk(vortex, next, time)
-
-  vortex.time = time
-  vortex.swayed = trunk
-
-  if vortex.release and climbed > height then
-    vortex.released = true
-  end
-
-  const nextPosition = center + axis * climbed + trunk + (first * math.cos(turned) + second * math.sin(turned)) * radius
+  const nextPosition = center + axis * height + (first * math.cos(turned) + second * math.sin(turned)) * reach
 
   return nextPosition, if dt > 0 then (nextPosition - position) / dt else velocity
 end
 
--- one step of a piece on a funnel, which carries the piece's own state on
-function particle_motion.funnel(position: vector, velocity: vector, vortex: Vortex, dt: number): (vector, vector)
-  return swirl(position, velocity, vortex, nil, dt)
-end
-
--- one step of an orbiting piece: the funnel's step on a ring of the orbit's
--- radius, its height eased toward the ring's at the capture's rate
-function particle_motion.ring(position: vector, velocity: vector, orbit: Orbit, dt: number): (vector, vector)
-  RING.center = orbit.center
-  RING.axis = orbit.axis
-  RING.radius = math.max(orbit.radius, 0)
-  RING.spin = orbit.spin
-  RING.pull = orbit.capture
-
-  return swirl(position, velocity, RING, orbit.height or vector.dot(position - orbit.center, orbit.axis), dt)
-end
-
--- one step under a force, or none: gravity by velocity Verlet, a vortex by
--- its funnel alone until it is released past the top, then as a particle with
--- the velocity it left with, an orbit by its ring alone
+-- one step under a force, or none: gravity by velocity Verlet, an orbit by
+-- its ring alone
 function particle_motion.advance(
   position: vector,
   velocity: vector,
@@ -471,14 +301,6 @@ function particle_motion.advance(
       wind,
       dt
     )
-  end
-
-  if force.kind == "Vortex" then
-    if force.released then
-      return particle_motion.step(position, velocity, acceleration, drag, wind, dt)
-    end
-
-    return particle_motion.funnel(position, velocity, force, dt)
   end
 
   return particle_motion.ring(position, velocity, force, dt)

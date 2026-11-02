@@ -508,9 +508,11 @@ end
 local function ownedOf(module: Module): Owned
   local out = { attribute = {}, property = {} }
 
-  for name, row in module.attributes do
-    if row.isMod then
-      mark(out.attribute, name, row)
+  for _, rows in { module.attributes, table.unpack(module.companions or {}) } do
+    for name, row in rows do
+      if row.isMod then
+        mark(out.attribute, name, row)
+      end
     end
   end
 

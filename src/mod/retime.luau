@@ -65,7 +65,7 @@ local RANGE = { "Min", "Max" }
 local function claimedOf(module: registry.Module): { [string]: boolean }
   local out = {}
 
-  for _, rows in { module.attributes, module.properties } do
+  for _, rows in { module.properties, module.attributes, table.unpack(module.companions or {}) } do
     for name, row in rows do
       out[name] = true
 
@@ -91,8 +91,16 @@ function retime.walk(
   visit: (source: string, name: string, key: string, f: number) -> ()
 )
   local claimed = claimedOf(module)
+  local sets = { { "attribute", module.attributes }, { "property", module.properties } }
 
-  for source, rows in { attribute = module.attributes, property = module.properties } do
+  -- a companion's rows sit on the effect's instance as its own attributes do
+  for _, rows in module.companions or {} do
+    table.insert(sets, { "attribute", rows })
+  end
+
+  for _, set in sets do
+    local source, rows = set[1], set[2]
+
     for name, row in rows do
       local f = if row.units ~= nil then unitFactor(row.units, factor) else nil
       local keys = { name }
