@@ -1,17 +1,17 @@
-local knob = require("@mod/knob")
-local reader = require("@mod/reader")
-local value_curve = require("@mod/value_curve")
-local harness = require("@tests/harness")
-local test, expect = harness.test, harness.expect
-local Instance = harness.datatypes.Instance
+const knob = require("@mod/knob")
+const reader = require("@mod/reader")
+const value_curve = require("@mod/value_curve")
+const harness = require("@tests/harness")
+const test, expect = harness.test, harness.expect
+const Instance = harness.datatypes.Instance
 
-local EPSILON = 1e-6
+const EPSILON = 1e-6
 
-local function near(a: number, b: number): boolean
+const function near(a: number, b: number): boolean
   return math.abs(a - b) < EPSILON
 end
 
-local function key(time: number, value: { number }, envelope: number?, left: vector?, right: vector?)
+const function key(time: number, value: { number }, envelope: number?, left: vector?, right: vector?)
   return {
     time = time,
     value = value,
@@ -21,7 +21,7 @@ local function key(time: number, value: { number }, envelope: number?, left: vec
   }
 end
 
-local function sample()
+const function sample()
   return {
     channels = 3,
     linked = false,
@@ -33,7 +33,7 @@ local function sample()
   }
 end
 
-local function module(attributes: { [string]: any })
+const function module(attributes: { [string]: any })
   return {
     id = "stub",
     display = { name = "Stub" },
@@ -47,8 +47,8 @@ end
 harness.suite(function()
   harness.describe("value_curve", function()
     test("a curve round-trips", function()
-      local c = sample()
-      local back = value_curve.decode(value_curve.encode(c))
+      const c = sample()
+      const back = value_curve.decode(value_curve.encode(c))
 
       expect(back).ok()
       expect(back).toEqual(c)
@@ -61,7 +61,7 @@ harness.suite(function()
     end)
 
     test("flat curves read their value everywhere", function()
-      local c = value_curve.flat(2, 1)
+      const c = value_curve.flat(2, 1)
 
       for _, t in { 0, 0.37, 1 } do
         expect(value_curve.at(c, t)).toEqual({ 2 })
@@ -72,14 +72,14 @@ harness.suite(function()
     end)
 
     test("a linear two-key curve interpolates", function()
-      local c = { channels = 1, linked = true, keys = { key(0, { 0 }), key(1, { 10 }) } }
+      const c = { channels = 1, linked = true, keys = { key(0, { 0 }), key(1, { 10 }) } }
 
       expect(near(value_curve.at(c, 0.25)[1], 2.5)).ok()
       expect(near(value_curve.at(c, 0.8)[1], 8)).ok()
     end)
 
     test("bezier handles bend the curve", function()
-      local c = {
+      const c = {
         channels = 1,
         linked = true,
         keys = {
@@ -94,7 +94,7 @@ harness.suite(function()
     end)
 
     test("handles that would fold time back still read monotone", function()
-      local c = {
+      const c = {
         channels = 1,
         linked = true,
         keys = {
@@ -106,7 +106,7 @@ harness.suite(function()
       local last = -1
 
       for i = 0, 100 do
-        local v = value_curve.at(c, i / 100)[1]
+        const v = value_curve.at(c, i / 100)[1]
 
         expect(v >= last - EPSILON and v == v).ok()
         last = v
@@ -114,7 +114,7 @@ harness.suite(function()
     end)
 
     test("envelopes widen per draw", function()
-      local c = { channels = 1, linked = true, keys = { key(0, { 1 }, 0.5) } }
+      const c = { channels = 1, linked = true, keys = { key(0, { 1 }, 0.5) } }
 
       expect(value_curve.at(c, 0.5, { 1 })).toEqual({ 1.5 })
       expect(value_curve.at(c, 0.5, { -1 })).toEqual({ 0.5 })
@@ -122,7 +122,7 @@ harness.suite(function()
     end)
 
     test("a draw is one number per key within -1..1", function()
-      local rng = {
+      const rng = {
         NextNumber = function(_, lo: number, hi: number)
           return hi
         end,
@@ -132,7 +132,7 @@ harness.suite(function()
     end)
 
     test("t outside 0..1 clamps", function()
-      local c = { channels = 1, linked = true, keys = { key(0, { 2 }), key(1, { 6 }) } }
+      const c = { channels = 1, linked = true, keys = { key(0, { 2 }), key(1, { 6 }) } }
 
       expect(value_curve.at(c, -3)).toEqual({ 2 })
       expect(value_curve.at(c, 7)).toEqual({ 6 })
@@ -140,12 +140,12 @@ harness.suite(function()
     end)
 
     test("one key, equal times and keys inside 0..1 hold their end values", function()
-      local one = { channels = 1, linked = true, keys = { key(0.5, { 7 }) } }
+      const one = { channels = 1, linked = true, keys = { key(0.5, { 7 }) } }
 
       expect(value_curve.at(one, 0)).toEqual({ 7 })
       expect(value_curve.at(one, 1)).toEqual({ 7 })
 
-      local equal = { channels = 1, linked = true, keys = { key(0.5, { 1 }), key(0.5, { 9 }) } }
+      const equal = { channels = 1, linked = true, keys = { key(0.5, { 1 }), key(0.5, { 9 }) } }
 
       expect(value_curve.at(equal, 0.25)).toEqual({ 1 })
       expect(value_curve.at(equal, 0.5)).toEqual({ 9 })
@@ -153,14 +153,14 @@ harness.suite(function()
     end)
 
     test("a sampler matches at and reuses its result", function()
-      local c = sample()
-      local draws = { 0.5, -0.5, 1 }
-      local read = value_curve.sampler(c, draws)
+      const c = sample()
+      const draws = { 0.5, -0.5, 1 }
+      const read = value_curve.sampler(c, draws)
 
       for i = 0, 20 do
-        local t = i / 20
-        local want = value_curve.at(c, t, draws)
-        local got = read(t)
+        const t = i / 20
+        const want = value_curve.at(c, t, draws)
+        const got = read(t)
 
         for ch = 1, 3 do
           expect(near(want[ch], got[ch])).ok()
@@ -171,15 +171,15 @@ harness.suite(function()
     end)
 
     test("decode sorts keys by time", function()
-      local c = { channels = 1, linked = true, keys = { key(1, { 6 }), key(0, { 2 }) } }
-      local back = value_curve.decode(value_curve.encode(c))
+      const c = { channels = 1, linked = true, keys = { key(1, { 6 }), key(0, { 2 }) } }
+      const back = value_curve.decode(value_curve.encode(c))
 
       expect(back.keys[1].time).toBe(0)
       expect(back.keys[2].time).toBe(1)
     end)
 
     test("bad data reads as nil", function()
-      local good = value_curve.encode(sample())
+      const good = value_curve.encode(sample())
 
       expect(value_curve.decode(nil)).toBe(nil)
       expect(value_curve.decode("")).toBe(nil)
@@ -192,16 +192,16 @@ harness.suite(function()
         expect(value_curve.decode(good:sub(1, n))).toBe(nil)
       end
 
-      local empty = value_curve.encode({ channels = 1, linked = true, keys = {} })
+      const empty = value_curve.encode({ channels = 1, linked = true, keys = {} })
 
       expect(value_curve.decode(empty)).toBe(nil)
 
-      local nan = buffer.fromstring(good)
+      const nan = buffer.fromstring(good)
       buffer.writef32(nan, 7, 0 / 0)
 
       expect(value_curve.decode(buffer.tostring(nan))).toBe(nil)
 
-      local huge = buffer.fromstring(good)
+      const huge = buffer.fromstring(good)
       buffer.writeu32(huge, 3, 0xFFFFFFFF)
 
       expect(value_curve.decode(buffer.tostring(huge))).toBe(nil)
@@ -210,14 +210,14 @@ harness.suite(function()
 
   harness.describe("a ValueCurve row", function()
     -- lune refuses a non utf-8 attribute string, so the stored map is stubbed
-    local function resolve(row: any, stored: any)
-      local obj = Instance.new("Part")
+    const function resolve(row: any, stored: any)
+      const obj = Instance.new("Part")
 
       reader.source = function()
         return { Size = stored }
       end
 
-      local ok, attrs = pcall(reader.resolve, module({ Size = row }), { ref = obj, obj = obj })
+      const ok, attrs = pcall(reader.resolve, module({ Size = row }), { ref = obj, obj = obj })
 
       reader.source = reader.defaultSource
 
@@ -227,13 +227,13 @@ harness.suite(function()
     end
 
     test("reads its stored string", function()
-      local c = sample()
+      const c = sample()
 
       expect(resolve(knob(value_curve.flat(1, 3)):valueCurve(3), value_curve.encode(c))).toEqual(c)
     end)
 
     test("a bad attribute falls back to its default", function()
-      local default = value_curve.flat(1, 3)
+      const default = value_curve.flat(1, 3)
 
       for _, bad in { "garbage", 4, true, value_curve.encode(value_curve.flat(1, 1)) } do
         expect(resolve(knob(default):valueCurve(3), bad)).toBe(default)
@@ -241,7 +241,7 @@ harness.suite(function()
     end)
 
     test("an unset row reads its default", function()
-      local default = value_curve.flat(1, 3)
+      const default = value_curve.flat(1, 3)
 
       expect(resolve(knob(default):valueCurve(3), nil)).toBe(default)
     end)

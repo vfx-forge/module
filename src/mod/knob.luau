@@ -195,6 +195,12 @@ end
 -- value_curve codec writes. its default is a decoded curve of this many
 -- channels, which an unset or malformed attribute reads as
 function Knob.valueCurve(self: Knob, channels: number): Knob
+  local default = self.default
+
+  if type(default) == "table" and default.channels ~= channels then
+    error(`valueCurve({channels}) row has a default of {default.channels} channels`, 2)
+  end
+
   self.kind = "ValueCurve"
   self.channels = channels
   return self
