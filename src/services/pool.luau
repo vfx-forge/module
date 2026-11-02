@@ -445,10 +445,45 @@ local function holdIn(holder: any, value: any)
   end
 end
 
+-- the root's children a bare copy leaves out, tagged to stay out of every
+-- emit, such as a template's frame sets
+local function skipped(source: Instance): { Instance }
+  const found = {}
+
+  for _, child in source:GetChildren() do
+    if child.Archivable and child:HasTag(utility.EMIT_EXCLUDE_TAG) then
+      table.insert(found, child)
+    end
+  end
+
+  return found
+end
+
+-- a clone of the source without the children it skips, which a clone passes
+-- over while they are not Archivable
+local function cloneWithout(source: Instance, skip: { Instance })
+  for _, child in skip do
+    child.Archivable = false
+  end
+
+  const ok, copy = pcall(utility.clone, source)
+
+  for _, child in skip do
+    child.Archivable = true
+  end
+
+  if not ok then
+    error(copy, 0)
+  end
+
+  return copy
+end
+
 -- a whole clone, held by the holder and destroyed when it lets go. a bare one
--- loses its root's tags and attributes before anything can see it parented
+-- loses its root's tags and attributes before anything can see it parented,
+-- and is cloned without the children its source keeps out of emits
 local function fresh(holder: any, source: Instance, bare: boolean?)
-  local copy = utility.clone(source)
+  local copy = if bare then cloneWithout(source, skipped(source)) else utility.clone(source)
 
   counts.fresh += 1
 
@@ -681,13 +716,16 @@ end
 -- a source with children is cloned whole, so a reference from one child into
 -- another names the copy's own; a childless one comes from its class's stack.
 -- `bare` takes a copy with none of its source's tags or attributes on its
--- root, which a single from a stack never carries anyway
+-- root, which a single from a stack never carries anyway, and none of the
+-- root's children tagged to stay out of emits
 function pool.take(holder: any, source: Instance, alone: boolean?, bare: boolean?)
   if folder == nil then
     return fresh(holder, source, bare)
   end
 
-  if alone or #source:GetChildren() == 0 then
+  const children = #source:GetChildren()
+
+  if alone or children == 0 or (bare and children == #skipped(source)) then
     return single(holder, source, bare)
   end
 
