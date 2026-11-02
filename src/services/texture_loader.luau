@@ -146,6 +146,55 @@ function texture_loader.init(scope: { any })
           obj.DescendantRemoving:Connect(run),
         }
       end)
+    elseif ref:IsA("BasePart") and ref:HasTag(utility.FORGE_MESH_TAG) then
+      -- a mesh's frame sets are warmed off its own rows, and its decals and
+      -- their flipbooks are what its pieces wear
+      const key = ref:GetAttribute("FrameSet")
+      const textureKey = ref:GetAttribute("TextureSet")
+      const set = if type(key) == "string" and key ~= "" then frame_store.find(ref, key) else nil
+      const textureSet = if type(textureKey) == "string" and textureKey ~= ""
+        then frame_store.findTextures(ref, textureKey)
+        else nil
+
+      if set then
+        frame_store.warm(set)
+      end
+
+      if textureSet then
+        frame_store.warm(textureSet)
+      end
+
+      createLoader(ref, function(add)
+        for _, child in ref:GetChildren() do
+          if not child:IsA("Decal") then
+            continue
+          end
+
+          add(child.Texture)
+
+          const flipbook = flipbook_common.getFlipbookData(child)
+
+          if flipbook then
+            const prefix = flipbook_common.getTexturePrefix(child)
+
+            for _, id in flipbook do
+              add(`{prefix}{id}`)
+            end
+          end
+        end
+
+        -- the effects nested in it play on every piece
+        for _, obj in ref:GetDescendants() do
+          if obj:IsA("ParticleEmitter") then
+            add(obj.Texture)
+          end
+        end
+      end, function(run)
+        return {
+          ref.DescendantAdded:Connect(run),
+          ref.DescendantRemoving:Connect(run),
+        }
+      end)
     elseif ref:IsA("Beam") then
       createLoader(ref, function(add)
         add(ref.Texture)
