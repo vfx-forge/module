@@ -1,4 +1,5 @@
 local particle_motion = require("@mod/particle_motion")
+local numeric_common = require("@mod/common/numeric")
 local roblox = require("@lune/roblox") :: any
 local harness = require("@tests/harness")
 
@@ -142,39 +143,173 @@ harness.suite(function()
     end)
   end)
 
-  harness.describe("particle_motion.pull", function()
-    test("a pull points at the target", function()
-      const position = vector.create(1, 2, 3)
-      const target = vector.create(4, 6, 3)
-      const pulled = particle_motion.pull(position, target, 5)
+  harness.describe("particle_motion.gravity", function()
+    test("gravity is the softened inverse square over a sweep", function()
+      const rng = Random.new(11)
 
-      expect(close(pulled, vector.create(3, 4, 0), 1e-4)).toBe(true)
+      for _ = 1, 400 do
+        const position = vector.create(rng:NextNumber(-20, 20), rng:NextNumber(-20, 20), rng:NextNumber(-20, 20))
+        const target = vector.create(rng:NextNumber(-20, 20), rng:NextNumber(-20, 20), rng:NextNumber(-20, 20))
+        const mass = rng:NextNumber(0, 5000)
+        const softening = rng:NextNumber(0, 4)
+        const offset = target - position
+        const want = offset * mass / (vector.dot(offset, offset) + softening * softening) ^ 1.5
+        const got = particle_motion.gravity(position, target, mass, softening)
+
+        expect(vector.magnitude(got - want) <= 1e-5 * math.max(vector.magnitude(want), 1)).toBe(true)
+      end
     end)
 
-    test("a pull at the target is zero", function()
-      const position = vector.create(1, 2, 3)
-      const pulled = particle_motion.pull(position, position, 5)
+    test("gravity at the target with no softening is zero, never NaN", function()
+      const at = vector.create(1, 2, 3)
 
-      expect(close(pulled, vector.zero, 1e-6)).toBe(true)
+      expect(particle_motion.gravity(at, at, 1000, 0)).toBe(vector.zero)
+      expect(particle_motion.gravity(at, at, 0, 0)).toBe(vector.zero)
+      expect(particle_motion.gravity(at, at, 1000, 1)).toBe(vector.zero)
     end)
 
-    test("a negative pull pushes away", function()
-      const pulled = particle_motion.pull(vector.zero, vector.create(10, 0, 0), -2)
-
-      expect(close(pulled, vector.create(-2, 0, 0), 1e-4)).toBe(true)
+    test("gravity of mass 0 is zero", function()
+      expect(particle_motion.gravity(vector.zero, vector.create(4, 0, 0), 0, 1)).toBe(vector.zero)
     end)
 
-    test("a path with a pull bends toward the target", function()
+    test("an orbit launch is the circular speed, across the radius, on the launch's side", function()
+      const target = vector.create(2, 0, 0)
+      const position = vector.create(2, 0, 10)
+      const look = vector.normalize(vector.create(1, 0, 1))
+
+      for _, softening in { 0, 1, 3 } do
+        const velocity = particle_motion.orbit(position, target, look, vector.create(0, 1, 0), 1000, softening)
+        const pulled = particle_motion.gravity(position, target, 1000, softening)
+        const radius = position - target
+
+        expect(math.abs(vector.dot(velocity, radius)) < 1e-4).toBe(true)
+        expect(vector.dot(velocity, look) > 0).toBe(true)
+        expect(math.abs(vector.dot(velocity, velocity) / 10 - vector.magnitude(pulled)) < 1e-4).toBe(true)
+      end
+    end)
+
+    test("a launch along the radius turns in the target's up plane, then the world's", function()
+      const target = vector.zero
+      const position = vector.create(10, 0, 0)
+      const outward = vector.create(1, 0, 0)
+      const tilted = particle_motion.orbit(position, target, outward, vector.create(0, 0, 1), 1000, 0)
+
+      expect(close(vector.normalize(tilted), vector.create(0, 0, 1), 1e-6)).toBe(true)
+
+      const upright = particle_motion.orbit(position, target, -outward, outward, 1000, 0)
+
+      expect(close(vector.normalize(upright), vector.create(0, 1, 0), 1e-6)).toBe(true)
+      expect(math.abs(vector.magnitude(upright) - 10) < 1e-5).toBe(true)
+    end)
+
+    test("an orbit launch at the target is still", function()
+      const at = vector.create(1, 2, 3)
+
+      expect(particle_motion.orbit(at, at, vector.create(0, 1, 0), vector.create(0, 1, 0), 1000, 0)).toBe(vector.zero)
+    end)
+
+    test("a verlet orbit at radius 10 keeps within 2% of it over five orbits", function()
+      const target = vector.create(3, -1, 2)
+
+      local position = target + vector.create(10, 0, 0)
+      local velocity = particle_motion.orbit(position, target, vector.create(0, 1, 0), vector.create(0, 1, 0), 1000, 0)
+      local lowest, highest = math.huge, 0
+
+      -- one orbit at speed 10 around radius 10 takes 2 pi seconds
+      for _ = 1, math.ceil(5 * 2 * math.pi * 60) do
+        position, velocity =
+          particle_motion.verlet(position, velocity, vector.zero, target, 1000, 0, 0, vector.zero, 1 / 60)
+
+        const radius = vector.magnitude(position - target)
+
+        lowest, highest = math.min(lowest, radius), math.max(highest, radius)
+      end
+
+      expect(lowest > 9.8 and highest < 10.2).toBe(true)
+    end)
+
+    test("a radial fall passes through the target and comes back out the other side", function()
+      const target = vector.zero
+
+      local position = vector.create(0, 10, 0)
+      local velocity = vector.zero
+      local through, back = false, false
+
+      for _ = 1, 600 do
+        position, velocity =
+          particle_motion.verlet(position, velocity, vector.zero, target, 1000, 1, 0, vector.zero, 1 / 60)
+
+        expect(numeric_common.usable(position) and numeric_common.usable(velocity)).toBe(true)
+
+        through = through or position.y < -8
+        back = back or (through and position.y > 8)
+      end
+
+      expect(through).toBe(true)
+      expect(back).toBe(true)
+    end)
+
+    test("verlet of mass 0 is the plain step", function()
+      const position, velocity = vector.create(1, 2, 3), vector.create(4, -5, 6)
+      const acceleration, wind = vector.create(0, -9, 1), vector.create(2, 0, -1)
+      const p1, v1 = particle_motion.verlet(position, velocity, acceleration, vector.zero, 0, 1, 0.7, wind, 0.03)
+      const p2, v2 = particle_motion.step(position, velocity, acceleration, 0.7, wind, 0.03)
+
+      expect(p1).toBe(p2)
+      expect(v1).toBe(v2)
+    end)
+
+    test("a path under gravity is the verlet stepped at most 1/60 s at a time", function()
+      const start = CFrame.new(10, 0, 0) * CFrame.fromOrientation(0.3, 0.2, 0.1)
+      const acceleration = vector.create(0, -2, 0)
+      const wind = vector.create(1, 0, 0)
+      const gravity = { target = vector.zero, mass = 1000, softening = 1 }
+      const points = particle_motion.path(start, 6, 1.3, acceleration, 0.4, wind, 32, gravity)
+
+      local position = vector.create(10, 0, 0)
+      local look = start.LookVector
+      local velocity = vector.create(look.X, look.Y, look.Z) * 6
+
+      const function run(dt: number)
+        const steps = particle_motion.substeps(dt)
+
+        for _ = 1, steps do
+          position, velocity =
+            particle_motion.verlet(position, velocity, acceleration, vector.zero, 1000, 1, 0.4, wind, dt / steps)
+        end
+      end
+
+      for index = 1, 41 do
+        run(1 / 32)
+
+        expect(close(points[index], position, 1e-6)).toBe(true)
+      end
+
+      run((1.3 * 32 - 41) / 32)
+
+      expect(#points).toBe(42)
+      expect(close(points[42], position, 1e-6)).toBe(true)
+    end)
+
+    test("a path with gravity bends toward the target", function()
       const start = CFrame.new(0, 0, 0)
       const target = vector.create(0, 20, 0)
       const free = particle_motion.path(start, 10, 1, vector.zero, 0, vector.zero, 30)
-      const bent =
-        particle_motion.path(start, 10, 1, vector.zero, 0, vector.zero, 30, { target = target, strength = 30 })
+      const bent = particle_motion.path(
+        start,
+        10,
+        1,
+        vector.zero,
+        0,
+        vector.zero,
+        30,
+        { target = target, mass = 3000, softening = 1 }
+      )
 
       expect(vector.magnitude(bent[#bent] - target) < vector.magnitude(free[#free] - target)).toBe(true)
     end)
 
-    test("a path without a pull is today's path", function()
+    test("a path without gravity is today's path", function()
       const start = CFrame.new(1, 2, 3) * CFrame.fromOrientation(0.3, 0.2, 0.1)
       const acceleration = vector.create(0, -9, 1)
       const wind = vector.create(2, 0, -1)
@@ -189,6 +324,14 @@ harness.suite(function()
 
         expect(points[index]).toBe(position)
       end
+    end)
+
+    test("substeps cut a frame into at most 1/60 s pieces, with slack and a cap of 8", function()
+      expect(particle_motion.substeps(1 / 60)).toBe(1)
+      expect(particle_motion.substeps(1.04 / 60)).toBe(1)
+      expect(particle_motion.substeps(1 / 30)).toBe(2)
+      expect(particle_motion.substeps(1)).toBe(8)
+      expect(particle_motion.substeps(0)).toBe(1)
     end)
   end)
 

@@ -29,13 +29,6 @@ const SETS = { Frames = "FrameSet", Textures = "TextureSet" }
 
 const FLIPBOOK_MODES = { "OneShot", "Loop", "PingPong" }
 
--- the longest stretch of a frame stepped whole once drag or collision is on,
--- a frame a little over it still taken as one, and the most steps a hitch
--- is cut into
-const MAX_STEP = 1 / 60
-const STEP_SLACK = 0.05
-const MAX_STEPS = 8
-
 -- how far a piece's look must move from what was last written before a write
 -- is worth it: transparency in absolute terms, size relative to itself on any
 -- axis, color in 8 bit steps on any channel
@@ -81,7 +74,7 @@ const function textureSynced(_, attrs: any)
 end
 
 const function untargeted(_, attrs: any)
-  return attrs.AccelTarget == nil
+  return attrs.GravityTarget == nil
 end
 
 -- a mod row reaches a rule as its track
@@ -258,8 +251,8 @@ type Flight = {
   rng: Random,
   collision: Collision?,
 
-  -- where the pull target stood on frame `read`, shared by every piece of the
-  -- emit; nil when it had no place or was gone
+  -- where the gravity target stood on frame `read`, shared by every piece of
+  -- the emit; nil when it had no place or was gone
   standing: vector?,
   read: number,
 
@@ -268,7 +261,7 @@ type Flight = {
   keypoints: { ColorSequenceKeypoint },
 }
 
--- where a pull target stands, or nil for a class that has no place
+-- where a gravity target stands, or nil for a class that has no place
 const function standingOf(target: Instance): vector?
   if target:IsA("BasePart") then
     return toVector(target.Position)
@@ -285,10 +278,28 @@ const function standingOf(target: Instance): vector?
   return nil
 end
 
+-- a gravity target's up axis, the plane an orbit launch along the radius
+-- turns in
+const function upOf(target: Instance): vector
+  if target:IsA("BasePart") then
+    return toVector(target.CFrame.UpVector)
+  end
+
+  if target:IsA("Attachment") then
+    return toVector(target.WorldCFrame.UpVector)
+  end
+
+  if target:IsA("Model") then
+    return toVector(target:GetPivot().UpVector)
+  end
+
+  return vector.create(0, 1, 0)
+end
+
 const forge_mesh = {}
 
--- the pull target's place this frame, read from the engine by the first piece
--- to ask and kept for the rest of the emit's pieces
+-- the gravity target's place this frame, read from the engine by the first
+-- piece to ask and kept for the rest of the emit's pieces
 const function standingNow(flight: Flight, target: Instance): vector?
   if flight.read ~= clock.frame then
     flight.read = clock.frame
@@ -447,16 +458,23 @@ forge_mesh.attributes = {
     :mod()
     :label("Acceleration")
     :hint("Constant acceleration on each piece, in the parent's frame while LockedToPart."),
-  AccelTarget = knob()
+  GravityTarget = knob()
     :instance({ "Attachment", "BasePart", "Model" })
-    :label("AccelTarget")
-    :hint("Attachment, part or model each piece is pulled toward."),
-  AccelStrength = knob(10)
-    :unit("studsPerSecondSquared")
-    :mod()
+    :label("GravityTarget")
+    :hint("Attachment, part or model whose gravity pulls each piece."),
+  GravityMass = knob(1000):min(0):mod():hidden(untargeted):label("GravityMass"):hint(
+    "How hard the target pulls. At distance d the pull is Mass / d squared, in studs per second squared."
+  ),
+  GravitySoftening = knob(1)
+    :min(0)
+    :unit("studs")
     :hidden(untargeted)
-    :label("AccelStrength")
-    :hint("Pull toward the target, negative pushing away."),
+    :label("GravitySoftening")
+    :hint("Smooths the pull close to the target, so a piece passing through it is not flung away."),
+  OrbitLaunch = knob(false)
+    :hidden(untargeted)
+    :label("OrbitLaunch")
+    :hint("Launch each piece sideways at the speed of a circular orbit around the target."),
 
   Turbulence = knob(0)
     :min(0)
@@ -573,7 +591,16 @@ forge_mesh.layout = {
   },
   {
     title = "Motion",
-    entries = { "Motion", "Acceleration", "AccelTarget", "AccelStrength", "Turbulence", "TurbulenceFrequency" },
+    entries = {
+      "Motion",
+      "Acceleration",
+      "GravityTarget",
+      "GravityMass",
+      "GravitySoftening",
+      "OrbitLaunch",
+      "Turbulence",
+      "TurbulenceFrequency",
+    },
   },
   {
     title = "Particles",
@@ -756,7 +783,7 @@ const function piece(
   local velocity = toVector(launch.spawn.LookVector) * launch.speed + launch.inherited
   local acceleration = vector.zero
   local drag = 0
-  local strength = 0
+  local mass = 0
   local amount = 0
   local wander = vector.zero
   local spin = vector.zero
@@ -764,7 +791,8 @@ const function piece(
   -- a piece the world stopped keeps its look but no longer moves
   local pinned = false
 
-  const target = attrs.AccelTarget :: Instance?
+  const target = attrs.GravityTarget :: Instance?
+  const softening = attrs.GravitySoftening :: number
   const collision = if flight.collision ~= nil and not locked then flight.collision else nil
   const response = if collision ~= nil then table.clone(collision.config) else nil
 
@@ -784,8 +812,8 @@ const function piece(
   end)
 
   if target ~= nil then
-    tween.drive(scope, attrs.AccelStrength(nil, duration), function(v: any)
-      strength = numberOr(v, 0)
+    tween.drive(scope, attrs.GravityMass(nil, duration), function(v: any)
+      mass = numberOr(v, 0)
     end)
   end
 
@@ -842,6 +870,22 @@ const function piece(
     end
 
     return toVector(origin:PointToWorldSpace(live():PointToObjectSpace(Vector3.new(at.x, at.y, at.z))))
+  end
+
+  -- an orbit launch trades the launch's speed for the circular orbit's about
+  -- where the target stands, in the frame the piece flies in
+  if target ~= nil and attrs.OrbitLaunch and mass ~= 0 then
+    const standing = standingNow(flight, target)
+
+    if standing ~= nil then
+      const up = upOf(target)
+      const axis = if locked
+        then toVector(origin:VectorToWorldSpace(live():VectorToObjectSpace(Vector3.new(up.x, up.y, up.z))))
+        else up
+      const look = toVector(launch.spawn.LookVector)
+
+      velocity = particle_motion.orbit(position, unplaced(standing), look, axis, mass, softening) + launch.inherited
+    end
   end
 
   -- the turn the velocity last gave, held once the piece stops
@@ -914,22 +958,25 @@ const function piece(
     if dt > 0 and not pinned then
       const wind = if windy then toVector(workspace.GlobalWind) else vector.zero
 
-      -- the pull target is read once a frame, a gone one adding none
-      const standing = if target ~= nil and strength ~= 0 then standingNow(flight, target) else nil
+      -- the gravity target is read once a frame, a gone one adding none
+      const standing = if target ~= nil and mass ~= 0 then standingNow(flight, target) else nil
 
       const pulled = if standing ~= nil then unplaced(standing) else nil
 
-      const steps = if collision ~= nil or drag > 0
-        then math.clamp(math.ceil(dt / MAX_STEP - STEP_SLACK), 1, MAX_STEPS)
-        else 1
+      const steps = if collision ~= nil or drag > 0 or pulled ~= nil then particle_motion.substeps(dt) else 1
       const h = dt / steps
 
       for step = 1, steps do
-        const push = if pulled ~= nil
-          then acceleration + particle_motion.pull(position, pulled, strength)
-          else acceleration
+        local nextPosition, nextVelocity
 
-        const nextPosition, nextVelocity = particle_motion.step(position, velocity, push, drag, wind, h)
+        -- a piece under gravity steps with velocity Verlet, so an orbit
+        -- neither spirals out nor in
+        if pulled ~= nil then
+          nextPosition, nextVelocity =
+            particle_motion.verlet(position, velocity, acceleration, pulled, mass, softening, drag, wind, h)
+        else
+          nextPosition, nextVelocity = particle_motion.step(position, velocity, acceleration, drag, wind, h)
+        end
 
         if not (numeric_common.usable(nextPosition) and numeric_common.usable(nextVelocity)) then
           break

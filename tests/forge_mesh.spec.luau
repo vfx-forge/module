@@ -411,7 +411,7 @@ const function targeting(part: BasePart, target: Instance, body: () -> ())
   const live, probe = reader.liveOf, reader.probe
 
   reader.liveOf = function(ref: Instance, name: string)
-    return if ref == part and name == "AccelTarget" then { handle = true, target = target } else live(ref, name)
+    return if ref == part and name == "GravityTarget" then { handle = true, target = target } else live(ref, name)
   end
 
   reader.probe = table.freeze({
@@ -1488,7 +1488,7 @@ harness.suite(function()
     test("a target pulls pieces in", function()
       staged(function(fake)
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(3, 3) })
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(3, 3), GravityMass = 30000 })
         const goal = harness.make("Part", parent) :: BasePart
 
         goal.Position = Vector3.new(30, 10, 0)
@@ -1588,7 +1588,10 @@ harness.suite(function()
     test("a locked piece is pulled toward where the target stands in the world", function()
       staged(function(fake)
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(3, 3), LockedToPart = true })
+        const part = template(
+          parent,
+          { Speed = STILL, Lifetime = NumberRange.new(3, 3), LockedToPart = true, GravityMass = 30000 }
+        )
         const goal = harness.make("Part") :: BasePart
 
         goal.Position = Vector3.new(30, 10, 0)
@@ -1614,6 +1617,149 @@ harness.suite(function()
             env:Clear()
           end)
         end)
+      end)
+    end)
+
+    test("an orbit launch at radius 10 stays within 2% of it over five orbits", function()
+      staged(function(fake)
+        const part = attached({
+          Speed = NumberRange.new(5, 5),
+          Lifetime = NumberRange.new(40, 40),
+          GravityMass = 1000,
+          GravitySoftening = 0,
+          OrbitLaunch = true,
+        })
+        const goal = harness.make("Part", part.Parent) :: BasePart
+
+        goal.Position = Vector3.new(11, 12, 3)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            local lowest, highest = math.huge, 0
+
+            for _ = 1, math.ceil(5 * 2 * math.pi * 60) do
+              frames(1)
+
+              const radius = (piece.CFrame.Position - goal.Position).Magnitude
+
+              lowest, highest = math.min(lowest, radius), math.max(highest, radius)
+            end
+
+            expect(lowest > 9.8 and highest < 10.2).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("a radial fall with softening passes through the target and back, never NaN", function()
+      staged(function(fake)
+        const part = attached({ Speed = STILL, Lifetime = NumberRange.new(12, 12), GravitySoftening = 1 })
+        const goal = harness.make("Part", part.Parent) :: BasePart
+
+        goal.Position = Vector3.new(1, 22, 3)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            local through, back = false, false
+
+            for _ = 1, 600 do
+              frames(1)
+
+              expect(finite(piece.CFrame)).toBe(true)
+
+              const y = piece.CFrame.Position.Y
+
+              through = through or y > 30
+              back = back or (through and y < 14)
+            end
+
+            expect(through).toBe(true)
+            expect(back).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("a target of mass 0 is the plain path", function()
+      staged(function(fake)
+        const part = attached({
+          Speed = NumberRange.new(10, 10),
+          Acceleration = Vector3.new(0, -20, 0),
+          Lifetime = NumberRange.new(1, 1),
+          GravityMass = 0,
+        })
+        const goal = harness.make("Part", part.Parent) :: BasePart
+
+        goal.Position = Vector3.new(30, 12, 3)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+
+            frames(30)
+
+            const expected = Vector3.new(1, 12, 3) + Vector3.new(0, 10, 0) * 0.5 + Vector3.new(0, -20, 0) * 0.125
+
+            expect(near(pieces(fake)[1].CFrame.Position, expected, LOOSE)).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("a piece with no target steps as it always did, sub-steps and all", function()
+      staged(function(fake)
+        const part = attached({
+          Speed = NumberRange.new(10, 10),
+          Acceleration = Vector3.new(3, -20, 1),
+          Drag = 1.5,
+          Lifetime = NumberRange.new(2, 2),
+        })
+
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+
+        local position = vector.create(1, 12, 3)
+        local velocity = vector.create(0, 10, 0)
+        local age = 0
+
+        const acceleration = vector.create(3, -20, 1)
+
+        for _, dt in { 1 / 60, 1 / 25, 1 / 90, 1 / 60, 0.2, 1 / 61, 1 / 45, 1 / 60 } do
+          scheduler.frame(dt)
+
+          const stepped = math.min(dt, 2 - age)
+          const steps = math.clamp(math.ceil(stepped / (1 / 60) - 0.05), 1, 8)
+          const h = stepped / steps
+
+          age += stepped
+
+          for _ = 1, steps do
+            position, velocity =
+              position + velocity * h + acceleration * (0.5 * h * h), (velocity + acceleration * h) * 2 ^ (-1.5 * h)
+          end
+
+          expect(near(piece.CFrame.Position, Vector3.new(position.x, position.y, position.z), EPSILON)).toBe(true)
+        end
+
+        env:Clear()
       end)
     end)
 
@@ -1858,7 +2004,9 @@ harness.suite(function()
             "Rate",
             "WindAffectsDrag",
             "ShapePartial",
-            "AccelStrength",
+            "GravityMass",
+            "GravitySoftening",
+            "OrbitLaunch",
             "TurbulenceFrequency",
             "Mesh Frames",
             "Material Frames",
