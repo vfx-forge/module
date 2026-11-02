@@ -1140,7 +1140,8 @@ local function buildNow(
   opts: { ownStart: boolean?, value: any? }?,
   piece: Piece?
 ): (Track, ((other: Piece) -> Track?)?)
-  local fallback: { [string]: { any } }? = if type(default) == "table" then default else nil
+  -- a table is a map of lanes, unless it is a value curve the row rests at
+  local fallback: { [string]: { any } }? = if mods.kindOf(default) == "table" then default else nil
   local rest: any = if fallback then nil else default
 
   local lead = if fallback then leadTween(fallback.start) else nil
@@ -1601,7 +1602,7 @@ function mods.build(
   -- holds without building any: the build waits for the first fire, or for a
   -- caller asking how far a lane reaches
   if
-    type(default) ~= "table"
+    mods.kindOf(default) ~= "table"
     or stated == nil
     or (lanes ~= nil and next(lanes) ~= nil)
     or default.start ~= nil

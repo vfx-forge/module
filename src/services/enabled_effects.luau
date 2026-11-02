@@ -50,9 +50,17 @@ function enabled_effects.ticking(token: lifetime.emit): boolean
 end
 
 -- what an enabled instance runs every frame: a tick each `1 / Rate` seconds of
--- the token's clock, the first at once, and none while that clock stands still
-function enabled_effects.ticker(obj: Instance, module: registry.Module, token: lifetime.emit, effectsService: any)
+-- the token's clock, the first at once, and none while that clock stands still.
+-- a window's ticks are told how far into it each fired
+function enabled_effects.ticker(
+  obj: Instance,
+  module: registry.Module,
+  token: lifetime.emit,
+  effectsService: any,
+  windowed: boolean?
+)
   local waited = math.huge
+  local age = 0
 
   return function(deltaTime: number)
     local rate = attr.get(obj, "Rate", 5)
@@ -63,6 +71,7 @@ function enabled_effects.ticker(obj: Instance, module: registry.Module, token: l
     end
 
     waited += deltaTime * factor
+    age += deltaTime * factor
 
     if waited <= 1 / rate then
       return
@@ -71,6 +80,10 @@ function enabled_effects.ticker(obj: Instance, module: registry.Module, token: l
     waited = 0
 
     local emitScope = lifetime.effect(token, 0, effectsService)
+
+    if windowed then
+      emitScope.windowAt = age
+    end
 
     lifetime.run(emitScope, function(scope)
       emitters.dispatch(obj, scope, { unc = {}, ref = {}, held = {} }, module, true)
@@ -105,7 +118,7 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
   Ticking[window] = true
   lifetime.speed(scope, speed, window.clock)
 
-  local tick = enabled_effects.ticker(ctx.ref, module, window, scope.effects)
+  local tick = enabled_effects.ticker(ctx.ref, module, window, scope.effects, true)
   local handle: scheduler.Handle
   local spawning = true
 

@@ -2,6 +2,7 @@ local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local knob = require("@mod/knob")
+local value = require("@mod/value")
 local logger = require("@mod/logger")
 local legacy_mods = require("@mod/legacy_mods")
 local value_curve = require("@mod/value_curve")
@@ -660,6 +661,83 @@ local function moving(lanes: { [string]: { any } }): { [string]: { any } }
   return out
 end
 
+-- the lanes of a value curve row with every endpoint decoded, one table per
+-- row and stored content, so a build kept under them is still kept under the
+-- content. an endpoint holds the curve as the string the codec writes for the
+-- row's own value; one that is no curve of the row's width reads as the row's
+-- default
+const CURVE_LANES: { [knob.Knob]: { [any]: { [string]: { any } } } } = setmetatable({}, { __mode = "k" }) :: any
+
+const function curveLanes(ref: Instance, name: string, row: knob.Knob, lanes: { [string]: { any } })
+  local held = CURVE_LANES[row]
+
+  if held == nil then
+    held = setmetatable({}, { __mode = "k" }) :: any
+    CURVE_LANES[row] = held
+  end
+
+  const known = held[lanes]
+
+  if known ~= nil then
+    return known
+  end
+
+  const function curveOf(v: any)
+    if value_curve.is(v) and v.channels == row.channels then
+      return v
+    end
+
+    const decoded = if type(v) == "string" then value_curve.decode(v) else nil
+
+    if decoded ~= nil and decoded.channels == row.channels then
+      return decoded
+    end
+
+    mods.warnOnce(ref, `{name}.modifier`, `{name} has a modifier value that is no value curve it can read`)
+
+    return row.default
+  end
+
+  const function endpointOf(x: any)
+    if type(x) ~= "table" then
+      return x
+    end
+
+    if x.t == "lit" then
+      return table.freeze(value.lit(curveOf(x.v)))
+    end
+
+    if x.t == "draw" then
+      return table.freeze(value.draw(curveOf(x.a), curveOf(x.b), x.weight))
+    end
+
+    return x
+  end
+
+  const out = {}
+
+  for lane, queue in lanes do
+    const entries = table.create(#queue)
+
+    for i, m in queue do
+      const entry = table.clone(m)
+
+      entry.start = endpointOf(m.start)
+      entry.finish = endpointOf(m.finish)
+      entries[i] = table.freeze(entry)
+    end
+
+    out[lane] = table.freeze(entries)
+  end
+
+  -- frozen as the stored lanes are, short of the curves: a row's default is
+  -- among them
+  table.freeze(out)
+  held[lanes] = out
+
+  return out
+end
+
 local wrap
 
 local function trackOf(
@@ -678,6 +756,10 @@ local function trackOf(
   local default: any = rest
   local declared: { [string]: { any } }? = nil
   local lanes = found.lanes
+
+  if lanes ~= nil and row.kind == "ValueCurve" then
+    lanes = curveLanes(ctx.ref, name, row, lanes)
+  end
 
   -- a range is the row's state and a draw from it is what a piece takes: this
   -- is not a default, it is what a range row's own value always means, so a

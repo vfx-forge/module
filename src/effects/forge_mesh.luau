@@ -190,6 +190,21 @@ const function numberOr(v: any, fallback: number)
   return if type(v) == "number" and v == v then v else fallback
 end
 
+-- a drawn curve, or `fallback` where a modifier drew none of its width
+const function curveOr(v: any, fallback: value_curve.Curve): value_curve.Curve
+  return if value_curve.is(v) and v.channels == fallback.channels then v else fallback
+end
+
+-- a drawn gradient, or `fallback` where a modifier drew none
+const function gradientOr(v: any, fallback: ColorSequence): ColorSequence
+  return if typeof(v) == "ColorSequence" then v else fallback
+end
+
+-- whether a row's track carries a modifier, so each piece reads its own
+const function modified(track: reader.Track)
+  return track.has("start") or track.has("end")
+end
+
 -- whether every keypoint of a gradient holds one color
 const function flatColor(sequence: ColorSequence)
   const keypoints = sequence.Keypoints
@@ -214,14 +229,19 @@ const function finite(cf: CFrame)
 end
 
 -- what one piece draws as it spawns: its launch frame, whose look vector is
--- the way it sets off, its speed and life, its initial turn in degrees and
--- the velocity it inherits
+-- the way it sets off, its speed and life, its initial turn in degrees, the
+-- velocity it inherits, and the curves and gradient it plays over its life
 type Launch = {
   spawn: CFrame,
   speed: number,
   duration: number,
   turn: vector,
   inherited: vector,
+  size: value_curve.Curve,
+  squash: value_curve.Curve,
+  clear: value_curve.Curve,
+  tint: ColorSequence,
+  keypoints: { ColorSequenceKeypoint },
 }
 
 -- how pieces meet the world, built once per emit: the rays' filter, and the
@@ -243,7 +263,8 @@ type Flight = {
   standing: vector?,
   read: number,
 
-  -- the Color sequence's keypoints, read from the property once for the emit
+  -- the Color row's keypoints, read once for the emit's pieces that take it
+  -- as it rests
   keypoints: { ColorSequenceKeypoint },
 }
 
@@ -309,6 +330,7 @@ forge_mesh.attributes = {
   Color = knob(function(ctx: reader.Ctx)
       return ColorSequence.new((ctx.ref :: BasePart).Color)
     end)
+    :mod()
     :label("Color")
     :hint("Color of each piece over its life."),
   Orientation = knob("None")
@@ -317,14 +339,17 @@ forge_mesh.attributes = {
     :hint("How each piece turns as it flies: its own pose, toward the camera or along its velocity."),
   Size = knob(value_curve.flat(1, 3))
     :valueCurve(3)
+    :mod()
     :label("Size")
     :hint("Factor on the template's size, or its special mesh's scale, over each piece's life."),
   Squash = knob(value_curve.flat(0, 1))
     :valueCurve(1)
+    :mod()
     :label("Squash")
     :hint("Stretch along each piece's up axis over its life, the other axes taking the opposite."),
   Transparency = knob(value_curve.flat(0, 1))
     :valueCurve(1)
+    :mod()
     :label("Transparency")
     :hint("Transparency of each piece over its life."),
 
@@ -647,12 +672,12 @@ const function piece(
 
   -- one draw per curve for the piece's whole life, read through samplers built
   -- once, so a frame allocates nothing for them; a flat one is written once
-  const sizeAt, sizeFlat = value_curve.sampler(attrs.Size, value_curve.draw(attrs.Size, flight.rng))
-  const squashAt, squashFlat = value_curve.sampler(attrs.Squash, value_curve.draw(attrs.Squash, flight.rng))
-  const clearAt, clearFlat = value_curve.sampler(attrs.Transparency, value_curve.draw(attrs.Transparency, flight.rng))
+  const sizeAt, sizeFlat = value_curve.sampler(launch.size, value_curve.draw(launch.size, flight.rng))
+  const squashAt, squashFlat = value_curve.sampler(launch.squash, value_curve.draw(launch.squash, flight.rng))
+  const clearAt, clearFlat = value_curve.sampler(launch.clear, value_curve.draw(launch.clear, flight.rng))
 
-  const tint = attrs.Color :: ColorSequence
-  const tinted = not flatColor(tint)
+  const keypoints = launch.keypoints
+  const tinted = not flatColor(launch.tint)
   const shaped = not (sizeFlat and squashFlat)
   const mode = attrs.Orientation :: orient_common.Mode
   const watching = mode == "FacingCamera" or mode == "FacingCameraWorldUp"
@@ -705,7 +730,7 @@ const function piece(
     end
 
     if first or tinted then
-      const tone = color.keypointsAt(flight.keypoints, t)
+      const tone = color.keypointsAt(keypoints, t)
 
       const moved = math.abs(tone.R - writtenColor.R) > COLOR_STEP
         or math.abs(tone.G - writtenColor.G) > COLOR_STEP
@@ -1062,7 +1087,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     collision = nil,
     standing = nil,
     read = -1,
-    keypoints = (attrs.Color :: ColorSequence).Keypoints,
+    keypoints = (attrs.Color.value :: ColorSequence).Keypoints,
   }
 
   if attrs.CollisionMode ~= "Off" then
@@ -1091,14 +1116,31 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   -- each piece runs on a thread the effect holds, so a clear closes it
   const outstanding = lifetime.join(scope)
 
+  -- every piece of an emit spawns at one time on the effect's clock: 0, or for
+  -- a tick of an EmitDuration window how far into the window it fired. so
+  -- these tracks differ between the pieces of one emit only by what their
+  -- modifiers draw, and between ticks by where the window had got to
+  const spawned = scope.windowAt or 0
+
+  -- an appearance row with no modifier hands every piece the value it rests
+  -- at, read here once rather than per piece
+  const sizeRest = attrs.Size.value :: value_curve.Curve
+  const squashRest = attrs.Squash.value :: value_curve.Curve
+  const clearRest = attrs.Transparency.value :: value_curve.Curve
+  const tintRest = attrs.Color.value :: ColorSequence
+
+  const sized = modified(attrs.Size)
+  const squashed = modified(attrs.Squash)
+  const cleared = modified(attrs.Transparency)
+  const colored = modified(attrs.Color)
+
   for _ = 1, attrs.EmitCount do
-    -- every piece spawns at the emit's time 0, so these tracks differ between
-    -- pieces only by what their modifiers draw
-    const speed = numberOr(attrs.Speed().at(0), attrs.Speed.value.Min)
-    const duration = math.max(numberOr(attrs.Lifetime().at(0), attrs.Lifetime.value.Min), 0)
-    const spread = attrs.SpreadAngle().at(0)
-    const turn = attrs.Rotation().at(0)
-    const inheritance = numberOr(attrs.VelocityInheritance().at(0), 0)
+    const speed = numberOr(attrs.Speed().at(spawned), attrs.Speed.value.Min)
+    const duration = math.max(numberOr(attrs.Lifetime().at(spawned), attrs.Lifetime.value.Min), 0)
+    const spread = attrs.SpreadAngle().at(spawned)
+    const turn = attrs.Rotation().at(spawned)
+    const inheritance = numberOr(attrs.VelocityInheritance().at(spawned), 0)
+    const tint = if colored then gradientOr(attrs.Color().at(spawned), tintRest) else tintRest
 
     config.spread = if isVector(spread) then vector.create(spread.X, spread.Y, 0) else vector.zero
 
@@ -1110,6 +1152,11 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
       inherited = if inheritance ~= 0 and moved
         then toVector((parent :: BasePart).AssemblyLinearVelocity) * inheritance
         else vector.zero,
+      size = if sized then curveOr(attrs.Size().at(spawned), sizeRest) else sizeRest,
+      squash = if squashed then curveOr(attrs.Squash().at(spawned), squashRest) else squashRest,
+      clear = if cleared then curveOr(attrs.Transparency().at(spawned), clearRest) else clearRest,
+      tint = tint,
+      keypoints = if colored then tint.Keypoints else flight.keypoints,
     }
 
     lifetime.spawn(outstanding, piece, ctx, attrs, looks, template, launch, flight, sets)

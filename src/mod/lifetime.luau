@@ -69,6 +69,10 @@ export type effect = {
   -- the span its module decided, once the dispatcher has read it
   span: number?,
 
+  -- how far into its EmitDuration window a tick fired, on the window's clock;
+  -- nil for every other effect
+  windowAt: number?,
+
   -- released in this order, each list in reverse
   defers: { (cancelled: boolean) -> () }?,
   threads: { RBXScriptConnection | thread | scheduler.Handle | () -> () }?,

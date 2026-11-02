@@ -1,3 +1,4 @@
+const lerp = require("@mod/lerp")
 const mods = require("@mod/mods")
 const value = require("@mod/value")
 const frame = require("@mod/modifier_frame")
@@ -155,6 +156,33 @@ const function randomized(obj: Instance, name: string, low: any, high: any)
   obj:SetAttribute(mods.attrName("attribute", name), frame.frame(codec.encode({ v = 1, queue = queue })))
 end
 
+-- a tween from `low` to `high` on the row `name` over the effect
+const function tweened(obj: Instance, name: string, low: any, high: any)
+  const queue = { { kind = "tween", chain = false, start = value.lit(low), finish = value.lit(high) } }
+
+  obj:SetAttribute(mods.attrName("attribute", name), frame.frame(codec.encode({ v = 1, queue = queue })))
+end
+
+-- every piece in the order it spawned while `body` runs, put back once it ends
+const function spawning(body: (spawned: { BasePart }) -> ())
+  const start = look_common.start
+  const spawned = {}
+
+  look_common.start = function(scope, piece, ...)
+    table.insert(spawned, piece)
+
+    return start(scope, piece, ...)
+  end
+
+  const ok, err = pcall(body, spawned)
+
+  look_common.start = start
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
 -- a tagged template part under `parent`, its rows set from `attributes`
 const function template(parent: Instance, attributes: { [string]: any }): BasePart
   const part = harness.make("Part", parent) :: BasePart
@@ -215,6 +243,22 @@ const function frames(count: number)
   for _ = 1, count do
     scheduler.frame(FRAME)
   end
+end
+
+-- what `read` gives of each piece in `spawned` on the frame it spawned, over
+-- `count` frames
+const function asSpawned(spawned: { BasePart }, count: number, read: (piece: BasePart) -> any): { any }
+  const seen = {}
+
+  for _ = 0, count do
+    for i = #seen + 1, #spawned do
+      seen[i] = read(spawned[i])
+    end
+
+    frames(1)
+  end
+
+  return seen
 end
 
 -- the writes a piece's property takes over `count` frames, and the last value
@@ -867,6 +911,149 @@ harness.suite(function()
             env:Clear()
           end)
         end)
+      end)
+    end)
+
+    test("a Size tween over the effect gives pieces spawned later bigger curves", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(1, 1), EmitDuration = 1, Rate = 4 })
+
+        part.Size = Vector3.new(2, 2, 2)
+        tweened(part, "Size", value_curve.encode(value_curve.flat(1, 3)), value_curve.encode(value_curve.flat(2, 3)))
+
+        spawning(function(spawned)
+          const env = effects.emit(0, part)
+          const sizes = asSpawned(spawned, 66, function(piece: BasePart)
+            return piece.Size.X
+          end)
+
+          expect(#sizes >= 3).toBe(true)
+          expect(near1(sizes[1], 2)).toBe(true)
+
+          for i = 2, #sizes do
+            expect(sizes[i] > sizes[i - 1] + 0.1).toBe(true)
+          end
+
+          expect(sizes[#sizes] > 3).toBe(true)
+          env:Clear()
+        end)
+      end)
+    end)
+
+    test("a Transparency randomizer gives two pieces different curves", function()
+      seeding(function()
+        staged(function(fake)
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { EmitCount = 2, Speed = STILL, Lifetime = NumberRange.new(1, 1) })
+          const clear, opaque = value_curve.flat(0, 1), value_curve.flat(1, 1)
+
+          randomized(part, "Transparency", value_curve.encode(clear), value_curve.encode(opaque))
+
+          const env = effects.emit(0, part)
+          const list = pieces(fake)
+
+          expect(#list).toBe(2)
+
+          const a, b = list[1].Transparency, list[2].Transparency
+
+          expect(math.abs(a - b) > EPSILON).toBe(true)
+          expect(a >= 0 and a <= 1 and b >= 0 and b <= 1).toBe(true)
+          env:Clear()
+        end)
+      end)
+    end)
+
+    test("a Color tween over the effect blends the gradient pieces spawn with", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(1, 1), EmitDuration = 1, Rate = 4 })
+        const red, blue = Color3.new(1, 0, 0), Color3.new(0, 0, 1)
+
+        tweened(part, "Color", ColorSequence.new(red), ColorSequence.new(blue))
+
+        spawning(function(spawned)
+          const env = effects.emit(0, part)
+          const colors = asSpawned(spawned, 66, function(piece: BasePart)
+            return piece.Color
+          end)
+
+          expect(#colors >= 3).toBe(true)
+          expect(colors[1]).toBe(red)
+
+          for i = 2, #colors do
+            expect(colors[i].R < colors[i - 1].R and colors[i].B > colors[i - 1].B).toBe(true)
+          end
+
+          env:Clear()
+        end)
+      end)
+    end)
+
+    test("pinned appearance rows blend nothing and play their curves", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const red, blue = Color3.new(1, 0, 0), Color3.new(0, 0, 1)
+        const part = template(parent, {
+          EmitCount = 3,
+          Speed = STILL,
+          Lifetime = NumberRange.new(1, 1),
+          DestroyDelay = 1,
+          Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, red), ColorSequenceKeypoint.new(1, blue) }),
+        })
+        const curves, sequences = lerp.ValueCurve, lerp.ColorSequence
+
+        local blends = 0
+
+        part.Size = Vector3.new(2, 2, 2)
+
+        lerp.ValueCurve = function(...)
+          blends += 1
+          return curves(...)
+        end
+
+        lerp.ColorSequence = function(...)
+          blends += 1
+          return sequences(...)
+        end
+
+        const ok, err = pcall(stubbed, part, {
+          Size = curveOf(3, { { 0, { 1, 1, 1 } }, { 1, { 2, 2, 2 } } }),
+          Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }),
+        }, function()
+          const env = effects.emit(0, part)
+          const list = pieces(fake)
+
+          expect(#list).toBe(3)
+
+          -- halfway, within the steps a write waits for
+          frames(30)
+
+          for _, piece in list do
+            expect(near(piece.Size, Vector3.new(3, 3, 3), 0.1)).toBe(true)
+            expect(math.abs(piece.Transparency - 0.5) < 0.05).toBe(true)
+            expect(piece.Color.R < 1 and piece.Color.B > 0).toBe(true)
+          end
+
+          -- past the life, held exactly at the curves' ends
+          frames(40)
+
+          for _, piece in list do
+            expect(piece.Size).toBe(Vector3.new(4, 4, 4))
+            expect(piece.Transparency).toBe(1)
+            expect(piece.Color).toBe(blue)
+          end
+
+          env:Clear()
+        end)
+
+        lerp.ValueCurve, lerp.ColorSequence = curves, sequences
+
+        if not ok then
+          error(err, 0)
+        end
+
+        expect(blends).toBe(0)
       end)
     end)
 
