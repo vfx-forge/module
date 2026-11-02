@@ -20,6 +20,11 @@ mods.PREFIX = {
   attribute = "ForgeAttrMods_",
 }
 
+-- what a roll draws from: a fresh generator each time, unless a caller that
+-- has to see the same draws twice lends one around its reads, as the path
+-- preview does for each path
+mods.random = nil :: Random?
+
 function mods.attrName(source: string, name: string): string
   return mods.PREFIX[source] .. name
 end
@@ -242,7 +247,7 @@ end
 -- the queue, so a caller that needs the SPAN first has to draw before it can
 -- ask for one, and then hand the same rolls to the sampler
 function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
-  local rng = Random.new()
+  local rng = mods.random or Random.new()
   local draws = {}
   local picks = {}
 

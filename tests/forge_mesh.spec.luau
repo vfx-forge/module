@@ -18,6 +18,7 @@ const value_curve = require("@mod/value_curve")
 const test, expect = harness.test, harness.expect
 
 const look_common = require("@mod/common/look")
+const launch_common = require("@mod/common/launch")
 const collision_common = require("@mod/common/collision")
 
 const forge_mesh = require("@vfx/forge_mesh")
@@ -2277,6 +2278,60 @@ harness.suite(function()
 
           expect(own[1] ~= nil).toBe(true)
         end
+      end)
+    end)
+
+    test("a piece's own row over its life is sampled evenly, a resting one once", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { VortexSwirl = 3 })
+
+        tweened(part, "GravityMass", 0, 100)
+
+        const ctx = { ref = part, obj = part, effect = forge_mesh }
+        const attrs = reader.resolve(forge_mesh :: any, ctx :: any)
+        const ramp = launch_common.over(attrs.GravityMass, 2, 4, function(v)
+          return v
+        end)
+
+        expect(#ramp).toBe(5)
+        expect(near1(ramp[1], 0)).toBe(true)
+        expect(near1(ramp[5], 100)).toBe(true)
+        expect(ramp[2] > ramp[1] and ramp[3] > ramp[2]).toBe(true)
+
+        const flat = launch_common.over(attrs.VortexSwirl, 2, 4, function(v)
+          return v
+        end)
+
+        expect(#flat).toBe(1)
+        expect(flat[1]).toBe(3)
+      end)
+    end)
+
+    test("a generator lent to the reads draws a piece's rows the same twice", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = NumberRange.new(1, 100), Lifetime = NumberRange.new(1, 9) })
+        const ctx = { ref = part, obj = part, effect = forge_mesh }
+        const attrs = reader.resolve(forge_mesh :: any, ctx :: any)
+
+        const function drawn(seed: number)
+          mods.random = Random.new(seed)
+
+          const speed, life = launch_common.draw(attrs, 0)
+
+          mods.random = nil
+
+          return speed, life
+        end
+
+        const a, b = drawn(7)
+        const c, d = drawn(7)
+        const e = drawn(8)
+
+        expect(a).toBe(c)
+        expect(b).toBe(d)
+        expect(a ~= e).toBe(true)
       end)
     end)
 

@@ -11,6 +11,7 @@ const utility = require("@mod/utility")
 const lifetime = require("@mod/lifetime")
 const value_curve = require("@mod/value_curve")
 const look_common = require("@mod/common/look")
+const launch_common = require("@mod/common/launch")
 const material_rows = require("@mod/common/material_rows")
 const orient_common = require("@mod/common/orient")
 const bezier_common = require("@mod/common/bezier")
@@ -38,14 +39,6 @@ const SIZE_FLOOR = 1e-4
 const COLOR_STEP = 2 / 255
 
 const WORLD_UP = vector.create(0, 1, 0)
-
--- the rows each force drives over a piece's life, by the field of its
--- particle_motion force they write
-const DRIVEN = {
-  Gravity = { GravityMass = "mass" },
-  Vortex = { VortexSwirl = "swirl", VortexInflow = "inflow", VortexLift = "lift" },
-  Orbit = { OrbitRadius = "radius", OrbitSpeed = "speed" },
-}
 
 const function always()
   return true
@@ -869,32 +862,8 @@ const function piece(
 
   -- the force the piece flies under, its place and axis written each frame
   -- and its driven rows over the life; none without a target
-  const target = if attrs.Force ~= "None" then attrs.ForceTarget :: Instance? else nil
-  const pull: any = if target == nil
-    then nil
-    elseif attrs.Force == "Gravity" then {
-      kind = "Gravity",
-      target = vector.zero,
-      mass = 0,
-      softening = attrs.GravitySoftening,
-    }
-    elseif attrs.Force == "Vortex" then {
-      kind = "Vortex",
-      center = vector.zero,
-      axis = WORLD_UP,
-      swirl = 0,
-      inflow = 0,
-      lift = 0,
-      radius = attrs.VortexRadius,
-    }
-    else {
-      kind = "Orbit",
-      center = vector.zero,
-      axis = WORLD_UP,
-      radius = 0,
-      speed = 0,
-      capture = attrs.OrbitCapture,
-    }
+  const target = launch_common.target(attrs)
+  const pull: any = if target ~= nil then launch_common.force(attrs) else nil
   const collision = if flight.collision ~= nil and not locked then flight.collision else nil
   const response = if collision ~= nil then table.clone(collision.config) else nil
 
@@ -914,7 +883,7 @@ const function piece(
   end)
 
   if pull ~= nil then
-    for row, field in DRIVEN[pull.kind] do
+    for row, field in launch_common.DRIVEN[pull.kind] do
       tween.drive(scope, attrs[row](nil, duration), function(v: any)
         pull[field] = numberOr(v, 0)
       end)
@@ -1316,20 +1285,16 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   const colored = modified(attrs.Color)
 
   for _ = 1, attrs.EmitCount do
-    const speed = numberOr(attrs.Speed().at(spawned), attrs.Speed.value.Min)
-    const duration = math.max(numberOr(attrs.Lifetime().at(spawned), attrs.Lifetime.value.Min), 0)
-    const spread = attrs.SpreadAngle().at(spawned)
-    const turn = attrs.Rotation().at(spawned)
-    const inheritance = numberOr(attrs.VelocityInheritance().at(spawned), 0)
+    const speed, duration, spread, turn, inheritance = launch_common.draw(attrs, spawned)
     const tint = if colored then gradientOr(attrs.Color().at(spawned), tintRest) else tintRest
 
-    config.spread = if isVector(spread) then vector.create(spread.X, spread.Y, 0) else vector.zero
+    config.spread = spread
 
     const launch: Launch = {
       spawn = particle_motion.spawn(origin, size, config, flight.rng),
       speed = speed,
       duration = duration,
-      turn = if isVector(turn) then toVector(turn) else vector.zero,
+      turn = turn,
       inherited = if inheritance ~= 0 and moved
         then toVector((parent :: BasePart).AssemblyLinearVelocity) * inheritance
         else vector.zero,
