@@ -5,9 +5,11 @@ const tween = require("@mod/tween")
 const reader = require("@mod/reader")
 const utility = require("@mod/utility")
 const lifetime = require("@mod/lifetime")
+const value_curve = require("@mod/value_curve")
 const look_common = require("@mod/common/look")
+const material_rows = require("@mod/common/material_rows")
+const orient_common = require("@mod/common/orient")
 const bezier_common = require("@mod/common/bezier")
-const flight_common = require("@mod/common/flight")
 const numeric_common = require("@mod/common/numeric")
 const particle_motion = require("@mod/particle_motion")
 
@@ -16,15 +18,10 @@ const mover = require("@srv/mover")
 const frame_store = require("@srv/frame_store")
 const enabled_effects = require("@srv/enabled_effects")
 
-const WHITE = Color3.new(1, 1, 1)
-const UP = Vector3.new(0, 1, 0)
-const SIDE = Vector3.new(1, 0, 0)
-
--- below this a piece is taken to stand still, so it keeps the way it faces
-const STILL_SPEED = 1e-6
-
 -- the template's folders of frame sets, which a piece is never handed
 const SETS = { Frames = "FrameSet", Textures = "TextureSet" }
+
+const FLIPBOOK_MODES = { "OneShot", "Loop", "PingPong" }
 
 const function always()
   return true
@@ -32,6 +29,14 @@ end
 
 const function linear()
   return utility.linear_bezier
+end
+
+const function disabled(_, attrs: any)
+  return not attrs.Enabled
+end
+
+const function boxed(_, attrs: any)
+  return attrs.Shape == "Box"
 end
 
 const function noFrames(_, attrs: any)
@@ -42,20 +47,33 @@ const function noTextures(_, attrs: any)
   return attrs.TextureSet == ""
 end
 
-const function noFrameLoop(_, attrs: any)
-  return attrs.FrameSet == "" or not attrs.FlipbookLoop
+const function frameOneShot(_, attrs: any)
+  return attrs.FlipbookMode == "OneShot"
 end
 
-const function noTextureLoop(_, attrs: any)
-  return attrs.TextureSet == "" or not attrs.TextureLoop
+const function textureOneShot(_, attrs: any)
+  return attrs.TextureMode == "OneShot"
 end
 
 const function textureSynced(_, attrs: any)
   return attrs.TextureSyncDuration == true
 end
 
-const function noSpecialMesh(ctx: reader.Ctx)
-  return ctx.ref:FindFirstChildOfClass("SpecialMesh") == nil
+const function untargeted(_, attrs: any)
+  return attrs.AccelTarget == nil
+end
+
+-- a mod row reaches a rule as its track
+const function dragless(_, attrs: any)
+  return attrs.Drag.value <= 0
+end
+
+const function noBounce(_, attrs: any)
+  return attrs.CollisionMode ~= "Bounce"
+end
+
+const function noCollision(_, attrs: any)
+  return attrs.CollisionMode == "Off"
 end
 
 -- whether a folder of the template is one of its frame sets
@@ -63,34 +81,6 @@ const function setFolder(child: Instance)
   const key = SETS[child.Name]
 
   return key ~= nil and child:IsA("Folder") and child:GetAttribute(key) ~= nil
-end
-
--- whether any frame of the template's frame set wears a look; a shape-only
--- set's frames wear none, so the glow has nothing to reach
-const function framesDressed(template: Instance, key: string): boolean
-  for _, folder in template:GetChildren() do
-    if folder.Name ~= "Frames" or not setFolder(folder) or folder:GetAttribute("FrameSet") ~= key then
-      continue
-    end
-
-    for _, part in folder:GetChildren() do
-      if part:FindFirstChildOfClass("SurfaceAppearance") or part:FindFirstChildOfClass("Decal") then
-        return true
-      end
-    end
-  end
-
-  return false
-end
-
--- the surface glow reaches only a surface appearance, one the template wears
--- or one a texture or dressed frame set brings
-const function unlit(ctx: reader.Ctx, attrs: any)
-  if ctx.ref:FindFirstChildOfClass("SurfaceAppearance") ~= nil or attrs.TextureSet ~= "" then
-    return false
-  end
-
-  return attrs.FrameSet == "" or not framesDressed(ctx.ref, attrs.FrameSet)
 end
 
 -- the piece's own decals, each its own twin, so nothing blends between two
@@ -148,13 +138,15 @@ const function scaled(size: Vector3, factor: Vector3)
   return Vector3.new(size.X * factor.X, size.Y * factor.Y, size.Z * factor.Z)
 end
 
--- upper case, the spelling an authored Vector3 answers to under every host
+-- upper case, the spelling a row's vector and an authored Vector3 both answer
+-- to under every host
 const function toVector(v: Vector3): vector
   return vector.create(v.X, v.Y, v.Z)
 end
 
-const function toVector3(v: vector)
-  return Vector3.new(v.x, v.y, v.z)
+-- a drawn number, or `fallback` where a modifier drew none a clock can use
+const function numberOr(v: any, fallback: number)
+  return if type(v) == "number" and v == v then v else fallback
 end
 
 -- whether every axis of a pose is finite, so no degenerate row reaches the
@@ -166,71 +158,23 @@ const function finite(cf: CFrame)
     and numeric_common.usable(cf.ZVector)
 end
 
--- a turn facing along `velocity`, or `fallback` while the piece stands still
-const function along(velocity: vector, fallback: CFrame)
-  const speed = vector.magnitude(velocity)
-
-  if speed < STILL_SPEED or speed ~= speed then
-    return fallback
-  end
-
-  -- straight up or down has no up of its own to turn about
-  const up = if math.abs(velocity.y / speed) > 0.999 then SIDE else UP
-
-  return CFrame.lookAt(Vector3.zero, toVector3(velocity), up)
-end
-
 -- what one piece draws as it spawns: its launch frame, whose look vector is
 -- the way it sets off, its speed and life, its initial turn in degrees and
--- its projectile's lifetime
+-- the velocity it inherits
 type Launch = {
   spawn: CFrame,
   speed: number,
   duration: number,
   turn: vector,
-  flight: number,
+  inherited: vector,
 }
 
--- what every piece of one emit flies by, read once as it emits
+-- what every piece of one emit shares, read once as it emits
 type Flight = {
   origin: CFrame,
   rotation: CFrame,
-  acceleration: vector,
-  inherited: vector,
-  hitbox: OverlapParams?,
+  rng: Random,
 }
-
-const function flightOf(template: BasePart, attrs: any, origin: CFrame): Flight
-  const parent = template.Parent
-  const authored = attrs.Acceleration
-  const inheritance = attrs.VelocityInheritance
-
-  -- a piece locked to its parent accelerates in the parent's frame
-  const acceleration = if attrs.SyncPosition
-    then origin:VectorToWorldSpace(Vector3.new(authored.X, authored.Y, authored.Z))
-    else authored
-
-  -- an attachment or no parent at all has no velocity to hand on
-  const inherited = if inheritance ~= 0
-      and parent ~= nil
-      and parent:IsA("BasePart")
-    then toVector(parent.AssemblyLinearVelocity) * inheritance
-    else vector.zero
-
-  -- an attachment's part is left out of the hits as a part parent is
-  const root = if parent ~= nil and parent:IsA("Attachment") then parent else nil
-  const hitbox = if attrs.HitboxEnabled and parent ~= nil
-    then bezier_common.createHitboxParams(bezier_common.hitboxOf(attrs), parent, root)
-    else nil
-
-  return {
-    origin = origin,
-    rotation = template.CFrame.Rotation,
-    acceleration = toVector(acceleration),
-    inherited = inherited,
-    hitbox = hitbox,
-  }
-end
 
 const forge_mesh = {}
 
@@ -242,152 +186,258 @@ forge_mesh.classifier = `BasePart.{utility.FORGE_MESH_TAG}`
 -- nested in it run per piece
 forge_mesh.components = "Instance"
 
-const attributes = bezier_common.rows({
-  Motion = knob("Particle"):options({ "Particle" }):label("Motion"):hint("How each piece moves after it spawns."),
-  Velocity = knob(NumberRange.new(5, 5))
-    :unit("studsPerSecond")
-    :label("Velocity")
-    :hint("Speed range each piece launches at along its emission direction."),
-  Acceleration = knob(vector.zero)
-    :unit("studsPerSecondSquared")
-    :label("Acceleration")
-    :hint("Constant acceleration on each piece, in the parent's frame while LockedToPart."),
-  Drag = knob(0):min(0):label("Drag"):hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
-  VelocityInheritance = knob(0)
-    :label("VelocityInheritance")
-    :hint("Share of the parent part's velocity each piece launches with."),
-  TimeScale = knob(1)
+forge_mesh.attributes = {
+  EmitCount = knob(1):min(0):label("Count"):hint("Pieces emitted at once."),
+  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDuration = knob(0)
     :min(0)
-    :max(1)
-    :label("TimeScale")
-    :hint("Speed of each piece's motion and spin, 0 freezing them where they spawn."),
-  WindAffectsDrag = knob(false)
-    :label("WindAffectsDrag")
-    :hint("Whether drag eases each piece toward the global wind rather than to rest."),
-  FaceVelocity = knob(false):label("FaceVelocity"):hint("Whether each piece turns to face its direction of travel."),
-  MinInitRot = knob(vector.zero)
-    :label("Min")
-    :hint("Lower per-axis bound for each piece's initial rotation, in degrees."),
-  MaxInitRot = knob(vector.zero)
-    :label("Max")
-    :hint("Upper per-axis bound for each piece's initial rotation, in degrees."),
-  RotSpeed = knob(0)
+    :unit("seconds")
+    :label("Duration")
+    :hint("Seconds the effect emits at its Rate, 0 emitting Count pieces once."),
+  DestroyDelay = knob(0)
+    :min(0)
+    :unit("seconds")
+    :label("DestroyDelay")
+    :hint("Extra seconds each piece keeps its look and nested effects after its motion ends."),
+
+  Color = knob(function(ctx: reader.Ctx)
+      return ColorSequence.new((ctx.ref :: BasePart).Color)
+    end)
+    :label("Color")
+    :hint("Color of each piece over its life."),
+  Orientation = knob("None")
+    :options(orient_common.MODES)
+    :label("Orientation")
+    :hint("How each piece turns as it flies: its own pose, toward the camera or along its velocity."),
+  Size = knob(value_curve.flat(1, 3))
+    :valueCurve(3)
+    :label("Size")
+    :hint("Factor on the template's size, or its special mesh's scale, over each piece's life."),
+  Squash = knob(value_curve.flat(0, 1))
+    :valueCurve(1)
+    :label("Squash")
+    :hint("Stretch along each piece's up axis over its life, the other axes taking the opposite."),
+  Transparency = knob(value_curve.flat(0, 1))
+    :valueCurve(1)
+    :label("Transparency")
+    :hint("Transparency of each piece over its life."),
+
+  EmissionDirection = knob("Top")
+    :options({ "Back", "Bottom", "Front", "Left", "Right", "Top" })
+    :label("EmissionDirection")
+    :hint("Face of the emitter pieces launch from."),
+  Enabled = knob(false):label("Enabled"):hint("Whether the effect emits continuously at its Rate."),
+  Lifetime = knob(NumberRange.new(1, 1))
+    :min(0)
+    :unit("seconds")
+    :mod()
+    :label("Lifetime")
+    :hint("Seconds each piece flies, drawn per piece."),
+  Rate = knob(5):min(0):unit("perSecond"):hidden(disabled):label("Rate"):hint("Emits per second while Enabled."),
+  Rotation = knob(vector.zero)
+    :mod()
+    :label("Rotation")
+    :hint("Initial rotation of each piece per axis, in degrees, drawn per piece."),
+  RotSpeed = knob(vector.zero)
     :unit("perSecond")
     :mod()
-    :label("Speed")
-    :hint("Rotation speed drawn for each piece, in degrees per second."),
-  Scale = knob(vector.one):mod():label("Scale"):hint("Multiplier on the template's size over the piece's duration."),
-  MeshScale = knob(vector.one)
+    :label("RotSpeed")
+    :hint("Spin of each piece per axis, in degrees per second, drawn per piece."),
+  Speed = knob(NumberRange.new(5, 5))
+    :unit("studsPerSecond")
     :mod()
-    :hidden(noSpecialMesh)
-    :label("MeshScale")
-    :hint("Multiplier on the template's special mesh scale over the piece's duration."),
-  PartTransparency = knob(0):mod():label("Transparency"):hint("Part transparency over the piece's duration."),
-  -- the key of the Frames folder the template plays, which the plugin writes
-  FrameSet = knob(""):hidden(always),
+    :label("Speed")
+    :hint("Speed each piece launches at along its emission direction, drawn per piece."),
+  SpreadAngle = knob(vector.zero)
+    :mod()
+    :label("SpreadAngle")
+    :hint("Random spread of each piece's launch direction, in degrees about X and Y."),
+
+  Shape = knob("Box")
+    :options({ "Box", "Cylinder", "Disc", "Sphere" })
+    :label("Shape")
+    :hint("Volume shape the pieces spawn in."),
+  ShapeFace = knob("Outward")
+    :options({ "InAndOut", "Inward", "Outward" })
+    :label("Face")
+    :hint("Whether pieces launch out of the shape, into it or both."),
+  ShapePartial = knob(1):min(0):max(1):hidden(boxed):label("Partial"):hint("Fraction of the shape pieces spawn in."),
+  ShapeStyle = knob("Volume")
+    :options({ "Surface", "Volume" })
+    :label("Style")
+    :hint("Whether pieces spawn on the shape's surface or in its volume."),
+
+  FlipbookMode = knob("OneShot")
+    :options(FLIPBOOK_MODES)
+    :label("Mode")
+    :hint("Whether the frames play once, loop, or play back and forth."),
+  FlipbookStartRandom = knob(false):label("StartRandom"):hint("Start each piece at a random frame."),
+  FlipbookReverse = knob(false):label("Reverse"):hint("Play the frames backward."),
+  FlipbookChangeCurve = knob(linear):label("Curve"):hint("Easing of the frames' playback."),
   FlipbookChangeDuration = knob(function(ctx)
       return ctx.duration
     end)
     :unit("seconds")
-    :hidden(noFrames)
     :label("Duration")
-    :hint("Seconds the frames play over."),
-  FlipbookChangeCurve = knob(linear):hidden(noFrames):label("Curve"):hint("Easing of the frames' playback."),
-  SyncDuration = knob(true)
-    :hidden(noFrames)
-    :label("SyncDuration")
-    :hint("Play the frames' cycles over the piece's duration."),
-  FlipbookLoop = knob(false):hidden(noFrames):label("Loop"):hint("Repeat the frames' cycle."),
-  FlipbookLoopCount = knob(0):hidden(noFrameLoop):label("LoopCount"):hint(
-    "Cycles of the frames to play, 0 repeating for the piece's duration, below 0 until Loop is switched off."
+    :hint("Seconds one pass of the frames takes."),
+  SyncDuration = knob(true):label("SyncDuration"):hint("Play the frames' cycles over the piece's life."),
+  FlipbookLoopCount = knob(0):hidden(frameOneShot):label("LoopCount"):hint(
+    "Cycles of the frames to play, 0 repeating for the piece's life, below 0 until Mode leaves Loop or PingPong."
   ),
   FrameTransparency = knob(0)
     :min(0)
     :max(1)
     :mod()
-    :hidden(noFrames)
     :label("Transparency")
-    :hint("Transparency of the frames' decals over the piece's duration."),
-  -- the key of the Textures folder the piece wears, which the plugin writes
-  TextureSet = knob(""):hidden(always),
+    :hint("Transparency of the frames' decals over the piece's life."),
+
+  TextureMode = knob("Loop")
+    :options(FLIPBOOK_MODES)
+    :label("Mode")
+    :hint("Whether the material frames play once, loop, or play back and forth."),
+  TextureStartRandom = knob(false):label("StartRandom"):hint("Start each piece at a random material frame."),
+  TextureReverse = knob(false):label("Reverse"):hint("Play the material frames backward."),
   TextureFps = knob(24)
     :min(1)
     :unit("perSecond")
-    :hidden(noTextures)
     :readonly(textureSynced)
     :label("Fps")
-    :hint("Material frames worn per second, set by the piece's duration while synced."),
+    :hint("Material frames worn per second, set by the piece's life while synced."),
   TextureSyncDuration = knob(false)
-    :hidden(noTextures)
     :label("SyncDuration")
-    :hint("Play the material frames' cycles over the piece's duration."),
-  TextureLoop = knob(true):hidden(noTextures):label("Loop"):hint("Repeat the material frames' cycle."),
-  TextureLoopCount = knob(0):hidden(noTextureLoop):label("LoopCount"):hint(
-    "Cycles of the material frames to play, 0 repeating for the piece's duration, below 0 until Loop is switched off."
+    :hint("Play the material frames' cycles over the piece's life."),
+  TextureLoopCount = knob(0):hidden(textureOneShot):label("LoopCount"):hint(
+    "Cycles of the material frames to play, 0 repeating for the piece's life, below 0 until Mode leaves Loop or PingPong."
   ),
-  EmissiveStrength = knob(1):min(0):mod():label("Strength"):hint("Multiplier on the glow of the mesh's material."),
-  SurfaceColor = knob(WHITE)
+
+  Motion = knob("Particle"):options({ "Particle" }):label("Motion"):hint("How each piece moves after it spawns."),
+  Acceleration = knob(vector.zero)
+    :unit("studsPerSecondSquared")
     :mod()
-    :label("Color")
-    :hint("Color the mesh's material is multiplied by, its glow included."),
-  EmissiveTint = knob(WHITE):mod():label("Tint"):hint("Color the glow of the mesh's material is multiplied by."),
-})
+    :label("Acceleration")
+    :hint("Constant acceleration on each piece, in the parent's frame while LockedToPart."),
+  AccelTarget = knob()
+    :instance({ "Attachment", "BasePart", "Model" })
+    :label("AccelTarget")
+    :hint("Attachment, part or model each piece is pulled toward."),
+  AccelStrength = knob(10)
+    :unit("studsPerSecondSquared")
+    :mod()
+    :hidden(untargeted)
+    :label("AccelStrength")
+    :hint("Pull toward the target, negative pushing away."),
 
--- the rows that aim at an end target, which this effect does not have yet
-for _, name in { "MirrorPaths", "MirrorRotation", "MatchEndDirection" } do
-  attributes[name]:hidden(always)
-end
+  Drag = knob(0):min(0):mod():label("Drag"):hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
+  LockedToPart = knob(false):label("LockedToPart"):hint("Whether pieces move with the parent after they spawn."),
+  TimeScale = knob(1):min(0):mod():label("TimeScale"):hint("Multiplier on the effect's clock, 0 freezing it."),
+  VelocityInheritance = knob(0)
+    :mod()
+    :label("VelocityInheritance")
+    :hint("Share of the parent part's velocity each piece launches with."),
+  WindAffectsDrag = knob(false)
+    :hidden(dragless)
+    :label("WindAffectsDrag")
+    :hint("Whether drag eases each piece toward the global wind rather than to rest."),
 
-attributes.SyncPosition:label("LockedToPart"):hint("Whether pieces move with the parent after they spawn.")
+  CollisionMode = knob("Off")
+    :options({ "Off", "Kill", "Stop", "Bounce" })
+    :label("CollisionMode")
+    :hint("What a piece does when its path hits something."),
+  Bounce = knob(0.5)
+    :min(0)
+    :max(1)
+    :mod()
+    :hidden(noBounce)
+    :label("Bounce")
+    :hint("Share of the speed into the surface a bounce keeps."),
+  Friction = knob(0.2)
+    :min(0)
+    :max(1)
+    :mod()
+    :hidden(noBounce)
+    :label("Friction")
+    :hint("Share of the speed along the surface a bounce loses."),
+  CollisionFilterType = knob("Exclude")
+    :options({ "Exclude", "Include" })
+    :label("FilterType")
+    :hint("Whether the tagged parts are left out of the hits or are the only ones hit."),
+  CollisionFilterTag = knob(""):label("FilterTag"):hint("CollectionService tag the filter reads."),
+  CollisionGroup = knob("Default"):label("CollisionGroup"):hint("Collision group the hits are cast in."),
+  CollisionRespectCanCollide = knob(true)
+    :label("RespectCanCollide")
+    :hint("Whether parts with CanCollide off are passed through."),
 
-forge_mesh.attributes = attributes
+  -- the keys of the Frames and Textures folders the template plays, which the
+  -- plugin writes
+  FrameSet = knob(""):hidden(always),
+  TextureSet = knob(""):hidden(always),
+}
 
 forge_mesh.properties = {}
 
 forge_mesh.layout = {
   { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration", "DestroyDelay" } },
-  { title = "Effect", entries = { "Duration", "SpreadAngle", "Enabled", "Rate", "SyncPosition", "Speed" } },
-  { title = "Shape", entries = { "EmissionDirection", "Shape", "ShapePartial", "ShapeStyle", "ShapeFace" } },
+  { title = "Appearance", entries = { "Color", "Orientation", "Size", "Squash", "Transparency" } },
   {
-    title = "Motion",
+    title = "Emission",
     entries = {
-      "Motion",
-      "Velocity",
-      "Acceleration",
-      "Drag",
-      "VelocityInheritance",
-      "TimeScale",
-      "WindAffectsDrag",
-      "FaceVelocity",
+      "EmissionDirection",
+      "Enabled",
+      "Lifetime",
+      "Rate",
+      "Rotation",
+      "RotSpeed",
+      "Speed",
+      "SpreadAngle",
     },
   },
+  { title = "EmitterShape", entries = { "Shape", "ShapeFace", "ShapePartial", "ShapeStyle" } },
   {
-    title = "Rotation",
-    entries = { { title = "Speed", entries = { "RotSpeed" } }, "MinInitRot", "MaxInitRot" },
-  },
-  { title = "Part", entries = { "PartTransparency", "Scale", "MeshScale" } },
-  {
-    title = "Frames",
+    title = "Mesh Frames",
     entries = {
+      "FlipbookMode",
+      "FlipbookStartRandom",
+      "FlipbookReverse",
       { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
       "SyncDuration",
-      "FlipbookLoop",
       "FlipbookLoopCount",
       "FrameTransparency",
     },
+    hidden = noFrames,
   },
   {
     title = "Material Frames",
-    entries = { "TextureFps", "TextureSyncDuration", "TextureLoop", "TextureLoopCount" },
-  },
-  { title = "Glow", entries = { "SurfaceColor", "EmissiveStrength", "EmissiveTint" }, hidden = unlit },
-  { title = "Projectile Motion", entries = { "ProjectileEnabled", "ProjectileLifetime", "ProjectileSpeed" } },
-  {
-    title = "Hitbox",
     entries = {
-      "HitboxEnabled",
-      "HitboxCollisionGroup",
-      { title = "Filter", entries = { "HitboxFilterTag", "HitboxFilterType", "HitboxIgnoreCanCollide" } },
+      "TextureMode",
+      "TextureStartRandom",
+      "TextureReverse",
+      "TextureFps",
+      "TextureSyncDuration",
+      "TextureLoopCount",
+    },
+    hidden = noTextures,
+  },
+  { title = "Motion", entries = { "Motion", "Acceleration", "AccelTarget", "AccelStrength" } },
+  {
+    title = "Particles",
+    entries = { "Drag", "LockedToPart", "TimeScale", "VelocityInheritance", "WindAffectsDrag" },
+  },
+  {
+    title = "Collision",
+    entries = {
+      "CollisionMode",
+      "Bounce",
+      "Friction",
+      {
+        title = "Filter",
+        entries = {
+          "CollisionFilterType",
+          "CollisionFilterTag",
+          "CollisionGroup",
+          "CollisionRespectCanCollide",
+        },
+        hidden = noCollision,
+      },
     },
   },
   {
@@ -400,7 +450,7 @@ forge_mesh.layout = {
 }
 
 function forge_mesh.duration(_, attrs: any)
-  return attrs.Duration.Max
+  return attrs.Lifetime.value.Max
 end
 
 forge_mesh.constant = true
@@ -410,6 +460,7 @@ forge_mesh.constant = true
 const function piece(
   ctx: reader.Ctx,
   attrs: any,
+  looks: any,
   template: BasePart,
   launch: Launch,
   flight: Flight,
@@ -428,64 +479,64 @@ const function piece(
 
   const objMesh = obj:FindFirstChildOfClass("SpecialMesh")
   const templateMesh = template:FindFirstChildOfClass("SpecialMesh")
-  const size = template.Size
 
   -- read before a frame's decal joins the piece, where it would pass for one
   -- of the piece's own
   const decals = decalsOf(obj)
 
-  const look = look_common.start(scope, obj, template, attrs, duration, sets, {
+  const look = look_common.start(scope, obj, template, looks, duration, sets, {
     owner = template,
     decals = decals,
+    modes = true,
+    rng = flight.rng,
+    ownDefault = true,
   })
 
-  tween.drive(scope, attrs.Scale(nil, duration), function(factor: any)
-    if isVector(factor) then
-      look.size(scaled(size, factor))
-    end
-  end)
+  -- the size and transparency where each piece's life starts
+  const size = value_curve.at(attrs.Size, 0)
+  const factor = Vector3.new(size[1], size[2], size[3])
 
   if objMesh and templateMesh then
-    const meshScale = templateMesh.Scale
-
-    tween.drive(scope, attrs.MeshScale(nil, duration), function(factor: any)
-      if isVector(factor) then
-        objMesh.Scale = scaled(meshScale, factor)
-        look.refit()
-      end
-    end)
+    objMesh.Scale = scaled(templateMesh.Scale, factor)
+    look.refit()
+  else
+    look.size(scaled(template.Size, factor))
   end
 
-  const locked = attrs.SyncPosition
-  const faced = attrs.FaceVelocity
+  obj.Transparency = value_curve.at(attrs.Transparency, 0)[1]
+
+  const locked = attrs.LockedToPart
   const windy = attrs.WindAffectsDrag
-  const drag = attrs.Drag
-  const timeScale = attrs.TimeScale
   const origin = flight.origin
-  const acceleration = flight.acceleration
+  const facing = flight.rotation
   const turn = launch.turn
-  -- an axis that starts unturned spins the positive way, so RotSpeed moves
-  -- a piece whose rotation rows rest at 0
-  const spin = vector.create(if turn.x < 0 then -1 else 1, if turn.y < 0 then -1 else 1, if turn.z < 0 then -1 else 1)
-    * utility.DEG_TO_RAD
   const at = launch.spawn.Position
 
   local position = toVector(at)
-  local velocity = toVector(launch.spawn.LookVector) * launch.speed + flight.inherited
-  local facing = if faced then along(velocity, flight.rotation) else flight.rotation
+  local velocity = toVector(launch.spawn.LookVector) * launch.speed + launch.inherited
+  local acceleration = vector.zero
+  local drag = 0
+  local spin = vector.zero
 
   -- the initial turn, each step's spin added onto it
   local rotation =
     CFrame.fromOrientation(turn.x * utility.DEG_TO_RAD, turn.y * utility.DEG_TO_RAD, turn.z * utility.DEG_TO_RAD)
 
-  -- set once a projectile lands, where it left the piece
-  local parked: CFrame? = nil
+  -- a piece locked to its parent accelerates in the parent's frame
+  tween.drive(scope, attrs.Acceleration(nil, duration), function(v: any)
+    if isVector(v) then
+      acceleration = toVector(if locked then origin:VectorToWorldSpace(Vector3.new(v.X, v.Y, v.Z)) else v)
+    end
+  end)
 
-  const rotSpeed = attrs.RotSpeed(nil, duration)
-  local currentRotSpeed = rotSpeed.at(0)
+  tween.drive(scope, attrs.Drag(nil, duration), function(v: number)
+    drag = v
+  end)
 
-  tween.drive(scope, rotSpeed, function(v: number)
-    currentRotSpeed = v
+  tween.drive(scope, attrs.RotSpeed(nil, duration), function(v: any)
+    if isVector(v) then
+      spin = toVector(v) * utility.DEG_TO_RAD
+    end
   end)
 
   -- the parent the piece spawned under, whose last pose is held once the
@@ -507,7 +558,7 @@ const function piece(
   end
 
   const function pose()
-    const cf = parked or CFrame.new(position.x, position.y, position.z) * facing * rotation
+    const cf = CFrame.new(position.x, position.y, position.z) * facing * rotation
 
     return placed(cf) * look.offset()
   end
@@ -531,9 +582,7 @@ const function piece(
   const finish = lifetime.add(ended)
 
   local age = 0
-  local hit = false
   local moving = true
-  local flying = false
 
   const function place()
     const cf = pose()
@@ -544,10 +593,6 @@ const function piece(
   end
 
   const function advance(deltaTime: number)
-    if flying then
-      return
-    end
-
     -- a piece at rest moves only with its parent or its frames
     if not moving then
       if locked or sets.frames then
@@ -564,11 +609,10 @@ const function piece(
       return
     end
 
-    -- the last step lands on the end of the piece's duration exactly
-    const span = math.min(deltaTime, duration - age)
-    const dt = span * timeScale
+    -- the last step lands on the end of the piece's life exactly
+    const dt = math.min(deltaTime, duration - age)
 
-    age += span
+    age += dt
 
     if dt > 0 then
       const wind = if windy then toVector(workspace.GlobalWind) else vector.zero
@@ -578,11 +622,7 @@ const function piece(
         position, velocity = nextPosition, nextVelocity
       end
 
-      if faced then
-        facing = along(velocity, facing)
-      end
-
-      const add = spin * currentRotSpeed * dt
+      const add = spin * dt
 
       if numeric_common.usable(add) then
         rotation *= CFrame.fromOrientation(add.x, add.y, add.z)
@@ -590,13 +630,6 @@ const function piece(
     end
 
     place()
-
-    if flight.hitbox ~= nil and flight_common.hit(flight.hitbox, obj) then
-      hit = true
-      moving = false
-      finish()
-      return
-    end
 
     if age >= duration then
       moving = false
@@ -607,37 +640,13 @@ const function piece(
   const stepping = lifetime.step(scope, advance, "follow")
   lifetime.awaitJoin(ended)
 
-  if attrs.ProjectileEnabled and not hit then
-    -- the last velocity, carried into the world the piece is placed in
-    const world = placed(CFrame.identity):VectorToWorldSpace(toVector3(velocity))
-    const direction = if world.Magnitude > 0 then world.Unit else Vector3.zero
-    const landing = lifetime.join(scope)
-
-    flying = true
-
-    flight_common.projectile(scope, obj, (direction * attrs.ProjectileSpeed) :: any, launch.flight, {
-      params = flight.hitbox,
-      follow = if locked then live else nil,
-      keepTurn = true,
-    }, lifetime.add(landing))
-
-    lifetime.awaitJoin(landing)
-
-    -- held where it landed, in the frame the piece spawned in
-    const landed = mover.cframe(obj) * look.offset():Inverse()
-
-    parked = if locked then origin * live():ToObjectSpace(landed) else landed
-    flying = false
-  end
-
   scope.effects.emitOnFinish(emitOnFinish, obj, scope.depth + 1, scope, children)
 
   -- the look may run past the motion, as frames played longer than the piece
-  -- do; a hit ends it there
-  const flown = if attrs.ProjectileEnabled then launch.flight else 0
-  const tail = look.life - duration - flown
+  -- do
+  const tail = look.life - duration
 
-  if not hit and tail > 0 then
+  if tail > 0 then
     tween.wait(scope, curve.new(tail, "linear"))
   end
 
@@ -665,7 +674,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   lifetime.wait(scope, attrs.EmitDelay)
 
   if attrs.EmitDuration > 0 and not ctx.constant then
-    enabled_effects.window(ctx, forge_mesh, attrs.EmitDuration, attrs.Speed)
+    enabled_effects.window(ctx, forge_mesh, attrs.EmitDuration, attrs.TimeScale)
     return
   end
 
@@ -673,8 +682,9 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     return
   end
 
-  -- every piece runs on the effect's clock, so one Speed track paces them all
-  utility.speedFrom(scope, ctx.constant, attrs.Speed)
+  -- every piece runs on the effect's clock, so one TimeScale track paces them
+  -- all
+  utility.speedFrom(scope, ctx.constant, attrs.TimeScale)
 
   const sets: look_common.Sets = {
     frames = if attrs.FrameSet ~= "" then frame_store.find(template, attrs.FrameSet) else nil,
@@ -689,51 +699,59 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     frame_store.warm(sets.textures)
   end
 
-  const origin, size = originOf(template)
-  const spread = attrs.SpreadAngle
+  -- the look reads the material's glow rows beside the effect's own
+  const looks = table.clone(attrs)
 
-  -- upper case, the spelling a row's vector and an authored Vector3 both
-  -- answer to under every host
+  for name, track in material_rows.resolve(ctx, template) do
+    looks[name] = track
+  end
+
+  const origin, size = originOf(template)
+  const parent = template.Parent
+
+  -- an attachment or no parent at all has no velocity to hand on
+  const moved = parent ~= nil and parent:IsA("BasePart")
+
   const config: particle_motion.Config = {
     shape = attrs.Shape,
     surface = attrs.ShapeStyle == "Surface",
     partial = attrs.ShapePartial,
     normal = Enum.NormalId[attrs.EmissionDirection],
     face = attrs.ShapeFace,
-    spread = vector.create(spread.X, spread.Y, 0),
+    spread = vector.zero,
   }
 
-  const rng = Random.new()
-  const range = attrs.Duration
-  const speeds = attrs.Velocity
-  const minTurn = attrs.MinInitRot
-  const maxTurn = attrs.MaxInitRot
-  const flights = attrs.ProjectileLifetime
-  const flight = flightOf(template, attrs, origin)
+  const flight: Flight = {
+    origin = origin,
+    rotation = template.CFrame.Rotation,
+    rng = Random.new(),
+  }
 
   -- each piece runs on a thread the effect holds, so a clear closes it
   const outstanding = lifetime.join(scope)
 
   for _ = 1, attrs.EmitCount do
-    -- speed and life ahead of the launch frame, the order a ParticleEmitter
-    -- draws them in
-    const speed = rng:NextNumber(speeds.Min, speeds.Max)
-    const duration = rng:NextNumber(range.Min, range.Max)
-    const spawn = particle_motion.spawn(origin, size, config, rng)
+    -- every piece spawns at the emit's time 0, so these tracks differ between
+    -- pieces only by what their modifiers draw
+    const speed = numberOr(attrs.Speed().at(0), attrs.Speed.value.Min)
+    const duration = math.max(numberOr(attrs.Lifetime().at(0), attrs.Lifetime.value.Min), 0)
+    const spread = attrs.SpreadAngle().at(0)
+    const turn = attrs.Rotation().at(0)
+    const inheritance = numberOr(attrs.VelocityInheritance().at(0), 0)
+
+    config.spread = if isVector(spread) then vector.create(spread.X, spread.Y, 0) else vector.zero
 
     const launch: Launch = {
-      spawn = spawn,
+      spawn = particle_motion.spawn(origin, size, config, flight.rng),
       speed = speed,
       duration = duration,
-      turn = vector.create(
-        rng:NextNumber(minTurn.X, maxTurn.X),
-        rng:NextNumber(minTurn.Y, maxTurn.Y),
-        rng:NextNumber(minTurn.Z, maxTurn.Z)
-      ),
-      flight = if attrs.ProjectileEnabled then rng:NextNumber(flights.Min, flights.Max) else 0,
+      turn = if isVector(turn) then toVector(turn) else vector.zero,
+      inherited = if inheritance ~= 0 and moved
+        then toVector((parent :: BasePart).AssemblyLinearVelocity) * inheritance
+        else vector.zero,
     }
 
-    lifetime.spawn(outstanding, piece, ctx, attrs, template, launch, flight, sets)
+    lifetime.spawn(outstanding, piece, ctx, attrs, looks, template, launch, flight, sets)
   end
 
   lifetime.awaitJoin(outstanding)

@@ -8,16 +8,14 @@ const common = {}
 export type ProjectileOptions = {
   params: OverlapParams?,
   follow: (() -> CFrame)?,
-  keepTurn: boolean?,
 }
 
 function common.hit(params: OverlapParams, obj: BasePart)
   return workspace:GetPartsInPart(obj, params)[1] ~= nil
 end
 
--- a followed flight is carried by the live origin and takes its turn, or with
--- keepTurn keeps the part's turn relative to it; an unfollowed one keeps the
--- part's own
+-- a followed flight is carried by the live origin and takes its turn; an
+-- unfollowed one keeps the part's own
 function common.projectile(
   scope: any,
   obj: BasePart,
@@ -30,14 +28,13 @@ function common.projectile(
   const follow = opts.follow
   const start = mover.cframe(obj)
   const origin = start.Position
-  const turn = if follow ~= nil and opts.keepTurn then start.Rotation else CFrame.identity
   const originAtStart = if follow ~= nil then follow() else CFrame.identity
   local hit = false
 
   -- a caller may be inside a tween's step, which must not yield
   task.spawn(function()
     tween.wait(scope, curve.new(lifetime, "linear"), function(_, _, elapsed: number)
-      const at = CFrame.new(origin + velocity * elapsed) * turn
+      const at = CFrame.new(origin + velocity * elapsed)
 
       if follow ~= nil then
         mover.move(scope, obj, follow() * originAtStart:ToObjectSpace(at))

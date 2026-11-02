@@ -133,8 +133,8 @@ end
 
 const function pieceRows(inst: Instance)
   inst:AddTag(utility.FORGE_MESH_TAG)
-  inst:SetAttribute("Velocity", NumberRange.new(0, 0))
-  inst:SetAttribute("Duration", NumberRange.new(0.6, 0.6))
+  inst:SetAttribute("Speed", NumberRange.new(0, 0))
+  inst:SetAttribute("Lifetime", NumberRange.new(0.6, 0.6))
 end
 
 -- a template holding every kind of reference a nested effect leans on: a weld

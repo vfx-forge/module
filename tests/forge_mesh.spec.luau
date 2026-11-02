@@ -1,3 +1,8 @@
+const mods = require("@mod/mods")
+const value = require("@mod/value")
+const frame = require("@mod/modifier_frame")
+const codec = require("@mod/modifier_codec")
+const reader = require("@mod/reader")
 const harness = require("@tests/harness")
 const effects = require("@srv/effects")
 const utility = require("@mod/utility")
@@ -6,10 +11,10 @@ const scheduler = require("@mod/scheduler")
 const fake_pool = require("@tests/fake_pool")
 const frame_show = require("@mod/frame_show")
 const frame_store = require("@srv/frame_store")
+const value_curve = require("@mod/value_curve")
 const test, expect = harness.test, harness.expect
 
-const bezier_common = require("@mod/common/bezier")
-const flight_common = require("@mod/common/flight")
+const look_common = require("@mod/common/look")
 
 const forge_mesh = require("@vfx/forge_mesh")
 
@@ -94,28 +99,38 @@ const function framed(body: (fake: fake_pool.Fake) -> ())
   end
 end
 
--- every emit's Random drawing `durations` in turn for a Duration of
--- `range`, and every other row at its lower bound, put back once `body` ends
-const function drawing(range: NumberRange, durations: { number }, body: () -> ())
+-- every piece's drawn life by the piece, as the look is handed it, put back
+-- once `body` ends
+const function recording(body: (lives: { [BasePart]: number }) -> ())
+  const start = look_common.start
+  const lives: { [BasePart]: number } = {}
+
+  look_common.start = function(scope, piece, template, attrs, duration, ...)
+    lives[piece] = duration
+
+    return start(scope, piece, template, attrs, duration, ...)
+  end
+
+  const ok, err = pcall(body, lives)
+
+  look_common.start = start
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- every Random built without a seed seeded apart, as the harness's fixed one
+-- would draw the same for every piece, put back once `body` ends
+const function seeding(body: () -> ())
   const new = Random.new
-  local next = 0
+  local seed = 0
 
   -- selene: allow(incorrect_standard_library_use)
-  Random.new = function()
-    return {
-      NextNumber = function(_, min: number, max: number)
-        if min == range.Min and max == range.Max then
-          next += 1
+  Random.new = function(given: number?)
+    seed += 1
 
-          return durations[next]
-        end
-
-        return min
-      end,
-      NextInteger = function(_, min: number)
-        return min
-      end,
-    } :: any
+    return new(given or (seed * 1103515245 + 12345) % 2147483647)
   end
 
   const ok, err = pcall(body)
@@ -126,6 +141,15 @@ const function drawing(range: NumberRange, durations: { number }, body: () -> ()
   if not ok then
     error(err, 0)
   end
+end
+
+-- a randomizer from `low` to `high` on the row `name`, drawn per component
+const function randomized(obj: Instance, name: string, low: any, high: any)
+  const queue = {
+    { kind = "randomizer", chain = false, start = value.lit(low), finish = value.lit(high), perComponent = true },
+  }
+
+  obj:SetAttribute(mods.attrName("attribute", name), frame.frame(codec.encode({ v = 1, queue = queue })))
 end
 
 -- a tagged template part under `parent`, its rows set from `attributes`
@@ -228,7 +252,7 @@ harness.suite(function()
       staged(function(fake)
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
 
-        template(parent, { EmitCount = 5, Shape = "Box", ShapeStyle = "Volume", Velocity = STILL })
+        template(parent, { EmitCount = 5, Shape = "Box", ShapeStyle = "Volume", Speed = STILL })
 
         const env = effects.emit(0, parent:FindFirstChild("Template"))
 
@@ -287,7 +311,7 @@ harness.suite(function()
         -- lune works out no world frame for an attachment, so it is written
         attachment.WorldCFrame = CFrame.new(1, 12, 3)
 
-        template(attachment, { EmitCount = 4, SpreadAngle = Vector3.new(30, 30, 0), Velocity = STILL })
+        template(attachment, { EmitCount = 4, SpreadAngle = Vector3.new(30, 30, 0), Speed = STILL })
 
         const env = effects.emit(0, attachment:FindFirstChild("Template"))
 
@@ -308,7 +332,7 @@ harness.suite(function()
     test("a template with no part or attachment above it spawns at its own pose", function()
       staged(function(fake)
         const root = harness.make("Folder")
-        const part = template(root, { EmitCount = 2, Shape = "Sphere", Velocity = STILL })
+        const part = template(root, { EmitCount = 2, Shape = "Sphere", Speed = STILL })
 
         part.CFrame = CFrame.new(5, 6, 7)
 
@@ -331,7 +355,7 @@ harness.suite(function()
     test("pieces are released when their life ends", function()
       staged(function(fake)
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { EmitCount = 3, Duration = NumberRange.new(0.5, 0.5) })
+        const part = template(parent, { EmitCount = 3, Lifetime = NumberRange.new(0.5, 0.5) })
 
         effects.emit(0, part)
 
@@ -367,64 +391,87 @@ harness.suite(function()
       end)
     end)
 
-    test("a piece's size is the template's times the Scale row", function()
+    test("a piece's size is the template's times the Size curve", function()
       staged(function(fake)
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { Scale = Vector3.new(2, 3, 4) })
+        const size = value_curve.flat(1, 3)
+
+        size.linked = false
+        size.keys[1].value = { 2, 3, 4 }
+
+        const part = template(parent, {})
+        const encoded = value_curve.encode(size)
 
         part.Size = Vector3.new(2, 2, 2)
 
-        const env = effects.emit(0, part)
-        const list = pieces(fake)
+        -- lune refuses a non utf-8 attribute string, so the stored map is stubbed
+        reader.source = function(inst: Instance)
+          const map = table.clone(reader.defaultSource(inst))
 
-        expect(#list).toBe(1)
-        expect(list[1].Size).toBe(Vector3.new(4, 6, 8))
+          if inst == part then
+            map.Size = encoded
+          end
 
-        env:Clear()
+          return map
+        end
+
+        const ok, err = pcall(function()
+          const env = effects.emit(0, part)
+          const list = pieces(fake)
+
+          expect(#list).toBe(1)
+          expect(list[1].Size).toBe(Vector3.new(4, 6, 8))
+
+          env:Clear()
+        end)
+
+        reader.source = reader.defaultSource
+
+        if not ok then
+          error(err, 0)
+        end
       end)
     end)
 
     test("degenerate rows do not produce NaN", function()
-      for _, timeScale in { 0, 1 } do
-        staged(function(fake)
-          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.zero)
-          const part = template(parent, {
-            EmitCount = 4,
-            -- a piece of no duration is up only for its destroy delay
-            Duration = NumberRange.new(0, 0),
-            DestroyDelay = 0.1,
-            ShapeStyle = "Surface",
-            SpreadAngle = Vector3.new(180, 180, 0),
-            Drag = 1e308,
-            TimeScale = timeScale,
-            FaceVelocity = true,
-            RotSpeed = 1e308,
-            MaxInitRot = Vector3.new(1, 1, 1),
-          })
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.zero)
+        const part = template(parent, {
+          EmitCount = 4,
+          -- a short life, so the spin steps, then the destroy delay
+          Lifetime = NumberRange.new(0.05, 0.05),
+          DestroyDelay = 0.1,
+          ShapeStyle = "Surface",
+          SpreadAngle = Vector3.new(180, 180, 0),
+          Drag = 1e308,
+          Orientation = "VelocityPerpendicular",
+          RotSpeed = Vector3.new(1e308, 1e308, 1e308),
+          Rotation = Vector3.new(1, 1, 1),
+        })
 
-          effects.emit(0, part)
+        effects.emit(0, part)
 
-          const list = pieces(fake)
+        const list = pieces(fake)
 
-          expect(#list).toBe(4)
+        expect(#list).toBe(4)
 
-          for _, piece in list do
-            expect(finite(piece.CFrame)).toBe(true)
-            expect(piece.Size == piece.Size).toBe(true)
-          end
+        for _, piece in list do
+          expect(finite(piece.CFrame)).toBe(true)
+          expect(piece.Size == piece.Size).toBe(true)
+        end
 
-          scheduler.frame(1 / 60)
+        scheduler.frame(1 / 60)
 
-          for _, piece in list do
-            expect(finite(piece.CFrame)).toBe(true)
-            expect(piece.Size == piece.Size).toBe(true)
-          end
+        for _, piece in list do
+          expect(finite(piece.CFrame)).toBe(true)
+          expect(piece.Size == piece.Size).toBe(true)
+        end
 
-          scheduler.frame(0.1)
-          scheduler.frame(1 / 60)
-          expect(#pieces(fake)).toBe(0)
-        end)
-      end
+        scheduler.frame(0.1)
+        scheduler.frame(0.1)
+        scheduler.frame(1 / 60)
+        expect(#pieces(fake)).toBe(0)
+      end)
     end)
   end)
 
@@ -432,10 +479,10 @@ harness.suite(function()
     test("a piece flies the particle formula", function()
       staged(function(fake)
         const part = attached({
-          Velocity = NumberRange.new(10, 10),
+          Speed = NumberRange.new(10, 10),
           Acceleration = Vector3.new(0, -20, 0),
           Drag = 0,
-          Duration = NumberRange.new(1, 1),
+          Lifetime = NumberRange.new(1, 1),
         })
 
         const env = effects.emit(0, part)
@@ -455,7 +502,7 @@ harness.suite(function()
 
     test("a piece keeps the template's own orientation as it flies", function()
       staged(function(fake)
-        const part = attached({ Velocity = NumberRange.new(10, 10) })
+        const part = attached({ Speed = NumberRange.new(10, 10) })
         const turn = CFrame.fromOrientation(0.3, 1, 0.2)
 
         part.CFrame = CFrame.new(0, 0, 0) * turn
@@ -480,7 +527,7 @@ harness.suite(function()
         workspace.GlobalWind = Vector3.new(10, 0, 0)
 
         const ok, err = pcall(function()
-          const part = attached({ Velocity = STILL, Drag = 2, WindAffectsDrag = true })
+          const part = attached({ Speed = STILL, Drag = 2, WindAffectsDrag = true })
           const env = effects.emit(0, part)
 
           frames(30)
@@ -507,38 +554,10 @@ harness.suite(function()
       end)
     end)
 
-    test("TimeScale 0 freezes a piece in place", function()
-      staged(function(fake)
-        const part = attached({
-          Velocity = NumberRange.new(10, 10),
-          Acceleration = Vector3.new(0, -20, 0),
-          TimeScale = 0,
-          RotSpeed = 90,
-          MaxInitRot = Vector3.new(10, 10, 10),
-          Duration = NumberRange.new(0.5, 0.5),
-        })
-
-        effects.emit(0, part)
-
-        const piece = pieces(fake)[1]
-        const before = piece.CFrame
-
-        frames(12)
-
-        expect(near(piece.CFrame.Position, Vector3.new(1, 12, 3), EPSILON)).toBe(true)
-        expect(near(piece.CFrame.LookVector, before.LookVector, EPSILON)).toBe(true)
-        expect(finite(piece.CFrame)).toBe(true)
-
-        frames(20)
-
-        expect(#pieces(fake)).toBe(0)
-      end)
-    end)
-
     test("LockedToPart carries pieces with the parent", function()
       staged(function(fake)
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { Velocity = STILL, SyncPosition = true })
+        const part = template(parent, { Speed = STILL, LockedToPart = true })
         const env = effects.emit(0, part)
 
         frames(1)
@@ -556,132 +575,66 @@ harness.suite(function()
       end)
     end)
 
-    test("FaceVelocity turns a piece along its flight", function()
-      staged(function(fake)
-        const part = attached({
-          Velocity = NumberRange.new(10, 10),
-          Acceleration = Vector3.new(10, -20, 0),
-          FaceVelocity = true,
-        })
+    test("a piece whose life ends first leaves the world while the other flies on", function()
+      seeding(function()
+        staged(function(fake)
+          const part = attached({ EmitCount = 2, Lifetime = NumberRange.new(0.5, 2) })
+          const env = effects.emit(0, part)
+          const list = pieces(fake)
+          local elapsed = 0
 
-        const env = effects.emit(0, part)
+          expect(#list).toBe(2)
 
-        frames(5)
+          while #pieces(fake) == 2 and elapsed < 2.5 do
+            frames(1)
+            elapsed += FRAME
+          end
 
-        const elapsed = 5 * FRAME
-        const velocity = Vector3.new(0, 10, 0) + Vector3.new(10, -20, 0) * elapsed
+          -- held by the effect to its end, both would leave on the same frame
+          expect(#pieces(fake)).toBe(1)
 
-        expect(near(pieces(fake)[1].CFrame.LookVector, velocity.Unit, LOOSE)).toBe(true)
+          const gone = if list[1].Parent == nil then list[1] else list[2]
+          const flying = if gone == list[1] then list[2] else list[1]
 
-        env:Clear()
+          expect(gone.Parent).toBe(nil)
+          expect(flying.Parent ~= nil).toBe(true)
+
+          env:Clear()
+        end)
       end)
     end)
 
-    test("a hit ends a piece early", function()
-      staged(function(fake)
-        const hit = flight_common.hit
-        const params = bezier_common.createHitboxParams
-        const onFinish = effects.emitOnFinish
-        local steps = 0
-        local finished = 0
-
-        flight_common.hit = function()
-          steps += 1
-
-          return steps >= 3
-        end
-
-        bezier_common.createHitboxParams = function()
-          return {} :: any
-        end
-
-        effects.emitOnFinish = function(...)
-          finished += 1
-
-          return onFinish(...)
-        end
-
-        const ok, err = pcall(function()
-          const part = attached({ HitboxEnabled = true, Duration = NumberRange.new(1, 1) })
+    test("Speed is the launch speed, TimeScale the clock", function()
+      for _, timeScale in { 1, 0.5 } do
+        staged(function(fake)
+          const part = attached({ Speed = NumberRange.new(20, 20), TimeScale = timeScale })
 
           effects.emit(0, part)
 
-          frames(3)
-          expect(finished).toBe(1)
+          const piece = pieces(fake)[1]
 
-          frames(2)
-          expect(#pieces(fake)).toBe(0)
-          expect(steps).toBe(3)
+          frames(30)
+
+          -- half a second of the effect's clock at its own pace
+          const elapsed = 0.5 * timeScale
+
+          expect(near(piece.CFrame.Position, Vector3.new(1, 12 + 20 * elapsed, 3), LOOSE)).toBe(true)
+
+          local alive = 30 * FRAME
+
+          while piece.Parent ~= nil and alive < 4 do
+            frames(1)
+            alive += FRAME
+          end
+
+          expect(math.abs(alive - 1 / timeScale) < 2 * FRAME).toBe(true)
         end)
-
-        flight_common.hit = hit
-        bezier_common.createHitboxParams = params
-        effects.emitOnFinish = onFinish
-
-        if not ok then
-          error(err, 0)
-        end
-      end)
+      end
     end)
 
-    test("a piece whose life ends first leaves the world while the other flies on", function()
+    test("TimeScale 0 releases pieces", function()
       staged(function(fake)
-        const part = attached({ EmitCount = 2, Duration = NumberRange.new(0.5, 2) })
-        const env = effects.emit(0, part)
-        const list = pieces(fake)
-        local elapsed = 0
-
-        expect(#list).toBe(2)
-
-        while #pieces(fake) == 2 and elapsed < 2.5 do
-          frames(1)
-          elapsed += FRAME
-        end
-
-        -- held by the effect to its end, both would leave on the same frame
-        expect(#pieces(fake)).toBe(1)
-
-        const gone = if list[1].Parent == nil then list[1] else list[2]
-        const flying = if gone == list[1] then list[2] else list[1]
-
-        expect(gone.Parent).toBe(nil)
-        expect(flying.Parent ~= nil).toBe(true)
-
-        env:Clear()
-      end)
-    end)
-
-    test("a projectile keeps its piece up until it lands", function()
-      staged(function(fake)
-        const part = attached({
-          Velocity = NumberRange.new(10, 10),
-          Duration = NumberRange.new(0.2, 0.2),
-          ProjectileEnabled = true,
-          ProjectileSpeed = 30,
-          ProjectileLifetime = NumberRange.new(0.5, 0.5),
-        })
-
-        effects.emit(0, part)
-
-        frames(12)
-
-        const piece = pieces(fake)[1]
-        const at = piece.CFrame.Position
-
-        frames(12)
-
-        expect(#pieces(fake)).toBe(1)
-        expect(piece.CFrame.Position.Y - at.Y > 5).toBe(true)
-
-        frames(30)
-
-        expect(#pieces(fake)).toBe(0)
-      end)
-    end)
-
-    test("Speed 0 releases pieces", function()
-      staged(function(fake)
-        const part = attached({ EmitCount = 3, Speed = 0, Duration = NumberRange.new(0.5, 0.5) })
+        const part = attached({ EmitCount = 3, TimeScale = 0, Lifetime = NumberRange.new(0.5, 0.5) })
 
         effects.emit(0, part)
 
@@ -691,25 +644,59 @@ harness.suite(function()
       end)
     end)
 
-    test("RotSpeed spins a piece whose rotation rows rest at 0", function()
+    test("RotSpeed spins an axis whose rotation rests at 0", function()
       staged(function(fake)
-        const part = attached({ Velocity = STILL, RotSpeed = 90 })
+        const part = attached({ Speed = STILL, RotSpeed = Vector3.new(0, 90, 0) })
         const env = effects.emit(0, part)
         const piece = pieces(fake)[1]
 
         frames(30)
 
-        -- a quarter second's spin on every axis turns the look away
-        expect(near(piece.CFrame.LookVector, part.CFrame.LookVector, 0.1)).toBe(false)
+        -- half a second at 90 degrees per second turns the yaw by 45 alone
+        const turned = CFrame.fromOrientation(0, math.rad(45), 0)
+
+        expect(near(piece.CFrame.LookVector, turned.LookVector, LOOSE)).toBe(true)
+        expect(near(piece.CFrame.UpVector, Vector3.new(0, 1, 0), LOOSE)).toBe(true)
 
         env:Clear()
+      end)
+    end)
+
+    test("a Rotation randomizer draws per axis per piece", function()
+      seeding(function()
+        staged(function(fake)
+          const part = attached({ EmitCount = 4, Speed = STILL })
+
+          randomized(part, "Rotation", Vector3.zero, Vector3.new(90, 90, 90))
+
+          const env = effects.emit(0, part)
+          const list = pieces(fake)
+          const seen = {}
+
+          expect(#list).toBe(4)
+
+          for _, piece in list do
+            const x, y, z = piece.CFrame:ToOrientation()
+
+            -- every axis draws its own, so no two match
+            expect(math.abs(x - y) > EPSILON and math.abs(y - z) > EPSILON).toBe(true)
+
+            for _, other in seen do
+              expect(near(piece.CFrame.LookVector, other, EPSILON)).toBe(false)
+            end
+
+            table.insert(seen, piece.CFrame.LookVector)
+          end
+
+          env:Clear()
+        end)
       end)
     end)
 
     test("a locked piece holds its last pose once the parent is destroyed", function()
       staged(function(fake)
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { Velocity = STILL, SyncPosition = true, Duration = NumberRange.new(1, 1) })
+        const part = template(parent, { Speed = STILL, LockedToPart = true, Lifetime = NumberRange.new(1, 1) })
 
         part.CFrame = CFrame.new(50, 0, 0)
 
@@ -732,21 +719,19 @@ harness.suite(function()
   end)
 
   harness.describe("a mesh's frame set", function()
-    test("pieces end at their own drawn durations", function()
-      const range = NumberRange.new(0.25, 2)
-
-      drawing(range, { 0.25, 1, 2 }, function()
+    test("pieces end at their own drawn lives", function()
+      recording(function(lives)
         framed(function(fake)
-          const part = attached({ EmitCount = 3, Duration = range })
+          const part = attached({ EmitCount = 3, Lifetime = NumberRange.new(0.25, 2) })
 
-          frameSet(part, "durations", 4)
+          frameSet(part, "lives", 4)
 
           const env = effects.emit(0, part)
           const list = pieces(fake)
           const gone: { [BasePart]: number } = {}
           local elapsed = 0
 
-          expect(frame_store.find(part, "durations") ~= nil).toBe(true)
+          expect(frame_store.find(part, "lives") ~= nil).toBe(true)
           expect(#list).toBe(3)
 
           while elapsed < 2.5 do
@@ -760,10 +745,11 @@ harness.suite(function()
             end
           end
 
-          for index, duration in { 0.25, 1, 2 } do
-            const at = gone[list[index]]
+          for _, piece in list do
+            const at = gone[piece]
+            const life = lives[piece]
 
-            expect(at ~= nil and math.abs(at - duration) < 2 * FRAME).toBe(true)
+            expect(life ~= nil and at ~= nil and math.abs(at - life) < 2 * FRAME).toBe(true)
           end
 
           env:Clear()
@@ -774,8 +760,8 @@ harness.suite(function()
     test("unsynced frames longer than the piece hold it still until they end", function()
       framed(function(fake)
         const part = attached({
-          Velocity = NumberRange.new(10, 10),
-          Duration = NumberRange.new(0.25, 0.25),
+          Speed = NumberRange.new(10, 10),
+          Lifetime = NumberRange.new(0.25, 0.25),
           SyncDuration = false,
           FlipbookChangeDuration = 1,
         })
@@ -797,6 +783,78 @@ harness.suite(function()
         frames(30)
 
         expect(piece.Parent).toBe(nil)
+
+        env:Clear()
+      end)
+    end)
+  end)
+
+  harness.describe("a mesh's rows", function()
+    test("every hidden rule runs on an untouched template", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, {})
+        const ctx = { ref = part, obj = part, effect = forge_mesh }
+        const attrs, props = reader.resolve(forge_mesh :: any, ctx :: any)
+        const hidden: { [string]: boolean } = {}
+
+        for name, row in forge_mesh.attributes do
+          if row.hiddenRule ~= nil then
+            hidden[name] = row.hiddenRule(ctx, attrs, props) == true
+          end
+
+          if row.readonlyRule ~= nil then
+            row.readonlyRule(ctx, attrs, props)
+          end
+        end
+
+        const function walk(entries: { any })
+          for _, entry in entries do
+            if type(entry) ~= "table" or entry.entries == nil then
+              continue
+            end
+
+            if entry.hidden ~= nil then
+              hidden[entry.title] = entry.hidden(ctx, attrs, props) == true
+            end
+
+            walk(entry.entries)
+          end
+        end
+
+        walk(forge_mesh.layout)
+
+        for _, name in
+          {
+            "Rate",
+            "WindAffectsDrag",
+            "ShapePartial",
+            "AccelStrength",
+            "Mesh Frames",
+            "Material Frames",
+            "Bounce",
+            "Friction",
+            "Filter",
+          }
+        do
+          expect(`{name} {hidden[name]}`).toBe(`{name} true`)
+        end
+      end)
+    end)
+
+    test("glow rows set on a template reach the look without being forge_mesh rows", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { EmissiveStrength = 3 })
+        const authored = harness.make("SurfaceAppearance", part) :: any
+
+        authored.EmissiveStrength = 2
+
+        const env = effects.emit(0, part)
+        const worn = pieces(fake)[1]:FindFirstChildOfClass("SurfaceAppearance") :: any
+
+        expect(forge_mesh.attributes.EmissiveStrength).toBe(nil)
+        expect(math.abs(worn.EmissiveStrength - 6) < EPSILON).toBe(true)
 
         env:Clear()
       end)

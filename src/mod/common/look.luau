@@ -529,9 +529,12 @@ function common.start(
   -- the transparency, the glow, the decals and the material frames, then the
   -- life the longest of them decides
   function look.play()
-    tween.drive(scope, attrs.PartTransparency(nil, duration), function(v: number)
-      piece.Transparency = v
-    end)
+    -- a caller without the row writes the piece's transparency itself
+    if attrs.PartTransparency ~= nil then
+      tween.drive(scope, attrs.PartTransparency(nil, duration), function(v: number)
+        piece.Transparency = v
+      end)
+    end
 
     glow()
 
