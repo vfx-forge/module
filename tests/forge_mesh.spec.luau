@@ -428,6 +428,41 @@ const function falling(rows: { [string]: any }, body: (piece: BasePart, fake: fa
   end)
 end
 
+-- every row and group a hidden rule hides on `part`, by row name or group title
+const function hiddenOf(part: BasePart): { [string]: boolean }
+  const ctx = { ref = part, obj = part, effect = forge_mesh }
+  const attrs, props = reader.resolve(forge_mesh :: any, ctx :: any)
+  const hidden: { [string]: boolean } = {}
+
+  for name, row in forge_mesh.attributes do
+    if row.hiddenRule ~= nil then
+      hidden[name] = row.hiddenRule(ctx, attrs, props) == true
+    end
+
+    if row.readonlyRule ~= nil then
+      row.readonlyRule(ctx, attrs, props)
+    end
+  end
+
+  const function walk(entries: { any })
+    for _, entry in entries do
+      if type(entry) ~= "table" or entry.entries == nil then
+        continue
+      end
+
+      if entry.hidden ~= nil then
+        hidden[entry.title] = entry.hidden(ctx, attrs, props) == true
+      end
+
+      walk(entry.entries)
+    end
+  end
+
+  walk(forge_mesh.layout)
+
+  return hidden
+end
+
 harness.suite(function()
   harness.describe("a mesh's pieces", function()
     test("an emit spawns EmitCount pieces inside the parent part", function()
@@ -1331,35 +1366,7 @@ harness.suite(function()
       staged(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
         const part = template(parent, {})
-        const ctx = { ref = part, obj = part, effect = forge_mesh }
-        const attrs, props = reader.resolve(forge_mesh :: any, ctx :: any)
-        const hidden: { [string]: boolean } = {}
-
-        for name, row in forge_mesh.attributes do
-          if row.hiddenRule ~= nil then
-            hidden[name] = row.hiddenRule(ctx, attrs, props) == true
-          end
-
-          if row.readonlyRule ~= nil then
-            row.readonlyRule(ctx, attrs, props)
-          end
-        end
-
-        const function walk(entries: { any })
-          for _, entry in entries do
-            if type(entry) ~= "table" or entry.entries == nil then
-              continue
-            end
-
-            if entry.hidden ~= nil then
-              hidden[entry.title] = entry.hidden(ctx, attrs, props) == true
-            end
-
-            walk(entry.entries)
-          end
-        end
-
-        walk(forge_mesh.layout)
+        const hidden = hiddenOf(part)
 
         for _, name in
           {
@@ -1367,6 +1374,7 @@ harness.suite(function()
             "WindAffectsDrag",
             "ShapePartial",
             "AccelStrength",
+            "TurbulenceFrequency",
             "Mesh Frames",
             "Material Frames",
             "Bounce",
@@ -1376,6 +1384,16 @@ harness.suite(function()
         do
           expect(`{name} {hidden[name]}`).toBe(`{name} true`)
         end
+
+        expect(hidden.Collision).toBe(false)
+      end)
+    end)
+
+    test("LockedToPart hides the Collision group", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+
+        expect(hiddenOf(template(parent, { LockedToPart = true })).Collision).toBe(true)
       end)
     end)
 

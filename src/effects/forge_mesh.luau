@@ -78,6 +78,11 @@ const function calm(_, attrs: any)
   return attrs.Turbulence.value <= 0
 end
 
+-- a piece locked to its parent never meets the world
+const function carried(_, attrs: any)
+  return attrs.LockedToPart == true
+end
+
 const function noBounce(_, attrs: any)
   return attrs.CollisionMode ~= "Bounce"
 end
@@ -317,7 +322,7 @@ forge_mesh.attributes = {
     end)
     :unit("seconds")
     :label("Duration")
-    :hint("Seconds one pass of the frames takes."),
+    :hint("Seconds one pass of the frames takes, a PingPong pass running there and back."),
   SyncDuration = knob(true):label("SyncDuration"):hint("Play the frames' cycles over the piece's life."),
   FlipbookLoopCount = knob(0):hidden(frameOneShot):label("LoopCount"):hint(
     "Cycles of the frames to play, 0 repeating for the piece's life, below 0 until Mode leaves Loop or PingPong."
@@ -444,29 +449,34 @@ forge_mesh.layout = {
   },
   { title = "EmitterShape", entries = { "Shape", "ShapeFace", "ShapePartial", "ShapeStyle" } },
   {
-    title = "Mesh Frames",
+    title = "Flipbook",
     entries = {
-      "FlipbookMode",
-      "FlipbookStartRandom",
-      "FlipbookReverse",
-      { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
-      "SyncDuration",
-      "FlipbookLoopCount",
-      "FrameTransparency",
+      {
+        title = "Mesh Frames",
+        entries = {
+          "FlipbookMode",
+          "FlipbookStartRandom",
+          "FlipbookReverse",
+          { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
+          "SyncDuration",
+          "FlipbookLoopCount",
+          "FrameTransparency",
+        },
+        hidden = noFrames,
+      },
+      {
+        title = "Material Frames",
+        entries = {
+          "TextureMode",
+          "TextureStartRandom",
+          "TextureReverse",
+          "TextureFps",
+          "TextureSyncDuration",
+          "TextureLoopCount",
+        },
+        hidden = noTextures,
+      },
     },
-    hidden = noFrames,
-  },
-  {
-    title = "Material Frames",
-    entries = {
-      "TextureMode",
-      "TextureStartRandom",
-      "TextureReverse",
-      "TextureFps",
-      "TextureSyncDuration",
-      "TextureLoopCount",
-    },
-    hidden = noTextures,
   },
   {
     title = "Motion",
@@ -493,6 +503,7 @@ forge_mesh.layout = {
         hidden = noCollision,
       },
     },
+    hidden = carried,
   },
   {
     title = "Behavior",
