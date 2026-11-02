@@ -91,7 +91,7 @@ local counts = { reuses = 0, fresh = 0, made = 0 }
 
 local lists: { [string]: { string } | false } = {}
 local links: { [string]: { string } } = {}
-const aims: { [string]: { string } } = {}
+const aims: { [string]: { string } | false } = {}
 local restorable: { [string]: boolean } = {}
 local hiddenBy: { [string]: { [string]: any } | false } = {}
 
@@ -179,20 +179,21 @@ pool.engine = {
   end,
 
   -- every property of a class that names an instance and any script may
-  -- write, Parent aside; a free copy lets go of what the listed ones name
-  references = function(class: string): { string }
-    local ok, found = pcall(function()
+  -- write, Parent aside; a free copy lets go of what the listed ones name.
+  -- nil when the engine cannot describe the class
+  references = function(class: string): { string }?
+    const ok, found = pcall(function()
       return game:GetService("ReflectionService"):GetPropertiesOfClass(class)
     end)
 
-    local list = {}
-
     if not ok then
-      return list
+      return nil
     end
 
+    const list = {}
+
     for _, property in found do
-      local kind = property.Type
+      const kind = property.Type
       const permits = property.Permits
       const write = if permits ~= nil and permits.Write ~= nil then tostring(permits.Write) else nil
 
@@ -272,18 +273,17 @@ local function listOf(class: string): { string }?
   return if list == false then nil else list
 end
 
--- the listed properties of a class that name an instance
 -- every property of a class that names an instance, unserialized ones such as
--- a weld constraint's parts among them
-const function aimsOf(class: string): { string }
+-- a weld constraint's parts among them; nil when the engine cannot say
+const function aimsOf(class: string): { string }?
   local found = aims[class]
 
   if found == nil then
-    found = pool.engine.references(class)
+    found = pool.engine.references(class) or false
     aims[class] = found
   end
 
-  return found
+  return if found == false then nil else found
 end
 
 local function linksOf(class: string): { string }
@@ -294,7 +294,7 @@ local function linksOf(class: string): { string }
 
     found = {}
 
-    for _, name in pool.engine.references(class) do
+    for _, name in aimsOf(class) or {} do
       if table.find(list, name) then
         table.insert(found, name)
       end
@@ -544,6 +544,29 @@ const function pairUp(from: Instance, to: Instance, found: { [Instance]: Instanc
   end
 end
 
+const function read(inst: any, name: string)
+  return inst[name]
+end
+
+const function write(inst: any, name: string, value: any)
+  inst[name] = value
+end
+
+-- the source cloned whole and the children it skips destroyed in the copy, for
+-- an engine that cannot say which properties name an instance: a reference
+-- left pointing into the source is worse than one heavier clone
+const function wholeWithout(source: Instance)
+  const copy = utility.clone(source)
+
+  for _, child in copy:GetChildren() do
+    if excluded(child) then
+      child:Destroy()
+    end
+  end
+
+  return copy
+end
+
 -- the source without the children it skips, which are never cloned: its root
 -- copied alone and each other child cloned under it. a whole clone points a
 -- reference into its tree at its own copy, so these are pointed so too
@@ -566,11 +589,20 @@ const function cloneWithout(source: Instance)
   end
 
   for _, made in found do
-    for _, name in aimsOf(made.ClassName) do
-      const target = found[(made :: any)[name]]
+    const names = aimsOf(made.ClassName)
+
+    if names == nil then
+      copy:Destroy()
+
+      return wholeWithout(source)
+    end
+
+    for _, name in names do
+      const ok, aimed = pcall(read, made, name)
+      const target = if ok and aimed ~= nil then found[aimed] else nil
 
       if target ~= nil then
-        (made :: any)[name] = target
+        pcall(write, made, name, target)
       end
     end
   end

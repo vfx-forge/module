@@ -2,6 +2,7 @@ local harness = require("@tests/harness")
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
 local lifetime = require("@mod/lifetime")
+const utility = require("@mod/utility")
 local fake_pool = require("@tests/fake_pool")
 
 local test, expect = harness.test, harness.expect
@@ -427,6 +428,38 @@ harness.suite(function()
       expect(child:HasTag("NestedTag")).toBe(true)
       expect(child:GetAttribute("Nested")).toBe(1)
       expect(part:HasTag("AuthoredTag")).toBe(true)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
+    test("a bare copy cloned whole when the engine cannot list references still welds its own child", function()
+      const fake = start()
+      const part = source("Part")
+      const child = harness.make("Part", part)
+      const weld = harness.make("Weld", part) :: Weld
+      const set = harness.make("Folder", part)
+
+      child.Name = "Child"
+      weld.Part0 = part :: BasePart
+      weld.Part1 = child :: BasePart
+      set.Name = "Frames"
+      set:AddTag(utility.EMIT_EXCLUDE_TAG)
+
+      fake.engine.references = function()
+        return nil
+      end
+
+      const holder = {}
+      const taken = pool.take(holder, part, false, true)
+      const joint = taken:FindFirstChildOfClass("Weld") :: Weld
+      const own = taken:FindFirstChild("Child")
+
+      expect(taken:FindFirstChild("Frames")).toBe(nil)
+      expect(own ~= nil).toBe(true)
+      expect(joint.Part0 == taken).toBe(true)
+      expect(joint.Part1 == own).toBe(true)
+      expect(part:FindFirstChild("Frames") ~= nil).toBe(true)
 
       lifetime.releasePlain(holder)
       stop(fake)
