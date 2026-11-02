@@ -1,3 +1,5 @@
+--!native
+--!optimize 2
 local Oklab = require("@mod/color/Oklab")
 
 -- the vendored modules stay as their author wrote them. two of their comments

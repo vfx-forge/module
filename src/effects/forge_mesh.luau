@@ -1,3 +1,5 @@
+--!native
+--!optimize 2
 const attr = require("@mod/attributes")
 const clock = require("@mod/clock")
 const color = require("@mod/color/color")

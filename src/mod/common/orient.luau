@@ -1,3 +1,5 @@
+--!native
+--!optimize 2
 const common = {}
 
 export type Mode = "None" | "FacingCamera" | "FacingCameraWorldUp" | "VelocityParallel" | "VelocityPerpendicular"

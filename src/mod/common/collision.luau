@@ -1,3 +1,5 @@
+--!native
+--!optimize 2
 const MIN_STEP = 1e-4
 const MIN_NORMAL = 1e-6
 const MIN_BOUNCE_SPEED = 0.5

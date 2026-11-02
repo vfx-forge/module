@@ -1,3 +1,5 @@
+--!native
+--!optimize 2
 local value_curve = {}
 
 const VERSION = 1
