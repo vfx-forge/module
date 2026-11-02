@@ -3,6 +3,7 @@ const value = require("@mod/value")
 const frame = require("@mod/modifier_frame")
 const codec = require("@mod/modifier_codec")
 const reader = require("@mod/reader")
+const lifetime = require("@mod/lifetime")
 const harness = require("@tests/harness")
 const effects = require("@srv/effects")
 const utility = require("@mod/utility")
@@ -11,6 +12,7 @@ const scheduler = require("@mod/scheduler")
 const fake_pool = require("@tests/fake_pool")
 const frame_show = require("@mod/frame_show")
 const frame_store = require("@srv/frame_store")
+const enabled_effects = require("@srv/enabled_effects")
 const value_curve = require("@mod/value_curve")
 const test, expect = harness.test, harness.expect
 
@@ -1340,6 +1342,76 @@ harness.suite(function()
         expect(math.abs(worn.EmissiveStrength - 6) < EPSILON).toBe(true)
 
         env:Clear()
+      end)
+    end)
+
+    test("a plain emit carries an edit no signal told of, and a tick keeps its copy until one does", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(1, 1) })
+        const decal = harness.make("Decal", part) :: Decal
+        const set = harness.make("Folder", part)
+
+        decal.Name = "Front"
+        decal.Texture = "rbxassetid://1"
+        set.Name = "Frames"
+        set:SetAttribute("FrameSet", "kept")
+        set:AddTag(utility.EMIT_EXCLUDE_TAG)
+
+        -- the texture the piece of one emit shows, its set left behind
+        const function shown(emit: () -> () -> ())
+          const clear = emit()
+          const list = pieces(fake)
+
+          expect(#list).toBe(1)
+          expect(list[1]:FindFirstChild("Frames")).toBe(nil)
+
+          const texture = (list[1]:FindFirstChild("Front") :: Decal).Texture
+
+          clear()
+          frames(1)
+
+          return texture
+        end
+
+        const function plain()
+          const env = effects.emit(0, part)
+
+          return function()
+            env:Clear()
+          end
+        end
+
+        const function tick()
+          const token = enabled_effects.token()
+
+          enabled_effects.ticker(part, forge_mesh, token, effects)(FRAME)
+
+          return function()
+            lifetime.clear(token)
+          end
+        end
+
+        const function told()
+          for source, stale in fake.stale or {} do
+            if source == part then
+              stale()
+            end
+          end
+        end
+
+        expect(shown(plain)).toBe("rbxassetid://1")
+
+        -- lune fires no signal, so only a plain emit's rebuild sees an edit
+        decal.Texture = "rbxassetid://2"
+
+        expect(shown(tick)).toBe("rbxassetid://1")
+        expect(shown(plain)).toBe("rbxassetid://2")
+
+        decal.Texture = "rbxassetid://3"
+        told()
+
+        expect(shown(tick)).toBe("rbxassetid://3")
       end)
     end)
   end)

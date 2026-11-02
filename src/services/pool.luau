@@ -82,7 +82,7 @@ type Store = {
 
 type Taken = { holder: any, store: Store, released: boolean }
 
-type Stripped = { copy: Instance, skip: { Instance }, conns: { any } }
+type Stripped = { copy: Instance, skip: { Instance }, conns: { any }, taken: number }
 
 local pool = {}
 
@@ -101,7 +101,7 @@ local storeOf: { [Instance]: Store } = {}
 local known: { [Instance]: any } = {}
 local loose: { [Instance]: true } = setmetatable({}, { __mode = "k" }) :: any
 local sources: { [Instance]: Instance } = setmetatable({}, { __mode = "k" }) :: any
-local stripped: { [Instance]: Stripped } = {}
+const stripped: { [Instance]: Stripped } = {}
 
 pool.engine = {
   folder = function(scope: { any })
@@ -562,11 +562,15 @@ const function strippedOf(source: Instance, skip: { Instance })
 
     table.insert(conns, pool.engine.destroying(source, stale))
 
-    cached = { copy = copy, skip = skip, conns = conns }
+    cached = { copy = copy, skip = skip, conns = conns, taken = 0 }
     stripped[source] = cached
   end
 
-  return utility.clone((cached :: Stripped).copy)
+  const found = cached :: Stripped
+
+  found.taken = os.clock()
+
+  return utility.clone(found.copy)
 end
 
 -- a whole clone, held by the holder and destroyed when it lets go. a bare one
@@ -602,6 +606,12 @@ local function fresh(holder: any, source: Instance, bare: boolean?)
   holdIn(holder, copy)
 
   return copy
+end
+
+-- a source's stripped copy is built again at its next take, for a change no
+-- signal has told of yet, such as a write just before a script's emit
+function pool.refresh(source: Instance)
+  drop(source)
 end
 
 -- the instance at an instance's place in the source of the fresh copy holding it
@@ -834,6 +844,14 @@ function pool.sweep(now: number)
     end
 
     trim(stack)
+  end
+
+  -- a template taken from by nothing for two buckets, such as one left out
+  -- of the place without being destroyed, lets its copy go
+  for source, cached in stripped do
+    if now - cached.taken >= BUCKET * 2 then
+      drop(source)
+    end
   end
 end
 

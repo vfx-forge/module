@@ -791,6 +791,13 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   const template = ctx.ref :: BasePart
   const scope = ctx.scope
 
+  -- a deferred signal has not yet told the pool of a write made just before a
+  -- plain emit, so its pieces come from a copy taken now; a tick's keep the one
+  -- its loop has
+  if not ctx.constant then
+    pool.refresh(template)
+  end
+
   -- a plain emit of an enabled template switches it off; the tick's own emits
   -- leave it as it is
   if attrs.Enabled and not ctx.constant then
