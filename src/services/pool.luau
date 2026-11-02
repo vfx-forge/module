@@ -82,6 +82,8 @@ type Store = {
 
 type Taken = { holder: any, store: Store, released: boolean }
 
+type Stripped = { copy: Instance, skip: { Instance }, conns: { any } }
+
 local pool = {}
 
 local folder: Instance? = nil
@@ -99,6 +101,7 @@ local storeOf: { [Instance]: Store } = {}
 local known: { [Instance]: any } = {}
 local loose: { [Instance]: true } = setmetatable({}, { __mode = "k" }) :: any
 local sources: { [Instance]: Instance } = setmetatable({}, { __mode = "k" }) :: any
+local stripped: { [Instance]: Stripped } = {}
 
 pool.engine = {
   folder = function(scope: { any })
@@ -206,6 +209,37 @@ pool.engine = {
 
   destroying = function(inst: Instance, fn: () -> ())
     return inst.Destroying:Connect(fn)
+  end,
+
+  -- whatever leaves a source's stripped copy stale: an instance gained or lost
+  -- anywhere in it, and a property or attribute of the root or of anything
+  -- outside the children it skips
+  changes = function(source: Instance, skip: { Instance }, fn: () -> ())
+    const conns = {
+      source.DescendantAdded:Connect(fn),
+      source.DescendantRemoving:Connect(fn),
+    }
+
+    const function watch(inst: Instance)
+      table.insert(conns, inst.Changed:Connect(fn))
+      table.insert(conns, inst.AttributeChanged:Connect(fn))
+    end
+
+    watch(source)
+
+    for _, child in source:GetChildren() do
+      if table.find(skip, child) then
+        continue
+      end
+
+      watch(child)
+
+      for _, inst in child:GetDescendants() do
+        watch(inst)
+      end
+    end
+
+    return conns
   end,
 
   -- what a property does not hold: live particles and trail segments, and a
@@ -459,31 +493,88 @@ local function skipped(source: Instance): { Instance }
   return found
 end
 
--- a clone of the source without the children it skips, which a clone passes
--- over while they are not Archivable
-local function cloneWithout(source: Instance, skip: { Instance })
-  for _, child in skip do
-    child.Archivable = false
-  end
+-- a clone of the source with the children it skips destroyed, which carry
+-- their tag into the clone
+const function cloneWithout(source: Instance)
+  const copy = utility.clone(source)
 
-  const ok, copy = pcall(utility.clone, source)
-
-  for _, child in skip do
-    child.Archivable = true
-  end
-
-  if not ok then
-    error(copy, 0)
+  for _, child in skipped(copy) do
+    child:Destroy()
   end
 
   return copy
+end
+
+const function same(a: { Instance }, b: { Instance })
+  if #a ~= #b then
+    return false
+  end
+
+  for i, inst in a do
+    if b[i] ~= inst then
+      return false
+    end
+  end
+
+  return true
+end
+
+const function drop(source: Instance)
+  const cached = stripped[source]
+
+  if cached == nil then
+    return
+  end
+
+  stripped[source] = nil
+
+  for _, conn in cached.conns do
+    conn:Disconnect()
+  end
+
+  cached.copy:Destroy()
+end
+
+-- a copy of the source without the children it skips, cloned from a stripped
+-- copy kept until the source changes outside them, so a take never writes to
+-- the source
+const function strippedOf(source: Instance, skip: { Instance })
+  if folder == nil then
+    return cloneWithout(source)
+  end
+
+  local cached = stripped[source]
+
+  if cached ~= nil and not same(cached.skip, skip) then
+    drop(source)
+    cached = nil
+  end
+
+  if cached == nil then
+    const copy = cloneWithout(source)
+    const function stale()
+      drop(source)
+    end
+
+    strip(copy)
+
+    const conns = pool.engine.changes(source, skip, stale)
+
+    table.insert(conns, pool.engine.destroying(source, stale))
+
+    cached = { copy = copy, skip = skip, conns = conns }
+    stripped[source] = cached
+  end
+
+  return utility.clone((cached :: Stripped).copy)
 end
 
 -- a whole clone, held by the holder and destroyed when it lets go. a bare one
 -- loses its root's tags and attributes before anything can see it parented,
 -- and is cloned without the children its source keeps out of emits
 local function fresh(holder: any, source: Instance, bare: boolean?)
-  local copy = if bare then cloneWithout(source, skipped(source)) else utility.clone(source)
+  const skip = if bare then skipped(source) else {}
+  const copy = if #skip > 0 then strippedOf(source, skip) else utility.clone(source)
 
   counts.fresh += 1
 
@@ -768,6 +859,10 @@ function pool.init(scope: { any })
     local made = folder
 
     folder = nil
+
+    for source in stripped do
+      drop(source)
+    end
 
     for _, map in { stacks, taken, storeOf, known, loose, sources, lists, links, restorable, hiddenBy } :: { any } do
       table.clear(map)

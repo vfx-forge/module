@@ -34,22 +34,8 @@ const function framesDressed(template: Instance, key: string)
   return false
 end
 
--- the surface glow reaches only a surface appearance, one the template wears
--- or one a texture or dressed frame set brings
 const function unlit(ctx: reader.Ctx)
-  const ref = ctx.ref
-  const frames = ref:GetAttribute("FrameSet")
-  const textures = ref:GetAttribute("TextureSet")
-
-  if ref:FindFirstChildOfClass("SurfaceAppearance") ~= nil then
-    return false
-  end
-
-  if type(textures) == "string" and textures ~= "" then
-    return false
-  end
-
-  return type(frames) ~= "string" or frames == "" or not framesDressed(ref, frames)
+  return not common.lit(ctx.ref)
 end
 
 common.layout = {
@@ -68,6 +54,23 @@ const module = {
   end,
   emit = function() end,
 }
+
+-- the surface glow reaches only a surface appearance, one the template wears
+-- or one a texture or dressed frame set brings
+function common.lit(template: Instance)
+  const frames = template:GetAttribute("FrameSet")
+  const textures = template:GetAttribute("TextureSet")
+
+  if template:FindFirstChildOfClass("SurfaceAppearance") ~= nil then
+    return true
+  end
+
+  if type(textures) == "string" and textures ~= "" then
+    return true
+  end
+
+  return type(frames) == "string" and frames ~= "" and framesDressed(template, frames)
+end
 
 -- the rows as the template holds them, modifiers and all, the way an
 -- effect's own rows resolve

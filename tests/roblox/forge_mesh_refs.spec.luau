@@ -11,6 +11,7 @@ const containers = require("@srv/containers")
 
 const PIECE = "ForgeMeshRefsTemplate"
 const INNER = "ForgeMeshRefsInner"
+const BARE = "ForgeMeshBareTemplate"
 const EMITS = 2
 const PIECES = 2
 const INNER_PIECES = 2
@@ -485,6 +486,111 @@ return {
           error(table.concat(problems, "\n       "), 0)
         end
       end)
+
+      root:Destroy()
+
+      if not ok then
+        error(err, 0)
+      end
+    end,
+  },
+  {
+    name = "a bare piece never writes to its template",
+    run = function()
+      const root = Instance.new("Folder")
+      root.Name = "ForgeMeshBareSpec"
+      root.Parent = workspace
+
+      const conns = {}
+
+      const ok, err = pcall(withRuntime, function()
+        const problems: Problems = {}
+        const origin = CFrame.new(0, 1000, 2040)
+        const base = part("Base", Vector3.new(8, 1, 8), origin, root)
+        const template = part(BARE, Vector3.one, origin, base)
+
+        template.Transparency = 1
+        pieceRows(template)
+        template:SetAttribute("EmitCount", PIECES)
+
+        const decal = Instance.new("Decal")
+        decal.Name = "Front"
+        decal.Texture = "rbxassetid://1"
+        decal.Parent = template
+
+        -- a frame set and a texture set, each kept out of every emit
+        const sets = {}
+
+        for name, key in { Frames = "FrameSet", Textures = "TextureSet" } do
+          const set = Instance.new("Folder")
+          set.Name = name
+          set:SetAttribute(key, "Probe")
+          set:AddTag(utility.EMIT_EXCLUDE_TAG)
+          set.Parent = template
+
+          part("1", Vector3.one, origin, set)
+          table.insert(sets, set)
+        end
+
+        local writes = 0
+
+        for _, inst in { template, sets[1], sets[2], sets[1]["1"], sets[2]["1"] } :: { Instance } do
+          for _, signal in { inst.Changed, inst.AttributeChanged } :: { any } do
+            table.insert(
+              conns,
+              signal:Connect(function(name: string)
+                writes += 1
+                table.insert(problems, `{inst:GetFullName()} changed {name}`)
+              end)
+            )
+          end
+        end
+
+        const folder = containers.root():FindFirstChild("Pool") :: Instance
+
+        for emit = 1, EMITS do
+          const label = `emit {emit}`
+          const texture = `rbxassetid://{emit}`
+
+          effects.emit(0, template)
+          task.wait(0.1)
+
+          const pieces = named(folder, BARE, "BasePart")
+
+          note(problems, #pieces == PIECES, `{label}: {#pieces} pieces in the pool for {PIECES}`)
+
+          for i, piece in pieces do
+            const front = piece:FindFirstChild("Front") :: Decal?
+            const found = if front ~= nil then front.Texture else "nil"
+
+            note(problems, piece:FindFirstChild("Frames") == nil, `{label} piece {i}: carries the frame set`)
+            note(problems, piece:FindFirstChild("Textures") == nil, `{label} piece {i}: carries the texture set`)
+            note(problems, found == texture, `{label} piece {i}: its decal shows {found}, not {texture}`)
+          end
+
+          const ended = waitFor(5, function()
+            return #named(folder, BARE, "BasePart") == 0
+          end)
+
+          note(problems, ended, `{label}: the pieces outlived their emit`)
+
+          -- an edit between emits reaches the next emit's pieces
+          if emit < EMITS then
+            decal.Texture = `rbxassetid://{emit + 1}`
+            task.wait()
+          end
+        end
+
+        note(problems, writes == 0, `{writes} writes reached the template or its sets`)
+
+        if #problems > 0 then
+          error(table.concat(problems, "\n       "), 0)
+        end
+      end)
+
+      for _, conn in conns do
+        conn:Disconnect()
+      end
 
       root:Destroy()
 

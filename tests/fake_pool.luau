@@ -11,6 +11,7 @@ export type Fake = {
   wrappers: { [string]: Instance },
   stable: (inst: Instance) -> Instance,
   destroyed: { [Instance]: () -> () }?,
+  stale: { [Instance]: () -> () }?,
 }
 
 local ENGINE = pool.engine
@@ -82,6 +83,13 @@ function fake_pool.start(lists: { [string]: { string } }): Fake
     end,
     settle = function(inst: Instance)
       table.insert(fake.settled, inst)
+    end,
+    -- lune fires no signal, so a spec drops a stripped copy through `stale`
+    changes = function(source: Instance, _, fn: () -> ())
+      fake.stale = fake.stale or {}
+      fake.stale[source] = fn
+
+      return { { Disconnect = function() end } }
     end,
   }
 
