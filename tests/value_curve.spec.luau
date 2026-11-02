@@ -113,6 +113,36 @@ harness.suite(function()
       end
     end)
 
+    test("a handle cut to its segment keeps its direction", function()
+      const function curve(right: vector, left: vector)
+        return {
+          channels = 1,
+          linked = true,
+          keys = { key(0, { 0 }, 0, nil, right), key(1, { 10 }, 0, left, nil) },
+        }
+      end
+
+      const cut = curve(vector.create(2, 1), vector.create(-2, 0))
+      const authored = curve(vector.create(1, 0.5), vector.create(-1, 0))
+
+      for _, t in { 0.1, 0.25, 0.5, 0.75, 0.9 } do
+        expect(near(value_curve.at(cut, t)[1], value_curve.at(authored, t)[1])).ok()
+      end
+    end)
+
+    test("a vertical handle keeps its value offset", function()
+      const c = {
+        channels = 1,
+        linked = true,
+        keys = {
+          key(0, { 0 }, 0, nil, vector.create(0, 4)),
+          key(1, { 0 }, 0, vector.create(0, 0), nil),
+        },
+      }
+
+      expect(value_curve.at(c, 0.5)[1] > 0.1).ok()
+    end)
+
     test("envelopes widen per draw", function()
       const c = { channels = 1, linked = true, keys = { key(0, { 1 }, 0.5) } }
 
