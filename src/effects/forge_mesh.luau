@@ -389,6 +389,13 @@ forge_mesh.layout = {
       { title = "Filter", entries = { "HitboxFilterTag", "HitboxFilterType", "HitboxIgnoreCanCollide" } },
     },
   },
+  {
+    title = "Behavior",
+    entries = {
+      { action = "toggle_paths", label = "Show Paths" },
+      { action = "toggle_textures", label = "Load Textures" },
+    },
+  },
 }
 
 function forge_mesh.duration(_, attrs: any)
