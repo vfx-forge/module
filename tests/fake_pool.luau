@@ -62,6 +62,9 @@ function fake_pool.start(lists: { [string]: { string } }): Fake
     properties = function(class: string)
       return lists[class]
     end,
+    references = function()
+      return {}
+    end,
     children = function(inst: Instance)
       local list = {}
 

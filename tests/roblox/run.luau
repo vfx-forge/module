@@ -2,6 +2,7 @@ local specs = {
   require("./modifier_frame.spec"),
   require("./modifier_codec.spec"),
   require("./pool.spec"),
+  require("./forge_mesh_refs.spec"),
 }
 
 return function()

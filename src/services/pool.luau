@@ -88,6 +88,7 @@ local folder: Instance? = nil
 local counts = { reuses = 0, fresh = 0, made = 0 }
 
 local lists: { [string]: { string } | false } = {}
+local links: { [string]: { string } } = {}
 local restorable: { [string]: boolean } = {}
 local hiddenBy: { [string]: { [string]: any } | false } = {}
 
@@ -173,6 +174,30 @@ pool.engine = {
     return list
   end,
 
+  -- every property of a class that names an instance; a free copy lets go of
+  -- what the listed ones name
+  references = function(class: string): { string }
+    local ok, found = pcall(function()
+      return game:GetService("ReflectionService"):GetPropertiesOfClass(class)
+    end)
+
+    local list = {}
+
+    if not ok then
+      return list
+    end
+
+    for _, property in found do
+      local kind = property.Type
+
+      if kind ~= nil and kind.ScriptType == "Instance" then
+        table.insert(list, property.Name)
+      end
+    end
+
+    return list
+  end,
+
   -- every walk of a released copy, so a test host can answer the wrappers it
   -- holds
   children = function(inst: Instance)
@@ -203,6 +228,27 @@ local function listOf(class: string): { string }?
   end
 
   return if list == false then nil else list
+end
+
+-- the listed properties of a class that name an instance
+local function linksOf(class: string): { string }
+  local found = links[class]
+
+  if found == nil then
+    local list = listOf(class) or {}
+
+    found = {}
+
+    for _, name in pool.engine.references(class) do
+      if table.find(list, name) then
+        table.insert(found, name)
+      end
+    end
+
+    links[class] = found
+  end
+
+  return found
 end
 
 local function canRestore(inst: Instance)
@@ -606,6 +652,14 @@ finish = function(inst: Instance, record: Taken)
   pool.engine.settle(inst)
   strip(inst)
 
+  -- a free copy names nothing of the use it was let go from, such as a beam
+  -- still naming a destroyed piece's attachments; a take dresses them back
+  for _, name in linksOf(inst.ClassName) do
+    if (inst :: any)[name] ~= nil then
+      (inst :: any)[name] = nil
+    end
+  end
+
   if inst:IsA("BasePart") then
     inert(inst :: BasePart)
   else
@@ -677,7 +731,7 @@ function pool.init(scope: { any })
 
     folder = nil
 
-    for _, map in { stacks, taken, storeOf, known, loose, sources, lists, restorable, hiddenBy } :: { any } do
+    for _, map in { stacks, taken, storeOf, known, loose, sources, lists, links, restorable, hiddenBy } :: { any } do
       table.clear(map)
     end
 
