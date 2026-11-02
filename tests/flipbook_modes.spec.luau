@@ -1,17 +1,17 @@
-local attr = require("@mod/attributes")
-local harness = require("@tests/harness")
-local effects = require("@srv/effects")
-local utility = require("@mod/utility")
-local registry = require("@mod/registry")
-local scheduler = require("@mod/scheduler")
-local fake_pool = require("@tests/fake_pool")
-local frame_show = require("@mod/frame_show")
-local look_common = require("@mod/common/look")
-local frame_store = require("@srv/frame_store")
-local flipbook_common = require("@mod/common/flipbook")
-local test, expect = harness.test, harness.expect
+const attr = require("@mod/attributes")
+const harness = require("@tests/harness")
+const effects = require("@srv/effects")
+const utility = require("@mod/utility")
+const registry = require("@mod/registry")
+const scheduler = require("@mod/scheduler")
+const fake_pool = require("@tests/fake_pool")
+const frame_show = require("@mod/frame_show")
+const look_common = require("@mod/common/look")
+const frame_store = require("@srv/frame_store")
+const flipbook_common = require("@mod/common/flipbook")
+const test, expect = harness.test, harness.expect
 
-local mesh = require("@vfx/mesh")
+const mesh = require("@vfx/mesh")
 
 const NumberRange = harness.datatypes.NumberRange
 const Vector3 = harness.datatypes.Vector3
@@ -60,7 +60,7 @@ end
 -- the mesh effect with the look given the modes the way the forge mesh will:
 -- the attributes read off the model, a stub rng, and with `own` a row default
 -- far past any piece's life. put back once `body` ends
-local function staged(own: boolean, body: (applied: { { any } }) -> ())
+const function staged(own: boolean, body: (applied: { { any } }) -> ())
   const protect, terrain = utility.protectParent, workspace.Terrain
   const constructor, store, show = Instance, frame_store.engine, frame_show.engine
   const start = look_common.start
@@ -209,11 +209,31 @@ harness.suite(function()
   harness.describe("flipbook modes", function()
     test("PingPong runs forward then back", function()
       expect(sweep(4, 0, "PingPong", nil, nil, 7)).toEqual({ 1, 2, 3, 4, 3, 2, 1, 2 })
-      expect(flipbook_common.phase(0, 1, 0, "PingPong")).toBe(0)
-      expect(flipbook_common.phase(0.25, 1, 0, "PingPong")).toBe(0.5)
-      expect(flipbook_common.phase(0.5, 1, 0, "PingPong")).toBe(1)
-      expect(flipbook_common.phase(0.75, 1, 0, "PingPong")).toBe(0.5)
-      expect(flipbook_common.phase(1.25, 1, 0, "PingPong")).toBe(0.5)
+      expect(flipbook_common.phase(0.25, 1, 0, "PingPong")).toBe(0.25)
+      expect(flipbook_common.phase(1.25, 1, 0, "PingPong")).toBe(0.25)
+    end)
+
+    test("a PingPong holds every frame for the same time, at both turns too", function()
+      for _, count in { 2, 4, 5 } do
+        const steps = flipbook_common.steps(count, "PingPong")
+        const holds = table.create(count, 0)
+        const samples = steps * 100
+
+        for k = 0, samples - 1 do
+          const alpha = flipbook_common.phase((k + 0.5) / samples, 1, 0, "PingPong")
+          const frame = flipbook_common.pick(count, alpha, "PingPong")
+
+          holds[frame] += 1
+        end
+
+        for frame, held in holds do
+          expect(held).toBe(if frame == 1 or frame == count then 100 else 200)
+        end
+      end
+
+      expect(flipbook_common.pick(4, 0, "PingPong")).toBe(1)
+      expect(flipbook_common.pick(4, 0.5, "PingPong")).toBe(4)
+      expect(flipbook_common.pick(4, 0.99, "PingPong")).toBe(2)
     end)
 
     test("a counted PingPong ends back on the first frame", function()
@@ -230,7 +250,7 @@ harness.suite(function()
       expect(sweep(4, 1, "OneShot", nil, 2, 5)).toEqual({ 3, 4, 1, 2, 2, 2 })
       expect(sweep(4, 0, "Loop", nil, 3, 5)).toEqual({ 4, 1, 2, 3, 4, 1 })
       expect(flipbook_common.phase(0, 1, 0, "Loop", 0.25)).toBe(0.25)
-      expect(flipbook_common.phase(0.5, 1, 0, "PingPong", 0.25)).toBe(0.5)
+      expect(flipbook_common.phase(0.5, 1, 0, "PingPong", 0.25)).toBe(0.75)
     end)
 
     test("a nil mode is today's frame", function()
@@ -273,7 +293,7 @@ harness.suite(function()
         attr.trigger(m, "FlipbookMode", "OneShot")
 
         -- the cycle playing then plays out and the last frame holds
-        plays(applied, set, { { 0.5, 2 }, { 0.65, 1 }, { 1.25, 1 } })
+        plays(applied, set, { { 0.5, 3 }, { 0.65, 2 }, { 1.25, 1 } })
       end)
     end)
 

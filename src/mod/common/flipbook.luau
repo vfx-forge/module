@@ -2,6 +2,7 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 
 local attr = require("@mod/attributes")
+local frames_common = require("@mod/common/frames")
 
 local common = {}
 
@@ -108,9 +109,9 @@ end
 export type mode = "OneShot" | "Loop" | "PingPong"
 
 -- where in its cycle a flipbook stands `elapsed` seconds in, 0 to 1, held at
--- 1 once the last of `cycles` ends. a PingPong cycle is the round trip, 0 up to
--- 1 and back, held at 0 where it began. `start` is how far into the cycle it
--- starts, 0 to 1
+-- 1 once the last of `cycles` ends, or at 0 for a PingPong, whose cycle is the
+-- round trip and which ends where it began. `start` is how far into the cycle
+-- it starts, 0 to 1
 function common.phase(elapsed: number, cycle: number, cycles: number, mode: mode?, start: number?): number
   const pingpong = mode == "PingPong"
   const held = if pingpong then 0 else 1
@@ -133,9 +134,7 @@ function common.phase(elapsed: number, cycle: number, cycles: number, mode: mode
     t += start
   end
 
-  const through = t - math.floor(t)
-
-  return if pingpong then 1 - math.abs(2 * through - 1) else through
+  return t - math.floor(t)
 end
 
 -- the cycles an endless loop has played once the cycle playing `elapsed`
@@ -148,6 +147,25 @@ end
 -- without showing either end twice
 function common.steps(count: number, mode: mode?): number
   return if mode == "PingPong" then math.max(2 * count - 2, 1) else count
+end
+
+-- the frame of `count` that step `step` of a cycle of `steps` shows, a PingPong
+-- cycle running up the frames and back down
+function common.fold(step: number, count: number, steps: number): number
+  return if step < count then step + 1 else steps - step + 1
+end
+
+-- the frame a flipbook of `count` shows at `alpha` through its cycle. a
+-- PingPong one is cut into equal steps, since rounding would hold its first
+-- frame for most of a turn
+function common.pick(count: number, alpha: number, mode: mode?): number
+  if mode ~= "PingPong" then
+    return frames_common.index(count, alpha)
+  end
+
+  const steps = common.steps(count, mode)
+
+  return common.fold(math.min(math.floor(alpha * steps), steps - 1), count, steps)
 end
 
 -- the frame of `count` shown `elapsed` seconds in at `rate` frames a second,
@@ -163,26 +181,33 @@ function common.frame(
   reverse: boolean?,
   offset: number?
 ): number
+  if mode == nil and not reverse and not offset then
+    -- a cycle of no length, such as one synced to an instant effect
+    if not (rate < math.huge) then
+      return count
+    end
+
+    const played = math.floor(elapsed * rate)
+
+    if cycles > 0 and played >= count * cycles then
+      return count
+    end
+
+    return played % count + 1
+  end
+
   const steps = common.steps(count, mode)
   const total = steps * math.max(cycles, 1)
 
   local played = if rate < math.huge then math.floor(elapsed * rate) else total
 
-  -- a cycle of no length, such as one synced to an instant effect
-  if cycles > 0 and played >= total then
+  if not (rate < math.huge) or (cycles > 0 and played >= total) then
     played = if mode == "PingPong" then 0 else total - 1
-  elseif not (rate < math.huge) then
-    return count
   end
 
-  const step = (played + (offset or 0)) % steps
-  local index = if step < count then step + 1 else steps - step + 1
+  const index = common.fold((played + (offset or 0)) % steps, count, steps)
 
-  if reverse then
-    index = count + 1 - index
-  end
-
-  return index
+  return if reverse then count + 1 - index else index
 end
 
 function common.createUpdateCallback(config: FlipbookConfig)

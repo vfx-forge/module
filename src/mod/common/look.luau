@@ -8,7 +8,6 @@ const lifetime = require("@mod/lifetime")
 const frame_show = require("@mod/frame_show")
 const texture_show = require("@mod/texture_show")
 const flipbook_loop = require("@mod/flipbook_loop")
-const frames_common = require("@mod/common/frames")
 const flipbook_common = require("@mod/common/flipbook")
 
 const emitters = require("@root/emitters")
@@ -189,8 +188,8 @@ function common.start(
   const looping = lifetime.join(scope)
 
   -- a loop counting below 0 plays until `running` answers false for `toggle` on
-  -- `obj`, then to the end of its cycle. the one read of an instance after its
-  -- rows resolve, since that switch while the loop plays is the only way it ends
+  -- `obj`, then to the end of its cycle. a read of an instance after its rows
+  -- resolve, since that switch while the loop plays is the only way it ends
   const function endless(
     obj: Instance,
     toggle: string,
@@ -306,7 +305,7 @@ function common.start(
     const wrap = if start and not looped then math.floor(start * frameCount) else 0
 
     const function write(alpha: number)
-      local index = frames_common.index(frameCount, alpha)
+      local index = flipbook_common.pick(frameCount, alpha, mode)
 
       if wrap > 0 then
         index = (index - 1 + wrap) % frameCount + 1
@@ -319,6 +318,7 @@ function common.start(
     const own = if opts
         and opts.ownDefault
         and attr.get(owner, "FlipbookChangeDuration", nil, true) == nil
+        and attr.get(owner, "Flipbook_Change_Duration", nil, true) == nil
       then duration
       else attrs.FlipbookChangeDuration
 
