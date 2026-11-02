@@ -1240,6 +1240,51 @@ harness.suite(function()
       end)
     end)
 
+    test("a locked piece is pulled toward where the target stands in the world", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(3, 3), LockedToPart = true })
+        const goal = harness.make("Part") :: BasePart
+
+        goal.Position = Vector3.new(30, 10, 0)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            -- the parent carries the piece past the target before it is pulled
+            parent.CFrame = CFrame.new(60, 10, 0)
+
+            frames(1)
+
+            const before = (piece.CFrame.Position - goal.Position).Magnitude
+
+            frames(30)
+
+            expect((piece.CFrame.Position - goal.Position).Magnitude < before - 1).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("VelocityParallel holds the last flight heading once Stop pins a piece", function()
+      falling({ CollisionMode = "Stop", Orientation = "VelocityParallel" }, function(piece)
+        frames(30)
+
+        expect(near(piece.CFrame.UpVector, Vector3.new(0, -1, 0), LOOSE)).toBe(true)
+
+        frames(90)
+
+        expect(math.abs(piece.CFrame.Position.Y) < 0.01).toBe(true)
+        expect(near(piece.CFrame.UpVector, Vector3.new(0, -1, 0), LOOSE)).toBe(true)
+      end)
+    end)
+
     test("Kill ends a piece at the floor", function()
       falling({ CollisionMode = "Kill" }, function(piece)
         local last = piece.CFrame.Position

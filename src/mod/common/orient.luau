@@ -56,7 +56,15 @@ const function direction(v: vector)
   return v / length
 end
 
-function common.rotation(mode: Mode, base: CFrame, position: vector, velocity: vector, camera: CFrame?): CFrame
+-- `held` is the turn the velocity last gave, kept while a piece stands still
+function common.rotation(
+  mode: Mode,
+  base: CFrame,
+  position: vector,
+  velocity: vector,
+  camera: CFrame?,
+  held: CFrame?
+): CFrame
   const keep = base.Rotation
 
   if mode == "None" then
@@ -67,7 +75,7 @@ function common.rotation(mode: Mode, base: CFrame, position: vector, velocity: v
     const heading = direction(velocity)
 
     if not heading then
-      return keep
+      return held or keep
     end
 
     if mode == "VelocityPerpendicular" then

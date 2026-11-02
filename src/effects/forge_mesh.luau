@@ -26,8 +26,12 @@ const SETS = { Frames = "FrameSet", Textures = "TextureSet" }
 
 const FLIPBOOK_MODES = { "OneShot", "Loop", "PingPong" }
 
--- the longest stretch of a frame stepped whole once drag or collision is on
+-- the longest stretch of a frame stepped whole once drag or collision is on,
+-- a frame a little over it still taken as one, and the most steps a hitch
+-- is cut into
 const MAX_STEP = 1 / 60
+const STEP_SLACK = 0.05
+const MAX_STEPS = 8
 
 const function always()
   return true
@@ -692,9 +696,26 @@ const function piece(
     return if locked then live() * origin:ToObjectSpace(cf) else cf
   end
 
+  -- a world point in the frame a locked piece flies in, carried back by the
+  -- parent's move since the spawn
+  const function unplaced(at: vector): vector
+    if not locked then
+      return at
+    end
+
+    return toVector(origin:PointToWorldSpace(live():PointToObjectSpace(Vector3.new(at.x, at.y, at.z))))
+  end
+
+  -- the turn the velocity last gave, held once the piece stops
+  local heading: CFrame? = nil
+
   const function pose()
     const camera = workspace.CurrentCamera
-    const turned = orient_common.rotation(mode, facing, position, velocity, if camera then camera.CFrame else nil)
+    const turned =
+      orient_common.rotation(mode, facing, position, velocity, if camera then camera.CFrame else nil, heading)
+
+    heading = turned
+
     const drawn = position + wander
     const cf = CFrame.new(drawn.x, drawn.y, drawn.z) * turned * rotation
 
@@ -756,13 +777,17 @@ const function piece(
       const wind = if windy then toVector(workspace.GlobalWind) else vector.zero
 
       -- the pull target is read once a frame, a gone one adding none
-      const pulled = if target ~= nil
+      const standing = if target ~= nil
           and strength ~= 0
           and forge_mesh.engine.alive(target)
         then standingOf(target)
         else nil
 
-      const steps = if collision ~= nil or drag > 0 then math.ceil(dt / MAX_STEP) else 1
+      const pulled = if standing ~= nil then unplaced(standing) else nil
+
+      const steps = if collision ~= nil or drag > 0
+        then math.clamp(math.ceil(dt / MAX_STEP - STEP_SLACK), 1, MAX_STEPS)
+        else 1
       const h = dt / steps
 
       for step = 1, steps do
