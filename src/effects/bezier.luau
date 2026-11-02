@@ -6,6 +6,7 @@ local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local lifetime = require("@mod/lifetime")
 local bezier_common = require("@mod/common/bezier")
+local flight_common = require("@mod/common/flight")
 
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
@@ -215,8 +216,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
           return false
         end
 
-        local result = workspace:GetPartsInPart(obj, hitboxParams)
-        return result[1] ~= nil
+        return flight_common.hit(hitboxParams, obj)
       end
 
       tween.drive(scope, rotSpeed, function(v: number)
@@ -289,42 +289,14 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
             dir = Vector3.zero
           end
 
-          lastVelocity = dir * attrs.ProjectileSpeed
+          local function follow()
+            return (utility.getTransformedOriginExtents(parent))
+          end
 
-          local projectileOrigin = mover.cframe(obj).Position
-          local originCFrameAtProjectileInit = utility.getTransformedOriginExtents(parent)
-
-          -- this runs inside the main tween's step, which must not yield
-          task.spawn(function()
-            tween.wait(scope, curve.new(projectileLifetime, "linear"), function(_, _, elapsed: number)
-              if attrs.SyncPosition then
-                mover.move(
-                  scope,
-                  obj,
-                  utility.getTransformedOriginExtents(parent)
-                    * originCFrameAtProjectileInit:ToObjectSpace(CFrame.new(projectileOrigin + lastVelocity * elapsed))
-                )
-              else
-                mover.move(
-                  scope,
-                  obj,
-                  CFrame.new(projectileOrigin + lastVelocity * elapsed) * mover.cframe(obj).Rotation
-                )
-              end
-
-              if shapecast() then
-                onFinish()
-                didHit = true
-                return false
-              end
-
-              return true
-            end, scope.depth)
-
-            if not didHit then
-              onFinish()
-            end
-          end)
+          flight_common.projectile(scope, obj, dir * attrs.ProjectileSpeed, projectileLifetime, {
+            params = if attrs.HitboxEnabled then hitboxParams else nil,
+            follow = if attrs.SyncPosition then follow else nil,
+          }, onFinish)
         end
       )
     end)
