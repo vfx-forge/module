@@ -720,6 +720,15 @@ const function piece(
   local writtenClear = 0
   local writtenColor = obj.Color
 
+  -- the share of a step each channel's first write after the spawn waits
+  -- for, drawn per piece, so the pieces of one emit playing one curve cross
+  -- their steps on different frames; every later write waits a whole step
+  const stagger = if shaped or tinted or not clearFlat then flight.rng:NextNumber() else 1
+
+  local sizeShare = stagger
+  local clearShare = stagger
+  local colorShare = stagger
+
   -- the piece's size, color and transparency at `t` of its life, each checked
   -- every frame only while it changes over the life
   const function appear(t: number, first: boolean, over: boolean)
@@ -731,12 +740,14 @@ const function piece(
       const stretched = orient_common.squash(Vector3.new(rest.X * x, rest.Y * y, rest.Z * z), squashAt(t)[1])
       const sx, sy, sz = stretched.X, stretched.Y, stretched.Z
 
-      const moved = math.abs(sx - writtenSize.X) > SIZE_STEP * math.max(math.abs(writtenSize.X), SIZE_FLOOR)
-        or math.abs(sy - writtenSize.Y) > SIZE_STEP * math.max(math.abs(writtenSize.Y), SIZE_FLOOR)
-        or math.abs(sz - writtenSize.Z) > SIZE_STEP * math.max(math.abs(writtenSize.Z), SIZE_FLOOR)
+      const step = SIZE_STEP * sizeShare
+      const moved = math.abs(sx - writtenSize.X) > step * math.max(math.abs(writtenSize.X), SIZE_FLOOR)
+        or math.abs(sy - writtenSize.Y) > step * math.max(math.abs(writtenSize.Y), SIZE_FLOOR)
+        or math.abs(sz - writtenSize.Z) > step * math.max(math.abs(writtenSize.Z), SIZE_FLOOR)
 
       if first or moved or (exact and stretched ~= writtenSize) then
         writtenSize = stretched
+        sizeShare = if first then sizeShare else 1
 
         if meshed then
           (objMesh :: SpecialMesh).Scale = stretched
@@ -750,8 +761,9 @@ const function piece(
     if first or not clearFlat then
       const clear = clearAt(t)[1]
 
-      if first or math.abs(clear - writtenClear) > CLEAR_STEP or (exact and clear ~= writtenClear) then
+      if first or math.abs(clear - writtenClear) > CLEAR_STEP * clearShare or (exact and clear ~= writtenClear) then
         writtenClear = clear
+        clearShare = if first then clearShare else 1
         obj.Transparency = clear
       end
     end
@@ -759,12 +771,14 @@ const function piece(
     if first or tinted then
       const tone = color.keypointsAt(keypoints, t)
 
-      const moved = math.abs(tone.R - writtenColor.R) > COLOR_STEP
-        or math.abs(tone.G - writtenColor.G) > COLOR_STEP
-        or math.abs(tone.B - writtenColor.B) > COLOR_STEP
+      const step = COLOR_STEP * colorShare
+      const moved = math.abs(tone.R - writtenColor.R) > step
+        or math.abs(tone.G - writtenColor.G) > step
+        or math.abs(tone.B - writtenColor.B) > step
 
       if first or moved or (exact and tone ~= writtenColor) then
         writtenColor = tone
+        colorShare = if first then colorShare else 1
         obj.Color = tone
       end
     end

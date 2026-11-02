@@ -801,11 +801,11 @@ harness.suite(function()
       end)
     end)
 
-    test("Transparency follows its curve", function()
+    test("Transparency follows its curve, within one write step", function()
       lived({ Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }, { DestroyDelay = 1 }, function(piece)
         frames(30)
 
-        expect(math.abs(piece.Transparency - 0.5) < LOOSE).toBe(true)
+        expect(math.abs(piece.Transparency - 0.5) < 0.02 + LOOSE).toBe(true)
       end)
     end)
 
@@ -820,11 +820,11 @@ harness.suite(function()
       end)
     end)
 
-    test("a Transparency change under the step is skipped until the end lands it", function()
+    test("a Transparency change under the step writes at most once before the end lands it", function()
       lived({ Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 0.015 } } }) }, { DestroyDelay = 1 }, function(piece)
         const early = watched(piece, "Transparency", 40)
 
-        expect(early).toBe(0)
+        expect(early <= 1).toBe(true)
 
         const _, last = watched(piece, "Transparency", 30)
 
@@ -838,6 +838,48 @@ harness.suite(function()
 
         expect(writes >= 4 and writes <= 7).toBe(true)
         expect(near1(last, 0.1)).toBe(true)
+      end)
+    end)
+
+    test("pieces spawned together cross their write steps on many different frames", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(4, 4), EmitCount = 100 })
+
+        stubbed(part, { Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }, function()
+          const env = effects.emit(0, part)
+          const list = pieces(fake)
+          const last = {}
+          const perFrame = {}
+
+          expect(#list).toBe(100)
+
+          for index, piece in list do
+            last[index] = piece.Transparency
+          end
+
+          for frame = 1, 230 do
+            frames(1)
+
+            for index, piece in list do
+              if piece.Transparency ~= last[index] then
+                last[index] = piece.Transparency
+                perFrame[frame] = (perFrame[frame] or 0) + 1
+              end
+            end
+          end
+
+          local busiest, busy = 0, 0
+
+          for _, count in perFrame do
+            busiest = math.max(busiest, count)
+            busy += 1
+          end
+
+          expect(busiest <= 40).toBe(true)
+          expect(busy >= 200).toBe(true)
+          env:Clear()
+        end)
       end)
     end)
 
