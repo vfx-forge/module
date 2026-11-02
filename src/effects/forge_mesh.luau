@@ -701,6 +701,7 @@ const function piece(
   const wobbles = turbulent(attrs.Turbulence)
   const seed = if wobbles then flight.rng:NextNumber(0, 1000) else 0
   const frequency = attrs.TurbulenceFrequency
+  const calm = if wobbles then particle_motion.rest(seed) else vector.zero
 
   if wobbles then
     tween.drive(scope, attrs.Turbulence(nil, duration), function(v: any)
@@ -845,7 +846,7 @@ const function piece(
 
         -- the ray runs along what is drawn: the flown position plus the wander
         const nextWander = if amount > 0
-          then particle_motion.wander(seed, age - dt + h * step, frequency, amount)
+          then particle_motion.wander(seed, age - dt + h * step, frequency, amount, calm)
           else vector.zero
 
         const hit = if collision ~= nil

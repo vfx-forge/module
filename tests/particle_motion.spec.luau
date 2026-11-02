@@ -221,6 +221,27 @@ harness.suite(function()
       end
     end)
 
+    test("a wander given its rest equals one that works it out, and the noise it was", function()
+      for seed = 0, 40 do
+        const base = seed * 23.17 + 0.4
+        const rest = particle_motion.rest(base)
+
+        for index = 0, 30 do
+          const age = index * 0.07
+          const given = particle_motion.wander(base, age, 1.7, 2.5, rest)
+          const t = age * 1.7
+          const expected = vector.create(
+            math.clamp((math.noise(base, t, 0.5) - math.noise(base, 0, 0.5)) * 5, -2.5, 2.5),
+            math.clamp((math.noise(base + 17.1, t, 0.5) - math.noise(base + 17.1, 0, 0.5)) * 5, -2.5, 2.5),
+            math.clamp((math.noise(base + 34.2, t, 0.5) - math.noise(base + 34.2, 0, 0.5)) * 5, -2.5, 2.5)
+          )
+
+          expect(given).toBe(expected)
+          expect(particle_motion.wander(base, age, 1.7, 2.5)).toBe(expected)
+        end
+      end
+    end)
+
     test("wander is zero at amount 0", function()
       expect(particle_motion.wander(5, 1.3, 2, 0)).toBe(vector.zero)
     end)

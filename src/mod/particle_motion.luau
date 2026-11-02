@@ -13,10 +13,10 @@ export type Config = {
 
 const FLIP = CFrame.fromOrientation(0, math.pi, 0)
 
--- one channel's drift from where it stood at age 0, so a piece spawns where
--- its path starts and never jumps on its first frame
-const function drift(seed: number, t: number, scale: number, amount: number)
-  return math.clamp((math.noise(seed, t, 0.5) - math.noise(seed, 0, 0.5)) * scale, -amount, amount)
+-- one channel's drift from `rest`, where it stood at age 0, so a piece spawns
+-- where its path starts and never jumps on its first frame
+const function drift(seed: number, t: number, scale: number, amount: number, rest: number)
+  return math.clamp((math.noise(seed, t, 0.5) - rest) * scale, -amount, amount)
 end
 
 const particle_motion = {}
@@ -85,15 +85,23 @@ function particle_motion.pull(position: vector, target: vector, strength: number
   return offset / distance * strength
 end
 
--- a smooth offset of up to amount per axis, three noise channels apart by seed
-function particle_motion.wander(seed: number, age: number, frequency: number, amount: number): vector
+-- where a seed's three wander channels stand at age 0, constant for a piece's
+-- whole life, so a caller wandering every frame works them out once
+function particle_motion.rest(seed: number): vector
+  return vector.create(math.noise(seed, 0, 0.5), math.noise(seed + 17.1, 0, 0.5), math.noise(seed + 34.2, 0, 0.5))
+end
+
+-- a smooth offset of up to amount per axis, three noise channels apart by
+-- seed; `rest` is particle_motion.rest(seed), worked out here when not given
+function particle_motion.wander(seed: number, age: number, frequency: number, amount: number, rest: vector?): vector
   const t = age * frequency
   const scale = amount * 2
+  const origin = rest or particle_motion.rest(seed)
 
   return vector.create(
-    drift(seed, t, scale, amount),
-    drift(seed + 17.1, t, scale, amount),
-    drift(seed + 34.2, t, scale, amount)
+    drift(seed, t, scale, amount, origin.x),
+    drift(seed + 17.1, t, scale, amount, origin.y),
+    drift(seed + 34.2, t, scale, amount, origin.z)
   )
 end
 
