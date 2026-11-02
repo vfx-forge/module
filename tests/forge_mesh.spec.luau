@@ -235,6 +235,23 @@ const function finite(cframe: CFrame)
   return true
 end
 
+-- the live piece cap lowered to `max` for as long as `body` runs
+const function capped(max: number, body: () -> ())
+  const census = forge_mesh.pieces
+  const was = census.max
+
+  census.max = max
+  census.live = 0
+
+  const ok, err = pcall(body)
+
+  census.max = was
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
 -- the stored rows of `part` replaced by `rows` for as long as `body` runs; lune
 -- refuses a non utf-8 attribute string, so a curve is stubbed in, not set
 const function stubbed(part: BasePart, rows: { [string]: any }, body: () -> ())
@@ -1681,6 +1698,135 @@ harness.suite(function()
         told()
 
         expect(shown(tick)).toBe("rbxassetid://3")
+      end)
+    end)
+  end)
+
+  harness.describe("the live piece cap", function()
+    const function census()
+      return forge_mesh.pieces.live
+    end
+
+    test("pieces past the cap are dropped and the count never passes it", function()
+      capped(5, function()
+        staged(function(fake)
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { EmitCount = 8, Lifetime = NumberRange.new(1, 1), Speed = STILL })
+          const env = effects.emit(0, part)
+
+          frames(1)
+          expect(census()).toBe(5)
+          expect(#pieces(fake)).toBe(5)
+
+          -- a second emit finds no room either
+          const more = effects.emit(0, part)
+
+          frames(1)
+          expect(census()).toBe(5)
+          expect(#pieces(fake)).toBe(5)
+
+          more:Clear()
+          env:Clear()
+          expect(census()).toBe(0)
+        end)
+      end)
+    end)
+
+    test("spawns succeed again once pieces end", function()
+      capped(5, function()
+        staged(function(fake)
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { EmitCount = 8, Lifetime = NumberRange.new(0.5, 0.5), Speed = STILL })
+
+          effects.emit(0, part)
+          frames(1)
+          expect(census()).toBe(5)
+
+          frames(60)
+          expect(census()).toBe(0)
+
+          const again = effects.emit(0, part)
+
+          frames(1)
+          expect(census()).toBe(5)
+          expect(#pieces(fake)).toBe(5)
+
+          again:Clear()
+          expect(census()).toBe(0)
+        end)
+      end)
+    end)
+
+    test("a piece that ends naturally gives its place back", function()
+      capped(5, function()
+        staged(function()
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { EmitCount = 3, Lifetime = NumberRange.new(0.5, 0.5), Speed = STILL })
+
+          effects.emit(0, part)
+          frames(1)
+          expect(census()).toBe(3)
+
+          frames(60)
+          expect(census()).toBe(0)
+        end)
+      end)
+    end)
+
+    test("a Kill on a hit gives its place back", function()
+      capped(5, function()
+        falling({ CollisionMode = "Kill" }, function(piece)
+          expect(census()).toBe(1)
+
+          for _ = 1, 120 do
+            frames(1)
+
+            if piece.Parent == nil then
+              break
+            end
+          end
+
+          expect(piece.Parent).toBe(nil)
+          expect(census()).toBe(0)
+        end)
+      end)
+    end)
+
+    test("clearing or cancelling an emit gives every place back", function()
+      capped(5, function()
+        staged(function()
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { EmitCount = 4, Lifetime = NumberRange.new(5, 5), Speed = STILL })
+          const env = effects.emit(0, part)
+
+          frames(2)
+          expect(census()).toBe(4)
+
+          env:Clear()
+          expect(census()).toBe(0)
+        end)
+      end)
+    end)
+
+    test("a template destroyed mid flight does not strand a place", function()
+      capped(5, function()
+        staged(function(fake)
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { EmitCount = 4, Lifetime = NumberRange.new(0.5, 0.5), Speed = STILL })
+
+          effects.emit(0, part)
+          frames(2)
+          expect(census()).toBe(4)
+
+          part:Destroy()
+
+          if fake.destroyed and fake.destroyed[part] then
+            fake.destroyed[part]()
+          end
+
+          frames(60)
+          expect(census()).toBe(0)
+        end)
       end)
     end)
   end)

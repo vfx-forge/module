@@ -574,6 +574,10 @@ end
 
 forge_mesh.constant = true
 
+-- every piece alive across all emitters and emits, and the most that may be;
+-- a spec lowers max, nothing else writes either
+forge_mesh.pieces = { live = 0, max = 500 }
+
 -- one piece: a bare copy of the template flown from its launch for its life,
 -- wearing the look, its nested effects run on it
 const function piece(
@@ -587,6 +591,28 @@ const function piece(
 )
   const scope = ctx.scope
   const duration = launch.duration
+  const census = forge_mesh.pieces
+
+  -- a full house drops the piece before it takes anything
+  if census.live >= census.max then
+    return
+  end
+
+  census.live += 1
+
+  -- given back once, by whichever comes first: the piece's own end or the
+  -- effect letting go (a clear, a cancel, a thrown step)
+  local counted = true
+
+  const function uncount()
+    if counted then
+      counted = false
+      census.live -= 1
+    end
+  end
+
+  lifetime.hold(scope, uncount)
+
   const obj = pool.take(scope, template, false, true) :: BasePart
 
   -- a frame set is lent from the store, never worn as a copy of its folder
@@ -917,6 +943,7 @@ const function piece(
   stepping:Disconnect()
   mover.cancel(obj)
   obj.Parent = nil
+  uncount()
 end
 
 function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
