@@ -578,7 +578,7 @@ const function piece(
     end
   end
 
-  lifetime.step(scope, advance, "follow")
+  const stepping = lifetime.step(scope, advance, "follow")
   lifetime.awaitJoin(ended)
 
   if attrs.ProjectileEnabled and not hit then
@@ -592,6 +592,7 @@ const function piece(
     flight_common.projectile(scope, obj, (direction * attrs.ProjectileSpeed) :: any, launch.flight, {
       params = flight.hitbox,
       follow = if locked then live else nil,
+      keepTurn = true,
     }, lifetime.add(landing))
 
     lifetime.awaitJoin(landing)
@@ -607,6 +608,12 @@ const function piece(
 
   look.linger()
   lifetime.awaitJoin(children)
+
+  -- a piece that ends ahead of its emit leaves the world at once, out of
+  -- reach of the writes still running on the effect; the pool takes it back
+  -- when the effect lets go
+  stepping:Disconnect()
+  obj.Parent = nil
 end
 
 function forge_mesh.emit(ctx: reader.Ctx, attrs: any)

@@ -106,5 +106,25 @@ harness.suite(function()
       expect(near(seen[1].cframe.Position, moved:PointToWorldSpace(Vector3.new(-4, 0, 1)))).toBe(true)
       expect(near(seen[1].cframe.LookVector, turn.LookVector)).toBe(true)
     end)
+
+    test("a followed flight that keeps its turn turns with the origin from where it set off", function()
+      const turn = CFrame.fromOrientation(0, 1, 0)
+      const moved = CFrame.new(0, 10, 0) * turn
+      local reads = 0
+
+      const function follow()
+        reads += 1
+
+        return if reads == 1 then CFrame.new(5, 0, 0) else moved
+      end
+
+      const tilt = CFrame.fromOrientation(0.5, 0, 0)
+      const start = CFrame.new(1, 0, 0) * tilt
+      const seen = fly(start, Vector3.new(0, 0, 2), 4, { follow = follow, keepTurn = true }, { 0.5 })
+
+      expect(near(seen[1].cframe.Position, moved:PointToWorldSpace(Vector3.new(-4, 0, 1)))).toBe(true)
+      expect(near(seen[1].cframe.LookVector, (turn * tilt).LookVector)).toBe(true)
+      expect(near(seen[1].cframe.UpVector, (turn * tilt).UpVector)).toBe(true)
+    end)
   end)
 end)

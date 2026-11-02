@@ -518,6 +518,33 @@ harness.suite(function()
       end)
     end)
 
+    test("a piece whose life ends first leaves the world while the other flies on", function()
+      staged(function(fake)
+        const part = attached({ EmitCount = 2, Duration = NumberRange.new(0.5, 2) })
+        const env = effects.emit(0, part)
+        const list = pieces(fake)
+        local elapsed = 0
+
+        expect(#list).toBe(2)
+
+        while #pieces(fake) == 2 and elapsed < 2.5 do
+          frames(1)
+          elapsed += FRAME
+        end
+
+        -- held by the effect to its end, both would leave on the same frame
+        expect(#pieces(fake)).toBe(1)
+
+        const gone = if list[1].Parent == nil then list[1] else list[2]
+        const flying = if gone == list[1] then list[2] else list[1]
+
+        expect(gone.Parent).toBe(nil)
+        expect(flying.Parent ~= nil).toBe(true)
+
+        env:Clear()
+      end)
+    end)
+
     test("a projectile keeps its piece up until it lands", function()
       staged(function(fake)
         const part = attached({
