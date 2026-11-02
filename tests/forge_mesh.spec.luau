@@ -623,12 +623,11 @@ harness.suite(function()
       end)
     end)
 
-    test("Squash stretches up and keeps volume", function()
+    test("Squash stretches up and narrows the rest as an emitter does", function()
       lived({ Squash = curveOf(1, { { 0, { 1 } } }) }, nil, function(piece)
         frames(1)
 
-        expect(near(piece.Size, Vector3.new(2 / math.sqrt(2), 4, 2 / math.sqrt(2)), LOOSE)).toBe(true)
-        expect(math.abs(piece.Size.X * piece.Size.Y * piece.Size.Z - 8) < LOOSE).toBe(true)
+        expect(near(piece.Size, Vector3.new(1, 4, 1), LOOSE)).toBe(true)
       end)
     end)
 

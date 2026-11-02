@@ -98,11 +98,13 @@ function common.rotation(mode: Mode, base: CFrame, position: vector, velocity: v
   return level and looking(level, UP) or keep
 end
 
--- the volume stays: height by 2^s, the other two by 2^(-s/2)
+-- as a ParticleEmitter squashes, measured: height by 1 + s, or by 1 / (1 - s)
+-- below 0, and the other two by its inverse, so each side keeps its area
 function common.squash(size: Vector3, s: number): Vector3
-  const across = 2 ^ (-s / 2)
+  const up = if s >= 0 then 1 + s else 1 / (1 - s)
+  const across = 1 / up
 
-  return Vector3.new(size.X * across, size.Y * 2 ^ s, size.Z * across)
+  return Vector3.new(size.X * across, size.Y * up, size.Z * across)
 end
 
 return common

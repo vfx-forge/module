@@ -94,20 +94,27 @@ harness.suite(function()
   end)
 
   harness.describe("orient_common.squash", function()
-    test("keeps the volume", function()
-      for _, s in { -2, 0, 1.5 } do
+    test("keeps the area of the side it stretches", function()
+      for _, s in { -2, -0.5, 0, 0.25, 1.5 } do
         const size = orient_common.squash(Vector3.new(2, 3, 5), s)
 
         -- a Vector3 holds float32, so the product is good to a part in 1e-6
-        expect(math.abs(size.X * size.Y * size.Z / 30 - 1) < 1e-6).toBe(true)
+        expect(math.abs(size.X * size.Y / 6 - 1) < 1e-6).toBe(true)
+        expect(math.abs(size.Z * size.Y / 15 - 1) < 1e-6).toBe(true)
       end
     end)
 
-    test("1 doubles the height", function()
-      const size = orient_common.squash(Vector3.new(2, 3, 5), 1)
+    test("1 doubles the height and halves the rest, -1 the other way", function()
+      const tall = orient_common.squash(Vector3.new(2, 3, 5), 1)
+      const wide = orient_common.squash(Vector3.new(2, 3, 5), -1)
 
-      expect(math.abs(size.Y - 6) < 1e-6).toBe(true)
-      expect(math.abs(size.X - 2 / math.sqrt(2)) < 1e-6).toBe(true)
+      expect(math.abs(tall.Y - 6) < 1e-6 and math.abs(tall.X - 1) < 1e-6).toBe(true)
+      expect(math.abs(wide.Y - 1.5) < 1e-6 and math.abs(wide.Z - 10) < 1e-6).toBe(true)
+    end)
+
+    test("the height grows linearly past 0, as an emitter's does", function()
+      expect(math.abs(orient_common.squash(Vector3.one, 2).Y - 3) < 1e-6).toBe(true)
+      expect(math.abs(orient_common.squash(Vector3.one, -2).X - 3) < 1e-6).toBe(true)
     end)
   end)
 end)
