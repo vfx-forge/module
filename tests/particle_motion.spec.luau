@@ -263,7 +263,7 @@ harness.suite(function()
       const start = CFrame.new(10, 0, 0) * CFrame.fromOrientation(0.3, 0.2, 0.1)
       const acceleration = vector.create(0, -2, 0)
       const wind = vector.create(1, 0, 0)
-      const gravity = { target = vector.zero, mass = 1000, softening = 1 }
+      const gravity = { kind = "Gravity", target = vector.zero, mass = 1000, softening = 1 }
       const points = particle_motion.path(start, 6, 1.3, acceleration, 0.4, wind, 32, gravity)
 
       local position = vector.create(10, 0, 0)
@@ -303,7 +303,7 @@ harness.suite(function()
         0,
         vector.zero,
         30,
-        { target = target, mass = 3000, softening = 1 }
+        { kind = "Gravity", target = target, mass = 3000, softening = 1 }
       )
 
       expect(vector.magnitude(bent[#bent] - target) < vector.magnitude(free[#free] - target)).toBe(true)
@@ -332,6 +332,374 @@ harness.suite(function()
       expect(particle_motion.substeps(1 / 30)).toBe(2)
       expect(particle_motion.substeps(1)).toBe(8)
       expect(particle_motion.substeps(0)).toBe(1)
+    end)
+  end)
+
+  harness.describe("particle_motion.vortex", function()
+    const AXIS = vector.create(0, 1, 0)
+
+    const function vortexOf(overrides: any?): particle_motion.Vortex
+      const base = {
+        kind = "Vortex",
+        center = vector.zero,
+        axis = AXIS,
+        swirl = 10,
+        inflow = 0,
+        lift = 0,
+        radius = 10,
+      }
+
+      for key, value in overrides or {} do
+        base[key] = value
+      end
+
+      return base :: any
+    end
+
+    test("the speed around the axis approaches VortexSwirl at radius R", function()
+      const vortex = vortexOf()
+      const position = vector.create(10, 0, 0)
+
+      local velocity = vector.zero
+
+      for _ = 1, 120 do
+        velocity += particle_motion.vortex(position, velocity, vortex, 1 / 60) * (1 / 60)
+      end
+
+      const around = vector.dot(velocity, vector.cross(AXIS, vector.create(1, 0, 0)))
+
+      expect(math.abs(around - 10) < 10 * math.exp(-4 * 2) + 1e-3).toBe(true)
+    end)
+
+    test("the swirl lands on its target in one long step, not past it", function()
+      const vortex = vortexOf()
+      const position = vector.create(10, 0, 0)
+      const velocity = particle_motion.vortex(position, vector.zero, vortex, 5) * 5
+      const around = vector.dot(velocity, vector.create(0, 0, -1))
+
+      expect(around > 0 and around <= 10).toBe(true)
+    end)
+
+    test("the swirl falls off inside R and outside it, Rankine style", function()
+      const vortex = vortexOf()
+
+      const function settled(d: number)
+        local velocity = vector.zero
+
+        for _ = 1, 600 do
+          velocity += particle_motion.vortex(vector.create(d, 0, 0), velocity, vortex, 1 / 60) * (1 / 60)
+        end
+
+        return vector.magnitude(velocity)
+      end
+
+      expect(math.abs(settled(5) - 5) < 1e-2).toBe(true)
+      expect(math.abs(settled(20) - 5) < 1e-2).toBe(true)
+    end)
+
+    test("a piece on the axis rises with lift and never goes NaN", function()
+      const vortex = vortexOf({ lift = 5, inflow = 5 })
+
+      local position = vector.create(0, 2, 0)
+      local velocity = vector.zero
+
+      for _ = 1, 120 do
+        position, velocity = particle_motion.advance(position, velocity, vector.zero, 0, vector.zero, vortex, 1 / 60)
+
+        expect(numeric_common.usable(position) and numeric_common.usable(velocity)).toBe(true)
+      end
+
+      expect(math.abs(position.y - (2 + 0.5 * 5 * 4)) < 1e-3).toBe(true)
+      expect(math.abs(position.x) + math.abs(position.z)).toBe(0)
+    end)
+
+    test("inflow brings a piece in from 3R", function()
+      const vortex = vortexOf({ inflow = 5 })
+
+      local position = vector.create(30, 0, 0)
+      local velocity = vector.zero
+
+      for _ = 1, 120 do
+        position, velocity = particle_motion.advance(position, velocity, vector.zero, 0, vector.zero, vortex, 1 / 60)
+      end
+
+      expect(vector.magnitude(vector.create(position.x, 0, position.z)) < 30 - 5).toBe(true)
+    end)
+
+    test("a vortex of nothing on a piece not going around is the plain step", function()
+      const vortex = vortexOf({ swirl = 0 })
+      const position, velocity = vector.create(4, 1, -2), vector.create(2, 3, -1)
+      const acceleration, wind = vector.create(0, -3, 0), vector.create(1, 0, 0)
+      const p1, v1 = particle_motion.advance(position, velocity, acceleration, 0.5, wind, vortex, 0.02)
+      const p2, v2 = particle_motion.step(position, velocity, acceleration, 0.5, wind, 0.02)
+
+      expect(close(p1, p2, 1e-6)).toBe(true)
+      expect(close(v1, v2, 1e-6)).toBe(true)
+    end)
+  end)
+
+  harness.describe("particle_motion.ring", function()
+    const AXIS = vector.create(0, 1, 0)
+
+    const function orbitOf(overrides: any?): particle_motion.Orbit
+      const base = {
+        kind = "Orbit",
+        center = vector.zero,
+        axis = AXIS,
+        radius = 10,
+        speed = 90,
+        capture = 2,
+        height = 0,
+      }
+
+      for key, value in overrides or {} do
+        base[key] = value
+      end
+
+      return base :: any
+    end
+
+    const function flown(orbit: particle_motion.Orbit, from: vector, seconds: number)
+      local position, velocity = from, vector.zero
+      const angles = {}
+
+      for _ = 1, math.round(seconds * 60) do
+        position, velocity = particle_motion.advance(position, velocity, vector.zero, 0, vector.zero, orbit, 1 / 60)
+        table.insert(angles, math.atan2(position.z, position.x))
+      end
+
+      return position, velocity, angles
+    end
+
+    test("a piece from radius 3 eases out to OrbitRadius at the capture's rate", function()
+      const orbit = orbitOf()
+      const position = flown(orbit, vector.create(3, 0, 0), 3 / 2)
+      const radius = vector.magnitude(position)
+
+      expect(math.abs(radius - (10 - 7 * math.exp(-3))) < 1e-3).toBe(true)
+
+      const settled = flown(orbit, vector.create(3, 0, 0), math.log(70) / 2 + 0.05)
+
+      expect(math.abs(vector.magnitude(settled) - 10) <= 0.1).toBe(true)
+    end)
+
+    test("the angle advances at OrbitSpeed", function()
+      const orbit = orbitOf({ speed = 90 })
+      const _, _, angles = flown(orbit, vector.create(3, 0, 0), 1)
+
+      local turned = 0
+
+      for i = 2, #angles do
+        local step = angles[i] - angles[i - 1]
+
+        if step > math.pi then
+          step -= 2 * math.pi
+        elseif step < -math.pi then
+          step += 2 * math.pi
+        end
+
+        turned += step
+      end
+
+      -- about the up axis a positive turn runs from +x toward -z
+      expect(math.abs(math.deg(-turned) - 90 * (59 / 60)) < 1e-2).toBe(true)
+    end)
+
+    test("a piece keeps to the height it spawned at and settles back to it", function()
+      const orbit = orbitOf({ height = 4 })
+      const position = flown(orbit, vector.create(3, 1, 0), 5)
+
+      expect(math.abs(position.y - 4) < 1e-3).toBe(true)
+    end)
+
+    test("the velocity is what the move took", function()
+      const orbit = orbitOf()
+      const from = vector.create(10, 0, 0)
+      const to, velocity = particle_motion.advance(from, vector.zero, vector.zero, 0, vector.zero, orbit, 1 / 60)
+
+      expect(close(velocity, (to - from) * 60, 1e-4)).toBe(true)
+      expect(math.abs(vector.magnitude(velocity) - math.rad(90) * 10) < 0.01).toBe(true)
+    end)
+
+    test("acceleration, drag and wind leave the ring alone", function()
+      const orbit = orbitOf()
+      const from = vector.create(6, 0, 0)
+      const a = particle_motion.advance(from, vector.zero, vector.create(0, -50, 0), 3, vector.one, orbit, 1 / 60)
+      const b = particle_motion.advance(from, vector.zero, vector.zero, 0, vector.zero, orbit, 1 / 60)
+
+      expect(a).toBe(b)
+    end)
+
+    test("a piece on the axis sets off the way it was launched, never NaN", function()
+      const orbit = orbitOf()
+      const position =
+        particle_motion.advance(vector.zero, vector.create(0, 0, 5), vector.zero, 0, vector.zero, orbit, 1 / 60)
+
+      expect(numeric_common.usable(position)).toBe(true)
+      expect(position.z > 0).toBe(true)
+    end)
+  end)
+
+  harness.describe("particle_motion.path under a force", function()
+    test("a path under a vortex is advance stepped at most 1/60 s at a time", function()
+      const start = CFrame.new(10, 0, 0)
+      const vortex = {
+        kind = "Vortex",
+        center = vector.zero,
+        axis = vector.create(0, 1, 0),
+        swirl = 10,
+        inflow = 5,
+        lift = 5,
+        radius = 10,
+      } :: particle_motion.Vortex
+      const points = particle_motion.path(start, 0, 1, vector.zero, 0, vector.zero, 32, vortex)
+
+      local position, velocity = vector.create(10, 0, 0), vector.zero
+
+      for index = 1, 32 do
+        for _ = 1, particle_motion.substeps(1 / 32) do
+          position, velocity = particle_motion.advance(
+            position,
+            velocity,
+            vector.zero,
+            0,
+            vector.zero,
+            vortex,
+            1 / 32 / particle_motion.substeps(1 / 32)
+          )
+        end
+
+        expect(close(points[index], position, 1e-5)).toBe(true)
+      end
+    end)
+
+    test("an orbit path takes its height from where it starts", function()
+      const orbit = {
+        kind = "Orbit",
+        center = vector.zero,
+        axis = vector.create(0, 1, 0),
+        radius = 10,
+        speed = 90,
+        capture = 2,
+      } :: particle_motion.Orbit
+      const points = particle_motion.path(CFrame.new(3, 2, 0), 0, 4, vector.zero, 0, vector.zero, 32, orbit)
+
+      expect(math.abs(points[#points].y - 2) < 1e-3).toBe(true)
+      expect(orbit.height).toBe(nil)
+    end)
+
+    test("rows sampled over the life drive the force as it flies", function()
+      const start = CFrame.new(0, 0, 0)
+      const gravity = { kind = "Gravity", target = vector.create(0, 20, 0), mass = 0, softening = 1 }
+      const flat = particle_motion.path(start, 0, 1, vector.zero, 0, vector.zero, 30, gravity)
+      const ramped = particle_motion.path(start, 0, 1, vector.zero, 0, vector.zero, 30, gravity, {
+        span = 1,
+        since = 0,
+        lists = { mass = { 0, 3000 } },
+      })
+
+      expect(flat[#flat]).toBe(vector.zero)
+      expect(ramped[#ramped].y > 1).toBe(true)
+      expect(gravity.mass).toBe(0)
+    end)
+
+    test("rows drive the acceleration and drag too", function()
+      const start = CFrame.new(0, 0, 0)
+      const points = particle_motion.path(start, 0, 1, vector.zero, 0, vector.zero, 32, nil, {
+        span = 1,
+        since = 0,
+        lists = { acceleration = { vector.create(0, -10, 0) } },
+      })
+      const plain = particle_motion.path(start, 0, 1, vector.create(0, -10, 0), 0, vector.zero, 32)
+
+      expect(points[#points]).toBe(plain[#plain])
+    end)
+  end)
+
+  harness.describe("particle_motion.sampled", function()
+    test("a list sampled evenly reads between its two nearest samples", function()
+      expect(particle_motion.sampled({ 4 }, 0.7)).toBe(4)
+      expect(particle_motion.sampled({ 0, 10 }, 0.25)).toBe(2.5)
+      expect(particle_motion.sampled({ 0, 10, 30 }, 0.75)).toBe(20)
+      expect(particle_motion.sampled({ 0, 10 }, 2)).toBe(10)
+      expect(particle_motion.sampled({ 0, 10 }, -1)).toBe(0)
+    end)
+  end)
+
+  harness.describe("particle_motion.thin", function()
+    const function circle(count: number, turns: number)
+      const points = {}
+
+      for i = 0, count do
+        const a = i / count * turns * 2 * math.pi
+
+        table.insert(points, vector.create(math.cos(a) * 10, 0, math.sin(a) * 10))
+      end
+
+      return points
+    end
+
+    test("a path that turns a lot keeps at most 64 points, its ends among them", function()
+      const points = circle(4000, 30)
+      const kept = particle_motion.thin(points, 64)
+
+      expect(#kept <= 64).toBe(true)
+      expect(#kept >= 32).toBe(true)
+      expect(kept[1]).toBe(points[1])
+      expect(kept[#kept]).toBe(points[#points])
+    end)
+
+    test("a path that turns little keeps a point every 3 degrees or so", function()
+      const kept = particle_motion.thin(circle(720, 0.25), 64)
+
+      -- a quarter turn is 30 bends of 3 degrees, and the eighths fall among them
+      expect(#kept >= 28 and #kept <= 40).toBe(true)
+    end)
+
+    test("a straight path keeps its ends and a point every eighth", function()
+      const points = {}
+
+      for i = 0, 100 do
+        table.insert(points, vector.create(i, 0, 0))
+      end
+
+      const kept = particle_motion.thin(points, 64)
+
+      expect(#kept).toBe(9)
+      expect(kept[#kept]).toBe(points[#points])
+    end)
+
+    test("a sharp bend is kept", function()
+      const points = {}
+
+      for i = 0, 50 do
+        table.insert(points, vector.create(i, 0, 0))
+      end
+
+      for i = 1, 50 do
+        table.insert(points, vector.create(50, i, 0))
+      end
+
+      const corner = points[51]
+
+      expect(table.find(particle_motion.thin(points, 64), corner) ~= nil).toBe(true)
+    end)
+
+    test("a jagged path keeps its biggest bends within the cap", function()
+      const points = {}
+      const rng = Random.new(3)
+
+      for i = 0, 2000 do
+        table.insert(points, vector.create(i * 0.1, rng:NextNumber(-1, 1), rng:NextNumber(-1, 1)))
+      end
+
+      expect(#particle_motion.thin(points, 64) <= 64).toBe(true)
+    end)
+
+    test("a path of two points or fewer is itself", function()
+      const two = { vector.zero, vector.one }
+
+      expect(particle_motion.thin(two, 64)).toBe(two)
     end)
   end)
 

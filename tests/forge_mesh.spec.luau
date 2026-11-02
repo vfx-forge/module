@@ -406,12 +406,17 @@ const function tagged(roots: { Instance }): { Instance }
 end
 
 -- an Instance row's live read and the probe that unwraps it, lune storing no
--- instance in an attribute: a handle is a table naming its target
+-- instance in an attribute: a handle is a table naming its target. a part
+-- naming no Force is pulled by Gravity
 const function targeting(part: BasePart, target: Instance, body: () -> ())
   const live, probe = reader.liveOf, reader.probe
 
+  if part:GetAttribute("Force") == nil then
+    part:SetAttribute("Force", "Gravity")
+  end
+
   reader.liveOf = function(ref: Instance, name: string)
-    return if ref == part and name == "GravityTarget" then { handle = true, target = target } else live(ref, name)
+    return if ref == part and name == "ForceTarget" then { handle = true, target = target } else live(ref, name)
   end
 
   reader.probe = table.freeze({
@@ -1766,6 +1771,181 @@ harness.suite(function()
       end)
     end)
 
+    test("Force None leaves a set target alone, the plain path", function()
+      staged(function(fake)
+        const part = attached({
+          Speed = NumberRange.new(10, 10),
+          Acceleration = Vector3.new(0, -20, 0),
+          Lifetime = NumberRange.new(1, 1),
+          GravityMass = 30000,
+          Force = "None",
+        })
+        const goal = harness.make("Part", part.Parent) :: BasePart
+
+        goal.Position = Vector3.new(30, 12, 3)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+
+            frames(30)
+
+            const expected = Vector3.new(1, 12, 3) + Vector3.new(0, 10, 0) * 0.5 + Vector3.new(0, -20, 0) * 0.125
+
+            expect(near(pieces(fake)[1].CFrame.Position, expected, LOOSE)).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("a vortex carries a piece around the target's up axis and lifts it", function()
+      staged(function(fake)
+        const part = attached({
+          Speed = STILL,
+          Lifetime = NumberRange.new(4, 4),
+          Force = "Vortex",
+          VortexSwirl = 10,
+          VortexInflow = 5,
+          VortexLift = 5,
+          VortexRadius = 10,
+        })
+        const goal = harness.make("Part", part.Parent) :: BasePart
+
+        -- the piece spawns 10 studs out along x, level with the target
+        goal.Position = Vector3.new(-9, 12, 3)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            local turned = 0
+            local last = math.atan2(0, 10)
+
+            for _ = 1, 120 do
+              frames(1)
+
+              expect(finite(piece.CFrame)).toBe(true)
+
+              const offset = piece.CFrame.Position - goal.Position
+              const angle = math.atan2(-offset.Z, offset.X)
+
+              turned += (angle - last + math.pi) % (2 * math.pi) - math.pi
+              last = angle
+            end
+
+            const offset = piece.CFrame.Position - goal.Position
+
+            expect(turned > math.rad(45)).toBe(true)
+            expect(math.abs(offset.Y - 0.5 * 5 * 4) < 0.05).toBe(true)
+            -- the swirl outruns the inflow at R, so the piece drifts out a little
+            expect(Vector3.new(offset.X, 0, offset.Z).Magnitude < 15).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("an orbit from radius 3 settles onto OrbitRadius at OrbitSpeed", function()
+      staged(function(fake)
+        const part = attached({
+          Speed = NumberRange.new(5, 5),
+          Lifetime = NumberRange.new(6, 6),
+          Force = "Orbit",
+          OrbitRadius = 10,
+          OrbitSpeed = 90,
+          OrbitCapture = 2,
+        })
+        const goal = harness.make("Part", part.Parent) :: BasePart
+
+        goal.Position = Vector3.new(-2, 12, 3)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            frames(math.ceil(math.log(70) / 2 * 60) + 1)
+
+            local lowest, highest, turned = math.huge, 0, 0
+            local last: number? = nil
+
+            for _ = 1, 120 do
+              frames(1)
+
+              const offset = piece.CFrame.Position - goal.Position
+              const radius = Vector3.new(offset.X, 0, offset.Z).Magnitude
+              const angle = math.atan2(-offset.Z, offset.X)
+
+              lowest, highest = math.min(lowest, radius), math.max(highest, radius)
+
+              if last ~= nil then
+                turned += (angle - last + math.pi) % (2 * math.pi) - math.pi
+              end
+
+              last = angle
+
+              expect(math.abs(offset.Y) < EPSILON).toBe(true)
+            end
+
+            expect(lowest >= 9.9 and highest <= 10.1).toBe(true)
+            expect(math.abs(math.deg(turned) - 90 * 119 / 60) < 0.5).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("a gone target stops the vortex and the piece flies on as it was", function()
+      staged(function(fake)
+        const part = attached({ Speed = STILL, Lifetime = NumberRange.new(3, 3), Force = "Vortex" })
+        const goal = harness.make("Part", part.Parent) :: BasePart
+        local open = true
+
+        goal.Position = Vector3.new(-9, 12, 3)
+
+        reachable(function()
+          return open
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            frames(20)
+
+            open = false
+
+            frames(2)
+
+            const a = piece.CFrame.Position
+
+            frames(1)
+
+            const b = piece.CFrame.Position
+
+            frames(1)
+
+            const c = piece.CFrame.Position
+
+            expect((b - a).Magnitude > EPSILON).toBe(true)
+            expect(near(b - a, c - b, EPSILON)).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
     test("a piece with no target steps as it always did, sub-steps and all", function()
       staged(function(fake)
         const part = attached({
@@ -2046,9 +2226,17 @@ harness.suite(function()
             "Rate",
             "WindAffectsDrag",
             "ShapePartial",
+            "ForceTarget",
             "GravityMass",
             "GravitySoftening",
             "OrbitLaunch",
+            "VortexSwirl",
+            "VortexInflow",
+            "VortexLift",
+            "VortexRadius",
+            "OrbitRadius",
+            "OrbitSpeed",
+            "OrbitCapture",
             "TurbulenceFrequency",
             "Mesh Frames",
             "Material Frames",
@@ -2064,6 +2252,31 @@ harness.suite(function()
         end
 
         expect(hidden.Collision).toBe(false)
+      end)
+    end)
+
+    test("each force shows its own rows and the target's", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const rows = {
+          Gravity = { "GravityMass", "GravitySoftening", "OrbitLaunch" },
+          Vortex = { "VortexSwirl", "VortexInflow", "VortexLift", "VortexRadius" },
+          Orbit = { "OrbitRadius", "OrbitSpeed", "OrbitCapture" },
+        }
+
+        for force, own in rows do
+          const hidden = hiddenOf(template(parent, { Force = force }))
+
+          expect(`{force} ForceTarget {hidden.ForceTarget}`).toBe(`{force} ForceTarget false`)
+
+          for other, names in rows do
+            for _, name in names do
+              expect(`{force} {name} {hidden[name]}`).toBe(`{force} {name} {other ~= force}`)
+            end
+          end
+
+          expect(own[1] ~= nil).toBe(true)
+        end
       end)
     end)
 

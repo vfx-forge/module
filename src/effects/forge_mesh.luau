@@ -37,6 +37,16 @@ const SIZE_STEP = 0.015
 const SIZE_FLOOR = 1e-4
 const COLOR_STEP = 2 / 255
 
+const WORLD_UP = vector.create(0, 1, 0)
+
+-- the rows each force drives over a piece's life, by the field of its
+-- particle_motion force they write
+const DRIVEN = {
+  Gravity = { GravityMass = "mass" },
+  Vortex = { VortexSwirl = "swirl", VortexInflow = "inflow", VortexLift = "lift" },
+  Orbit = { OrbitRadius = "radius", OrbitSpeed = "speed" },
+}
+
 const function always()
   return true
 end
@@ -73,8 +83,20 @@ const function textureSynced(_, attrs: any)
   return attrs.TextureSyncDuration == true
 end
 
-const function untargeted(_, attrs: any)
-  return attrs.GravityTarget == nil
+const function forceless(_, attrs: any)
+  return attrs.Force == "None"
+end
+
+const function gravityless(_, attrs: any)
+  return attrs.Force ~= "Gravity"
+end
+
+const function vortexless(_, attrs: any)
+  return attrs.Force ~= "Vortex"
+end
+
+const function orbitless(_, attrs: any)
+  return attrs.Force ~= "Orbit"
 end
 
 -- a mod row reaches a rule as its track
@@ -251,9 +273,10 @@ type Flight = {
   rng: Random,
   collision: Collision?,
 
-  -- where the gravity target stood on frame `read`, shared by every piece of
-  -- the emit; nil when it had no place or was gone
+  -- where the force's target stood on frame `read` and its up axis, shared
+  -- by every piece of the emit; nil when it had no place or was gone
   standing: vector?,
+  up: vector,
   read: number,
 
   -- the Color row's keypoints, read once for the emit's pieces that take it
@@ -261,52 +284,42 @@ type Flight = {
   keypoints: { ColorSequenceKeypoint },
 }
 
--- where a gravity target stands, or nil for a class that has no place
-const function standingOf(target: Instance): vector?
+-- where a force's target stands and its up axis, nil for a class that has no
+-- place. the place is read on its own, lune keeping it apart from the frame
+const function poseOf(target: Instance): (vector?, vector)
   if target:IsA("BasePart") then
-    return toVector(target.Position)
+    return toVector(target.Position), toVector(target.CFrame.UpVector)
   end
 
   if target:IsA("Attachment") then
-    return toVector(target.WorldPosition)
+    return toVector(target.WorldPosition), toVector(target.WorldCFrame.UpVector)
   end
 
   if target:IsA("Model") then
-    return toVector(target:GetPivot().Position)
+    const pivot = target:GetPivot()
+
+    return toVector(pivot.Position), toVector(pivot.UpVector)
   end
 
-  return nil
-end
-
--- a gravity target's up axis, the plane an orbit launch along the radius
--- turns in
-const function upOf(target: Instance): vector
-  if target:IsA("BasePart") then
-    return toVector(target.CFrame.UpVector)
-  end
-
-  if target:IsA("Attachment") then
-    return toVector(target.WorldCFrame.UpVector)
-  end
-
-  if target:IsA("Model") then
-    return toVector(target:GetPivot().UpVector)
-  end
-
-  return vector.create(0, 1, 0)
+  return nil, WORLD_UP
 end
 
 const forge_mesh = {}
 
--- the gravity target's place this frame, read from the engine by the first
--- piece to ask and kept for the rest of the emit's pieces
-const function standingNow(flight: Flight, target: Instance): vector?
+-- the force target's place and up axis this frame, read from the engine by
+-- the first piece to ask and kept for the rest of the emit's pieces
+const function standingNow(flight: Flight, target: Instance): (vector?, vector)
   if flight.read ~= clock.frame then
     flight.read = clock.frame
-    flight.standing = if forge_mesh.engine.alive(target) then standingOf(target) else nil
+
+    if forge_mesh.engine.alive(target) then
+      flight.standing, flight.up = poseOf(target)
+    else
+      flight.standing, flight.up = nil, WORLD_UP
+    end
   end
 
-  return flight.standing
+  return flight.standing, flight.up
 end
 
 -- the engine calls, held here so a spec can stand in for them under lune
@@ -458,23 +471,65 @@ forge_mesh.attributes = {
     :mod()
     :label("Acceleration")
     :hint("Constant acceleration on each piece, in the parent's frame while LockedToPart."),
-  GravityTarget = knob()
+  Force = knob("None")
+    :options({ "None", "Gravity", "Vortex", "Orbit" })
+    :label("Force")
+    :hint("What moves each piece around the target: a pull, a swirl or a ring."),
+  ForceTarget = knob()
     :instance({ "Attachment", "BasePart", "Model" })
-    :label("GravityTarget")
-    :hint("Attachment, part or model whose gravity pulls each piece."),
-  GravityMass = knob(1000):min(0):mod():hidden(untargeted):label("GravityMass"):hint(
+    :hidden(forceless)
+    :label("ForceTarget")
+    :hint("Attachment, part or model the force acts around, about its up axis."),
+  GravityMass = knob(1000):min(0):mod():hidden(gravityless):label("GravityMass"):hint(
     "How hard the target pulls. At distance d the pull is Mass / d squared, in studs per second squared."
   ),
   GravitySoftening = knob(1)
     :min(0)
     :unit("studs")
-    :hidden(untargeted)
+    :hidden(gravityless)
     :label("GravitySoftening")
     :hint("Smooths the pull close to the target, so a piece passing through it is not flung away."),
   OrbitLaunch = knob(false)
-    :hidden(untargeted)
+    :hidden(gravityless)
     :label("OrbitLaunch")
     :hint("Launch each piece sideways at the speed of a circular orbit around the target."),
+  VortexSwirl = knob(10)
+    :mod()
+    :unit("studsPerSecond")
+    :hidden(vortexless)
+    :label("VortexSwirl")
+    :hint("The speed pieces are carried around the axis."),
+  VortexInflow = knob(5)
+    :mod()
+    :unit("studsPerSecondSquared")
+    :hidden(vortexless)
+    :label("VortexInflow")
+    :hint("The pull toward the axis."),
+  VortexLift = knob(5)
+    :mod()
+    :unit("studsPerSecondSquared")
+    :hidden(vortexless)
+    :label("VortexLift")
+    :hint("The push along the axis."),
+  VortexRadius = knob(10)
+    :min(0)
+    :unit("studs")
+    :hidden(vortexless)
+    :label("VortexRadius")
+    :hint("Where swirl and inflow are at full strength."),
+  OrbitRadius = knob(10):min(0):unit("studs"):mod():hidden(orbitless):label("OrbitRadius"):hint("The ring's radius."),
+  OrbitSpeed = knob(90)
+    :unit("perSecond")
+    :mod()
+    :hidden(orbitless)
+    :label("OrbitSpeed")
+    :hint("How fast pieces go around, in degrees per second."),
+  OrbitCapture = knob(2)
+    :min(0)
+    :unit("perSecond")
+    :hidden(orbitless)
+    :label("OrbitCapture")
+    :hint("How quickly a piece settles onto the ring."),
 
   Turbulence = knob(0)
     :min(0)
@@ -594,10 +649,18 @@ forge_mesh.layout = {
     entries = {
       "Motion",
       "Acceleration",
-      "GravityTarget",
+      "Force",
+      "ForceTarget",
       "GravityMass",
       "GravitySoftening",
       "OrbitLaunch",
+      "VortexSwirl",
+      "VortexInflow",
+      "VortexLift",
+      "VortexRadius",
+      "OrbitRadius",
+      "OrbitSpeed",
+      "OrbitCapture",
       "Turbulence",
       "TurbulenceFrequency",
     },
@@ -797,7 +860,6 @@ const function piece(
   local velocity = toVector(launch.spawn.LookVector) * launch.speed + launch.inherited
   local acceleration = vector.zero
   local drag = 0
-  local mass = 0
   local amount = 0
   local wander = vector.zero
   local spin = vector.zero
@@ -805,8 +867,34 @@ const function piece(
   -- a piece the world stopped keeps its look but no longer moves
   local pinned = false
 
-  const target = attrs.GravityTarget :: Instance?
-  const softening = attrs.GravitySoftening :: number
+  -- the force the piece flies under, its place and axis written each frame
+  -- and its driven rows over the life; none without a target
+  const target = if attrs.Force ~= "None" then attrs.ForceTarget :: Instance? else nil
+  const pull: any = if target == nil
+    then nil
+    elseif attrs.Force == "Gravity" then {
+      kind = "Gravity",
+      target = vector.zero,
+      mass = 0,
+      softening = attrs.GravitySoftening,
+    }
+    elseif attrs.Force == "Vortex" then {
+      kind = "Vortex",
+      center = vector.zero,
+      axis = WORLD_UP,
+      swirl = 0,
+      inflow = 0,
+      lift = 0,
+      radius = attrs.VortexRadius,
+    }
+    else {
+      kind = "Orbit",
+      center = vector.zero,
+      axis = WORLD_UP,
+      radius = 0,
+      speed = 0,
+      capture = attrs.OrbitCapture,
+    }
   const collision = if flight.collision ~= nil and not locked then flight.collision else nil
   const response = if collision ~= nil then table.clone(collision.config) else nil
 
@@ -825,10 +913,12 @@ const function piece(
     drag = v
   end)
 
-  if target ~= nil then
-    tween.drive(scope, attrs.GravityMass(nil, duration), function(v: any)
-      mass = numberOr(v, 0)
-    end)
+  if pull ~= nil then
+    for row, field in DRIVEN[pull.kind] do
+      tween.drive(scope, attrs[row](nil, duration), function(v: any)
+        pull[field] = numberOr(v, 0)
+      end)
+    end
   end
 
   const wobbles = turbulent(attrs.Turbulence)
@@ -886,19 +976,58 @@ const function piece(
     return toVector(origin:PointToWorldSpace(live():PointToObjectSpace(Vector3.new(at.x, at.y, at.z))))
   end
 
+  -- a world axis in the frame a locked piece flies in
+  const function unturned(up: vector): vector
+    if not locked then
+      return up
+    end
+
+    return toVector(origin:VectorToWorldSpace(live():VectorToObjectSpace(Vector3.new(up.x, up.y, up.z))))
+  end
+
+  -- the force this frame, placed where its target stands, in the frame the
+  -- piece flies in; none while the target is gone, or for gravity of no mass
+  const function forceNow(): particle_motion.Force?
+    if pull == nil or (pull.kind == "Gravity" and pull.mass == 0) then
+      return nil
+    end
+
+    const standing, up = standingNow(flight, target :: Instance)
+
+    if standing == nil then
+      return nil
+    end
+
+    const at = unplaced(standing)
+
+    if pull.kind == "Gravity" then
+      pull.target = at
+      return pull
+    end
+
+    const axis = vector.normalize(unturned(up))
+
+    pull.center = at
+    pull.axis = axis
+
+    -- a piece's own ring sits at the height it spawned at
+    if pull.kind == "Orbit" and pull.height == nil then
+      pull.height = vector.dot(position - at, axis)
+    end
+
+    return pull
+  end
+
   -- an orbit launch trades the launch's speed for the circular orbit's about
   -- where the target stands, in the frame the piece flies in
-  if target ~= nil and attrs.OrbitLaunch and mass ~= 0 then
-    const standing = standingNow(flight, target)
+  if pull ~= nil and pull.kind == "Gravity" and attrs.OrbitLaunch and pull.mass ~= 0 then
+    const standing, up = standingNow(flight, target :: Instance)
 
     if standing ~= nil then
-      const up = upOf(target)
-      const axis = if locked
-        then toVector(origin:VectorToWorldSpace(live():VectorToObjectSpace(Vector3.new(up.x, up.y, up.z))))
-        else up
       const look = toVector(launch.spawn.LookVector)
 
-      velocity = particle_motion.orbit(position, unplaced(standing), look, axis, mass, softening) + launch.inherited
+      velocity = particle_motion.orbit(position, unplaced(standing), look, unturned(up), pull.mass, pull.softening)
+        + launch.inherited
     end
   end
 
@@ -972,25 +1101,15 @@ const function piece(
     if dt > 0 and not pinned then
       const wind = if windy then toVector(workspace.GlobalWind) else vector.zero
 
-      -- the gravity target is read once a frame, a gone one adding none
-      const standing = if target ~= nil and mass ~= 0 then standingNow(flight, target) else nil
+      -- the force's target is read once a frame, a gone one adding none
+      const force = forceNow()
 
-      const pulled = if standing ~= nil then unplaced(standing) else nil
-
-      const steps = if collision ~= nil or drag > 0 or pulled ~= nil then particle_motion.substeps(dt) else 1
+      const steps = if collision ~= nil or drag > 0 or force ~= nil then particle_motion.substeps(dt) else 1
       const h = dt / steps
 
       for step = 1, steps do
-        local nextPosition, nextVelocity
-
-        -- a piece under gravity steps with velocity Verlet, so an orbit
-        -- neither spirals out nor in
-        if pulled ~= nil then
-          nextPosition, nextVelocity =
-            particle_motion.verlet(position, velocity, acceleration, pulled, mass, softening, drag, wind, h)
-        else
-          nextPosition, nextVelocity = particle_motion.step(position, velocity, acceleration, drag, wind, h)
-        end
+        const nextPosition, nextVelocity =
+          particle_motion.advance(position, velocity, acceleration, drag, wind, force, h)
 
         if not (numeric_common.usable(nextPosition) and numeric_common.usable(nextVelocity)) then
           break
@@ -1147,6 +1266,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     rng = Random.new(),
     collision = nil,
     standing = nil,
+    up = WORLD_UP,
     read = -1,
     keypoints = (attrs.Color.value :: ColorSequence).Keypoints,
   }
