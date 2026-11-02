@@ -14,6 +14,14 @@ export type Options = {
   materials: boolean?,
 }
 
+local function meshOf(part: BasePart): string?
+  const ok, uri = pcall(function()
+    return (part :: MeshPart).MeshContent.Uri
+  end)
+
+  return if ok and uri ~= "" then uri else nil
+end
+
 local frame_show = {}
 
 -- what a spec stands in
@@ -35,6 +43,10 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, 
   -- a frame applied before its mesh is loaded blocks the frame it lands on, so until it is the last one
   -- shown holds, or the start before any has
   const gated = set.meshes and special == nil and piece:IsA("MeshPart")
+
+  -- a frame of the mesh the piece already wears, as a start wears its first frame's, shows at its own bounds
+  -- with no apply and no wait on its load
+  local wearing = if gated then meshOf(piece) else nil
 
   local shown: number? = nil
   local switched = false
@@ -94,7 +106,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, 
       return offset
     end
 
-    if index ~= shown and gated and not frame_store.ready(set, index) then
+    if index ~= shown and gated and frame.meshId ~= wearing and not frame_store.ready(set, index) then
       frame = if shown then set.frames[shown] else nil
     elseif index ~= shown then
       if set.meshes then
@@ -105,9 +117,10 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, 
             special.MeshId = source.MeshId
             switched = true
           end
-        elseif frame.mesh and piece:IsA("MeshPart") then
+        elseif frame.mesh and piece:IsA("MeshPart") and (frame.meshId == nil or frame.meshId ~= wearing) then
           frame_show.engine.apply(piece, frame.mesh)
           switched = true
+          wearing = frame.meshId
         end
       end
 
@@ -185,6 +198,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, 
         end
       elseif piece:IsA("MeshPart") then
         frame_show.engine.apply(piece, start)
+        wearing = if gated then meshOf(start) else nil
       end
 
       switched = false

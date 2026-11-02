@@ -658,6 +658,40 @@ harness.suite(function()
       end)
     end)
 
+    test("a piece already wearing a frame's mesh shows that frame at its bounds while the mesh loads", function()
+      stored(function(applied)
+        local set, start = loading("l5", 2)
+
+        set.union = { size = Vector3.new(4, 8, 4), center = Vector3.new(0, 4, 0) }
+        set.frames[1].bounds = { size = Vector3.new(4, 2, 4), center = Vector3.new(0, 1, 0) }
+        set.frames[2].bounds = { size = Vector3.new(4, 8, 4), center = Vector3.new(0, 4, 0) }
+
+        local piece = harness.make("MeshPart") :: any
+
+        piece.MeshContent = roblox.Content.fromUri("rbxassetid://1")
+
+        local shown = frame_show.new(set, piece, start)
+        local offset = shown.show(1, Vector3.new(4, 8, 4))
+
+        expect(#applied).toBe(0)
+        expect(piece.Size).toBe(Vector3.new(4, 2, 4))
+        expect(offset).toBe(Vector3.new(0, -3, 0))
+
+        offset = shown.show(2, Vector3.new(4, 8, 4))
+
+        expect(#applied).toBe(0)
+        expect(piece.Size).toBe(Vector3.new(4, 2, 4))
+        expect(offset).toBe(Vector3.new(0, -3, 0))
+
+        preloads[1].done()
+        offset = shown.show(2, Vector3.new(4, 8, 4))
+
+        expect(#applied).toBe(1)
+        expect(piece.Size).toBe(Vector3.new(4, 8, 4))
+        expect(offset).toBe(Vector3.zero)
+      end)
+    end)
+
     test("before any frame is ready the piece keeps its start mesh and surface", function()
       stored(function(applied)
         local set, start = loading("l4", 2)
