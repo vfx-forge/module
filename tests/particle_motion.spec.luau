@@ -338,17 +338,32 @@ harness.suite(function()
   harness.describe("particle_motion.funnel", function()
     const AXIS = vector.create(0, 1, 0)
 
+    -- a funnel 2 studs wide at its foot and 8 at its top, 20 high
     const function vortexOf(overrides: any?): particle_motion.Vortex
       const base = {
         kind = "Vortex",
         center = vector.zero,
         axis = AXIS,
-        bottom = 2,
-        top = 8,
-        height = 15,
+        height = 20,
+        radius = { 2, 8 },
+        widest = 8,
+        wall = 0,
+        thickness = 0,
         spin = 1,
+        tighten = 0,
         rise = 0,
-        capture = 3,
+        pull = 3,
+        sway = 0,
+        swaySpeed = 0.3,
+        spinOver = 1,
+        riseOver = 1,
+        swayOver = { 0, 1 },
+        inflow = 0,
+        release = false,
+        seeds = vector.create(3.7, 9.1, 0),
+        time = 0,
+        swayed = nil,
+        released = false,
       }
 
       for key, value in overrides or {} do
@@ -359,8 +374,8 @@ harness.suite(function()
     end
 
     -- the funnel's radius at height `h`, held at its ends past them
-    const function widthAt(vortex: particle_motion.Vortex, h: number)
-      return vortex.bottom + (vortex.top - vortex.bottom) * math.clamp(h / vortex.height, 0, 1)
+    const function widthAt(h: number)
+      return 2 + 6 * math.clamp(h / 20, 0, 1)
     end
 
     const function radiusOf(position: vector)
@@ -386,32 +401,83 @@ harness.suite(function()
         turned += (angles[i] - angles[i - 1] + math.pi) % (2 * math.pi) - math.pi
       end
 
-      return turned
+      return -turned
     end
 
-    test("a piece at a height settles to the funnel's radius there within 1% after 4.7 / capture", function()
-      const vortex = vortexOf({ capture = 3 })
-      const position = flown(vortex, vector.create(1, 7.5, 0), 4.7 / 3)
+    -- radians a second a piece turns at once it sits on the wall at `h`
+    const function angularAt(vortex: particle_motion.Vortex, h: number, from: number)
+      const _, _, angles = flown(vortex, vector.create(from, h, 0), 2)
+      const settled = table.move(angles, 61, 120, 1, {})
 
-      expect(math.abs(radiusOf(position) - 5) <= 0.05).toBe(true)
-      expect(math.abs(position.y - 7.5) < 1e-9).toBe(true)
+      return turnOf(settled) * 60 / 59
+    end
+
+    test("a piece at a height settles to a curved radius there within 1% after 4.7 / pull", function()
+      const vortex = vortexOf({ radius = { 2, 2.5, 5, 8 }, pull = 3 })
+      const position = flown(vortex, vector.create(1, 10, 0), 4.7 / 3)
+
+      -- halfway between the second and third samples
+      expect(math.abs(radiusOf(position) - 3.75) <= 0.0375).toBe(true)
+      expect(math.abs(position.y - 10) < 1e-9).toBe(true)
     end)
 
     test("a rising piece keeps to the funnel as it climbs once drawn on", function()
-      const vortex = vortexOf({ rise = 5, capture = 3 })
-      const position = flown(vortex, vector.create(1, 0, 0), 4.7 / 3)
-      const width = widthAt(vortex, position.y)
+      const position = flown(vortexOf({ rise = 5 }), vector.create(1, 0, 0), 4.7 / 3)
+      const width = widthAt(position.y)
 
       expect(math.abs(radiusOf(position) - width) <= 0.01 * width).toBe(true)
     end)
 
-    test("the angle advances at the spin's turns per second, and a negative spin turns back", function()
-      const _, _, forward = flown(vortexOf({ spin = 0.5 }), vector.create(2, 0, 0), 1)
+    test("Tighten 0 turns the whole funnel together at the spin", function()
+      const vortex = vortexOf({ spin = 0.5 })
+      const bottom = angularAt(vortex, 0, 2)
+      const top = angularAt(vortexOf({ spin = 0.5 }), 20, 8)
+
+      expect(math.abs(bottom - math.pi) < 1e-3).toBe(true)
+      expect(math.abs(top - math.pi) < 1e-3).toBe(true)
+
       const _, _, backward = flown(vortexOf({ spin = -0.5 }), vector.create(2, 0, 0), 1)
 
-      -- about the up axis a positive turn runs from +x toward -z
-      expect(math.abs(-turnOf(forward) - math.pi * (59 / 60)) < 1e-6).toBe(true)
-      expect(math.abs(turnOf(backward) - math.pi * (59 / 60)) < 1e-6).toBe(true)
+      expect(math.abs(turnOf(backward) + math.pi * (59 / 60)) < 1e-6).toBe(true)
+    end)
+
+    test("Tighten 1 keeps one wall speed: the angular speed times the radius holds along the height", function()
+      const bottom = angularAt(vortexOf({ tighten = 1 }), 0, 2)
+      const middle = angularAt(vortexOf({ tighten = 1 }), 10, 5)
+      const top = angularAt(vortexOf({ tighten = 1 }), 20, 8)
+
+      -- the spin is the turn at the widest part, so the top turns at it
+      expect(math.abs(top - 2 * math.pi) < 1e-3).toBe(true)
+      expect(math.abs(bottom * 2 - top * 8) < 1e-2).toBe(true)
+      expect(math.abs(middle * 5 - top * 8) < 1e-2).toBe(true)
+    end)
+
+    test("Tighten 2 turns an inner piece faster than an outer one at the same height", function()
+      const inner = angularAt(vortexOf({ tighten = 2, thickness = 2, wall = -0.5 }), 10, 4)
+      const outer = angularAt(vortexOf({ tighten = 2, thickness = 2, wall = 0.5 }), 10, 6)
+
+      expect(inner > outer).toBe(true)
+      expect(math.abs(inner / outer - (6 / 4) ^ 2) < 1e-2).toBe(true)
+    end)
+
+    test("the boost is capped near the axis and never NaN", function()
+      const position, velocity = flown(vortexOf({ tighten = 2, radius = 0 }), vector.create(0, 5, 0), 1)
+
+      expect(numeric_common.usable(position) and numeric_common.usable(velocity)).toBe(true)
+
+      const capped = angularAt(vortexOf({ tighten = 2, radius = { 0.1, 8 }, pull = 30 }), 0, 0.1)
+
+      expect(math.abs(capped - 8 * 2 * math.pi) < 1e-2).toBe(true)
+    end)
+
+    test("Thickness spreads pieces across the wall, each keeping its place", function()
+      const inner = flown(vortexOf({ thickness = 2, wall = -0.5 }), vector.create(1, 10, 0), 4)
+      const outer = flown(vortexOf({ thickness = 2, wall = 0.5 }), vector.create(1, 10, 0), 4)
+      const middle = flown(vortexOf({ thickness = 2, wall = 0.25 }), vector.create(1, 10, 0), 4)
+
+      expect(math.abs(radiusOf(inner) - 4) < 1e-3).toBe(true)
+      expect(math.abs(radiusOf(outer) - 6) < 1e-3).toBe(true)
+      expect(math.abs(radiusOf(middle) - 5.5) < 1e-3).toBe(true)
     end)
 
     test("the rise moves a piece along the axis at its speed, a negative one sinking", function()
@@ -422,12 +488,103 @@ harness.suite(function()
       expect(math.abs(down.y + 5) < 1e-4).toBe(true)
     end)
 
+    test("RiseOverHeight and SpinOverHeight scale the rise and spin where the piece stands", function()
+      const slowed = flown(vortexOf({ rise = 4, riseOver = { 0.5, 0.5 } }), vector.create(2, 1, 0), 2)
+      const quick = angularAt(vortexOf({ spinOver = { 2, 2 } }), 10, 5)
+
+      expect(math.abs(slowed.y - 5) < 1e-4).toBe(true)
+      expect(math.abs(quick - 4 * math.pi) < 1e-3).toBe(true)
+    end)
+
+    test("Inflow 1 holds a piece outside the wall to a ninth of the rise at three times its radius", function()
+      const vortex = vortexOf({ rise = 9, inflow = 1, radius = 2, pull = 0 })
+      const from = vector.create(6, 0, 0)
+      const to = particle_motion.advance(from, vector.zero, vector.zero, 0, vector.zero, vortex, 1 / 60)
+
+      expect(math.abs(to.y - 1 / 60) < 1e-5).toBe(true)
+
+      const climbing = vortexOf({ rise = 9, inflow = 0, radius = 2, pull = 0 })
+      const free = particle_motion.advance(from, vector.zero, vector.zero, 0, vector.zero, climbing, 1 / 60)
+
+      expect(math.abs(free.y - 9 / 60) < 1e-5).toBe(true)
+    end)
+
     test("a piece above the height holds the top radius, one below it the bottom", function()
-      const above = flown(vortexOf({ rise = 2 }), vector.create(3, 20, 0), 4)
+      const above = flown(vortexOf({ rise = 2 }), vector.create(3, 25, 0), 4)
       const below = flown(vortexOf({ rise = -2 }), vector.create(6, -1, 0), 4)
 
       expect(math.abs(radiusOf(above) - 8) < 1e-3).toBe(true)
       expect(math.abs(radiusOf(below) - 2) < 1e-3).toBe(true)
+    end)
+
+    test("Sway moves the centerline off the axis, its foot planted where SwayOverHeight is 0", function()
+      const vortex = vortexOf({ sway = 3 })
+
+      expect(particle_motion.trunk(vortex, 0, 1.7)).toBe(vector.zero)
+
+      local most = 0
+
+      for k = 0, 20 do
+        most = math.max(most, vector.magnitude(particle_motion.trunk(vortex, 1, k * 0.5)))
+      end
+
+      expect(most > 0.5).toBe(true)
+
+      -- a piece at the foot turns about the bare axis as the trunk sways
+      const foot = vortexOf({ sway = 3, swaySpeed = 2 })
+      local position = vector.create(2, 0, 0)
+
+      for _ = 1, 120 do
+        position = particle_motion.advance(position, vector.zero, vector.zero, 0, vector.zero, foot, 1 / 60)
+
+        expect(math.abs(radiusOf(position) - 2) < 1e-4).toBe(true)
+      end
+    end)
+
+    test("a piece on the wall stays on the wall as the trunk sways", function()
+      const vortex = vortexOf({ sway = 3, swaySpeed = 2, pull = 3 })
+
+      -- set on the wall about where the trunk stands as it starts
+      local position = vector.create(5, 10, 0) + particle_motion.trunk(vortex, 0.5, 0)
+
+      local moved = 0
+
+      for _ = 1, 180 do
+        position = particle_motion.advance(position, vector.zero, vector.zero, 0, vector.zero, vortex, 1 / 60)
+
+        const trunk = particle_motion.trunk(vortex, 0.5, vortex.time)
+        const offset = position - vector.create(0, 10, 0) - trunk
+
+        moved = math.max(moved, vector.magnitude(trunk))
+
+        expect(math.abs(vector.magnitude(offset) - 5) < 1e-3).toBe(true)
+      end
+
+      expect(moved > 0.1).toBe(true)
+    end)
+
+    test("Release hands a piece's velocity on at the top, then Acceleration and Drag take it", function()
+      const vortex = vortexOf({ rise = 6, release = true, tighten = 1 })
+
+      local position, velocity = vector.create(8, 19.95, 0), vector.zero
+
+      position, velocity = particle_motion.advance(position, velocity, vector.zero, 0, vector.zero, vortex, 1 / 60)
+
+      expect(vortex.released).toBe(true)
+      expect(math.abs(velocity.y - 6) < 1e-3).toBe(true)
+
+      const gravity = vector.create(0, -20, 0)
+      const next, after = particle_motion.advance(position, velocity, gravity, 1, vector.zero, vortex, 1 / 60)
+      const expected, expectedVelocity = particle_motion.step(position, velocity, gravity, 1, vector.zero, 1 / 60)
+
+      expect(next).toBe(expected)
+      expect(after).toBe(expectedVelocity)
+
+      const held = vortexOf({ rise = 6, tighten = 1 })
+
+      particle_motion.advance(vector.create(8, 19.95, 0), vector.zero, vector.zero, 0, vector.zero, held, 1 / 60)
+
+      expect(held.released).toBe(false)
     end)
 
     test("a piece on the axis sets off the way it was launched, never NaN", function()
@@ -438,18 +595,28 @@ harness.suite(function()
       expect(sideways.z > 0).toBe(true)
 
       for _, launch in { vector.zero, vector.create(0, 7, 0) } do
-        const position, velocity = flown(vortexOf({ rise = 5 }), vector.zero, 2, launch)
+        for _, tighten in { 0, 1, 2 } do
+          const position, velocity = flown(vortexOf({ rise = 5, tighten = tighten, sway = 2 }), vector.zero, 2, launch)
 
-        expect(numeric_common.usable(position) and numeric_common.usable(velocity)).toBe(true)
-        expect(radiusOf(position) > 2 * 0.9).toBe(true)
+          expect(numeric_common.usable(position) and numeric_common.usable(velocity)).toBe(true)
+          expect(radiusOf(position) > 2 * 0.9).toBe(true)
+        end
       end
     end)
 
     test("the velocity is what the move took, and acceleration, drag and wind leave it alone", function()
-      const vortex = vortexOf({ rise = 5 })
       const from = vector.create(4, 3, 0)
-      const to, velocity = particle_motion.advance(from, vector.zero, vector.zero, 0, vector.zero, vortex, 1 / 60)
-      const pushed = particle_motion.advance(from, vector.zero, vector.create(0, -50, 0), 3, vector.one, vortex, 1 / 60)
+      const to, velocity =
+        particle_motion.advance(from, vector.zero, vector.zero, 0, vector.zero, vortexOf({ rise = 5 }), 1 / 60)
+      const pushed = particle_motion.advance(
+        from,
+        vector.zero,
+        vector.create(0, -50, 0),
+        3,
+        vector.one,
+        vortexOf({ rise = 5 }),
+        1 / 60
+      )
 
       expect(close(velocity, (to - from) * 60, 1e-4)).toBe(true)
       expect(pushed).toBe(to)
@@ -565,14 +732,31 @@ harness.suite(function()
         kind = "Vortex",
         center = vector.zero,
         axis = vector.create(0, 1, 0),
-        bottom = 2,
-        top = 8,
         height = 15,
+        radius = { 2, 3, 8 },
+        widest = 8,
+        wall = 0.5,
+        thickness = 1,
         spin = 1,
+        tighten = 1,
         rise = 5,
-        capture = 3,
+        pull = 3,
+        sway = 2,
+        swaySpeed = 0.5,
+        spinOver = 1,
+        riseOver = 1,
+        swayOver = { 0, 1 },
+        inflow = 0,
+        release = false,
+        seeds = vector.create(3.7, 9.1, 0),
+        time = 4,
+        swayed = nil,
+        released = false,
       } :: particle_motion.Vortex
       const points = particle_motion.path(start, 0, 1, vector.zero, 0, vector.zero, 32, vortex)
+
+      -- the path flies a copy, so the caller's force keeps its own state
+      const own = table.clone(vortex)
 
       local position, velocity = vector.create(10, 0, 0), vector.zero
 
@@ -584,13 +768,16 @@ harness.suite(function()
             vector.zero,
             0,
             vector.zero,
-            vortex,
+            own,
             1 / 32 / particle_motion.substeps(1 / 32)
           )
         end
 
-        expect(close(points[index], position, 1e-5)).toBe(true)
+        expect(close(points[index], position, 1e-4)).toBe(true)
       end
+
+      expect(vortex.time).toBe(4)
+      expect(vortex.swayed).toBe(nil)
     end)
 
     test("an orbit path takes its height from where it starts", function()

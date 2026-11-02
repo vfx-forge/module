@@ -370,6 +370,11 @@ const function curveOf(channels: number, keys: { { any } }, linked: boolean?)
   return value_curve.encode(made)
 end
 
+-- a curve row running straight from `bottom` to `top`, as stored
+const function rampOf(bottom: number, top: number)
+  return curveOf(1, { { 0, { bottom } }, { 1, { top } } })
+end
+
 -- a template with `rows` stubbed in, one piece of a second's life standing
 -- where it spawned
 const function lived(rows: { [string]: any }, attributes: { [string]: any }?, body: (piece: BasePart, env: any) -> ())
@@ -1809,48 +1814,50 @@ harness.suite(function()
           Speed = STILL,
           Lifetime = NumberRange.new(4, 4),
           Force = "Vortex",
-          VortexBottomRadius = 2,
-          VortexTopRadius = 8,
           VortexHeight = 15,
+          VortexThickness = 0,
           VortexSpin = 1,
+          VortexTighten = 0,
           VortexRise = 5,
-          VortexCapture = 3,
+          VortexPull = 3,
         })
         const goal = harness.make("Part", part.Parent) :: BasePart
 
         -- the piece spawns on the funnel's foot, 2 studs out along x
         goal.Position = Vector3.new(-1, 12, 3)
 
-        reachable(function()
-          return true
-        end, function()
-          targeting(part, goal, function()
-            const env = effects.emit(0, part)
-            const piece = pieces(fake)[1]
+        stubbed(part, { VortexRadius = rampOf(2, 8) }, function()
+          reachable(function()
+            return true
+          end, function()
+            targeting(part, goal, function()
+              const env = effects.emit(0, part)
+              const piece = pieces(fake)[1]
 
-            local turned = 0
-            local last = 0
+              local turned = 0
+              local last = 0
 
-            for _ = 1, 120 do
-              frames(1)
+              for _ = 1, 120 do
+                frames(1)
 
-              expect(finite(piece.CFrame)).toBe(true)
+                expect(finite(piece.CFrame)).toBe(true)
+
+                const offset = piece.CFrame.Position - goal.Position
+                const angle = math.atan2(-offset.Z, offset.X)
+
+                turned += (angle - last + math.pi) % (2 * math.pi) - math.pi
+                last = angle
+              end
 
               const offset = piece.CFrame.Position - goal.Position
-              const angle = math.atan2(-offset.Z, offset.X)
+              const width = 2 + 6 * offset.Y / 15
 
-              turned += (angle - last + math.pi) % (2 * math.pi) - math.pi
-              last = angle
-            end
+              expect(math.abs(offset.Y - 10) < LOOSE).toBe(true)
+              expect(math.abs(Vector3.new(offset.X, 0, offset.Z).Magnitude - width) < 0.01 * width).toBe(true)
+              expect(math.abs(turned - 4 * math.pi) < 0.01).toBe(true)
 
-            const offset = piece.CFrame.Position - goal.Position
-            const width = 2 + 6 * offset.Y / 15
-
-            expect(math.abs(offset.Y - 10) < LOOSE).toBe(true)
-            expect(math.abs(Vector3.new(offset.X, 0, offset.Z).Magnitude - width) < 0.01 * width).toBe(true)
-            expect(math.abs(turned - 4 * math.pi) < 0.01).toBe(true)
-
-            env:Clear()
+              env:Clear()
+            end)
           end)
         end)
       end)
@@ -1994,27 +2001,81 @@ harness.suite(function()
           Speed = STILL,
           Lifetime = NumberRange.new(4, 4),
           Force = "Vortex",
-          VortexBottomRadius = 2,
-          VortexTopRadius = 8,
           VortexHeight = 15,
+          VortexThickness = 0,
           VortexSpin = 1,
+          VortexTighten = 0,
           VortexRise = 5,
-          VortexCapture = 3,
+          VortexPull = 3,
         })
 
-        const env = effects.emit(0, part)
-        const piece = pieces(fake)[1]
+        stubbed(part, { VortexRadius = rampOf(2, 8) }, function()
+          const env = effects.emit(0, part)
+          const piece = pieces(fake)[1]
 
-        frames(120)
+          frames(120)
 
-        -- spawned on the axis, drawn out onto the funnel as it rises
-        const offset = piece.CFrame.Position - Vector3.new(1, 12, 3)
+          -- spawned on the axis, drawn out onto the funnel as it rises
+          const offset = piece.CFrame.Position - Vector3.new(1, 12, 3)
 
-        expect(finite(piece.CFrame)).toBe(true)
-        expect(math.abs(offset.Y - 10) < LOOSE).toBe(true)
-        expect(math.abs(Vector3.new(offset.X, 0, offset.Z).Magnitude - 6) < 0.06).toBe(true)
+          expect(finite(piece.CFrame)).toBe(true)
+          expect(math.abs(offset.Y - 10) < LOOSE).toBe(true)
+          expect(math.abs(Vector3.new(offset.X, 0, offset.Z).Magnitude - 6) < 0.06).toBe(true)
 
-        env:Clear()
+          env:Clear()
+        end)
+      end)
+    end)
+
+    test("a tightened vortex spreads its pieces across the wall at one wall speed", function()
+      staged(function(fake)
+        const part = attached({
+          EmitCount = 12,
+          Speed = STILL,
+          Lifetime = NumberRange.new(3, 3),
+          Force = "Vortex",
+          VortexHeight = 15,
+          VortexThickness = 2,
+          VortexSpin = 0.5,
+          VortexTighten = 1,
+          VortexRise = 0,
+          VortexPull = 3,
+        })
+
+        stubbed(part, { VortexRadius = rampOf(2, 8) }, function()
+          const env = effects.emit(0, part)
+          const center = Vector3.new(1, 12, 3)
+
+          frames(150)
+
+          const before = {}
+
+          for i, piece in pieces(fake) do
+            before[i] = piece.CFrame.Position - center
+          end
+
+          frames(1)
+
+          local lowest, highest = math.huge, 0
+
+          for i, piece in pieces(fake) do
+            const a, b = before[i], piece.CFrame.Position - center
+            const radius = Vector3.new(b.X, 0, b.Z).Magnitude
+            const turned = (math.atan2(-b.Z, b.X) - math.atan2(-a.Z, a.X) + math.pi) % (2 * math.pi) - math.pi
+
+            lowest, highest = math.min(lowest, radius), math.max(highest, radius)
+
+            -- the spin is a turn at the widest part, 8 studs out
+            expect(math.abs(turned * 60 * radius - 0.5 * 2 * math.pi * 8) < 0.05).toBe(true)
+            expect(math.abs(b.Y) < LOOSE).toBe(true)
+          end
+
+          expect(#pieces(fake)).toBe(12)
+          expect(lowest >= 1 - LOOSE and highest <= 3 + LOOSE).toBe(true)
+          expect(highest - lowest > 0.2).toBe(true)
+
+          env:Clear()
+        end)
       end)
     end)
 
@@ -2336,12 +2397,21 @@ harness.suite(function()
             "GravityMass",
             "GravitySoftening",
             "OrbitLaunch",
-            "VortexBottomRadius",
-            "VortexTopRadius",
             "VortexHeight",
+            "VortexRadius",
+            "VortexThickness",
             "VortexSpin",
+            "VortexTighten",
             "VortexRise",
-            "VortexCapture",
+            "VortexPull",
+            "VortexSway",
+            "VortexSwaySpeed",
+            "VortexShaping",
+            "VortexSpinOverHeight",
+            "VortexRiseOverHeight",
+            "VortexSwayOverHeight",
+            "VortexInflow",
+            "VortexTop",
             "OrbitRadius",
             "OrbitSpin",
             "OrbitCapture",
@@ -2369,12 +2439,15 @@ harness.suite(function()
         const rows = {
           Gravity = { "GravityMass", "GravitySoftening", "OrbitLaunch" },
           Vortex = {
-            "VortexBottomRadius",
-            "VortexTopRadius",
             "VortexHeight",
+            "VortexRadius",
+            "VortexThickness",
             "VortexSpin",
+            "VortexTighten",
             "VortexRise",
-            "VortexCapture",
+            "VortexPull",
+            "VortexSway",
+            "VortexShaping",
           },
           Orbit = { "OrbitRadius", "OrbitSpin", "OrbitCapture" },
         }
@@ -2392,6 +2465,77 @@ harness.suite(function()
 
           expect(own[1] ~= nil).toBe(true)
         end
+      end)
+    end)
+
+    test("SwaySpeed shows once Sway is on and the shaping rows once Shaping is on", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const shaping = {
+          "VortexSpinOverHeight",
+          "VortexRiseOverHeight",
+          "VortexSwayOverHeight",
+          "VortexInflow",
+          "VortexTop",
+        }
+
+        const still = hiddenOf(template(parent, { Force = "Vortex" }))
+        const swaying = hiddenOf(template(parent, { Force = "Vortex", VortexSway = 2 }))
+        const shaped = hiddenOf(template(parent, { Force = "Vortex", VortexShaping = true }))
+        const orbiting = hiddenOf(template(parent, { Force = "Orbit", VortexSway = 2, VortexShaping = true }))
+
+        expect(still.VortexSwaySpeed).toBe(true)
+        expect(swaying.VortexSwaySpeed).toBe(false)
+        expect(orbiting.VortexSwaySpeed).toBe(true)
+
+        for _, name in shaping do
+          expect(`{name} {still[name]} {shaped[name]} {orbiting[name]}`).toBe(`{name} true false true`)
+        end
+      end)
+    end)
+
+    test("the shaping rows reach a vortex only while Shaping is on", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const curves = {
+          VortexSpinOverHeight = rampOf(1, 3),
+          VortexRiseOverHeight = rampOf(2, 2),
+          VortexSwayOverHeight = rampOf(1, 1),
+        }
+
+        const function forceOf(shaping: boolean): any
+          const part = template(parent, {
+            Force = "Vortex",
+            VortexInflow = 0.7,
+            VortexTop = "Release",
+            VortexShaping = shaping,
+          })
+
+          local force: any = nil
+
+          stubbed(part, curves, function()
+            const ctx = { ref = part, obj = part, effect = forge_mesh }
+
+            force = launch_common.force((reader.resolve(forge_mesh :: any, ctx :: any)))
+          end)
+
+          return force
+        end
+
+        const off, on = forceOf(false), forceOf(true)
+
+        expect(off.inflow).toBe(0)
+        expect(off.release).toBe(false)
+        expect(off.spinOver).toBe(1)
+        expect(off.riseOver).toBe(1)
+        expect(off.swayOver[1]).toBe(0)
+        expect(off.swayOver[#off.swayOver]).toBe(1)
+
+        expect(math.abs(on.inflow - 0.7) < 1e-6).toBe(true)
+        expect(on.release).toBe(true)
+        expect(math.abs(on.spinOver[1] - 1) < 1e-6 and math.abs(on.spinOver[#on.spinOver] - 3) < 1e-6).toBe(true)
+        expect(on.riseOver).toBe(2)
+        expect(on.swayOver).toBe(1)
       end)
     end)
 
@@ -2416,15 +2560,24 @@ harness.suite(function()
           "GravityMass",
           "GravitySoftening",
           "OrbitLaunch",
-          "VortexBottomRadius",
-          "VortexTopRadius",
           "VortexHeight",
+          "VortexRadius",
+          "VortexThickness",
           "VortexSpin",
+          "VortexTighten",
           "VortexRise",
-          "VortexCapture",
+          "VortexPull",
+          "VortexSway",
+          "VortexSwaySpeed",
           "OrbitRadius",
           "OrbitSpin",
           "OrbitCapture",
+          "VortexShaping",
+          "VortexSpinOverHeight",
+          "VortexRiseOverHeight",
+          "VortexSwayOverHeight",
+          "VortexInflow",
+          "VortexTop",
         })
 
         for _, name in force.entries do

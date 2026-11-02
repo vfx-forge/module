@@ -9,6 +9,7 @@ const tween = require("@mod/tween")
 const reader = require("@mod/reader")
 const utility = require("@mod/utility")
 const lifetime = require("@mod/lifetime")
+const scheduler = require("@mod/scheduler")
 const value_curve = require("@mod/value_curve")
 const look_common = require("@mod/common/look")
 const launch_common = require("@mod/common/launch")
@@ -92,6 +93,27 @@ const function orbitless(_, attrs: any)
   return attrs.Force ~= "Orbit"
 end
 
+-- the funnel's eased radius, wide at the top: a trumpet 1.5 studs across at
+-- the foot flaring to 9
+const FUNNEL: value_curve.Curve = {
+  channels = 1,
+  linked = true,
+  keys = {
+    { time = 0, value = { 1.5 }, envelope = 0, left = { vector.zero }, right = { vector.create(0.5, 0) } },
+    { time = 1, value = { 9 }, envelope = 0, left = { vector.create(-0.25, -4) }, right = { vector.zero } },
+  },
+}
+
+-- none of the sway at the foot, all of it at the top
+const RAMP: value_curve.Curve = {
+  channels = 1,
+  linked = true,
+  keys = {
+    { time = 0, value = { 0 }, envelope = 0, left = { vector.zero }, right = { vector.zero } },
+    { time = 1, value = { 1 }, envelope = 0, left = { vector.zero }, right = { vector.zero } },
+  },
+}
+
 -- a mod row reaches a rule as its track
 const function dragless(_, attrs: any)
   return attrs.Drag.value <= 0
@@ -110,6 +132,14 @@ end
 
 const function calm(_, attrs: any)
   return not turbulent(attrs.Turbulence)
+end
+
+const function steady(_, attrs: any)
+  return attrs.Force ~= "Vortex" or not turbulent(attrs.VortexSway)
+end
+
+const function unshaped(_, attrs: any)
+  return attrs.Force ~= "Vortex" or attrs.VortexShaping ~= true
 end
 
 -- a piece locked to its parent never meets the world
@@ -276,6 +306,9 @@ type Flight = {
   up: vector,
   read: number,
 
+  -- the force as the emit read it, which each piece flies a copy of
+  force: particle_motion.Force?,
+
   -- the Color row's keypoints, read once for the emit's pieces that take it
   -- as it rests
   keypoints: { ColorSequenceKeypoint },
@@ -302,6 +335,25 @@ const function poseOf(target: Instance): (vector?, vector)
 end
 
 const forge_mesh = {}
+
+-- each emitter's trunk seeds, drawn the first time it emits a vortex
+const Trunks: { [Instance]: vector } = setmetatable({}, { __mode = "k" }) :: any
+
+-- the two noise channels an emitter's trunk sways on
+const function trunkOf(template: BasePart): vector
+  const known = Trunks[template]
+
+  if known ~= nil then
+    return known
+  end
+
+  const rng = Random.new()
+  const seeds = vector.create(rng:NextNumber(0, 1000), rng:NextNumber(0, 1000), 0)
+
+  Trunks[template] = seeds
+
+  return seeds
+end
 
 -- the force's center and up axis this frame, read from the engine by the
 -- first piece to ask and kept for the rest of the emit's pieces. with no
@@ -515,44 +567,84 @@ forge_mesh.attributes = {
     :hidden(gravityless)
     :label("OrbitLaunch")
     :hint("Launch each piece sideways at the speed of a circular orbit around the center."),
-  VortexBottomRadius = knob(2)
-    :min(0)
-    :unit("studs")
-    :mod()
-    :hidden(vortexless)
-    :label("VortexBottomRadius")
-    :hint("The funnel's radius at the center's height."),
-  VortexTopRadius = knob(8)
-    :min(0)
-    :unit("studs")
-    :mod()
-    :hidden(vortexless)
-    :label("VortexTopRadius")
-    :hint("The funnel's radius at VortexHeight, held above it."),
-  VortexHeight = knob(15)
+  VortexHeight = knob(20)
     :min(0.01)
     :unit("studs")
     :hidden(vortexless)
     :label("VortexHeight")
-    :hint("The funnel's height along the axis. Above it pieces keep rising at the top radius."),
-  VortexSpin = knob(1)
+    :hint("How tall the funnel is along the axis. Its curves run from its foot to this height."),
+  VortexRadius = knob(FUNNEL)
+    :valueCurve(1)
+    :hidden(vortexless)
+    :label("VortexRadius")
+    :hint("The funnel's radius in studs from its foot (left) to its top (right), held above the top."),
+  VortexThickness = knob(1)
+    :min(0)
+    :unit("studs")
+    :mod()
+    :hidden(vortexless)
+    :label("VortexThickness")
+    :hint("How thick the funnel's wall is. Each piece keeps its own place across it."),
+  VortexSpin = knob(0.5)
     :unit("perSecond")
     :mod()
     :hidden(vortexless)
     :label("VortexSpin")
-    :hint("Turns per second around the axis. Negative spins the other way."),
-  VortexRise = knob(5)
+    :hint("Turns per second at the funnel's widest part. Negative spins the other way."),
+  VortexTighten = knob(1):min(0):max(2):slider():mod():hidden(vortexless):label("VortexTighten"):hint(
+    "How much faster narrow parts and inner pieces spin. 0 turns the funnel as one, 1 keeps one wall speed so a part half as wide turns twice as fast, 2 four times as fast."
+  ),
+  VortexRise = knob(6)
     :unit("studsPerSecond")
     :mod()
     :hidden(vortexless)
     :label("VortexRise")
-    :hint("Climb speed along the axis. Negative sinks."),
-  VortexCapture = knob(3)
+    :hint("Climb speed along the axis. Negative sinks, for a drain."),
+  VortexPull = knob(3)
     :min(0)
     :unit("perSecond")
+    :mod()
     :hidden(vortexless)
-    :label("VortexCapture")
-    :hint("How quickly a piece is pulled onto the funnel, per second."),
+    :label("VortexPull")
+    :hint("How tightly pieces hold to the funnel's wall. Low lets them drift in from far away."),
+  VortexSway = knob(0)
+    :min(0)
+    :unit("studs")
+    :mod()
+    :hidden(vortexless)
+    :label("VortexSway")
+    :hint("How far the funnel's centerline swings off the axis. The bend travels up the trunk."),
+  VortexSwaySpeed = knob(0.3)
+    :min(0)
+    :unit("perSecond")
+    :hidden(steady)
+    :label("VortexSwaySpeed")
+    :hint("How fast the sway changes."),
+  VortexShaping = knob(false)
+    :hidden(vortexless)
+    :label("VortexShaping")
+    :hint("Show the curves that shape spin, rise and sway along the height, the inflow and the top."),
+  VortexSpinOverHeight = knob(value_curve.flat(1, 1))
+    :valueCurve(1)
+    :hidden(unshaped)
+    :label("VortexSpinOverHeight")
+    :hint("Multiplies Spin along the height, from the foot (left) to the top (right)."),
+  VortexRiseOverHeight = knob(value_curve.flat(1, 1))
+    :valueCurve(1)
+    :hidden(unshaped)
+    :label("VortexRiseOverHeight")
+    :hint("Multiplies Rise along the height: slow at the foot, fast in the trunk, slowing at the top."),
+  VortexSwayOverHeight = knob(RAMP)
+    :valueCurve(1)
+    :hidden(unshaped)
+    :label("VortexSwayOverHeight")
+    :hint("How much of the sway each height takes. 0 at the foot keeps the base planted."),
+  VortexInflow = knob(0):min(0):max(1):slider():hidden(unshaped):label("VortexInflow"):hint(
+    "How long pieces outside the wall skim inward before they climb. 0 climbs at once, 1 waits for the wall."
+  ),
+  VortexTop = knob("Hold"):options({ "Hold", "Release" }):hidden(unshaped):label("VortexTop"):hint(
+    "What a piece does above the height. Hold keeps it rising at the top radius, Release lets it fly off with its speed under Acceleration and Drag."
+  ),
   OrbitRadius = knob(10):min(0):unit("studs"):mod():hidden(orbitless):label("OrbitRadius"):hint("The ring's radius."),
   OrbitSpin = knob(0.25)
     :unit("perSecond")
@@ -684,15 +776,24 @@ forge_mesh.layout = {
       "GravityMass",
       "GravitySoftening",
       "OrbitLaunch",
-      "VortexBottomRadius",
-      "VortexTopRadius",
       "VortexHeight",
+      "VortexRadius",
+      "VortexThickness",
       "VortexSpin",
+      "VortexTighten",
       "VortexRise",
-      "VortexCapture",
+      "VortexPull",
+      "VortexSway",
+      "VortexSwaySpeed",
       "OrbitRadius",
       "OrbitSpin",
       "OrbitCapture",
+      "VortexShaping",
+      "VortexSpinOverHeight",
+      "VortexRiseOverHeight",
+      "VortexSwayOverHeight",
+      "VortexInflow",
+      "VortexTop",
     },
   },
   {
@@ -899,7 +1000,7 @@ const function piece(
 
   -- the force the piece flies under, its place and axis written each frame
   -- and its driven rows over the life
-  const pull: any = launch_common.force(attrs)
+  const pull: any = if flight.force ~= nil then table.clone(flight.force) else nil
   const collision = if flight.collision ~= nil and not locked then flight.collision else nil
   const response = if collision ~= nil then table.clone(collision.config) else nil
 
@@ -917,6 +1018,13 @@ const function piece(
   tween.drive(scope, attrs.Drag(nil, duration), function(v: number)
     drag = v
   end)
+
+  -- a funnel piece draws its place across the wall, and its trunk sways on
+  -- the frame clock from where it spawns
+  if pull ~= nil and pull.kind == "Vortex" then
+    launch_common.wall(attrs, pull, flight.rng)
+    pull.time = scheduler.now
+  end
 
   if pull ~= nil then
     for row, field in launch_common.DRIVEN[pull.kind] do
@@ -1275,8 +1383,14 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     standing = toVector(origin.Position),
     up = toVector(origin.UpVector),
     read = -1,
+    force = launch_common.force(attrs),
     keypoints = (attrs.Color.value :: ColorSequence).Keypoints,
   }
+
+  -- every emit of one emitter sways the same trunk
+  if flight.force ~= nil and flight.force.kind == "Vortex" then
+    flight.force.seeds = trunkOf(template)
+  end
 
   if attrs.CollisionMode ~= "Off" then
     const exclude = { containers.root(), template }
