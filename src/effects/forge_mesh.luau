@@ -1,4 +1,5 @@
 const attr = require("@mod/attributes")
+const clock = require("@mod/clock")
 const color = require("@mod/color/color")
 const knob = require("@mod/knob")
 const curve = require("@mod/curve")
@@ -226,6 +227,11 @@ type Flight = {
   rotation: CFrame,
   rng: Random,
   collision: Collision?,
+
+  -- where the pull target stood on frame `read`, shared by every piece of the
+  -- emit; nil when it had no place or was gone
+  standing: vector?,
+  read: number,
 }
 
 -- where a pull target stands, or nil for a class that has no place
@@ -246,6 +252,17 @@ const function standingOf(target: Instance): vector?
 end
 
 const forge_mesh = {}
+
+-- the pull target's place this frame, read from the engine by the first piece
+-- to ask and kept for the rest of the emit's pieces
+const function standingNow(flight: Flight, target: Instance): vector?
+  if flight.read ~= clock.frame then
+    flight.read = clock.frame
+    flight.standing = if forge_mesh.engine.alive(target) then standingOf(target) else nil
+  end
+
+  return flight.standing
+end
 
 -- the engine calls, held here so a spec can stand in for them under lune
 forge_mesh.engine = {
@@ -801,11 +818,7 @@ const function piece(
       const wind = if windy then toVector(workspace.GlobalWind) else vector.zero
 
       -- the pull target is read once a frame, a gone one adding none
-      const standing = if target ~= nil
-          and strength ~= 0
-          and forge_mesh.engine.alive(target)
-        then standingOf(target)
-        else nil
+      const standing = if target ~= nil and strength ~= 0 then standingNow(flight, target) else nil
 
       const pulled = if standing ~= nil then unplaced(standing) else nil
 
@@ -972,6 +985,8 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     rotation = template.CFrame.Rotation,
     rng = Random.new(),
     collision = nil,
+    standing = nil,
+    read = -1,
   }
 
   if attrs.CollisionMode ~= "Off" then
