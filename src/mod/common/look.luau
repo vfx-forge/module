@@ -44,6 +44,7 @@ export type Look = {
   offset: () -> CFrame,
   play: () -> (),
   wait: () -> (),
+  linger: () -> (),
   life: number,
 }
 
@@ -547,13 +548,18 @@ function common.start(
     end
   end
 
-  -- parks for the piece's life, then for every loop counting below 0, whose
-  -- end starts the destroy delay
+  -- parks for every loop counting below 0, whose end starts the destroy
+  -- delay, for a piece whose life has already ended
+  function look.linger()
+    lifetime.awaitJoin(looping)
+    tween.wait(scope, curve.new(destroyDelay, "linear"))
+  end
+
+  -- parks for the piece's life, then for what lingers after it
   function look.wait()
     if looping.count > 0 then
       tween.wait(scope, curve.new(look.life, "linear"))
-      lifetime.awaitJoin(looping)
-      tween.wait(scope, curve.new(destroyDelay, "linear"))
+      look.linger()
     else
       tween.wait(scope, curve.new(look.life + destroyDelay, "linear"))
     end
