@@ -217,6 +217,35 @@ const function frames(count: number)
   end
 end
 
+-- the writes a piece's property takes over `count` frames, and the last value
+-- read before the piece went with its life
+const function watched(piece: BasePart, name: string, count: number): (number, any)
+  local writes, last = 0, (piece :: any)[name]
+
+  for _ = 1, count do
+    frames(1)
+
+    const ok, now = pcall(function()
+      return (piece :: any)[name]
+    end)
+
+    if not ok then
+      break
+    end
+
+    if now ~= last then
+      writes += 1
+      last = now
+    end
+  end
+
+  return writes, last
+end
+
+const function near1(a: number, b: number)
+  return math.abs(a - b) < EPSILON
+end
+
 const function near(a: Vector3, b: Vector3, epsilon: number)
   return (a - b).Magnitude < epsilon
 end
@@ -729,10 +758,77 @@ harness.suite(function()
     end)
 
     test("Transparency follows its curve", function()
-      lived({ Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }, nil, function(piece)
+      lived({ Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }, { DestroyDelay = 1 }, function(piece)
         frames(30)
 
         expect(math.abs(piece.Transparency - 0.5) < LOOSE).toBe(true)
+      end)
+    end)
+
+    test("a slow Transparency ramp writes far fewer times than frames and ends exact", function()
+      const attributes = { DestroyDelay = 1, Lifetime = NumberRange.new(4, 4) }
+
+      lived({ Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }, attributes, function(piece)
+        const writes, last = watched(piece, "Transparency", 250)
+
+        expect(writes < 240 / 3).toBe(true)
+        expect(last).toBe(1)
+      end)
+    end)
+
+    test("a Transparency change under the step is skipped until the end lands it", function()
+      lived({ Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 0.015 } } }) }, { DestroyDelay = 1 }, function(piece)
+        const early = watched(piece, "Transparency", 40)
+
+        expect(early).toBe(0)
+
+        const _, last = watched(piece, "Transparency", 30)
+
+        expect(near1(last, 0.015)).toBe(true)
+      end)
+    end)
+
+    test("drift past the step writes, measured from the last write", function()
+      lived({ Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 0.1 } } }) }, { DestroyDelay = 1 }, function(piece)
+        const writes, last = watched(piece, "Transparency", 70)
+
+        expect(writes >= 4 and writes <= 7).toBe(true)
+        expect(near1(last, 0.1)).toBe(true)
+      end)
+    end)
+
+    test("the first frame writes whatever the value", function()
+      lived({ Transparency = curveOf(1, { { 0, { 0.005 } }, { 1, { 0.01 } } }) }, nil, function(piece)
+        expect(near1(piece.Transparency, 0.005)).toBe(true)
+      end)
+    end)
+
+    test("Size steps are relative, so a small piece still follows small changes", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(1, 1), DestroyDelay = 1 })
+
+        part.Size = Vector3.new(0.1, 0.1, 0.1)
+
+        stubbed(part, { Size = curveOf(3, { { 0, { 1, 1, 1 } }, { 1, { 1.05, 1.05, 1.05 } } }) }, function()
+          const env = effects.emit(0, part)
+          const piece = pieces(fake)[1]
+          const writes, last = watched(piece, "Size", 70)
+
+          expect(writes >= 2 and writes <= 5).toBe(true)
+          expect(near(last, Vector3.new(0.105, 0.105, 0.105), EPSILON)).toBe(true)
+          env:Clear()
+        end)
+      end)
+    end)
+
+    test("a Transparency above one is written as it is", function()
+      lived({ Transparency = curveOf(1, { { 0, { 1.5 } }, { 1, { 2.5 } } }) }, { DestroyDelay = 1 }, function(piece)
+        expect(piece.Transparency).toBe(1.5)
+
+        const _, last = watched(piece, "Transparency", 70)
+
+        expect(last).toBe(2.5)
       end)
     end)
 

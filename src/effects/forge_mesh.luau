@@ -36,6 +36,14 @@ const MAX_STEP = 1 / 60
 const STEP_SLACK = 0.05
 const MAX_STEPS = 8
 
+-- how far a piece's look must move from what was last written before a write
+-- is worth it: transparency in absolute terms, size relative to itself on any
+-- axis, color in 8 bit steps on any channel
+const CLEAR_STEP = 0.02
+const SIZE_STEP = 0.015
+const SIZE_FLOOR = 1e-4
+const COLOR_STEP = 2 / 255
+
 const function always()
   return true
 end
@@ -653,32 +661,64 @@ const function piece(
   const meshed = objMesh ~= nil and templateMesh ~= nil
   const rest = if meshed then (templateMesh :: SpecialMesh).Scale else template.Size
 
-  -- the piece's size, color and transparency at `t` of its life, each written
+  -- the last size, transparency and color written; a value is written only
+  -- once it is far enough from these, and always on the first frame, at an
+  -- end of the curve and as the piece ends
+  local writtenSize = rest
+  local writtenClear = 0
+  local writtenColor = obj.Color
+
+  -- the piece's size, color and transparency at `t` of its life, each checked
   -- every frame only while it changes over the life
-  const function appear(t: number, first: boolean)
+  const function appear(t: number, first: boolean, over: boolean)
+    const exact = first or over or t <= 0 or t >= 1
+
     if first or shaped then
       const size = sizeAt(t)
       const x, y, z = size[1], size[2], size[3]
       const stretched = orient_common.squash(Vector3.new(rest.X * x, rest.Y * y, rest.Z * z), squashAt(t)[1])
+      const sx, sy, sz = stretched.X, stretched.Y, stretched.Z
 
-      if meshed then
-        (objMesh :: SpecialMesh).Scale = stretched
-        look.refit()
-      else
-        look.size(stretched)
+      const moved = math.abs(sx - writtenSize.X) > SIZE_STEP * math.max(math.abs(writtenSize.X), SIZE_FLOOR)
+        or math.abs(sy - writtenSize.Y) > SIZE_STEP * math.max(math.abs(writtenSize.Y), SIZE_FLOOR)
+        or math.abs(sz - writtenSize.Z) > SIZE_STEP * math.max(math.abs(writtenSize.Z), SIZE_FLOOR)
+
+      if first or moved or (exact and stretched ~= writtenSize) then
+        writtenSize = stretched
+
+        if meshed then
+          (objMesh :: SpecialMesh).Scale = stretched
+          look.refit()
+        else
+          look.size(stretched)
+        end
       end
     end
 
     if first or not clearFlat then
-      obj.Transparency = clearAt(t)[1]
+      const clear = clearAt(t)[1]
+
+      if first or math.abs(clear - writtenClear) > CLEAR_STEP or (exact and clear ~= writtenClear) then
+        writtenClear = clear
+        obj.Transparency = clear
+      end
     end
 
     if first or tinted then
-      obj.Color = color.keypointsAt(flight.keypoints, t)
+      const tone = color.keypointsAt(flight.keypoints, t)
+
+      const moved = math.abs(tone.R - writtenColor.R) > COLOR_STEP
+        or math.abs(tone.G - writtenColor.G) > COLOR_STEP
+        or math.abs(tone.B - writtenColor.B) > COLOR_STEP
+
+      if first or moved or (exact and tone ~= writtenColor) then
+        writtenColor = tone
+        obj.Color = tone
+      end
     end
   end
 
-  appear(0, true)
+  appear(0, true, false)
 
   const locked = attrs.LockedToPart
   const windy = attrs.WindAffectsDrag
@@ -912,10 +952,12 @@ const function piece(
       end
     end
 
-    appear(if duration > 0 then age / duration else 1, false)
+    const over = not moving or age >= duration
+
+    appear(if duration > 0 then age / duration else 1, false, over)
     place()
 
-    if not moving or age >= duration then
+    if over then
       moving = false
       finish()
     end
