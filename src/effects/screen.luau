@@ -11,9 +11,10 @@ local screen = {}
 screen.id = "screen"
 screen.display = { name = "Screen Effect", icon = "screen", order = 60 }
 
--- an enabled part that is not a shockwave piece. its descendants are its own:
--- the emit below runs them under the placed part
-screen.classifier = "BasePart[$Enabled=true]:not(.Shockwave >> BasePart)"
+-- an enabled part that is not a shockwave piece or a mesh template, which a
+-- passive loop leaves enabled. its descendants are its own: the emit below
+-- runs them under the placed part
+screen.classifier = `BasePart[$Enabled=true]:not(.{utility.FORGE_MESH_TAG}):not(.Shockwave >> BasePart)`
 screen.components = "Instance"
 
 screen.attributes = {

@@ -408,6 +408,30 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a bare whole copy loses its root's tags and attributes, and its children keep theirs", function()
+      local fake = start()
+      local part = source("Part")
+      local nested = harness.make("Trail", part)
+
+      part:AddTag("AuthoredTag")
+      part:SetAttribute("Authored", 1)
+      nested:AddTag("NestedTag")
+      nested:SetAttribute("Nested", 1)
+
+      local holder = {}
+      local taken = pool.take(holder, part, false, true)
+      local child = taken:FindFirstChildOfClass("Trail") :: Trail
+
+      expect(#taken:GetTags()).toBe(0)
+      expect(taken:GetAttribute("Authored")).toBe(nil)
+      expect(child:HasTag("NestedTag")).toBe(true)
+      expect(child:GetAttribute("Nested")).toBe(1)
+      expect(part:HasTag("AuthoredTag")).toBe(true)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
     test("a take before init is a fresh clone", function()
       local holder = {}
       local part = source("Part")

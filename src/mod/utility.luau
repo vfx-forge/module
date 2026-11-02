@@ -26,6 +26,7 @@ utility.SERVER_CONTEXT = context_common.serverContext(RunService:IsServer(), uti
 utility.DEG_TO_RAD = math.pi / 180
 
 utility.BEZIER_TAG = "BezierParticle"
+utility.FORGE_MESH_TAG = "ForgeMesh"
 utility.LIGHTNING_TAG = "LightningBolt"
 utility.SHOCKWAVE_TAG = "Shockwave"
 utility.SCREENSHAKE_TAG = "CameraShake"

@@ -21,6 +21,7 @@ local MODULES = {
   "shockwave_line",
   "shockwave_debris",
   "controller",
+  "forge_mesh",
 }
 
 -- the two piece modules whose Size row rests on a draw between two corners
@@ -96,6 +97,11 @@ local function scene()
   made.shockwave_line = made.shockwave_lines
   made.shockwave_rings, made.shockwave_lines = nil, nil
 
+  -- enabled, as a passive loop leaves it, which screen's classifier matches too
+  made.forge_mesh = harness.make("Part", harness.make("Part", root))
+  made.forge_mesh:AddTag("ForgeMesh")
+  made.forge_mesh:SetAttribute("Enabled", true)
+
   made.bezier = harness.make("Attachment", root)
   made.bezier:AddTag("BezierParticle")
   harness.make("Part", made.bezier)
@@ -157,7 +163,7 @@ harness.suite(function()
       expect(count).toBe(#MODULES)
     end)
 
-    test("only the three constant modules may be ticked", function()
+    test("only the four constant modules may be ticked", function()
       loadAll()
 
       local constant = {}
@@ -170,7 +176,7 @@ harness.suite(function()
 
       table.sort(constant)
 
-      expect(constant).toEqual({ "bezier", "lightning", "mesh" })
+      expect(constant).toEqual({ "bezier", "forge_mesh", "lightning", "mesh" })
     end)
 
     test("no layout offers a button for the ConstantVFX tag", function()

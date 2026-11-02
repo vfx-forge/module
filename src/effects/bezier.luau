@@ -17,7 +17,7 @@ local Bezier = require("@obj/Bezier")
 local bezier = {}
 
 bezier.id = "bezier"
-bezier.display = { name = "Bezier", icon = "bezier", order = 110 }
+bezier.display = { name = "Bezier (legacy)", icon = "bezier", order = 110 }
 bezier.classifier = "Attachment.BezierParticle"
 
 -- the template part, the points and the end attachments under the bolt are

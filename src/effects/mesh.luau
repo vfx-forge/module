@@ -106,7 +106,7 @@ end
 local mesh = {}
 
 mesh.id = "mesh"
-mesh.display = { name = "Mesh", icon = "mesh", order = 100 }
+mesh.display = { name = "Mesh (legacy)", icon = "mesh", order = 100 }
 mesh.classifier = "Model:has(> BasePart#Start):has(> BasePart#End)"
 mesh.components = "Instance"
 mesh.constant = true

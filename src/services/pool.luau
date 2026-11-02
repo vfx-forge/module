@@ -399,11 +399,16 @@ local function holdIn(holder: any, value: any)
   end
 end
 
--- a whole clone, held by the holder and destroyed when it lets go
-local function fresh(holder: any, source: Instance)
+-- a whole clone, held by the holder and destroyed when it lets go. a bare one
+-- loses its root's tags and attributes before anything can see it parented
+local function fresh(holder: any, source: Instance, bare: boolean?)
   local copy = utility.clone(source)
 
   counts.fresh += 1
+
+  if bare then
+    strip(copy)
+  end
 
   if folder ~= nil then
     copy.Parent = folder
@@ -533,15 +538,15 @@ local function begin(holder: any, inst: Instance, stack: Store)
   return inst
 end
 
-local function single(holder: any, source: Instance)
+local function single(holder: any, source: Instance, bare: boolean?)
   if not canRestore(source) then
-    return fresh(holder, source)
+    return fresh(holder, source, bare)
   end
 
   local stack = stackOf(source)
 
   if stack == nil then
-    return fresh(holder, source)
+    return fresh(holder, source, bare)
   end
 
   local inst = table.remove(stack.free)
@@ -620,17 +625,19 @@ finish = function(inst: Instance, record: Taken)
 end
 
 -- a source with children is cloned whole, so a reference from one child into
--- another names the copy's own; a childless one comes from its class's stack
-function pool.take(holder: any, source: Instance, alone: boolean?)
+-- another names the copy's own; a childless one comes from its class's stack.
+-- `bare` takes a copy with none of its source's tags or attributes on its
+-- root, which a single from a stack never carries anyway
+function pool.take(holder: any, source: Instance, alone: boolean?, bare: boolean?)
   if folder == nil then
-    return fresh(holder, source)
+    return fresh(holder, source, bare)
   end
 
   if alone or #source:GetChildren() == 0 then
-    return single(holder, source)
+    return single(holder, source, bare)
   end
 
-  return fresh(holder, source)
+  return fresh(holder, source, bare)
 end
 
 -- the once a second tick: each stack keeps the larger of its floor and the
