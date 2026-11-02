@@ -77,6 +77,14 @@ local function scaleShape(obj: any, module: registry.Module, factor: number)
         goalMesh.Scale *= factor
       end
     end
+  elseif id == "forge_mesh" then
+    obj.Size *= factor
+
+    const mesh = obj:FindFirstChildOfClass("SpecialMesh")
+
+    if mesh then
+      mesh.Scale *= factor
+    end
   elseif id == "shockwave_debris" then
     obj.Size *= factor
   end

@@ -534,6 +534,21 @@ const function meshDecal(obj: Instance): boolean
   return module ~= nil and module.id == "mesh"
 end
 
+-- whether `obj` is a decal on a piece of the Mesh effect, which plays the
+-- decal's color on the piece's own copy
+const function forgeMeshDecal(obj: Instance): boolean
+  const template = pool.templateOf(obj)
+  const owner = if template ~= nil then template.Parent else nil
+
+  if owner == nil or not owner:IsA("BasePart") then
+    return false
+  end
+
+  const module = registry.of(owner)
+
+  return module ~= nil and module.id == "forge_mesh"
+end
+
 -- what the effect on `obj` leaves to another writer: whatever an animator
 -- under it drives, and a decal's Color3 where its mesh plays it, multiplying it
 -- by the strength when it glows by its color. a mesh plays its pair's color in
@@ -545,7 +560,7 @@ function emitters.claims(obj: Instance): { [string]: boolean }?
     return animated
   end
 
-  if attr.get(obj, "GlowMode", "None", true) ~= "Color" and not meshDecal(obj) then
+  if attr.get(obj, "GlowMode", "None", true) ~= "Color" and not meshDecal(obj) and not forgeMeshDecal(obj) then
     return animated
   end
 
