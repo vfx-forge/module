@@ -36,6 +36,13 @@ export type Options = {
   -- the instance whose loop toggles a playing loop watches, else the template
   owner: Instance?,
   decals: Decals?,
+  -- read the flipbooks' Mode, StartRandom and Reverse rows rather than their
+  -- Loop toggles
+  modes: boolean?,
+  -- an unset change duration is the piece's own, not the row's default
+  ownDefault: boolean?,
+  -- draws the random starts
+  rng: { NextNumber: (self: any) -> number }?,
 }
 
 export type Look = {
@@ -145,6 +152,8 @@ function common.start(
   const textureSet = sets.textures
   const owner = if opts and opts.owner then opts.owner else template
   const decals = if opts then opts.decals else nil
+  const modes = opts ~= nil and opts.modes == true
+  const rng = if opts then opts.rng else nil
 
   const destroyDelay = attrs.DestroyDelay or 0
 
@@ -179,13 +188,13 @@ function common.start(
   -- every loop counting below 0 still playing, which the piece outlives
   const looping = lifetime.join(scope)
 
-  -- a loop counting below 0 plays until `toggle` on `obj` is switched off, then
-  -- to the end of its cycle. the one read of an instance after its rows
-  -- resolve, since that switch while the loop plays is the only way it ends
+  -- a loop counting below 0 plays until `running` answers false for `toggle` on
+  -- `obj`, then to the end of its cycle. the one read of an instance after its
+  -- rows resolve, since that switch while the loop plays is the only way it ends
   const function endless(
     obj: Instance,
     toggle: string,
-    default: boolean,
+    running: (v: any) -> boolean,
     cycle: number,
     write: (elapsed: number, cycles: number) -> ()
   )
@@ -200,11 +209,21 @@ function common.start(
     lifetime.hold(
       scope,
       attr.observe(obj, toggle, function(v: any)
-        if (if v == nil then default else v) ~= true then
+        if not running(v) then
           stop()
         end
       end)
     )
+  end
+
+  -- whether a loop's switch leaves it running, a toggle or a mode that is not
+  -- OneShot, either read as `fallback` while unset
+  const function running(fallback: any)
+    return function(v: any)
+      const now = if v == nil then fallback else v
+
+      return now == true or now == "Loop" or now == "PingPong"
+    end
   end
 
   const function loop(
@@ -214,18 +233,22 @@ function common.start(
     cycle: number,
     cycles: number,
     length: number,
-    write: (alpha: number) -> ()
+    write: (alpha: number) -> (),
+    mode: flipbook_common.mode?,
+    start: number?
   )
     if cycles > 0 then
-      flipbook_loop.play(scope, shape, cycle, cycles, length, write)
+      flipbook_loop.play(scope, shape, cycle, cycles, length, write, mode, start)
       return
     end
 
     const eased = curve.new(1, shape)
 
     if count < 0 then
-      endless(obj, "FlipbookLoop", false, cycle, function(elapsed: number, played: number)
-        write(eased:at(flipbook_common.phase(elapsed, cycle, played)))
+      const toggle = if modes then "FlipbookMode" else "FlipbookLoop"
+
+      endless(obj, toggle, running(if modes then mode or "OneShot" else false), cycle, function(elapsed, played)
+        write(eased:at(flipbook_common.phase(elapsed, cycle, played, mode, start)))
       end)
 
       return
@@ -234,7 +257,7 @@ function common.start(
     write(eased:at(0))
 
     table.insert(bounded, function(life: number)
-      flipbook_loop.play(scope, shape, cycle, 0, life, write)
+      flipbook_loop.play(scope, shape, cycle, 0, life, write, mode, start)
     end)
   end
 
@@ -274,24 +297,39 @@ function common.start(
     -- before a piece cloned whole is destroyed with it
     lifetime.defer(scope, shown.release)
 
+    const mode: flipbook_common.mode? = if modes then attrs.FlipbookMode or "OneShot" else nil
+    const looped = if modes then mode ~= "OneShot" else attrs.FlipbookLoop
+    const reverse = modes and attrs.FlipbookReverse == true
+    const start = if modes and attrs.FlipbookStartRandom == true and rng then rng:NextNumber() else nil
+
+    -- a loop starts that far into its cycle, one cycle wraps round its frames
+    const wrap = if start and not looped then math.floor(start * frameCount) else 0
+
     const function write(alpha: number)
-      frameIndex = frames_common.index(frameCount, alpha)
+      local index = frames_common.index(frameCount, alpha)
+
+      if wrap > 0 then
+        index = (index - 1 + wrap) % frameCount + 1
+      end
+
+      frameIndex = if reverse then frameCount + 1 - index else index
       offset = shown.show(frameIndex, currentSize)
     end
 
-    if attrs.FlipbookLoop then
-      const cycle, cycles, length = flipbook_common.cycles(
-        attrs.FlipbookChangeDuration,
-        duration,
-        attrs.SyncDuration,
-        true,
-        attrs.FlipbookLoopCount
-      )
+    const own = if opts
+        and opts.ownDefault
+        and attr.get(owner, "FlipbookChangeDuration", nil, true) == nil
+      then duration
+      else attrs.FlipbookChangeDuration
+
+    if looped then
+      const cycle, cycles, length =
+        flipbook_common.cycles(own, duration, attrs.SyncDuration, true, attrs.FlipbookLoopCount)
 
       longestFlipbookDuration = length
-      loop(owner, attrs.FlipbookChangeCurve, attrs.FlipbookLoopCount, cycle, cycles, length, write)
+      loop(owner, attrs.FlipbookChangeCurve, attrs.FlipbookLoopCount, cycle, cycles, length, write, mode, start)
     else
-      const changeDuration = if attrs.SyncDuration then duration else attrs.FlipbookChangeDuration
+      const changeDuration = if attrs.SyncDuration then duration else own
 
       longestFlipbookDuration = changeDuration
 
@@ -505,8 +543,18 @@ function common.start(
 
     const fps = attrs.TextureFps
     const textureSync = attrs.TextureSyncDuration
+    const textureMode: flipbook_common.mode? = if modes then attrs.TextureMode or "OneShot" else nil
+    const textureLooped = if modes then textureMode ~= "OneShot" else attrs.TextureLoop
+    const textureSteps = flipbook_common.steps(textureCount, textureMode)
+    const textureReverse = modes and attrs.TextureReverse == true
+    const textureStart = if modes
+        and attrs.TextureStartRandom == true
+        and rng
+      then math.floor(rng:NextNumber() * textureSteps)
+      else nil
+
     const textureCycle, textureCycles, textureLength =
-      flipbook_common.cycles(textureCount / fps, duration, textureSync, attrs.TextureLoop, attrs.TextureLoopCount)
+      flipbook_common.cycles(textureSteps / fps, duration, textureSync, textureLooped, attrs.TextureLoopCount)
 
     if textures then
       longestFlipbookDuration = math.max(longestFlipbookDuration, textureLength)
@@ -523,11 +571,12 @@ function common.start(
     if textures then
       lifetime.defer(scope, textures.release)
 
-      const rate = if textureSync then textureCount / textureCycle else fps
+      const rate = if textureSync then textureSteps / textureCycle else fps
       local textureIndex = 0
 
       const function wear(elapsed: number, cycles: number)
-        const index = flipbook_common.frame(elapsed, rate, textureCount, cycles)
+        const index =
+          flipbook_common.frame(elapsed, rate, textureCount, cycles, textureMode, textureReverse, textureStart)
 
         if index ~= textureIndex then
           textureIndex = index
@@ -536,7 +585,9 @@ function common.start(
       end
 
       if textureCycles == 0 and attrs.TextureLoopCount < 0 then
-        endless(owner, "TextureLoop", true, textureCycle, wear)
+        const toggle = if modes then "TextureMode" else "TextureLoop"
+
+        endless(owner, toggle, running(if modes then textureMode or "OneShot" else true), textureCycle, wear)
       else
         -- a loop counting 0 wears the textures for as long as the piece is up
         const worn = if textureCycles == 0 then life + destroyDelay else textureLength

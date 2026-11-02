@@ -15,12 +15,14 @@ function flipbook_loop.play(
   cycle: number,
   cycles: number,
   span: number,
-  write: (alpha: number) -> ()
+  write: (alpha: number) -> (),
+  mode: flipbook_common.mode?,
+  start: number?
 )
   const eased = curve.new(1, shape)
 
   tween.play(scope, curve.new(span, "linear"), function(_, _, elapsed: number)
-    write(eased:at(flipbook_common.phase(elapsed, cycle, cycles)))
+    write(eased:at(flipbook_common.phase(elapsed, cycle, cycles, mode, start)))
   end)
 end
 
