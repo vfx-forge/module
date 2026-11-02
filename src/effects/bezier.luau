@@ -289,7 +289,7 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
             dir = Vector3.zero
           end
 
-          local function follow()
+          const function follow()
             return (utility.getTransformedOriginExtents(parent))
           end
 

@@ -1,9 +1,9 @@
-local curve = require("@mod/curve")
-local tween = require("@mod/tween")
+const curve = require("@mod/curve")
+const tween = require("@mod/tween")
 
-local mover = require("@srv/mover")
+const mover = require("@srv/mover")
 
-local common = {}
+const common = {}
 
 export type ProjectileOptions = {
   params: OverlapParams?,
@@ -14,8 +14,8 @@ function common.hit(params: OverlapParams, obj: BasePart)
   return workspace:GetPartsInPart(obj, params)[1] ~= nil
 end
 
--- flown on from where the mover last put it; a followed flight is carried by
--- the live origin and takes its turn, an unfollowed one keeps the part's own
+-- a followed flight is carried by the live origin and takes its turn, an
+-- unfollowed one keeps the part's own
 function common.projectile(
   scope: any,
   obj: BasePart,
@@ -24,16 +24,16 @@ function common.projectile(
   opts: ProjectileOptions,
   done: () -> ()
 )
-  local params = opts.params
-  local follow = opts.follow
-  local origin = mover.cframe(obj).Position
-  local originAtStart = if follow ~= nil then follow() else CFrame.identity
+  const params = opts.params
+  const follow = opts.follow
+  const origin = mover.cframe(obj).Position
+  const originAtStart = if follow ~= nil then follow() else CFrame.identity
   local hit = false
 
   -- a caller may be inside a tween's step, which must not yield
   task.spawn(function()
     tween.wait(scope, curve.new(lifetime, "linear"), function(_, _, elapsed: number)
-      local at = CFrame.new(origin + velocity * elapsed)
+      const at = CFrame.new(origin + velocity * elapsed)
 
       if follow ~= nil then
         mover.move(scope, obj, follow() * originAtStart:ToObjectSpace(at))
