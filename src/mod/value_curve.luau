@@ -364,4 +364,261 @@ function value_curve.at(curve: Curve, t: number, draws: { number }?): { number }
   return table.clone(value_curve.sampler(curve, draws)(t))
 end
 
+-- whether a value is a decoded curve, which a row's value is the one table of
+function value_curve.is(v: any)
+  return type(v) == "table" and type(v.channels) == "number" and type(v.keys) == "table"
+end
+
+-- a handle cut to a segment the way the sampler cuts it, so a copy stores the
+-- curve the sampler draws
+const function cut(handle: vector, low: number, high: number)
+  const x = math.clamp(handle.x, low, high)
+
+  if x == handle.x then
+    return handle
+  end
+
+  return vector.create(x, if handle.x ~= 0 then handle.y * x / handle.x else handle.y, 0)
+end
+
+-- a key at `time` holding `from`'s value with no handles
+const function still(from: Key, time: number, channels: number): Key
+  return {
+    time = time,
+    value = table.clone(from.value),
+    envelope = from.envelope,
+    left = table.create(channels, vector.zero),
+    right = table.create(channels, vector.zero),
+  }
+end
+
+-- the key at `time` inside the segment from `from` to `into`, each channel's
+-- cubic cut there by de Casteljau at the parameter whose time is `time`. the
+-- handles either side are rewritten to the halves, so the two segments draw
+-- exactly the one they replace while each segment's time handles do not
+-- cross. the envelope is spread as the cubic spreads the end values
+const function splitAt(from: Key, into: Key, time: number, channels: number): Key
+  const t0, t1 = from.time, into.time
+  const values = table.create(channels)
+  const left = table.create(channels)
+  const right = table.create(channels)
+
+  local weight = 0
+
+  for c = 1, channels do
+    const leave, enter = from.right[c], into.left[c]
+    const v0, v1 = from.value[c], into.value[c]
+    const x1, y1 = t0 + leave.x, v0 + leave.y
+    const x2, y2 = t1 + enter.x, v1 + enter.y
+    const s = solve(t0, x1, x2, t1, time)
+
+    const ax, ay = t0 + (x1 - t0) * s, v0 + (y1 - v0) * s
+    const bx, by = x1 + (x2 - x1) * s, y1 + (y2 - y1) * s
+    const cx, cy = x2 + (t1 - x2) * s, y2 + (v1 - y2) * s
+    const dx, dy = ax + (bx - ax) * s, ay + (by - ay) * s
+    const ex, ey = bx + (cx - bx) * s, by + (cy - by) * s
+    const px, py = dx + (ex - dx) * s, dy + (ey - dy) * s
+
+    from.right[c] = vector.create(ax - t0, ay - v0, 0)
+    into.left[c] = vector.create(cx - t1, cy - v1, 0)
+
+    values[c] = py
+    left[c] = vector.create(dx - px, dy - py, 0)
+    right[c] = vector.create(ex - px, ey - py, 0)
+
+    if c == 1 then
+      weight = s * s * (3 - 2 * s)
+    end
+  end
+
+  return {
+    time = time,
+    value = values,
+    envelope = from.envelope + (into.envelope - from.envelope) * weight,
+    left = left,
+    right = right,
+  }
+end
+
+-- the curve's keys, copied with their handles cut to their segments, and a key
+-- added at each of `extra`, sorted times the curve has no key at. a time before
+-- the first key or past the last holds that end's value, as the sampler reads
+-- it there
+const function withTimes(curve: Curve, extra: { number }): { Key }
+  const channels = curve.channels
+  const source = curve.keys
+  const count = #source
+  const keys = table.create(count)
+  const out = table.create(count + #extra)
+
+  for i, k in source do
+    const before = source[i - 1]
+    const after = source[i + 1]
+
+    keys[i] = {
+      time = k.time,
+      value = table.clone(k.value),
+      envelope = k.envelope,
+      left = table.clone(k.left),
+      right = table.clone(k.right),
+    }
+
+    for c = 1, channels do
+      if before ~= nil then
+        keys[i].left[c] = cut(k.left[c], before.time - k.time, 0)
+      end
+
+      if after ~= nil then
+        keys[i].right[c] = cut(k.right[c], 0, after.time - k.time)
+      end
+    end
+  end
+
+  local cursor = 1
+
+  -- a held end that becomes a segment must not bend it with a handle the
+  -- sampler never read
+  while cursor <= #extra and extra[cursor] < keys[1].time do
+    table.insert(out, still(keys[1], extra[cursor], channels))
+    cursor += 1
+  end
+
+  if cursor > 1 then
+    keys[1].left = table.create(channels, vector.zero)
+  end
+
+  for i = 1, count do
+    local from = keys[i]
+    const into = keys[i + 1]
+
+    if into ~= nil then
+      while cursor <= #extra and extra[cursor] < into.time do
+        if extra[cursor] > from.time then
+          const mid = splitAt(from, into, extra[cursor], channels)
+
+          table.insert(out, from)
+          from = mid
+        end
+
+        cursor += 1
+      end
+    end
+
+    table.insert(out, from)
+  end
+
+  const last = keys[count]
+
+  local trailed = false
+
+  while cursor <= #extra do
+    if extra[cursor] > last.time then
+      table.insert(out, still(last, extra[cursor], channels))
+      trailed = true
+    end
+
+    cursor += 1
+  end
+
+  if trailed then
+    last.right = table.create(channels, vector.zero)
+  end
+
+  return out
+end
+
+-- a copy of the curve with a key at `time`, drawing the same curve
+function value_curve.split(curve: Curve, time: number): Curve
+  for _, k in curve.keys do
+    if k.time == time then
+      return { channels = curve.channels, linked = curve.linked, keys = withTimes(curve, {}) }
+    end
+  end
+
+  return { channels = curve.channels, linked = curve.linked, keys = withTimes(curve, { time }) }
+end
+
+-- the times of `other`'s keys that `own` has no key at, both sorted
+const function missing(own: { Key }, other: { Key }): { number }
+  const out = {}
+
+  local i = 1
+
+  for _, k in other do
+    const time = k.time
+
+    while own[i] ~= nil and own[i].time < time do
+      i += 1
+    end
+
+    if (own[i] == nil or own[i].time ~= time) and out[#out] ~= time then
+      table.insert(out, time)
+    end
+  end
+
+  return out
+end
+
+-- the keys of one time, `count` of them from `at`, made `want` by copying the
+-- last into keys of no width between, which the sampler never reads inside
+const function pad(keys: { Key }, at: number, count: number, want: number, channels: number, out: { Key })
+  for i = at, at + count - 2 do
+    table.insert(out, keys[i])
+  end
+
+  const last = keys[at + count - 1]
+
+  for copy = 1, want - count do
+    const made = still(last, last.time, channels)
+
+    if copy == 1 then
+      made.left = last.left
+    end
+
+    table.insert(out, made)
+  end
+
+  if want > count then
+    last.left = table.create(channels, vector.zero)
+  end
+
+  table.insert(out, last)
+end
+
+-- how many keys from `at` share its time
+const function run(keys: { Key }, at: number)
+  local count = 1
+
+  while keys[at + count] ~= nil and keys[at + count].time == keys[at].time do
+    count += 1
+  end
+
+  return count
+end
+
+-- both curves' keys on one set of times, the union of theirs, each drawing
+-- the curve it was. key i of one sits at the time of key i of the other
+function value_curve.align(a: Curve, b: Curve): ({ Key }, { Key })
+  const channels = a.channels
+  const ka = withTimes(a, missing(a.keys, b.keys))
+  const kb = withTimes(b, missing(b.keys, a.keys))
+  const outA = table.create(#ka)
+  const outB = table.create(#kb)
+
+  local i, j = 1, 1
+
+  while ka[i] ~= nil and kb[j] ~= nil do
+    const na, nb = run(ka, i), run(kb, j)
+    const want = math.max(na, nb)
+
+    pad(ka, i, na, want, channels, outA)
+    pad(kb, j, nb, want, channels, outB)
+
+    i += na
+    j += nb
+  end
+
+  return outA, outB
+end
+
 return value_curve

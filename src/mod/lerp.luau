@@ -1,5 +1,7 @@
+local knob = require("@mod/knob")
 local color = require("@mod/color/color")
 local logger = require("@mod/logger")
+local value_curve = require("@mod/value_curve")
 
 -- the most keypoints the engine takes in a sequence
 local ENGINE_KEYPOINTS = 20
@@ -222,6 +224,51 @@ function lerp.ColorSequence(a: ColorSequence, b: ColorSequence, t: number)
   return ColorSequence.new(keypoints)
 end
 
+-- both curves on one set of key times, each drawing exactly what it did, then
+-- every key's value, envelope and handles blended channel by channel
+function lerp.ValueCurve(a: value_curve.Curve, b: value_curve.Curve, t: number)
+  if not value_curve.is(b) or a.channels ~= b.channels then
+    const got = if value_curve.is(b) then `one of {b.channels}` else `a {typeof(b)}`
+
+    logger.error(`a value curve of {a.channels} channels cannot blend with {got}`)
+  end
+
+  if t == 0 then
+    return a
+  end
+
+  if t == 1 then
+    return b
+  end
+
+  const channels = a.channels
+  const from, into = value_curve.align(a, b)
+  const keys = table.create(#from)
+
+  for i, k in from do
+    const o = into[i]
+    const values = table.create(channels)
+    const left = table.create(channels)
+    const right = table.create(channels)
+
+    for c = 1, channels do
+      values[c] = k.value[c] + (o.value[c] - k.value[c]) * t
+      left[c] = k.left[c] + (o.left[c] - k.left[c]) * t
+      right[c] = k.right[c] + (o.right[c] - k.right[c]) * t
+    end
+
+    keys[i] = {
+      time = k.time,
+      value = values,
+      envelope = k.envelope + (o.envelope - k.envelope) * t,
+      left = left,
+      right = right,
+    }
+  end
+
+  return { channels = channels, linked = a.linked and b.linked, keys = keys }
+end
+
 function lerp.Other(a: any, b: any, t: number)
   -- NOT `t < 0.5 and a or b`: that's the classic Lua ternary pitfall, since
   -- when `a` is falsy (`false`/`nil`, both valid discrete values here), `X and
@@ -232,10 +279,15 @@ function lerp.Other(a: any, b: any, t: number)
   return b
 end
 
--- dispatches on the type of `a` to the matching lerp above, falling back to
--- lerp.Other for anything with no typed lerp of its own
+-- dispatches on the type of `a` to the matching lerp above, a table on the
+-- kind it is, falling back to lerp.Other for anything with no typed lerp of its
+-- own
 function lerp.any(a: any, b: any, t: number)
   local fn = (lerp :: any)[typeof(a)]
+
+  if fn == nil and type(a) == "table" then
+    fn = (lerp :: any)[knob.kindOf(a)]
+  end
 
   if fn then
     return fn(a, b, t)

@@ -1,3 +1,5 @@
+local value_curve = require("@mod/value_curve")
+
 local Knob = {}
 Knob.__index = Knob
 
@@ -19,11 +21,20 @@ local counter = 0
 export type Rule = (ctx: any, attrs: any, props: any) -> any
 
 -- the kind a value names, with the engine's two spellings of a vector read as
--- one. the package's only answer to that question: mods re-exports this one
+-- one and a decoded value curve named for itself. the package's only answer to
+-- that question: mods re-exports this one
 function knob.kindOf(v: any)
   local t = typeof(v)
 
-  return if t == "vector" then "Vector3" else t
+  if t == "vector" then
+    return "Vector3"
+  end
+
+  if t == "table" and value_curve.is(v) then
+    return "ValueCurve"
+  end
+
+  return t
 end
 
 -- never a name a chain method also answers to: an unset field of that name

@@ -1,4 +1,5 @@
 const knob = require("@mod/knob")
+const lerp = require("@mod/lerp")
 const reader = require("@mod/reader")
 const value_curve = require("@mod/value_curve")
 const harness = require("@tests/harness")
@@ -6,6 +7,7 @@ const test, expect = harness.test, harness.expect
 const Instance = harness.datatypes.Instance
 
 const EPSILON = 1e-6
+const LOOSE = 1e-4
 
 const function near(a: number, b: number): boolean
   return math.abs(a - b) < EPSILON
@@ -322,6 +324,138 @@ harness.suite(function()
       buffer.writeu32(huge, 3, 0xFFFFFFFF)
 
       expect(value_curve.decode(buffer.tostring(huge))).toBe(nil)
+    end)
+  end)
+
+  harness.describe("lerp.ValueCurve", function()
+    -- every channel of `got` within LOOSE of `want` at each t of a sweep
+    const function alike(got: any, want: any)
+      const read, truth = value_curve.sampler(got), value_curve.sampler(want)
+
+      for i = 0, 200 do
+        const t = i / 200
+        const a, b = table.clone(read(t)), truth(t)
+
+        for c = 1, want.channels do
+          assert(math.abs(a[c] - b[c]) < LOOSE, `channel {c} at {t} reads {a[c]}, wants {b[c]}`)
+        end
+      end
+    end
+
+    -- three channels on key times sample() has none of, the first and last
+    -- inside 0..1
+    const function other()
+      return {
+        channels = 3,
+        linked = false,
+        keys = {
+          key(
+            0.1,
+            { -2, 1, 0 },
+            0.5,
+            nil,
+            { vector.create(0.1, 1, 0), vector.create(0.05, 0, 0), vector.create(0.2, -1, 0) }
+          ),
+          key(
+            0.3,
+            { 1, 1, 4 },
+            0,
+            { vector.create(-0.05, 0, 0), vector.create(-0.1, 2, 0), vector.create(-0.05, 0.5, 0) },
+            { vector.create(0.2, 0, 0), vector.create(0.1, -1, 0), vector.create(0.3, 0, 0) }
+          ),
+          key(
+            0.8,
+            { 3, 6, -2 },
+            0,
+            { vector.create(-0.25, 1, 0), vector.create(-0.1, 0, 0), vector.create(-0.2, -1, 0) },
+            nil
+          ),
+        },
+      }
+    end
+
+    test("a blend at 0 reads as a and at 1 as b over a sweep", function()
+      const a, b = sample(), other()
+
+      alike(lerp.ValueCurve(a, b, 0), a)
+      alike(lerp.ValueCurve(a, b, 1), b)
+
+      -- a step off either end goes through the shared key times
+      alike(lerp.ValueCurve(a, b, 1e-9), a)
+      alike(lerp.ValueCurve(a, b, 1 - 1e-9), b)
+      alike(lerp.ValueCurve(b, a, 1e-9), b)
+    end)
+
+    test("splitting a curve at a new time leaves its samples unchanged", function()
+      const c = sample()
+
+      for _, time in { 0.2, 0.37, 0.5, 0.9 } do
+        const split = value_curve.split(c, time)
+
+        alike(split, c)
+        expect(#split.keys).toBe(if time == 0.5 then 3 else 4)
+      end
+
+      -- before the first key and past the last, where the curve holds its ends
+      const inside = other()
+
+      alike(value_curve.split(value_curve.split(inside, 0), 1), inside)
+      alike(value_curve.split(value_curve.split(inside, 0.2), 0.25), inside)
+    end)
+
+    test("a blend at 0.5 of two flat curves is the flat mean", function()
+      const blend = lerp.ValueCurve(value_curve.flat(1, 3), value_curve.flat(3, 3), 0.5)
+
+      for _, t in { 0, 0.4, 1 } do
+        expect(value_curve.at(blend, t)).toEqual({ 2, 2, 2 })
+      end
+
+      expect(lerp.any(value_curve.flat(0, 1), value_curve.flat(1, 1), 0.25)).toEqual(value_curve.flat(0.25, 1))
+    end)
+
+    test("curves on different key times blend between them where both rise", function()
+      const a = {
+        channels = 1,
+        linked = true,
+        keys = {
+          key(0, { 0 }, 0, nil, { vector.create(0.1, 0.5, 0) }),
+          key(0.4, { 2 }, 0, { vector.create(-0.1, -0.5, 0) }, { vector.create(0.2, 1, 0) }),
+          key(1, { 5 }, 0, { vector.create(-0.2, -0.5, 0) }, nil),
+        },
+      }
+      const b = {
+        channels = 1,
+        linked = true,
+        keys = {
+          key(0, { 1 }, 0, nil, { vector.create(0.3, 2, 0) }),
+          key(0.7, { 6 }, 0, { vector.create(-0.2, -1, 0) }, { vector.create(0.1, 0.5, 0) }),
+          key(1, { 8 }),
+        },
+      }
+
+      for _, weight in { 0.25, 0.5, 0.75 } do
+        const blend = lerp.ValueCurve(a, b, weight)
+
+        for i = 0, 100 do
+          const t = i / 100
+          const v, low, high = value_curve.at(blend, t)[1], value_curve.at(a, t)[1], value_curve.at(b, t)[1]
+
+          expect(v >= math.min(low, high) - LOOSE and v <= math.max(low, high) + LOOSE).ok()
+        end
+      end
+    end)
+
+    test("the blend is linked only when both are, and channel counts must agree", function()
+      const one, three = value_curve.flat(1, 1), value_curve.flat(1, 3)
+      const loose = value_curve.flat(2, 1)
+
+      loose.linked = false
+
+      expect(lerp.ValueCurve(one, loose, 0.5).linked).toBe(false)
+      expect(lerp.ValueCurve(one, value_curve.flat(2, 1), 0.5).linked).toBe(true)
+      expect(function()
+        lerp.ValueCurve(one, three, 0.5)
+      end).toThrow()
     end)
   end)
 
