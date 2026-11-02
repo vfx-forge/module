@@ -38,6 +38,7 @@ type Fields = {
   names: { string },
   choices: { string }?,
   classes: { string }?,
+  channels: number?,
   title: string?,
   details: string?,
   preset: string?,
@@ -74,6 +75,7 @@ local function make(default: any): Knob
     names = {},
     choices = nil,
     classes = nil,
+    channels = nil,
     title = nil,
     details = nil,
     preset = nil,
@@ -186,6 +188,15 @@ end
 function Knob.instance(self: Knob, classes: { string }?): Knob
   self.kind = "Instance"
   self.classes = classes
+  return self
+end
+
+-- a row that holds a value curve over a piece's life, stored as a string the
+-- value_curve codec writes. its default is a decoded curve of this many
+-- channels, which an unset or malformed attribute reads as
+function Knob.valueCurve(self: Knob, channels: number): Knob
+  self.kind = "ValueCurve"
+  self.channels = channels
   return self
 end
 

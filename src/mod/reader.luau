@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local knob = require("@mod/knob")
 local logger = require("@mod/logger")
 local legacy_mods = require("@mod/legacy_mods")
+local value_curve = require("@mod/value_curve")
 local instance_value = require("@mod/instance_value")
 local numeric_common = require("@mod/common/numeric")
 
@@ -492,9 +493,46 @@ local function instanceOf(state: State, name: string, row: knob.Knob)
   return inst
 end
 
+-- a value curve row, the decoded string under its name or an old spelling. a
+-- missing, malformed or wrong width curve reads as the row's default
+local function curveOf(state: State, name: string, row: knob.Knob)
+  local map = state.map
+  local v = map[name]
+
+  if v == nil then
+    for _, alias in row.names do
+      v = map[alias]
+
+      if v ~= nil then
+        break
+      end
+    end
+  end
+
+  local curve = value_curve.decode(if type(v) == "string" then v else nil)
+
+  if curve == nil or curve.channels ~= row.channels then
+    if v ~= nil then
+      mods.warnOnce(state.ctx.ref, name, `{name} holds no value curve {state.module.id} can read`)
+    end
+
+    return fallbackOf(state, row, nil)
+  end
+
+  if row.readonlyRule ~= nil and row.readonlyRule(state.ctx, state.attrs, state.props) == true then
+    return fallbackOf(state, row, nil)
+  end
+
+  return curve
+end
+
 local function plainOf(state: State, source: string, name: string, row: knob.Knob)
   if source == "attribute" and row.kind == "Instance" then
     return instanceOf(state, name, row)
+  end
+
+  if source == "attribute" and row.kind == "ValueCurve" then
+    return curveOf(state, name, row)
   end
 
   local ctx = state.ctx
