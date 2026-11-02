@@ -234,6 +234,9 @@ type Flight = {
   -- emit; nil when it had no place or was gone
   standing: vector?,
   read: number,
+
+  -- the Color sequence's keypoints, read from the property once for the emit
+  keypoints: { ColorSequenceKeypoint },
 }
 
 -- where a pull target stands, or nil for a class that has no place
@@ -645,7 +648,7 @@ const function piece(
     end
 
     if first or tinted then
-      obj.Color = color.sequenceAt(tint, t)
+      obj.Color = color.keypointsAt(flight.keypoints, t)
     end
   end
 
@@ -989,6 +992,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     collision = nil,
     standing = nil,
     read = -1,
+    keypoints = (attrs.Color :: ColorSequence).Keypoints,
   }
 
   if attrs.CollisionMode ~= "Off" then

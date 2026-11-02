@@ -31,12 +31,12 @@ function color.blend(a: Color3, b: Color3, t: number, unclamped: boolean?): Colo
   return Oklab.toSRGB(Oklab.fromSRGB(a):Lerp(Oklab.fromSRGB(b), t), unclamped)
 end
 
--- a sequence's color at `time`, blended in Oklab between the keypoints on
--- either side of it
-function color.sequenceAt(sequence: ColorSequence, time: number): Color3
-  local keypoints = sequence.Keypoints
-  local first = keypoints[1]
-  local last = keypoints[#keypoints]
+-- the color at `time` of a sequence's keypoints, blended in Oklab between the
+-- ones on either side of it; a caller sampling every frame reads
+-- `sequence.Keypoints` once, as the property builds a new array on each read
+function color.keypointsAt(keypoints: { ColorSequenceKeypoint }, time: number): Color3
+  const first = keypoints[1]
+  const last = keypoints[#keypoints]
 
   if time <= first.Time then
     return first.Value
@@ -47,10 +47,10 @@ function color.sequenceAt(sequence: ColorSequence, time: number): Color3
   end
 
   for i = 2, #keypoints do
-    local above = keypoints[i]
+    const above = keypoints[i]
 
     if above.Time >= time then
-      local below = keypoints[i - 1]
+      const below = keypoints[i - 1]
 
       if above.Time == time then
         return above.Value
@@ -61,6 +61,11 @@ function color.sequenceAt(sequence: ColorSequence, time: number): Color3
   end
 
   return last.Value
+end
+
+-- a sequence's color at `time`
+function color.sequenceAt(sequence: ColorSequence, time: number): Color3
+  return color.keypointsAt(sequence.Keypoints, time)
 end
 
 return color

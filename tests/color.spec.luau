@@ -120,6 +120,33 @@ harness.suite(function()
       end
     end)
 
+    test("keypointsAt samples a keypoint array as sequenceAt samples its sequence", function()
+      local white = Color3.new(1, 1, 1)
+      local sequences = {
+        ColorSequence.new(RED, BLUE),
+        ColorSequence.new({
+          ColorSequenceKeypoint.new(0, RED),
+          ColorSequenceKeypoint.new(0.3, BLUE),
+          ColorSequenceKeypoint.new(0.6, white),
+          ColorSequenceKeypoint.new(1, Color3.new(0.2, 0.7, 0.4)),
+        }),
+      }
+
+      for _, sequence in sequences do
+        local keypoints = sequence.Keypoints
+
+        for step = -10, 110 do
+          local t = step / 100
+
+          expect(color.keypointsAt(keypoints, t)).toBe(color.sequenceAt(sequence, t))
+        end
+
+        for _, keypoint in keypoints do
+          expect(color.keypointsAt(keypoints, keypoint.Time)).toBe(keypoint.Value)
+        end
+      end
+    end)
+
     test("a NumberSequence blend past the engine's 20 keypoints keeps 20 and warns once", function()
       local function sequence(count: number, offset: number): NumberSequence
         local keypoints = {}
