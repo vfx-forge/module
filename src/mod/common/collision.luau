@@ -6,12 +6,13 @@ const SURFACE_OFFSET = 0.01
 const common = {}
 
 export type Mode = "Off" | "Kill" | "Stop" | "Bounce"
+export type FilterType = "Exclude" | "Include"
 
 export type Config = {
   mode: Mode,
   bounce: number,
   friction: number,
-  filterType: Enum.RaycastFilterType,
+  filterType: FilterType,
   filterTag: string,
   group: string,
   respectCanCollide: boolean,
@@ -33,6 +34,16 @@ common.engine = {
     )
   end,
 }
+
+-- a filter row's choice as the filter type and tag a cast reads: None leaves
+-- out only what the caller excludes
+function common.filter(choice: string, tag: string): (FilterType, string)
+  if choice == "Include Tag" then
+    return "Include", tag
+  end
+
+  return "Exclude", if choice == "Exclude Tag" then tag else ""
+end
 
 -- Terrain is never filtered out, so the ground stays hittable
 function common.params(config: Config, exclude: { Instance }): RaycastParams

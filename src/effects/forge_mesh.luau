@@ -106,6 +106,10 @@ const function noCollision(_, attrs: any)
   return attrs.CollisionMode == "Off"
 end
 
+const function untagged(_, attrs: any)
+  return attrs.CollisionMode == "Off" or attrs.CollisionFilter == "None"
+end
+
 -- whether a folder of the template is one of its frame sets
 const function setFolder(child: Instance)
   const key = SETS[child.Name]
@@ -442,13 +446,18 @@ forge_mesh.attributes = {
     :hidden(noBounce)
     :label("Friction")
     :hint("Share of the speed along the surface a bounce loses."),
-  CollisionFilterType = knob("Exclude")
-    :options({ "Exclude", "Include" })
-    :label("FilterType")
-    :hint("Whether the tagged parts are left out of the hits or are the only ones hit."),
-  CollisionFilterTag = knob(""):label("FilterTag"):hint("CollectionService tag the filter reads."),
-  CollisionGroup = knob("Default"):label("CollisionGroup"):hint("Collision group the hits are cast in."),
+  CollisionFilter = knob("None")
+    :options({ "None", "Exclude Tag", "Include Tag" })
+    :hidden(noCollision)
+    :label("CollisionFilter")
+    :hint("Whether tagged parts are left out of the hits or are the only ones hit."),
+  CollisionFilterTag = knob(""):hidden(untagged):label("FilterTag"):hint("CollectionService tag the filter reads."),
+  CollisionGroup = knob("Default")
+    :hidden(noCollision)
+    :label("CollisionGroup")
+    :hint("Collision group the hits are cast in."),
   CollisionRespectCanCollide = knob(true)
+    :hidden(noCollision)
     :label("RespectCanCollide")
     :hint("Whether parts with CanCollide off are passed through."),
 
@@ -521,16 +530,10 @@ forge_mesh.layout = {
       "CollisionMode",
       "Bounce",
       "Friction",
-      {
-        title = "Filter",
-        entries = {
-          "CollisionFilterType",
-          "CollisionFilterTag",
-          "CollisionGroup",
-          "CollisionRespectCanCollide",
-        },
-        hidden = noCollision,
-      },
+      "CollisionFilter",
+      "CollisionFilterTag",
+      "CollisionGroup",
+      "CollisionRespectCanCollide",
     },
     hidden = carried,
   },
@@ -979,12 +982,14 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
       table.insert(exclude, parent)
     end
 
+    const filterType, filterTag = collision_common.filter(attrs.CollisionFilter, attrs.CollisionFilterTag)
+
     const collision: collision_common.Config = {
       mode = attrs.CollisionMode,
       bounce = 0,
       friction = 0,
-      filterType = attrs.CollisionFilterType,
-      filterTag = attrs.CollisionFilterTag,
+      filterType = filterType,
+      filterTag = filterTag,
       group = attrs.CollisionGroup,
       respectCanCollide = attrs.CollisionRespectCanCollide,
     }

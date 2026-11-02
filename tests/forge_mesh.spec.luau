@@ -410,6 +410,51 @@ const function walled(parent: Instance, body: (filters: { { any } }) -> ())
   end
 end
 
+-- the world stood in by a floor at y 0 tagged `tag`, hit as a real cast's
+-- filter would: an Exclude filter holding the floor and an Include filter
+-- lacking it both pass through, put back once `body` ends
+const function floored(tag: string, body: () -> ())
+  const real = collision_common.engine
+  const floor = { Name = "Floor" }
+
+  collision_common.engine = {
+    params = function()
+      const params = { added = {} }
+
+      function params.AddToFilter(self: any, items: { any })
+        for _, item in items do
+          table.insert(self.added, item)
+        end
+      end
+
+      return params :: any
+    end,
+    tagged = function(name: string)
+      return if name == tag then { floor :: any } else {}
+    end,
+    raycast = function(params: any, from: vector, to: vector)
+      const listed = table.find(params.added, floor) ~= nil
+      const include = params.FilterType == Enum.RaycastFilterType.Include
+
+      if listed ~= include or not (from.y > 0 and to.y <= 0) then
+        return nil
+      end
+
+      const at = from + (to - from) * (from.y / (from.y - to.y))
+
+      return { Position = Vector3.new(at.x, at.y, at.z), Normal = Vector3.new(0, 1, 0) } :: any
+    end,
+  }
+
+  const ok, err = pcall(body)
+
+  collision_common.engine = real
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
 -- a piece falling from y 12 on a template under an attachment, `rows` over it
 const function falling(rows: { [string]: any }, body: (piece: BasePart, fake: fake_pool.Fake) -> ())
   framed(function(fake)
@@ -1351,6 +1396,41 @@ harness.suite(function()
       end)
     end)
 
+    test("Include Tag hits only tagged parts and None hits everything", function()
+      -- whether a Kill piece over a floor tagged Ground is gone once it has
+      -- fallen past the floor
+      const function killed(rows: { [string]: any }, tag: string)
+        local gone = false
+
+        framed(function(fake)
+          const part = attached(rows)
+
+          part:SetAttribute("CollisionMode", "Kill")
+          part:SetAttribute("Acceleration", Vector3.new(0, -20, 0))
+          part:SetAttribute("Lifetime", NumberRange.new(3, 3))
+          part:SetAttribute("Speed", STILL)
+
+          floored(tag, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            frames(90)
+
+            gone = piece.Parent == nil
+            env:Clear()
+          end)
+        end)
+
+        return gone
+      end
+
+      expect(killed({ CollisionFilter = "Include Tag", CollisionFilterTag = "Ground" }, "Ground")).toBe(true)
+      expect(killed({ CollisionFilter = "Include Tag", CollisionFilterTag = "Ground" }, "Wall")).toBe(false)
+      expect(killed({ CollisionFilter = "Exclude Tag", CollisionFilterTag = "Ground" }, "Ground")).toBe(false)
+      expect(killed({ CollisionFilter = "None", CollisionFilterTag = "Ground" }, "Ground")).toBe(true)
+      expect(killed({}, "Ground")).toBe(true)
+    end)
+
     test("collision never hits the template or its parent", function()
       framed(function(fake)
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
@@ -1484,7 +1564,10 @@ harness.suite(function()
             "Material Frames",
             "Bounce",
             "Friction",
-            "Filter",
+            "CollisionFilter",
+            "CollisionFilterTag",
+            "CollisionGroup",
+            "CollisionRespectCanCollide",
           }
         do
           expect(`{name} {hidden[name]}`).toBe(`{name} true`)
