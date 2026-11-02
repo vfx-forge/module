@@ -32,6 +32,8 @@ type Kind = { folder: string, key: string, count: string, shaped: boolean }
 
 local DEFAULT_BUDGET = 128
 local PARK = CFrame.new(0, -20000, 0)
+-- a surface on a fully transparent part is never requested; just under 1 it loads while still drawing nothing visible
+const HOME_TRANSPARENCY = 0.999
 
 local MAPS =
   { "ColorMapContent", "EmissiveMaskContent", "NormalMapContent", "RoughnessMapContent", "MetalnessMapContent" }
@@ -85,6 +87,7 @@ local out: { [Frame]: boolean } = {}
 const refused: { [string]: { any } } = {}
 const shapeless: { [Set]: boolean } = {}
 const starts: { [Set]: BasePart } = {}
+const wearers: { [Set]: Instance } = {}
 const requested: { [Set]: boolean } = {}
 
 -- a mesh's first ApplyMesh onto a part in the world blocks until the engine holds the mesh, so a frame is
@@ -204,6 +207,10 @@ local function register(folder: Instance, key: string, kind: Kind): Set
     starts[set] = start
   end
 
+  if kind.shaped then
+    wearers[set] = start or folder.Parent
+  end
+
   return set
 end
 
@@ -217,8 +224,10 @@ local function locate(model: Instance, key: string, kind: Kind): Instance?
   return nil
 end
 
--- a copy of a frame part that draws nothing and sits out of view, holding only what its kind of mesh needs
-local function parked(source: BasePart, keep: boolean): BasePart?
+-- a copy of a frame part that draws nothing and sits out of view, holding only what its kind of mesh needs; a
+-- mesh first drawn on a piece wearing a surface keeps the old shape for up to half a second, so a mesh copy that
+-- will be worn under one draws under a copy of it already
+local function parked(source: BasePart, keep: boolean, surface: Instance?): BasePart?
   const copy = frame_store.engine.clone(source) :: BasePart?
 
   if copy == nil then
@@ -239,9 +248,17 @@ local function parked(source: BasePart, keep: boolean): BasePart?
   copy.CanQuery = false
   copy.CanTouch = false
   copy.CastShadow = false
-  copy.Transparency = 1
+  copy.Transparency = if keep and surface == nil then 1 else HOME_TRANSPARENCY
   copy.Size = Vector3.zero
   copy.CFrame = PARK
+
+  if surface then
+    const dressed = frame_store.engine.clone(surface)
+
+    if dressed then
+      dressed.Parent = copy
+    end
+  end
 
   return copy
 end
@@ -294,6 +311,8 @@ end
 local function build(set: Set, holder: Instance): boolean
   const shaped = not shapeless[set]
   const made: { Instance } = {}
+  const wearer = wearers[set]
+  const surface = if wearer then wearer:FindFirstChildOfClass("SurfaceAppearance") else nil
   local textures = 0
 
   const function keep(instance: Instance?): any
@@ -306,7 +325,7 @@ local function build(set: Set, holder: Instance): boolean
 
   for _, frame in set.frames do
     const material = materialOf(frame.source) :: any
-    const mesh = if shaped then keep(parked(frame.source, true)) else nil
+    const mesh = if shaped then keep(parked(frame.source, true, surface)) else nil
     const home = if material then keep(parked(frame.source, false)) else nil
     const copy = if material then keep(frame_store.engine.clone(material)) else nil
 
@@ -443,6 +462,7 @@ function frame_store.init(scope: { any })
   table.clear(refused)
   table.clear(shapeless)
   table.clear(starts)
+  table.clear(wearers)
   table.clear(requested)
   table.clear(settled)
   table.clear(asked)
@@ -467,6 +487,7 @@ function frame_store.init(scope: { any })
     table.clear(out)
     table.clear(shapeless)
     table.clear(starts)
+    table.clear(wearers)
     table.clear(requested)
     park = nil
   end)
