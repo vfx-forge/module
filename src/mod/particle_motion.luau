@@ -4,14 +4,19 @@ local shape = require("@mod/shape")
 
 export type Gravity = { kind: "Gravity", target: vector, mass: number, softening: number }
 
+-- a funnel about the axis: its radius runs from `bottom` at the center's
+-- height to `top` at `height` and holds past either end; `spin` is in turns
+-- per second, `rise` in studs per second and `capture` per second
 export type Vortex = {
   kind: "Vortex",
   center: vector,
   axis: vector,
-  swirl: number,
-  inflow: number,
-  lift: number,
-  radius: number,
+  bottom: number,
+  top: number,
+  height: number,
+  spin: number,
+  rise: number,
+  capture: number,
 }
 
 -- `height` is where the piece's own ring sits along the axis, the height it
@@ -21,7 +26,7 @@ export type Orbit = {
   center: vector,
   axis: vector,
   radius: number,
-  speed: number,
+  spin: number,
   capture: number,
   height: number?,
 }
@@ -56,9 +61,7 @@ const WORLD_UP = vector.create(0, 1, 0)
 const WORLD_X = vector.create(1, 0, 0)
 const WORLD_Z = vector.create(0, 0, 1)
 
--- how fast, per second, a vortex steers a piece's speed around its axis
--- toward the swirl's
-const SWIRL_RATE = 4
+const TAU = 2 * math.pi
 
 -- the turn a thinned path keeps a point at, at the least, and the points it
 -- keeps for time alone: one every eighth of the path, then the two ends
@@ -88,6 +91,36 @@ const function basisOf(axis: vector): (vector, vector)
   const first = (across(WORLD_X, axis) or across(WORLD_Z, axis)) :: vector
 
   return first, vector.cross(axis, first)
+end
+
+-- where a piece stands about a center and unit axis: its height along the
+-- axis, its distance off it and its angle in the plane across it. a piece on
+-- the axis takes the angle of its velocity, else the plane's first direction
+const function aroundOf(
+  position: vector,
+  velocity: vector,
+  center: vector,
+  axis: vector
+): (number, number, number, vector, vector)
+  const first, second = basisOf(axis)
+  const offset = position - center
+  const height = vector.dot(offset, axis)
+  const radial = offset - axis * height
+
+  local x, y = vector.dot(radial, first), vector.dot(radial, second)
+
+  if x * x + y * y <= 1e-12 then
+    x, y = vector.dot(velocity, first), vector.dot(velocity, second)
+  end
+
+  return height, vector.magnitude(radial), math.atan2(y, x), first, second
+end
+
+-- a funnel's radius at height `h` along its axis, held at its ends past them
+const function widthOf(vortex: Vortex, h: number)
+  const t = if vortex.height > 0 then math.clamp(h / vortex.height, 0, 1) elseif h > 0 then 1 else 0
+
+  return math.max(vortex.bottom + (vortex.top - vortex.bottom) * t, 0)
 end
 
 -- the angle between two steps, 0 when either has no length
@@ -221,63 +254,42 @@ function particle_motion.verlet(
   return nextPosition, nextVelocity
 end
 
--- a vortex's pull on a piece over a step of `dt`: the speed around the axis
--- steered toward the swirl's Rankine profile, full at the radius and falling
--- off inside and out, the inflow toward the axis, easing off inside the
--- radius, and the lift along it. the steering lands exactly over the step, so
--- no frame rate overshoots it; a piece on the axis takes the lift alone
-function particle_motion.vortex(position: vector, velocity: vector, vortex: Vortex, dt: number): vector
+-- one step of a piece on a funnel, worked out from where it stands: its
+-- angle carried on at the spin, its height at the rise, and its gap from the
+-- funnel's radius eased away at the capture's rate, so a piece drawn on keeps
+-- to the funnel as it climbs. the velocity is what the move took
+function particle_motion.funnel(position: vector, velocity: vector, vortex: Vortex, dt: number): (vector, vector)
   const axis = vortex.axis
-  const lift = axis * vortex.lift
-  const offset = position - vortex.center
-  const radial = offset - axis * vector.dot(offset, axis)
-  const d = vector.magnitude(radial)
-
-  if d <= 1e-6 then
-    return lift
-  end
-
-  const outward = radial / d
-  const around = vector.cross(axis, outward)
-  const r = vortex.radius
-  const profile = if d < r then d / r else r / d
-  const inflow = if r > 0 then math.min(1, d / r) else 1
-  const steer = if dt > 0 then (1 - math.exp(-SWIRL_RATE * dt)) / dt else SWIRL_RATE
-  const swirl = (vortex.swirl * profile - vector.dot(velocity, around)) * steer
-
-  return lift - outward * (vortex.inflow * inflow) + around * swirl
-end
-
--- one step of an orbiting piece, worked out from where it stands: its angle
--- about the axis carried on at the orbit's speed in degrees per second, its
--- radius and height eased toward the ring's at the capture's rate. a piece on
--- the axis sets off the way it moves. the velocity is what the move took
-function particle_motion.ring(position: vector, velocity: vector, orbit: Orbit, dt: number): (vector, vector)
-  const axis = orbit.axis
-  const first, second = basisOf(axis)
-  const offset = position - orbit.center
-  const height = vector.dot(offset, axis)
-  const radial = offset - axis * height
-
-  local x, y = vector.dot(radial, first), vector.dot(radial, second)
-
-  if x * x + y * y <= 1e-12 then
-    x, y = vector.dot(velocity, first), vector.dot(velocity, second)
-  end
-
-  const angle = math.atan2(y, x) + math.rad(orbit.speed) * dt
-  const settle = math.exp(-math.max(orbit.capture, 0) * dt)
-  const ring = math.max(orbit.radius, 0)
-  const rest = orbit.height or height
-  const radius = ring + (vector.magnitude(radial) - ring) * settle
-  const along = rest + (height - rest) * settle
-  const nextPosition = orbit.center + axis * along + (first * math.cos(angle) + second * math.sin(angle)) * radius
+  const height, distance, angle, first, second = aroundOf(position, velocity, vortex.center, axis)
+  const turned = angle + vortex.spin * TAU * dt
+  const along = height + vortex.rise * dt
+  const settle = math.exp(-math.max(vortex.capture, 0) * dt)
+  const radius = math.max(widthOf(vortex, along) + (distance - widthOf(vortex, height)) * settle, 0)
+  const nextPosition = vortex.center + axis * along + (first * math.cos(turned) + second * math.sin(turned)) * radius
 
   return nextPosition, if dt > 0 then (nextPosition - position) / dt else velocity
 end
 
--- one step under a force, or none: gravity by velocity Verlet, a vortex as
--- an acceleration on top of the piece's own, an orbit by its ring alone
+-- one step of an orbiting piece, worked out from where it stands: its angle
+-- about the axis carried on at the orbit's spin in turns per second, its
+-- radius and height eased toward the ring's at the capture's rate. a piece on
+-- the axis sets off the way it moves. the velocity is what the move took
+function particle_motion.ring(position: vector, velocity: vector, orbit: Orbit, dt: number): (vector, vector)
+  const axis = orbit.axis
+  const height, distance, angle, first, second = aroundOf(position, velocity, orbit.center, axis)
+  const turned = angle + orbit.spin * TAU * dt
+  const settle = math.exp(-math.max(orbit.capture, 0) * dt)
+  const ring = math.max(orbit.radius, 0)
+  const rest = orbit.height or height
+  const radius = ring + (distance - ring) * settle
+  const along = rest + (height - rest) * settle
+  const nextPosition = orbit.center + axis * along + (first * math.cos(turned) + second * math.sin(turned)) * radius
+
+  return nextPosition, if dt > 0 then (nextPosition - position) / dt else velocity
+end
+
+-- one step under a force, or none: gravity by velocity Verlet, a vortex by
+-- its funnel alone, an orbit by its ring alone
 function particle_motion.advance(
   position: vector,
   velocity: vector,
@@ -306,9 +318,7 @@ function particle_motion.advance(
   end
 
   if force.kind == "Vortex" then
-    const pull = particle_motion.vortex(position, velocity, force, dt)
-
-    return particle_motion.step(position, velocity, acceleration + pull, drag, wind, dt)
+    return particle_motion.funnel(position, velocity, force, dt)
   end
 
   return particle_motion.ring(position, velocity, force, dt)

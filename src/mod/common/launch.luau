@@ -8,8 +8,13 @@ const common = {}
 -- particle_motion force they write
 common.DRIVEN = table.freeze({
   Gravity = table.freeze({ GravityMass = "mass" }),
-  Vortex = table.freeze({ VortexSwirl = "swirl", VortexInflow = "inflow", VortexLift = "lift" }),
-  Orbit = table.freeze({ OrbitRadius = "radius", OrbitSpeed = "speed" }),
+  Vortex = table.freeze({
+    VortexBottomRadius = "bottom",
+    VortexTopRadius = "top",
+    VortexSpin = "spin",
+    VortexRise = "rise",
+  }),
+  Orbit = table.freeze({ OrbitRadius = "radius", OrbitSpin = "spin" }),
 })
 
 -- a row's vector under every host, which lune spells apart from Vector3
@@ -47,7 +52,8 @@ function common.draw(attrs: any, spawned: number): (number, number, vector, vect
     inheritance
 end
 
--- what the chosen force acts around, nil for None or no target
+-- the target set for the chosen force, nil for None or none set, when a
+-- force centers on the emitter
 function common.target(attrs: any): Instance?
   if attrs.Force == "None" then
     return nil
@@ -71,10 +77,12 @@ function common.force(attrs: any): particle_motion.Force?
       kind = "Vortex",
       center = vector.zero,
       axis = WORLD_UP,
-      swirl = 0,
-      inflow = 0,
-      lift = 0,
-      radius = attrs.VortexRadius,
+      bottom = 0,
+      top = 0,
+      height = attrs.VortexHeight,
+      spin = 0,
+      rise = 0,
+      capture = attrs.VortexCapture,
     }
   end
 
@@ -84,7 +92,7 @@ function common.force(attrs: any): particle_motion.Force?
       center = vector.zero,
       axis = WORLD_UP,
       radius = 0,
-      speed = 0,
+      spin = 0,
       capture = attrs.OrbitCapture,
       height = nil,
     }

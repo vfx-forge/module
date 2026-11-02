@@ -1803,21 +1803,23 @@ harness.suite(function()
       end)
     end)
 
-    test("a vortex carries a piece around the target's up axis and lifts it", function()
+    test("a vortex draws a piece up its funnel around the target's up axis", function()
       staged(function(fake)
         const part = attached({
           Speed = STILL,
           Lifetime = NumberRange.new(4, 4),
           Force = "Vortex",
-          VortexSwirl = 10,
-          VortexInflow = 5,
-          VortexLift = 5,
-          VortexRadius = 10,
+          VortexBottomRadius = 2,
+          VortexTopRadius = 8,
+          VortexHeight = 15,
+          VortexSpin = 1,
+          VortexRise = 5,
+          VortexCapture = 3,
         })
         const goal = harness.make("Part", part.Parent) :: BasePart
 
-        -- the piece spawns 10 studs out along x, level with the target
-        goal.Position = Vector3.new(-9, 12, 3)
+        -- the piece spawns on the funnel's foot, 2 studs out along x
+        goal.Position = Vector3.new(-1, 12, 3)
 
         reachable(function()
           return true
@@ -1827,7 +1829,7 @@ harness.suite(function()
             const piece = pieces(fake)[1]
 
             local turned = 0
-            local last = math.atan2(0, 10)
+            local last = 0
 
             for _ = 1, 120 do
               frames(1)
@@ -1842,11 +1844,11 @@ harness.suite(function()
             end
 
             const offset = piece.CFrame.Position - goal.Position
+            const width = 2 + 6 * offset.Y / 15
 
-            expect(turned > math.rad(45)).toBe(true)
-            expect(math.abs(offset.Y - 0.5 * 5 * 4) < 0.05).toBe(true)
-            -- the swirl outruns the inflow at R, so the piece drifts out a little
-            expect(Vector3.new(offset.X, 0, offset.Z).Magnitude < 15).toBe(true)
+            expect(math.abs(offset.Y - 10) < LOOSE).toBe(true)
+            expect(math.abs(Vector3.new(offset.X, 0, offset.Z).Magnitude - width) < 0.01 * width).toBe(true)
+            expect(math.abs(turned - 4 * math.pi) < 0.01).toBe(true)
 
             env:Clear()
           end)
@@ -1854,14 +1856,14 @@ harness.suite(function()
       end)
     end)
 
-    test("an orbit from radius 3 settles onto OrbitRadius at OrbitSpeed", function()
+    test("an orbit from radius 3 settles onto OrbitRadius at OrbitSpin", function()
       staged(function(fake)
         const part = attached({
           Speed = NumberRange.new(5, 5),
           Lifetime = NumberRange.new(6, 6),
           Force = "Orbit",
           OrbitRadius = 10,
-          OrbitSpeed = 90,
+          OrbitSpin = 0.25,
           OrbitCapture = 2,
         })
         const goal = harness.make("Part", part.Parent) :: BasePart
@@ -1944,6 +1946,109 @@ harness.suite(function()
             env:Clear()
           end)
         end)
+      end)
+    end)
+
+    test("with no target a part emitter's center and up axis are the force's", function()
+      staged(function(fake)
+        -- turned so its up runs along -x, pieces spawning within 1 stud of the
+        -- center that way
+        const _, parent = parentPart(CFrame.new(0, 10, 0) * CFrame.Angles(0, 0, math.pi / 2), Vector3.new(4, 2, 4))
+        const part = template(parent, {
+          Speed = STILL,
+          Lifetime = NumberRange.new(6, 6),
+          Force = "Orbit",
+          OrbitRadius = 10,
+          OrbitSpin = 0.25,
+          OrbitCapture = 2,
+        })
+
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+
+        frames(1)
+
+        -- the ring sits at the height along the axis the piece spawned at
+        const height = -piece.CFrame.Position.X
+
+        frames(180)
+
+        for _ = 1, 30 do
+          frames(1)
+
+          const at = piece.CFrame.Position
+          const radius = Vector3.new(0, at.Y - 10, at.Z).Magnitude
+
+          expect(math.abs(height) <= 1).toBe(true)
+          expect(math.abs(-at.X - height) < LOOSE).toBe(true)
+          expect(radius >= 9.9 and radius <= 10.1).toBe(true)
+        end
+
+        env:Clear()
+      end)
+    end)
+
+    test("with no target an attachment emitter's world pose is the funnel's center", function()
+      staged(function(fake)
+        const part = attached({
+          Speed = STILL,
+          Lifetime = NumberRange.new(4, 4),
+          Force = "Vortex",
+          VortexBottomRadius = 2,
+          VortexTopRadius = 8,
+          VortexHeight = 15,
+          VortexSpin = 1,
+          VortexRise = 5,
+          VortexCapture = 3,
+        })
+
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+
+        frames(120)
+
+        -- spawned on the axis, drawn out onto the funnel as it rises
+        const offset = piece.CFrame.Position - Vector3.new(1, 12, 3)
+
+        expect(finite(piece.CFrame)).toBe(true)
+        expect(math.abs(offset.Y - 10) < LOOSE).toBe(true)
+        expect(math.abs(Vector3.new(offset.X, 0, offset.Z).Magnitude - 6) < 0.06).toBe(true)
+
+        env:Clear()
+      end)
+    end)
+
+    test("a locked orbit with no target rides around its parent wherever it goes", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, {
+          Speed = STILL,
+          Lifetime = NumberRange.new(6, 6),
+          LockedToPart = true,
+          Force = "Orbit",
+          OrbitRadius = 10,
+          OrbitSpin = 0.25,
+          OrbitCapture = 2,
+        })
+
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+
+        frames(1)
+
+        const height = piece.CFrame.Position.Y
+
+        parent.CFrame = CFrame.new(60, 10, 0)
+
+        frames(180)
+
+        const at = piece.CFrame.Position
+        const radius = Vector3.new(at.X - 60, 0, at.Z).Magnitude
+
+        expect(math.abs(at.Y - height) < LOOSE).toBe(true)
+        expect(radius >= 9.9 and radius <= 10.1).toBe(true)
+
+        env:Clear()
       end)
     end)
 
@@ -2231,12 +2336,14 @@ harness.suite(function()
             "GravityMass",
             "GravitySoftening",
             "OrbitLaunch",
-            "VortexSwirl",
-            "VortexInflow",
-            "VortexLift",
-            "VortexRadius",
+            "VortexBottomRadius",
+            "VortexTopRadius",
+            "VortexHeight",
+            "VortexSpin",
+            "VortexRise",
+            "VortexCapture",
             "OrbitRadius",
-            "OrbitSpeed",
+            "OrbitSpin",
             "OrbitCapture",
             "TurbulenceFrequency",
             "Mesh Frames",
@@ -2261,8 +2368,15 @@ harness.suite(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
         const rows = {
           Gravity = { "GravityMass", "GravitySoftening", "OrbitLaunch" },
-          Vortex = { "VortexSwirl", "VortexInflow", "VortexLift", "VortexRadius" },
-          Orbit = { "OrbitRadius", "OrbitSpeed", "OrbitCapture" },
+          Vortex = {
+            "VortexBottomRadius",
+            "VortexTopRadius",
+            "VortexHeight",
+            "VortexSpin",
+            "VortexRise",
+            "VortexCapture",
+          },
+          Orbit = { "OrbitRadius", "OrbitSpin", "OrbitCapture" },
         }
 
         for force, own in rows do
@@ -2281,10 +2395,48 @@ harness.suite(function()
       end)
     end)
 
+    test("the Force group follows Motion and holds every force row, all but Force hidden at None", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const hidden = hiddenOf(template(parent, {}))
+
+        local motion, force: any = nil, nil
+
+        for i, entry in forge_mesh.layout do
+          if type(entry) == "table" and entry.title == "Motion" then
+            motion, force = entry, forge_mesh.layout[i + 1]
+          end
+        end
+
+        expect(motion.entries).toEqual({ "Motion", "Acceleration", "Turbulence", "TurbulenceFrequency" })
+        expect(force.title).toBe("Force")
+        expect(force.entries).toEqual({
+          "Force",
+          "ForceTarget",
+          "GravityMass",
+          "GravitySoftening",
+          "OrbitLaunch",
+          "VortexBottomRadius",
+          "VortexTopRadius",
+          "VortexHeight",
+          "VortexSpin",
+          "VortexRise",
+          "VortexCapture",
+          "OrbitRadius",
+          "OrbitSpin",
+          "OrbitCapture",
+        })
+
+        for _, name in force.entries do
+          expect(`{name} {hidden[name] == true}`).toBe(`{name} {name ~= "Force"}`)
+        end
+      end)
+    end)
+
     test("a piece's own row over its life is sampled evenly, a resting one once", function()
       staged(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { VortexSwirl = 3 })
+        const part = template(parent, { VortexSpin = 3 })
 
         tweened(part, "GravityMass", 0, 100)
 
@@ -2299,7 +2451,7 @@ harness.suite(function()
         expect(near1(ramp[5], 100)).toBe(true)
         expect(ramp[2] > ramp[1] and ramp[3] > ramp[2]).toBe(true)
 
-        const flat = launch_common.over(attrs.VortexSwirl, 2, 4, function(v)
+        const flat = launch_common.over(attrs.VortexSpin, 2, 4, function(v)
           return v
         end)
 
