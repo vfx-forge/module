@@ -26,11 +26,9 @@ common.engine = {
     return game:GetService("CollectionService"):GetTagged(tag)
   end,
   raycast = function(params: RaycastParams, from: vector, to: vector): RaycastResult?
-    const origin, direction = from, to - from
-
     return workspace:Raycast(
-      Vector3.new(origin.x, origin.y, origin.z),
-      Vector3.new(direction.x, direction.y, direction.z),
+      Vector3.new(from.x, from.y, from.z),
+      Vector3.new(to.x - from.x, to.y - from.y, to.z - from.z),
       params
     )
   end,

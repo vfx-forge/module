@@ -11,10 +11,12 @@ const look_common = require("@mod/common/look")
 const material_rows = require("@mod/common/material_rows")
 const orient_common = require("@mod/common/orient")
 const bezier_common = require("@mod/common/bezier")
+const collision_common = require("@mod/common/collision")
 const numeric_common = require("@mod/common/numeric")
 const particle_motion = require("@mod/particle_motion")
 
 const pool = require("@srv/pool")
+const containers = require("@srv/containers")
 const mover = require("@srv/mover")
 const frame_store = require("@srv/frame_store")
 const enabled_effects = require("@srv/enabled_effects")
@@ -23,6 +25,9 @@ const enabled_effects = require("@srv/enabled_effects")
 const SETS = { Frames = "FrameSet", Textures = "TextureSet" }
 
 const FLIPBOOK_MODES = { "OneShot", "Loop", "PingPong" }
+
+-- the longest stretch of a frame stepped whole once drag or collision is on
+const MAX_STEP = 1 / 60
 
 const function always()
   return true
@@ -166,14 +171,46 @@ type Launch = {
   inherited: vector,
 }
 
+-- how pieces meet the world, built once per emit: the rays' filter, and the
+-- response each piece copies to give its own bounce and friction
+type Collision = {
+  params: RaycastParams,
+  config: collision_common.Config,
+}
+
 -- what every piece of one emit shares, read once as it emits
 type Flight = {
   origin: CFrame,
   rotation: CFrame,
   rng: Random,
+  collision: Collision?,
 }
 
+-- where a pull target stands, or nil for a class that has no place
+const function standingOf(target: Instance): vector?
+  if target:IsA("BasePart") then
+    return toVector(target.Position)
+  end
+
+  if target:IsA("Attachment") then
+    return toVector(target.WorldPosition)
+  end
+
+  if target:IsA("Model") then
+    return toVector(target:GetPivot().Position)
+  end
+
+  return nil
+end
+
 const forge_mesh = {}
+
+-- the engine calls, held here so a spec can stand in for them under lune
+forge_mesh.engine = {
+  alive = function(inst: Instance): boolean
+    return inst:IsDescendantOf(game)
+  end,
+}
 
 forge_mesh.id = "forge_mesh"
 forge_mesh.display = { name = "Mesh", icon = "forge_mesh", order = 95 }
@@ -536,7 +573,15 @@ const function piece(
   local velocity = toVector(launch.spawn.LookVector) * launch.speed + launch.inherited
   local acceleration = vector.zero
   local drag = 0
+  local strength = 0
   local spin = vector.zero
+
+  -- a piece the world stopped keeps its look but no longer moves
+  local pinned = false
+
+  const target = attrs.AccelTarget :: Instance?
+  const collision = if flight.collision ~= nil and not locked then flight.collision else nil
+  const response = if collision ~= nil then table.clone(collision.config) else nil
 
   -- the initial turn, each step's spin added onto it
   local rotation =
@@ -552,6 +597,22 @@ const function piece(
   tween.drive(scope, attrs.Drag(nil, duration), function(v: number)
     drag = v
   end)
+
+  if target ~= nil then
+    tween.drive(scope, attrs.AccelStrength(nil, duration), function(v: any)
+      strength = numberOr(v, 0)
+    end)
+  end
+
+  if response ~= nil then
+    tween.drive(scope, attrs.Bounce(nil, duration), function(v: any)
+      response.bounce = numberOr(v, 0)
+    end)
+
+    tween.drive(scope, attrs.Friction(nil, duration), function(v: any)
+      response.friction = numberOr(v, 0)
+    end)
+  end
 
   tween.drive(scope, attrs.RotSpeed(nil, duration), function(v: any)
     if isVector(v) then
@@ -636,17 +697,59 @@ const function piece(
 
     age += dt
 
-    if dt > 0 then
+    if dt > 0 and not pinned then
       const wind = if windy then toVector(workspace.GlobalWind) else vector.zero
-      const nextPosition, nextVelocity = particle_motion.step(position, velocity, acceleration, drag, wind, dt)
 
-      if numeric_common.usable(nextPosition) and numeric_common.usable(nextVelocity) then
-        position, velocity = nextPosition, nextVelocity
+      -- the pull target is read once a frame, a gone one adding none
+      const pulled = if target ~= nil
+          and strength ~= 0
+          and forge_mesh.engine.alive(target)
+        then standingOf(target)
+        else nil
+
+      const steps = if collision ~= nil or drag > 0 then math.ceil(dt / MAX_STEP) else 1
+      const h = dt / steps
+
+      for _ = 1, steps do
+        const push = if pulled ~= nil
+          then acceleration + particle_motion.pull(position, pulled, strength)
+          else acceleration
+
+        const nextPosition, nextVelocity = particle_motion.step(position, velocity, push, drag, wind, h)
+
+        if not (numeric_common.usable(nextPosition) and numeric_common.usable(nextVelocity)) then
+          break
+        end
+
+        const hit = if collision ~= nil then collision_common.cast(collision.params, position, nextPosition) else nil
+
+        if hit == nil then
+          position, velocity = nextPosition, nextVelocity
+          continue
+        end
+
+        const outcome, landed, rebound = collision_common.respond(
+          response :: collision_common.Config,
+          nextVelocity,
+          { position = toVector(hit.Position), normal = toVector(hit.Normal) }
+        )
+
+        position, velocity = landed, rebound
+
+        if outcome == "kill" then
+          moving = false
+          break
+        end
+
+        if outcome == "stop" then
+          pinned = true
+          break
+        end
       end
 
       const add = spin * dt
 
-      if numeric_common.usable(add) then
+      if not pinned and moving and numeric_common.usable(add) then
         rotation *= CFrame.fromOrientation(add.x, add.y, add.z)
       end
     end
@@ -654,7 +757,7 @@ const function piece(
     appear(if duration > 0 then age / duration else 1)
     place()
 
-    if age >= duration then
+    if not moving or age >= duration then
       moving = false
       finish()
     end
@@ -748,7 +851,29 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     origin = origin,
     rotation = template.CFrame.Rotation,
     rng = Random.new(),
+    collision = nil,
   }
+
+  if attrs.CollisionMode ~= "Off" then
+    const exclude = { containers.root(), template }
+
+    -- the workspace and its terrain are the world the rays are for
+    if parent ~= nil and parent ~= workspace and parent ~= workspace.Terrain then
+      table.insert(exclude, parent)
+    end
+
+    const collision: collision_common.Config = {
+      mode = attrs.CollisionMode,
+      bounce = 0,
+      friction = 0,
+      filterType = attrs.CollisionFilterType,
+      filterTag = attrs.CollisionFilterTag,
+      group = attrs.CollisionGroup,
+      respectCanCollide = attrs.CollisionRespectCanCollide,
+    }
+
+    flight.collision = { params = collision_common.params(collision, exclude), config = collision }
+  end
 
   -- each piece runs on a thread the effect holds, so a clear closes it
   const outstanding = lifetime.join(scope)

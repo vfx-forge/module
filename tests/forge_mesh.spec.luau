@@ -15,6 +15,7 @@ const value_curve = require("@mod/value_curve")
 const test, expect = harness.test, harness.expect
 
 const look_common = require("@mod/common/look")
+const collision_common = require("@mod/common/collision")
 
 const forge_mesh = require("@vfx/forge_mesh")
 
@@ -304,6 +305,119 @@ const function tagged(roots: { Instance }): { Instance }
   end
 
   return found
+end
+
+-- an Instance row's live read and the probe that unwraps it, lune storing no
+-- instance in an attribute: a handle is a table naming its target
+const function targeting(part: BasePart, target: Instance, body: () -> ())
+  const live, probe = reader.liveOf, reader.probe
+
+  reader.liveOf = function(ref: Instance, name: string)
+    return if ref == part and name == "AccelTarget" then { handle = true, target = target } else live(ref, name)
+  end
+
+  reader.probe = table.freeze({
+    kind = function(v: any)
+      return if type(v) == "table" and v.handle then "InstanceHandle" else typeof(v)
+    end,
+    get = function(v: any)
+      return v.target
+    end,
+    alive = function()
+      return true
+    end,
+    isA = function(inst: Instance, class: string)
+      return inst:IsA(class)
+    end,
+  }) :: any
+
+  const ok, err = pcall(body)
+
+  reader.liveOf, reader.probe = live, probe
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- whether a target counts as in the game, answered by `open` for as long as
+-- `body` runs
+const function reachable(open: () -> boolean, body: () -> ())
+  const real = forge_mesh.engine.alive
+
+  forge_mesh.engine.alive = open
+
+  const ok, err = pcall(body)
+
+  forge_mesh.engine.alive = real
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- the world stood in by a floor at y 0 and a parent part's top at y 11 that
+-- hits only what its filter leaves in, the filters each ray was cast with
+-- kept, put back once `body` ends
+const function walled(parent: Instance, body: (filters: { { any } }) -> ())
+  const real = collision_common.engine
+  const filters = {}
+
+  collision_common.engine = {
+    params = function()
+      const params = { added = {} }
+
+      function params.AddToFilter(self: any, items: { any })
+        for _, item in items do
+          table.insert(self.added, item)
+        end
+      end
+
+      return params :: any
+    end,
+    tagged = function()
+      return {}
+    end,
+    raycast = function(params: any, from: vector, to: vector)
+      table.insert(filters, params.added)
+
+      const wall = if table.find(params.added, parent) == nil then 11 else 0
+
+      if from.y > wall and to.y <= wall then
+        const at = from + (to - from) * ((from.y - wall) / (from.y - to.y))
+
+        return { Position = Vector3.new(at.x, at.y, at.z), Normal = Vector3.new(0, 1, 0) } :: any
+      end
+
+      return nil
+    end,
+  }
+
+  const ok, err = pcall(body, filters)
+
+  collision_common.engine = real
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- a piece falling from y 12 on a template under an attachment, `rows` over it
+const function falling(rows: { [string]: any }, body: (piece: BasePart, fake: fake_pool.Fake) -> ())
+  framed(function(fake)
+    const part = attached(table.clone(rows))
+
+    part:SetAttribute("Acceleration", Vector3.new(0, -20, 0))
+    part:SetAttribute("Lifetime", NumberRange.new(3, 3))
+    part:SetAttribute("Speed", STILL)
+
+    walled(part.Parent :: Instance, function()
+      const env = effects.emit(0, part)
+
+      body(pieces(fake)[1], fake)
+      env:Clear()
+    end)
+  end)
 end
 
 harness.suite(function()
@@ -872,6 +986,200 @@ harness.suite(function()
         expect(near(piece.CFrame.Position, before, EPSILON)).toBe(true)
 
         env:Clear()
+      end)
+    end)
+  end)
+
+  harness.describe("a mesh's motion", function()
+    test("a target pulls pieces in", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(3, 3) })
+        const goal = harness.make("Part", parent) :: BasePart
+
+        goal.Position = Vector3.new(30, 10, 0)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            frames(1)
+
+            const before = (piece.CFrame.Position - goal.Position).Magnitude
+
+            frames(30)
+
+            expect((piece.CFrame.Position - goal.Position).Magnitude < before - 1).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("a destroyed target stops pulling", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(3, 3) })
+        const goal = harness.make("Part", parent) :: BasePart
+        local open = true
+
+        goal.Position = Vector3.new(30, 10, 0)
+
+        reachable(function()
+          return open
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            frames(10)
+
+            open = false
+
+            frames(2)
+
+            const a = piece.CFrame.Position
+
+            frames(1)
+
+            const b = piece.CFrame.Position
+
+            frames(10)
+
+            const c = piece.CFrame.Position
+
+            frames(1)
+
+            const d = piece.CFrame.Position
+
+            expect((b - a).Magnitude > EPSILON).toBe(true)
+            expect(near(b - a, d - c, EPSILON)).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("a target at the piece adds nothing", function()
+      staged(function(fake)
+        const part = attached({ Speed = STILL, Lifetime = NumberRange.new(2, 2) })
+        const goal = harness.make("Part", part.Parent) :: BasePart
+
+        goal.Position = Vector3.new(1, 12, 3)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+
+            frames(20)
+
+            const piece = pieces(fake)[1]
+
+            expect(finite(piece.CFrame)).toBe(true)
+            expect(near(piece.CFrame.Position, Vector3.new(1, 12, 3), EPSILON)).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("Kill ends a piece at the floor", function()
+      falling({ CollisionMode = "Kill" }, function(piece)
+        local last = piece.CFrame.Position
+
+        for _ = 1, 120 do
+          frames(1)
+
+          if piece.Parent == nil then
+            break
+          end
+
+          last = piece.CFrame.Position
+        end
+
+        expect(piece.Parent).toBe(nil)
+
+        -- the frame before the hit, a frame's fall above the floor
+        expect(last.Y > 0).toBe(true)
+        expect(last.Y < 0.5).toBe(true)
+      end)
+    end)
+
+    test("Stop pins it", function()
+      falling({ CollisionMode = "Stop" }, function(piece)
+        frames(90)
+
+        const at = piece.CFrame.Position
+
+        frames(30)
+
+        expect(piece.Parent ~= nil).toBe(true)
+        expect(math.abs(at.Y) < 0.01).toBe(true)
+        expect(near(piece.CFrame.Position, at, EPSILON)).toBe(true)
+      end)
+    end)
+
+    test("Bounce lifts it back up and a slow bounce stops", function()
+      falling({ CollisionMode = "Bounce", Bounce = 0.5, Friction = 0 }, function(piece)
+        local landed = false
+        local rose = false
+
+        for _ = 1, 100 do
+          frames(1)
+
+          if piece.CFrame.Position.Y < 0.5 then
+            landed = true
+          elseif landed then
+            rose = true
+          end
+        end
+
+        expect(rose).toBe(true)
+      end)
+
+      falling({ CollisionMode = "Bounce", Bounce = 0.02 }, function(piece)
+        frames(90)
+
+        const at = piece.CFrame.Position
+
+        frames(30)
+
+        expect(math.abs(at.Y) < 0.05).toBe(true)
+        expect(near(piece.CFrame.Position, at, EPSILON)).toBe(true)
+      end)
+    end)
+
+    test("collision never hits the template or its parent", function()
+      framed(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, {
+          Speed = NumberRange.new(5, 5),
+          Lifetime = NumberRange.new(1, 1),
+          ShapeFace = "Inward",
+          ShapeStyle = "Surface",
+          CollisionMode = "Kill",
+        })
+
+        walled(parent, function(filters)
+          const env = effects.emit(0, part)
+
+          frames(30)
+
+          expect(pieces(fake)[1].Parent ~= nil).toBe(true)
+          expect(#filters > 0).toBe(true)
+          expect(table.find(filters[1], parent) ~= nil).toBe(true)
+          expect(table.find(filters[1], part) ~= nil).toBe(true)
+
+          env:Clear()
+        end)
       end)
     end)
   end)
