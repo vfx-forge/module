@@ -74,8 +74,19 @@ const function dragless(_, attrs: any)
   return attrs.Drag.value <= 0
 end
 
+-- whether a Turbulence track wanders at all, its base or a modifier lifting it
+const function turbulent(track: any)
+  if track.animated then
+    return true
+  end
+
+  const v = track.at(0)
+
+  return type(v) == "number" and v > 0
+end
+
 const function calm(_, attrs: any)
-  return attrs.Turbulence.value <= 0
+  return not turbulent(attrs.Turbulence)
 end
 
 -- a piece locked to its parent never meets the world
@@ -637,7 +648,7 @@ const function piece(
     end)
   end
 
-  const wobbles = attrs.Turbulence.value > 0
+  const wobbles = turbulent(attrs.Turbulence)
   const seed = if wobbles then flight.rng:NextNumber(0, 1000) else 0
   const frequency = attrs.TurbulenceFrequency
 

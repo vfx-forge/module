@@ -13,6 +13,12 @@ export type Config = {
 
 const FLIP = CFrame.fromOrientation(0, math.pi, 0)
 
+-- one channel's drift from where it stood at age 0, so a piece spawns where
+-- its path starts and never jumps on its first frame
+const function drift(seed: number, t: number, scale: number, amount: number)
+  return math.clamp((math.noise(seed, t, 0.5) - math.noise(seed, 0, 0.5)) * scale, -amount, amount)
+end
+
 const particle_motion = {}
 
 -- a spawn frame whose look vector is the launch direction. draws shape point,
@@ -85,9 +91,9 @@ function particle_motion.wander(seed: number, age: number, frequency: number, am
   const scale = amount * 2
 
   return vector.create(
-    math.clamp(math.noise(seed, t, 0.5) * scale, -amount, amount),
-    math.clamp(math.noise(seed + 17.1, t, 0.5) * scale, -amount, amount),
-    math.clamp(math.noise(seed + 34.2, t, 0.5) * scale, -amount, amount)
+    drift(seed, t, scale, amount),
+    drift(seed + 17.1, t, scale, amount),
+    drift(seed + 34.2, t, scale, amount)
   )
 end
 

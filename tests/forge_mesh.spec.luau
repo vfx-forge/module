@@ -900,6 +900,66 @@ harness.suite(function()
       end)
     end)
 
+    test("a modifier lifting Turbulence from 0 wanders a piece", function()
+      for _, range in { { 2, 2 }, { 1, 2 } } do
+        seeding(function()
+          staged(function(fake)
+            const part = attached({
+              Speed = STILL,
+              Turbulence = 0,
+              TurbulenceFrequency = 3,
+              Lifetime = NumberRange.new(3, 3),
+            })
+
+            randomized(part, "Turbulence", range[1], range[2])
+
+            const env = effects.emit(0, part)
+            local farthest = 0
+
+            for _ = 1, 60 do
+              frames(1)
+              farthest = math.max(farthest, (pieces(fake)[1].CFrame.Position - Vector3.new(1, 12, 3)).Magnitude)
+            end
+
+            expect(farthest > 0.05).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end
+    end)
+
+    test("turbulence starts at the spawn and its first frame moves little", function()
+      seeding(function()
+        staged(function(fake)
+          const part = attached({
+            EmitCount = 20,
+            Speed = STILL,
+            Turbulence = 2,
+            TurbulenceFrequency = 3,
+            Lifetime = NumberRange.new(3, 3),
+          })
+          const env = effects.emit(0, part)
+          const list = pieces(fake)
+          local total = 0
+
+          for _, piece in list do
+            expect(near(piece.CFrame.Position, Vector3.new(1, 12, 3), EPSILON)).toBe(true)
+          end
+
+          frames(1)
+
+          for _, piece in list do
+            total += (piece.CFrame.Position - Vector3.new(1, 12, 3)).Magnitude
+          end
+
+          expect(total / #list < 0.2).toBe(true)
+
+          env:Clear()
+        end)
+      end)
+    end)
+
     test("turbulence 0 is the plain path", function()
       staged(function(fake)
         const part = attached({ Speed = STILL, Turbulence = 0, TurbulenceFrequency = 3 })
@@ -1394,6 +1454,17 @@ harness.suite(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
 
         expect(hiddenOf(template(parent, { LockedToPart = true })).Collision).toBe(true)
+      end)
+    end)
+
+    test("a Turbulence modifier over a base of 0 shows TurbulenceFrequency", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Turbulence = 0 })
+
+        randomized(part, "Turbulence", 1, 2)
+
+        expect(hiddenOf(part).TurbulenceFrequency).toBe(false)
       end)
     end)
 

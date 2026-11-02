@@ -214,6 +214,13 @@ harness.suite(function()
       end
     end)
 
+    test("wander starts at zero, so a piece leaves its spawn without a jump", function()
+      for seed = 0, 99 do
+        expect(particle_motion.wander(seed * 9.7 + 0.3, 0, 3, 2)).toBe(vector.zero)
+        expect(vector.magnitude(particle_motion.wander(seed * 9.7 + 0.3, 1 / 60, 3, 2)) < 0.5).toBe(true)
+      end
+    end)
+
     test("wander is zero at amount 0", function()
       expect(particle_motion.wander(5, 1.3, 2, 0)).toBe(vector.zero)
     end)
