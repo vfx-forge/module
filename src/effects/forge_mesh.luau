@@ -74,6 +74,10 @@ const function dragless(_, attrs: any)
   return attrs.Drag.value <= 0
 end
 
+const function calm(_, attrs: any)
+  return attrs.Turbulence.value <= 0
+end
+
 const function noBounce(_, attrs: any)
   return attrs.CollisionMode ~= "Bounce"
 end
@@ -361,6 +365,19 @@ forge_mesh.attributes = {
     :label("AccelStrength")
     :hint("Pull toward the target, negative pushing away."),
 
+  Turbulence = knob(0)
+    :min(0)
+    :unit("studs")
+    :mod()
+    :label("Turbulence")
+    :hint("How far each piece wanders off its path, drawn per piece."),
+  TurbulenceFrequency = knob(1)
+    :min(0)
+    :unit("perSecond")
+    :hidden(calm)
+    :label("TurbulenceFrequency")
+    :hint("How fast each piece's wander changes."),
+
   Drag = knob(0):min(0):mod():label("Drag"):hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
   LockedToPart = knob(false):label("LockedToPart"):hint("Whether pieces move with the parent after they spawn."),
   TimeScale = knob(1):min(0):mod():label("TimeScale"):hint("Multiplier on the effect's clock, 0 freezing it."),
@@ -451,7 +468,10 @@ forge_mesh.layout = {
     },
     hidden = noTextures,
   },
-  { title = "Motion", entries = { "Motion", "Acceleration", "AccelTarget", "AccelStrength" } },
+  {
+    title = "Motion",
+    entries = { "Motion", "Acceleration", "AccelTarget", "AccelStrength", "Turbulence", "TurbulenceFrequency" },
+  },
   {
     title = "Particles",
     entries = { "Drag", "LockedToPart", "TimeScale", "VelocityInheritance", "WindAffectsDrag" },
@@ -574,6 +594,8 @@ const function piece(
   local acceleration = vector.zero
   local drag = 0
   local strength = 0
+  local amount = 0
+  local wander = vector.zero
   local spin = vector.zero
 
   -- a piece the world stopped keeps its look but no longer moves
@@ -601,6 +623,16 @@ const function piece(
   if target ~= nil then
     tween.drive(scope, attrs.AccelStrength(nil, duration), function(v: any)
       strength = numberOr(v, 0)
+    end)
+  end
+
+  const wobbles = attrs.Turbulence.value > 0
+  const seed = if wobbles then flight.rng:NextNumber(0, 1000) else 0
+  const frequency = attrs.TurbulenceFrequency
+
+  if wobbles then
+    tween.drive(scope, attrs.Turbulence(nil, duration), function(v: any)
+      amount = numberOr(v, 0)
     end)
   end
 
@@ -641,7 +673,8 @@ const function piece(
   const function pose()
     const camera = workspace.CurrentCamera
     const turned = orient_common.rotation(mode, facing, position, velocity, if camera then camera.CFrame else nil)
-    const cf = CFrame.new(position.x, position.y, position.z) * turned * rotation
+    const drawn = position + wander
+    const cf = CFrame.new(drawn.x, drawn.y, drawn.z) * turned * rotation
 
     return placed(cf) * look.offset()
   end
@@ -710,7 +743,7 @@ const function piece(
       const steps = if collision ~= nil or drag > 0 then math.ceil(dt / MAX_STEP) else 1
       const h = dt / steps
 
-      for _ = 1, steps do
+      for step = 1, steps do
         const push = if pulled ~= nil
           then acceleration + particle_motion.pull(position, pulled, strength)
           else acceleration
@@ -721,7 +754,16 @@ const function piece(
           break
         end
 
-        const hit = if collision ~= nil then collision_common.cast(collision.params, position, nextPosition) else nil
+        -- the ray runs along what is drawn: the flown position plus the wander
+        const nextWander = if amount > 0
+          then particle_motion.wander(seed, age - dt + h * step, frequency, amount)
+          else vector.zero
+
+        const hit = if collision ~= nil
+          then collision_common.cast(collision.params, position + wander, nextPosition + nextWander)
+          else nil
+
+        wander = nextWander
 
         if hit == nil then
           position, velocity = nextPosition, nextVelocity
@@ -734,7 +776,7 @@ const function piece(
           { position = toVector(hit.Position), normal = toVector(hit.Normal) }
         )
 
-        position, velocity = landed, rebound
+        position, velocity = landed - wander, rebound
 
         if outcome == "kill" then
           moving = false

@@ -833,6 +833,53 @@ harness.suite(function()
       end)
     end)
 
+    test("turbulence wanders a piece off its path and stays within its amount", function()
+      seeding(function()
+        staged(function(fake)
+          const part = attached({
+            Speed = STILL,
+            Turbulence = 2,
+            TurbulenceFrequency = 3,
+            Lifetime = NumberRange.new(3, 3),
+          })
+          const env = effects.emit(0, part)
+          local farthest = 0
+
+          for _ = 1, 90 do
+            frames(1)
+
+            const piece = pieces(fake)[1]
+            const away = piece.CFrame.Position - Vector3.new(1, 12, 3)
+
+            farthest = math.max(farthest, away.Magnitude)
+
+            expect(math.abs(away.X) <= 2 + EPSILON).toBe(true)
+            expect(math.abs(away.Y) <= 2 + EPSILON).toBe(true)
+            expect(math.abs(away.Z) <= 2 + EPSILON).toBe(true)
+          end
+
+          expect(farthest > 0.05).toBe(true)
+
+          env:Clear()
+        end)
+      end)
+    end)
+
+    test("turbulence 0 is the plain path", function()
+      staged(function(fake)
+        const part = attached({ Speed = STILL, Turbulence = 0, TurbulenceFrequency = 3 })
+        const env = effects.emit(0, part)
+
+        frames(30)
+
+        const piece = pieces(fake)[1]
+
+        expect(near(piece.CFrame.Position, Vector3.new(1, 12, 3), EPSILON)).toBe(true)
+
+        env:Clear()
+      end)
+    end)
+
     test("LockedToPart carries pieces with the parent", function()
       staged(function(fake)
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
