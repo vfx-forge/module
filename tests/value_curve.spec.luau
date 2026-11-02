@@ -222,6 +222,26 @@ harness.suite(function()
       expect(value_curve.draw(sample(), rng :: any)).toEqual({ 1, 1, 1 })
     end)
 
+    test("a sampler says whether its curve reads the same at every t", function()
+      const function flat(c: any, draws: { number }?)
+        return select(2, value_curve.sampler(c, draws))
+      end
+
+      const bent = {
+        channels = 1,
+        linked = true,
+        keys = { key(0, { 1 }, 0, nil, { vector.create(0.25, 2, 0) }), key(1, { 1 }) },
+      }
+      const widened = { channels = 1, linked = true, keys = { key(0, { 1 }, 0.5), key(1, { 1 }) } }
+
+      expect(flat(value_curve.flat(1, 3))).toBe(true)
+      expect(flat({ channels = 1, linked = true, keys = { key(0, { 2 }), key(1, { 2 }) } })).toBe(true)
+      expect(flat({ channels = 1, linked = true, keys = { key(0, { 2 }), key(1, { 3 }) } })).toBe(false)
+      expect(flat(bent)).toBe(false)
+      expect(flat(widened, { 0, 0 })).toBe(true)
+      expect(flat(widened, { 1, 0 })).toBe(false)
+    end)
+
     test("t outside 0..1 clamps", function()
       const c = { channels = 1, linked = true, keys = { key(0, { 2 }), key(1, { 6 }) } }
 

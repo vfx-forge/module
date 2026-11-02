@@ -175,6 +175,20 @@ const function numberOr(v: any, fallback: number)
   return if type(v) == "number" and v == v then v else fallback
 end
 
+-- whether every keypoint of a gradient holds one color
+const function flatColor(sequence: ColorSequence)
+  const keypoints = sequence.Keypoints
+  const first = keypoints[1].Value
+
+  for _, keypoint in keypoints do
+    if keypoint.Value ~= first then
+      return false
+    end
+  end
+
+  return true
+end
+
 -- whether every axis of a pose is finite, so no degenerate row reaches the
 -- mover
 const function finite(cf: CFrame)
@@ -573,40 +587,47 @@ const function piece(
   })
 
   -- one draw per curve for the piece's whole life, read through samplers built
-  -- once, so a frame allocates nothing for them
-  const sizeAt = value_curve.sampler(attrs.Size, value_curve.draw(attrs.Size, flight.rng))
-  const squashAt = value_curve.sampler(attrs.Squash, value_curve.draw(attrs.Squash, flight.rng))
-  const clearAt = value_curve.sampler(attrs.Transparency, value_curve.draw(attrs.Transparency, flight.rng))
+  -- once, so a frame allocates nothing for them; a flat one is written once
+  const sizeAt, sizeFlat = value_curve.sampler(attrs.Size, value_curve.draw(attrs.Size, flight.rng))
+  const squashAt, squashFlat = value_curve.sampler(attrs.Squash, value_curve.draw(attrs.Squash, flight.rng))
+  const clearAt, clearFlat = value_curve.sampler(attrs.Transparency, value_curve.draw(attrs.Transparency, flight.rng))
 
   const tint = attrs.Color :: ColorSequence
-  const tinted = #tint.Keypoints > 1
+  const tinted = not flatColor(tint)
+  const shaped = not (sizeFlat and squashFlat)
   const mode = attrs.Orientation :: orient_common.Mode
+  const watching = mode == "FacingCamera" or mode == "FacingCameraWorldUp"
 
   -- a template's special mesh carries the size when the piece has one too
   const meshed = objMesh ~= nil and templateMesh ~= nil
   const rest = if meshed then (templateMesh :: SpecialMesh).Scale else template.Size
 
-  -- the piece's size, color and transparency at `t` of its life
-  const function appear(t: number)
-    const size = sizeAt(t)
-    const x, y, z = size[1], size[2], size[3]
-    const stretched = orient_common.squash(Vector3.new(rest.X * x, rest.Y * y, rest.Z * z), squashAt(t)[1])
+  -- the piece's size, color and transparency at `t` of its life, each written
+  -- every frame only while it changes over the life
+  const function appear(t: number, first: boolean)
+    if first or shaped then
+      const size = sizeAt(t)
+      const x, y, z = size[1], size[2], size[3]
+      const stretched = orient_common.squash(Vector3.new(rest.X * x, rest.Y * y, rest.Z * z), squashAt(t)[1])
 
-    if meshed then
-      (objMesh :: SpecialMesh).Scale = stretched
-      look.refit()
-    else
-      look.size(stretched)
+      if meshed then
+        (objMesh :: SpecialMesh).Scale = stretched
+        look.refit()
+      else
+        look.size(stretched)
+      end
     end
 
-    obj.Transparency = clearAt(t)[1]
+    if first or not clearFlat then
+      obj.Transparency = clearAt(t)[1]
+    end
 
-    if tinted or t == 0 then
+    if first or tinted then
       obj.Color = color.sequenceAt(tint, t)
     end
   end
 
-  appear(0)
+  appear(0, true)
 
   const locked = attrs.LockedToPart
   const windy = attrs.WindAffectsDrag
@@ -710,7 +731,7 @@ const function piece(
   local heading: CFrame? = nil
 
   const function pose()
-    const camera = workspace.CurrentCamera
+    const camera = if watching then workspace.CurrentCamera else nil
     const turned =
       orient_common.rotation(mode, facing, position, velocity, if camera then camera.CFrame else nil, heading)
 
@@ -843,7 +864,7 @@ const function piece(
       end
     end
 
-    appear(if duration > 0 then age / duration else 1)
+    appear(if duration > 0 then age / duration else 1, false)
     place()
 
     if not moving or age >= duration then

@@ -249,8 +249,9 @@ const function solve(t0: number, x1: number, x2: number, t1: number, t: number)
 end
 
 -- the returned table is the sampler's own and is rewritten by the next call,
--- so a frame loop allocates nothing; copy it to keep a reading
-function value_curve.sampler(curve: Curve, draws: { number }?): (t: number) -> { number }
+-- so a frame loop allocates nothing; copy it to keep a reading. the second
+-- return says whether every t reads the same, so a caller can write it once
+function value_curve.sampler(curve: Curve, draws: { number }?): ((t: number) -> { number }, boolean)
   const keys = curve.keys
   const channels = curve.channels
   const count = #keys
@@ -275,6 +276,12 @@ function value_curve.sampler(curve: Curve, draws: { number }?): (t: number) -> {
     end
   end
 
+  -- per segment: whether every channel's time handles match, as a linked
+  -- curve's always do, so one time solve serves them all
+  const shared = table.create(count, true)
+
+  local flat = true
+
   for i = 1, count - 1 do
     const a, b = keys[i], keys[i + 1]
     const width = b.time - a.time
@@ -291,6 +298,14 @@ function value_curve.sampler(curve: Curve, draws: { number }?): (t: number) -> {
       -- a handle cut short keeps its direction
       ty1[at] = if leave.x ~= 0 then leave.y * rx / leave.x else leave.y
       ty2[at] = if enter.x ~= 0 then enter.y * lx / enter.x else enter.y
+
+      if tx1[at] ~= tx1[at - c + 1] or tx2[at] ~= tx2[at - c + 1] then
+        shared[i] = false
+      end
+
+      if ty1[at] ~= 0 or ty2[at] ~= 0 or values[at] ~= values[at + channels] then
+        flat = false
+      end
     end
   end
 
@@ -327,17 +342,19 @@ function value_curve.sampler(curve: Curve, draws: { number }?): (t: number) -> {
     const t0, t1 = times[i], times[i + 1]
     const from = (i - 1) * channels
     const to = i * channels
+    const one = if shared[i] then solve(t0, tx1[from + 1], tx2[from + 1], t1, t) else nil
 
     for c = 1, channels do
       const at = from + c
-      const s = solve(t0, tx1[at], tx2[at], t1, t)
+      const s = one or solve(t0, tx1[at], tx2[at], t1, t)
       const v0, v1 = values[at], values[to + c]
 
       out[c] = cubic(v0, v0 + ty1[at], v1 + ty2[at], v1, s)
     end
 
     return out
-  end
+  end,
+    flat
 end
 
 -- builds a whole sampler per call, so not for a frame loop; use sampler there
