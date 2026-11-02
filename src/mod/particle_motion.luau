@@ -67,6 +67,30 @@ function particle_motion.step(
   return nextPosition, nextVelocity
 end
 
+-- a pull along the line to the target, zero inside 1e-4 so no NaN
+function particle_motion.pull(position: vector, target: vector, strength: number): vector
+  const offset = target - position
+  const distance = vector.magnitude(offset)
+
+  if distance < 1e-4 then
+    return vector.zero
+  end
+
+  return offset / distance * strength
+end
+
+-- a smooth offset of up to amount per axis, three noise channels apart by seed
+function particle_motion.wander(seed: number, age: number, frequency: number, amount: number): vector
+  const t = age * frequency
+  const scale = amount * 2
+
+  return vector.create(
+    math.clamp(math.noise(seed, t, 0.5) * scale, -amount, amount),
+    math.clamp(math.noise(seed + 17.1, t, 0.5) * scale, -amount, amount),
+    math.clamp(math.noise(seed + 34.2, t, 0.5) * scale, -amount, amount)
+  )
+end
+
 -- positions at whole steps of 1/rate, then the remainder step
 function particle_motion.path(
   start: CFrame,
@@ -75,7 +99,8 @@ function particle_motion.path(
   acceleration: vector,
   drag: number,
   wind: vector,
-  rate: number
+  rate: number,
+  pull: { target: vector, strength: number }?
 ): { vector }
   const origin = start.Position
   const look = start.LookVector
@@ -85,17 +110,25 @@ function particle_motion.path(
 
   const points = {}
 
+  const function accelerate(at: vector): vector
+    if pull == nil then
+      return acceleration
+    end
+
+    return acceleration + particle_motion.pull(at, pull.target, pull.strength)
+  end
+
   const samples = lifetime * rate
   const remainder = if samples <= 1 then samples else samples % 1
 
   for _ = 1, math.floor(samples) do
-    position, velocity = particle_motion.step(position, velocity, acceleration, drag, wind, 1 / rate)
+    position, velocity = particle_motion.step(position, velocity, accelerate(position), drag, wind, 1 / rate)
 
     table.insert(points, position)
   end
 
   if remainder ~= 0 then
-    position, velocity = particle_motion.step(position, velocity, acceleration, drag, wind, remainder / rate)
+    position, velocity = particle_motion.step(position, velocity, accelerate(position), drag, wind, remainder / rate)
 
     table.insert(points, position)
   end

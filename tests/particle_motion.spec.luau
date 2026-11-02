@@ -141,4 +141,81 @@ harness.suite(function()
       expect(close(points[#points], position, 1e-4)).toBe(true)
     end)
   end)
+
+  harness.describe("particle_motion.pull", function()
+    test("a pull points at the target", function()
+      const position = vector.create(1, 2, 3)
+      const target = vector.create(4, 6, 3)
+      const pulled = particle_motion.pull(position, target, 5)
+
+      expect(close(pulled, vector.create(3, 4, 0), 1e-4)).toBe(true)
+    end)
+
+    test("a pull at the target is zero", function()
+      const position = vector.create(1, 2, 3)
+      const pulled = particle_motion.pull(position, position, 5)
+
+      expect(close(pulled, vector.zero, 1e-6)).toBe(true)
+    end)
+
+    test("a negative pull pushes away", function()
+      const pulled = particle_motion.pull(vector.zero, vector.create(10, 0, 0), -2)
+
+      expect(close(pulled, vector.create(-2, 0, 0), 1e-4)).toBe(true)
+    end)
+
+    test("a path with a pull bends toward the target", function()
+      const start = CFrame.new(0, 0, 0)
+      const target = vector.create(0, 20, 0)
+      const free = particle_motion.path(start, 10, 1, vector.zero, 0, vector.zero, 30)
+      const bent =
+        particle_motion.path(start, 10, 1, vector.zero, 0, vector.zero, 30, { target = target, strength = 30 })
+
+      expect(vector.magnitude(bent[#bent] - target) < vector.magnitude(free[#free] - target)).toBe(true)
+    end)
+
+    test("a path without a pull is today's path", function()
+      const start = CFrame.new(1, 2, 3) * CFrame.fromOrientation(0.3, 0.2, 0.1)
+      const acceleration = vector.create(0, -9, 1)
+      const wind = vector.create(2, 0, -1)
+      const points = particle_motion.path(start, 12, 1.3, acceleration, 0.4, wind, 32, nil)
+
+      local position = vector.create(1, 2, 3)
+      local look = start.LookVector
+      local velocity = vector.create(look.X, look.Y, look.Z) * 12
+
+      for index = 1, 41 do
+        position, velocity = particle_motion.step(position, velocity, acceleration, 0.4, wind, 1 / 32)
+
+        expect(points[index]).toBe(position)
+      end
+    end)
+  end)
+
+  harness.describe("particle_motion.wander", function()
+    test("wander stays inside its amount", function()
+      for index = 0, 999 do
+        const offset = particle_motion.wander(3.7, index * 0.05, 2, 1.5)
+
+        expect(math.abs(offset.x) <= 1.5).toBe(true)
+        expect(math.abs(offset.y) <= 1.5).toBe(true)
+        expect(math.abs(offset.z) <= 1.5).toBe(true)
+      end
+    end)
+
+    test("wander is smooth", function()
+      const amount = 2
+
+      for index = 0, 999 do
+        const a = particle_motion.wander(1.2, index / 60, 1, amount)
+        const b = particle_motion.wander(1.2, (index + 1) / 60, 1, amount)
+
+        expect(vector.magnitude(a - b) < amount * 0.2).toBe(true)
+      end
+    end)
+
+    test("wander is zero at amount 0", function()
+      expect(particle_motion.wander(5, 1.3, 2, 0)).toBe(vector.zero)
+    end)
+  end)
 end)
