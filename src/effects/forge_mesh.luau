@@ -1,5 +1,6 @@
 const attr = require("@mod/attributes")
 const knob = require("@mod/knob")
+const curve = require("@mod/curve")
 const tween = require("@mod/tween")
 const reader = require("@mod/reader")
 const utility = require("@mod/utility")
@@ -292,7 +293,7 @@ const attributes = bezier_common.rows({
     :label("Duration")
     :hint("Seconds the frames play over."),
   FlipbookChangeCurve = knob(linear):hidden(noFrames):label("Curve"):hint("Easing of the frames' playback."),
-  SyncDuration = knob(false)
+  SyncDuration = knob(true)
     :hidden(noFrames)
     :label("SyncDuration")
     :hint("Play the frames' cycles over the piece's duration."),
@@ -463,7 +464,10 @@ const function piece(
   const origin = flight.origin
   const acceleration = flight.acceleration
   const turn = launch.turn
-  const spin = vector.sign(turn) * utility.DEG_TO_RAD
+  -- an axis that starts unturned spins the positive way, so RotSpeed moves
+  -- a piece whose rotation rows rest at 0
+  const spin = vector.create(if turn.x < 0 then -1 else 1, if turn.y < 0 then -1 else 1, if turn.z < 0 then -1 else 1)
+    * utility.DEG_TO_RAD
   const at = launch.spawn.Position
 
   local position = toVector(at)
@@ -484,8 +488,17 @@ const function piece(
     currentRotSpeed = v
   end)
 
+  -- the parent the piece spawned under, whose last pose is held once the
+  -- template leaves it, so a destroyed parent never snaps a locked piece
+  const anchor = template.Parent
+  local held = origin
+
   const function live()
-    return (originOf(template))
+    if template.Parent == anchor then
+      held = (originOf(template))
+    end
+
+    return held
   end
 
   -- a piece locked to its parent rides the parent from where it spawned
@@ -514,7 +527,6 @@ const function piece(
 
   look.play()
 
-  const life = look.life
   const ended = lifetime.join(scope)
   const finish = lifetime.add(ended)
 
@@ -545,8 +557,15 @@ const function piece(
       return
     end
 
-    -- the last step lands on the end of the life exactly
-    const span = math.min(deltaTime, life - age)
+    -- a clock halted for good never reaches the end of the motion
+    if scope.clock.halted then
+      moving = false
+      finish()
+      return
+    end
+
+    -- the last step lands on the end of the piece's duration exactly
+    const span = math.min(deltaTime, duration - age)
     const dt = span * timeScale
 
     age += span
@@ -579,7 +598,7 @@ const function piece(
       return
     end
 
-    if age >= life then
+    if age >= duration then
       moving = false
       finish()
     end
@@ -613,13 +632,23 @@ const function piece(
 
   scope.effects.emitOnFinish(emitOnFinish, obj, scope.depth + 1, scope, children)
 
+  -- the look may run past the motion, as frames played longer than the piece
+  -- do; a hit ends it there
+  const flown = if attrs.ProjectileEnabled then launch.flight else 0
+  const tail = look.life - duration - flown
+
+  if not hit and tail > 0 then
+    tween.wait(scope, curve.new(tail, "linear"))
+  end
+
   look.linger()
   lifetime.awaitJoin(children)
 
   -- a piece that ends ahead of its emit leaves the world at once, out of
-  -- reach of the writes still running on the effect; the pool takes it back
-  -- when the effect lets go
+  -- reach of the writes still running on the effect, its last move with it;
+  -- the pool takes it back when the effect lets go
   stepping:Disconnect()
+  mover.cancel(obj)
   obj.Parent = nil
 end
 

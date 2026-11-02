@@ -4,6 +4,8 @@ const utility = require("@mod/utility")
 const registry = require("@mod/registry")
 const scheduler = require("@mod/scheduler")
 const fake_pool = require("@tests/fake_pool")
+const frame_show = require("@mod/frame_show")
+const frame_store = require("@srv/frame_store")
 const test, expect = harness.test, harness.expect
 
 const bezier_common = require("@mod/common/bezier")
@@ -36,6 +38,90 @@ const function staged(body: (fake: fake_pool.Fake) -> ())
 
   fake_pool.stop(fake)
   registry.clear()
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- `staged` with the frame store started under a terrain of its own and both
+-- frame engine seams stood in
+const function framed(body: (fake: fake_pool.Fake) -> ())
+  const protect, terrain = utility.protectParent, workspace.Terrain
+  const constructor, store, show = Instance, frame_store.engine, frame_show.engine
+  const scope = {}
+
+  utility.protectParent = function() end
+  -- selene: allow(incorrect_standard_library_use)
+  workspace.Terrain = harness.make("Folder") :: any
+
+  -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+  Instance = harness.datatypes.Instance
+
+  frame_store.engine = {
+    now = function()
+      return 0
+    end,
+    detaches = function()
+      return false
+    end,
+    maps = function()
+      return 1
+    end,
+    clone = function(instance: Instance)
+      return instance:Clone()
+    end,
+  }
+
+  frame_show.engine = {
+    apply = function() end,
+  }
+
+  const ok, err = pcall(staged, function(fake)
+    frame_store.init(scope)
+    body(fake)
+  end)
+
+  utility.cleanupScope(scope)
+  frame_store.engine, frame_show.engine = store, show
+  utility.protectParent, workspace.Terrain = protect, terrain
+
+  -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+  Instance = constructor
+
+  if not ok then
+    error(err, 0)
+  end
+end
+
+-- every emit's Random drawing `durations` in turn for a Duration of
+-- `range`, and every other row at its lower bound, put back once `body` ends
+const function drawing(range: NumberRange, durations: { number }, body: () -> ())
+  const new = Random.new
+  local next = 0
+
+  -- selene: allow(incorrect_standard_library_use)
+  Random.new = function()
+    return {
+      NextNumber = function(_, min: number, max: number)
+        if min == range.Min and max == range.Max then
+          next += 1
+
+          return durations[next]
+        end
+
+        return min
+      end,
+      NextInteger = function(_, min: number)
+        return min
+      end,
+    } :: any
+  end
+
+  const ok, err = pcall(body)
+
+  -- selene: allow(incorrect_standard_library_use)
+  Random.new = new
 
   if not ok then
     error(err, 0)
@@ -76,6 +162,26 @@ const function attached(attributes: { [string]: any }): BasePart
   attachment.WorldCFrame = CFrame.new(1, 12, 3)
 
   return template(attachment, attributes)
+end
+
+-- a Frames folder of `count` frames under `part`, the part naming its key
+const function frameSet(part: BasePart, key: string, count: number)
+  const folder = harness.make("Folder", part)
+
+  folder.Name = "Frames"
+  folder:SetAttribute("FrameSet", key)
+  folder:SetAttribute("UnionSize", Vector3.new(2, 2, 2))
+  folder:SetAttribute("UnionCenter", Vector3.zero)
+  part:SetAttribute("FrameSet", key)
+
+  for index = 1, count do
+    const frame = harness.make("MeshPart", folder) :: any
+
+    frame.Name = tostring(index)
+    frame:SetAttribute("FrameSize", Vector3.new(1, 2, 2))
+    frame:SetAttribute("FrameCenter", Vector3.zero)
+    harness.make("SurfaceAppearance", frame)
+  end
 end
 
 const function frames(count: number)
@@ -570,6 +676,129 @@ harness.suite(function()
         frames(30)
 
         expect(#pieces(fake)).toBe(0)
+      end)
+    end)
+
+    test("Speed 0 releases pieces", function()
+      staged(function(fake)
+        const part = attached({ EmitCount = 3, Speed = 0, Duration = NumberRange.new(0.5, 0.5) })
+
+        effects.emit(0, part)
+
+        frames(2)
+
+        expect(#pieces(fake)).toBe(0)
+      end)
+    end)
+
+    test("RotSpeed spins a piece whose rotation rows rest at 0", function()
+      staged(function(fake)
+        const part = attached({ Velocity = STILL, RotSpeed = 90 })
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+
+        frames(30)
+
+        -- a quarter second's spin on every axis turns the look away
+        expect(near(piece.CFrame.LookVector, part.CFrame.LookVector, 0.1)).toBe(false)
+
+        env:Clear()
+      end)
+    end)
+
+    test("a locked piece holds its last pose once the parent is destroyed", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Velocity = STILL, SyncPosition = true, Duration = NumberRange.new(1, 1) })
+
+        part.CFrame = CFrame.new(50, 0, 0)
+
+        const env = effects.emit(0, part)
+
+        frames(1)
+
+        const piece = pieces(fake)[1]
+        const before = piece.CFrame.Position
+
+        parent:Destroy()
+
+        frames(2)
+
+        expect(near(piece.CFrame.Position, before, EPSILON)).toBe(true)
+
+        env:Clear()
+      end)
+    end)
+  end)
+
+  harness.describe("a mesh's frame set", function()
+    test("pieces end at their own drawn durations", function()
+      const range = NumberRange.new(0.25, 2)
+
+      drawing(range, { 0.25, 1, 2 }, function()
+        framed(function(fake)
+          const part = attached({ EmitCount = 3, Duration = range })
+
+          frameSet(part, "durations", 4)
+
+          const env = effects.emit(0, part)
+          const list = pieces(fake)
+          const gone: { [BasePart]: number } = {}
+          local elapsed = 0
+
+          expect(frame_store.find(part, "durations") ~= nil).toBe(true)
+          expect(#list).toBe(3)
+
+          while elapsed < 2.5 do
+            frames(1)
+            elapsed += FRAME
+
+            for _, piece in list do
+              if gone[piece] == nil and piece.Parent == nil then
+                gone[piece] = elapsed
+              end
+            end
+          end
+
+          for index, duration in { 0.25, 1, 2 } do
+            const at = gone[list[index]]
+
+            expect(at ~= nil and math.abs(at - duration) < 2 * FRAME).toBe(true)
+          end
+
+          env:Clear()
+        end)
+      end)
+    end)
+
+    test("unsynced frames longer than the piece hold it still until they end", function()
+      framed(function(fake)
+        const part = attached({
+          Velocity = NumberRange.new(10, 10),
+          Duration = NumberRange.new(0.25, 0.25),
+          SyncDuration = false,
+          FlipbookChangeDuration = 1,
+        })
+
+        frameSet(part, "longer", 4)
+
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+
+        frames(18)
+
+        const at = piece.CFrame.Position
+
+        frames(18)
+
+        expect(piece.Parent ~= nil).toBe(true)
+        expect(near(piece.CFrame.Position, at, EPSILON)).toBe(true)
+
+        frames(30)
+
+        expect(piece.Parent).toBe(nil)
+
+        env:Clear()
       end)
     end)
   end)

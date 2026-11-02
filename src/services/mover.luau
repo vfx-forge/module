@@ -47,6 +47,11 @@ function mover.drop(part: BasePart)
   pending[part] = nil
 end
 
+-- a move queued for a part leaving the world, which keeps its holder
+function mover.cancel(part: BasePart)
+  pending[part] = nil
+end
+
 -- the batch is taken out before it is sent, so one the engine refuses is not
 -- sent again every frame
 function mover.flush()
