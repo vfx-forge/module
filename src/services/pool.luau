@@ -91,6 +91,7 @@ local counts = { reuses = 0, fresh = 0, made = 0 }
 
 local lists: { [string]: { string } | false } = {}
 local links: { [string]: { string } } = {}
+const aims: { [string]: { string } } = {}
 local restorable: { [string]: boolean } = {}
 local hiddenBy: { [string]: { [string]: any } | false } = {}
 
@@ -177,8 +178,8 @@ pool.engine = {
     return list
   end,
 
-  -- every property of a class that names an instance; a free copy lets go of
-  -- what the listed ones name
+  -- every property of a class that names an instance and any script may
+  -- write, Parent aside; a free copy lets go of what the listed ones name
   references = function(class: string): { string }
     local ok, found = pcall(function()
       return game:GetService("ReflectionService"):GetPropertiesOfClass(class)
@@ -192,8 +193,15 @@ pool.engine = {
 
     for _, property in found do
       local kind = property.Type
+      const permits = property.Permits
+      const write = if permits ~= nil and permits.Write ~= nil then tostring(permits.Write) else nil
 
-      if kind ~= nil and kind.ScriptType == "Instance" then
+      if kind == nil or kind.ScriptType ~= "Instance" or property.Name == "Parent" then
+        continue
+      end
+
+      -- no capability, or Basic, which every script outside a sandbox holds
+      if write == "" or write == "Basic" then
         table.insert(list, property.Name)
       end
     end
@@ -265,6 +273,19 @@ local function listOf(class: string): { string }?
 end
 
 -- the listed properties of a class that name an instance
+-- every property of a class that names an instance, unserialized ones such as
+-- a weld constraint's parts among them
+const function aimsOf(class: string): { string }
+  local found = aims[class]
+
+  if found == nil then
+    found = pool.engine.references(class)
+    aims[class] = found
+  end
+
+  return found
+end
+
 local function linksOf(class: string): { string }
   local found = links[class]
 
@@ -479,13 +500,17 @@ local function holdIn(holder: any, value: any)
   end
 end
 
--- the root's children a bare copy leaves out, tagged to stay out of every
--- emit, such as a template's frame sets
+-- a root's child a bare copy leaves out, tagged to stay out of every emit,
+-- such as a template's frame set
+const function excluded(child: Instance)
+  return child.Archivable and child:HasTag(utility.EMIT_EXCLUDE_TAG)
+end
+
 local function skipped(source: Instance): { Instance }
   const found = {}
 
   for _, child in source:GetChildren() do
-    if child.Archivable and child:HasTag(utility.EMIT_EXCLUDE_TAG) then
+    if excluded(child) then
       table.insert(found, child)
     end
   end
@@ -493,13 +518,61 @@ local function skipped(source: Instance): { Instance }
   return found
 end
 
--- a clone of the source with the children it skips destroyed, which carry
--- their tag into the clone
-const function cloneWithout(source: Instance)
-  const copy = utility.clone(source)
+-- each instance of a clone by the one it was cloned from, a clone keeping the
+-- order of the children it takes and passing over the ones not Archivable
+const function pairUp(from: Instance, to: Instance, found: { [Instance]: Instance })
+  const kept = {}
 
-  for _, child in skipped(copy) do
-    child:Destroy()
+  found[from] = to
+
+  for _, child in from:GetChildren() do
+    if child.Archivable then
+      table.insert(kept, child)
+    end
+  end
+
+  const made = to:GetChildren()
+
+  if #made ~= #kept then
+    return
+  end
+
+  for i, child in kept do
+    if made[i].Name == child.Name and made[i].ClassName == child.ClassName then
+      pairUp(child, made[i], found)
+    end
+  end
+end
+
+-- the source without the children it skips, which are never cloned: its root
+-- copied alone and each other child cloned under it. a whole clone points a
+-- reference into its tree at its own copy, so these are pointed so too
+const function cloneWithout(source: Instance)
+  const copy = pool.engine.fromExisting(source)
+  const found: { [Instance]: Instance } = { [source] = copy }
+
+  -- the copy of a source not Archivable is not either, and no clone takes it
+  copy.Archivable = true
+
+  for _, child in source:GetChildren() do
+    if not child.Archivable or excluded(child) then
+      continue
+    end
+
+    const made = child:Clone()
+
+    pairUp(child, made, found)
+    made.Parent = copy
+  end
+
+  for _, made in found do
+    for _, name in aimsOf(made.ClassName) do
+      const target = found[(made :: any)[name]]
+
+      if target ~= nil then
+        (made :: any)[name] = target
+      end
+    end
   end
 
   return copy
@@ -882,7 +955,7 @@ function pool.init(scope: { any })
       drop(source)
     end
 
-    for _, map in { stacks, taken, storeOf, known, loose, sources, lists, links, restorable, hiddenBy } :: { any } do
+    for _, map in { stacks, taken, storeOf, known, loose, sources, lists, links, aims, restorable, hiddenBy } :: { any } do
       table.clear(map)
     end
 

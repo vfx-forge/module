@@ -518,6 +518,19 @@ return {
         decal.Texture = "rbxassetid://1"
         decal.Parent = template
 
+        -- references across the template's own children and to its root, which
+        -- a copy built child by child must point at its own
+        const child = part("Child", Vector3.one * 0.5, origin, template)
+        const pointer = Instance.new("ObjectValue")
+        pointer.Name = "Pointer"
+        pointer.Value = child
+        pointer.Parent = template
+
+        const tie = Instance.new("WeldConstraint")
+        tie.Name = "Tie"
+        tie.Part0 = template
+        tie.Parent = template
+
         -- a frame set and a texture set, each kept out of every emit
         const sets = {}
 
@@ -566,6 +579,21 @@ return {
             note(problems, piece:FindFirstChild("Frames") == nil, `{label} piece {i}: carries the frame set`)
             note(problems, piece:FindFirstChild("Textures") == nil, `{label} piece {i}: carries the texture set`)
             note(problems, found == texture, `{label} piece {i}: its decal shows {found}, not {texture}`)
+
+            const own = piece:FindFirstChild("Child")
+            const held = piece:FindFirstChild("Pointer") :: ObjectValue?
+            const joint = piece:FindFirstChild("Tie") :: WeldConstraint?
+
+            note(
+              problems,
+              held ~= nil and own ~= nil and held.Value == own,
+              `{label} piece {i}: Pointer names {if held then nameOf(held.Value) else "nothing"}`
+            )
+            note(
+              problems,
+              joint ~= nil and joint.Part0 == piece,
+              `{label} piece {i}: Tie.Part0 is {if joint then nameOf(joint.Part0) else "nothing"}`
+            )
           end
 
           const ended = waitFor(5, function()
