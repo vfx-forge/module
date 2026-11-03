@@ -328,16 +328,18 @@ harness.suite(function()
   end)
 
   harness.describe("lerp.ValueCurve", function()
-    -- every channel of `got` within LOOSE of `want` at each t of a sweep
-    const function alike(got: any, want: any)
+    -- every channel of `got` within `within`, else LOOSE, of `want` at each t
+    -- of a sweep
+    const function alike(got: any, want: any, within: number?)
       const read, truth = value_curve.sampler(got), value_curve.sampler(want)
+      const most = within or LOOSE
 
       for i = 0, 200 do
         const t = i / 200
         const a, b = table.clone(read(t)), truth(t)
 
         for c = 1, want.channels do
-          assert(math.abs(a[c] - b[c]) < LOOSE, `channel {c} at {t} reads {a[c]}, wants {b[c]}`)
+          assert(math.abs(a[c] - b[c]) < most, `channel {c} at {t} reads {a[c]}, wants {b[c]}`)
         end
       end
     end
@@ -403,6 +405,86 @@ harness.suite(function()
       alike(value_curve.split(value_curve.split(inside, 0.2), 0.25), inside)
     end)
 
+    test("a split leaves a curve whose handles reach across its segment unchanged", function()
+      for _, handle in { { 0.6, 0.3 }, { 0.9, 1 }, { 1, 1 } } do
+        const hx, hy = handle[1], handle[2]
+
+        -- handles the full segment long stall time at its middle, where the
+        -- solve's own tolerance in time is up to 3e-3 of the parameter
+        const within = if hx == 1 then 5e-3 else nil
+        const long = {
+          channels = 1,
+          linked = true,
+          keys = {
+            key(0, { 0 }, 0, nil, { vector.create(hx, hy, 0) }),
+            key(1, { 1 }, 0, { vector.create(-hx, hy, 0) }, nil),
+          },
+        }
+
+        for _, time in { 0.1, 0.3, 0.7, 0.9 } do
+          alike(value_curve.split(long, time), long, within)
+        end
+
+        alike(value_curve.split(value_curve.split(long, 0.3), 0.7), long, within)
+
+        -- aligned with a curve keyed between, its keys still draw it
+        const steps = {
+          channels = 1,
+          linked = true,
+          keys = { key(0, { 0 }), key(0.3, { 2 }), key(1, { 1 }) },
+        }
+        const aligned = value_curve.align(long, steps)
+
+        alike({ channels = 1, linked = true, keys = aligned, exact = true }, long, within)
+        alike(lerp.ValueCurve(long, steps, 1e-9), long, within)
+        alike(lerp.ValueCurve(steps, long, 1 - 1e-9), long, within)
+      end
+    end)
+
+    test("a key a split or a pad adds widens with the keys it came from", function()
+      const enveloped = {
+        channels = 1,
+        linked = true,
+        keys = { key(0, { 0 }, 0.5), key(1, { 1 }, 0.5) },
+      }
+      const stepped = {
+        channels = 1,
+        linked = true,
+        keys = { key(0, { 0 }), key(0.5, { 0 }), key(0.5, { 1 }), key(1, { 1 }) },
+      }
+      const blend = lerp.ValueCurve(enveloped, stepped, 1e-9)
+
+      -- the added keys draw anything at all, and the blend still reads the
+      -- enveloped curve as its own two keys drew it, with no jump at the step
+      expect(#blend.keys).toBe(4)
+
+      const read = value_curve.sampler(blend, { 1, 1, -1, -1 })
+      const truth = value_curve.sampler(enveloped, { 1, -1 })
+
+      for i = 0, 200 do
+        const t = i / 200
+
+        assert(math.abs(read(t)[1] - truth(t)[1]) < LOOSE, `at {t} reads {read(t)[1]}, wants {truth(t)[1]}`)
+      end
+
+      -- every channel of a split curve, its handles each its own, widens as
+      -- the whole did, split again and all
+      const whole = sample()
+      const twice = value_curve.split(value_curve.split(whole, 0.2), 0.8)
+      const draws = { 0.7, -0.4, 1 }
+      const after = value_curve.sampler(twice, { 0.7, -1, -0.4, -1, 1 })
+      const before = value_curve.sampler(whole, draws)
+
+      for i = 0, 200 do
+        const t = i / 200
+        const a, b = table.clone(after(t)), before(t)
+
+        for c = 1, 3 do
+          assert(math.abs(a[c] - b[c]) < LOOSE, `channel {c} at {t} reads {a[c]}, wants {b[c]}`)
+        end
+      end
+    end)
+
     test("a blend at 0.5 of two flat curves is the flat mean", function()
       const blend = lerp.ValueCurve(value_curve.flat(1, 3), value_curve.flat(3, 3), 0.5)
 
@@ -410,7 +492,12 @@ harness.suite(function()
         expect(value_curve.at(blend, t)).toEqual({ 2, 2, 2 })
       end
 
-      expect(lerp.any(value_curve.flat(0, 1), value_curve.flat(1, 1), 0.25)).toEqual(value_curve.flat(0.25, 1))
+      const quarter = value_curve.flat(0.25, 1) :: any
+
+      -- a blend draws its handles as they are
+      quarter.exact = true
+
+      expect(lerp.any(value_curve.flat(0, 1), value_curve.flat(1, 1), 0.25)).toEqual(quarter)
     end)
 
     test("curves on different key times blend between them where both rise", function()

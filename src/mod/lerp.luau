@@ -225,7 +225,7 @@ function lerp.ColorSequence(a: ColorSequence, b: ColorSequence, t: number)
 end
 
 -- both curves on one set of key times, each drawing exactly what it did, then
--- every key's value, envelope and handles blended channel by channel
+-- every key's value, envelope, handles and widening blended channel by channel
 function lerp.ValueCurve(a: value_curve.Curve, b: value_curve.Curve, t: number)
   if not value_curve.is(b) or a.channels ~= b.channels then
     const got = if value_curve.is(b) then `one of {b.channels}` else `a {typeof(b)}`
@@ -263,10 +263,11 @@ function lerp.ValueCurve(a: value_curve.Curve, b: value_curve.Curve, t: number)
       envelope = k.envelope + (o.envelope - k.envelope) * t,
       left = left,
       right = right,
+      mix = value_curve.mixOf(k, o, i, t, channels),
     }
   end
 
-  return { channels = channels, linked = a.linked and b.linked, keys = keys }
+  return { channels = channels, linked = a.linked and b.linked, keys = keys, exact = true }
 end
 
 function lerp.Other(a: any, b: any, t: number)
