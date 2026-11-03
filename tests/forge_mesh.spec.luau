@@ -1010,6 +1010,35 @@ harness.suite(function()
       end)
     end)
 
+    test("a curve modifier endpoint that is no curve of its row's width plays the row's default", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(1, 1) })
+        const narrow = value_curve.encode(value_curve.flat(3, 1))
+
+        part.Size = Vector3.new(2, 2, 2)
+        tweened(part, "Size", narrow, narrow)
+        tweened(part, "Transparency", "no curve", "no curve")
+
+        const warnings = harness.captureWarnings(function()
+          const env = effects.emit(0, part)
+          const piece = pieces(fake)[1]
+
+          frames(30)
+
+          expect(near(piece.Size, Vector3.new(2, 2, 2), EPSILON)).toBe(true)
+          expect(piece.Transparency).toBe(0)
+
+          env:Clear()
+        end)
+
+        const said = table.concat(warnings, "\n")
+
+        expect(string.find(said, "Size has a modifier value", 1, true) ~= nil).toBe(true)
+        expect(string.find(said, "Transparency has a modifier value", 1, true) ~= nil).toBe(true)
+      end)
+    end)
+
     test("a Transparency randomizer gives two pieces different curves", function()
       seeding(function()
         staged(function(fake)
