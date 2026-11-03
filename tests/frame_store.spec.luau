@@ -819,6 +819,53 @@ harness.suite(function()
       end)
     end)
 
+    test("mesh copies wear the wearer's surface, else the texture set's first, and a Part's never", function()
+      stored(function()
+        local function dressedOf(set: any): { boolean }
+          local out = {}
+
+          for _, frame in set.frames do
+            local mesh = frame.mesh :: BasePart
+            local worn = mesh:FindFirstChildOfClass("SurfaceAppearance") ~= nil
+
+            -- a mesh copy under a surface parks where its maps load, a bare one fully hidden
+            expect(math.abs(mesh.Transparency - (if worn then 0.999 else 1)) < 1e-6).toBe(true)
+            table.insert(out, worn)
+          end
+
+          return out
+        end
+
+        local wearer = harness.make("MeshPart")
+        local bare = harness.make("MeshPart")
+        local surface = harness.make("SurfaceAppearance", wearer)
+
+        local own = frame_store.find(model("d1", 2), "d1") :: any
+        frame_store.warm(own, wearer)
+        expect(dressedOf(own)).toEqual({ true, true })
+
+        local plain = frame_store.find(model("d2", 2), "d2") :: any
+        frame_store.warm(plain, bare)
+        expect(dressedOf(plain)).toEqual({ false, false })
+
+        -- a texture set the model plays dresses them when the wearer has none
+        local textures = frame_store.findTextures(textured("d3", 2), "d3") :: any
+        local played = frame_store.find(model("d4", 2), "d4") :: any
+        frame_store.warm(played, bare, textures)
+        expect(dressedOf(played)).toEqual({ true, true })
+
+        -- a Part draws its SpecialMesh and nothing else
+        local parts = frame_store.find(decaled("d5", { "rbxassetid://1", "rbxassetid://2" }), "d5") :: any
+        frame_store.warm(parts, wearer)
+        expect(dressedOf(parts)).toEqual({ false, false })
+
+        -- a wearer that gains a surface has its copies built again under it
+        surface.Parent = bare
+        frame_store.warm(plain, bare)
+        expect(dressedOf(plain)).toEqual({ true, true })
+      end)
+    end)
+
     test("findTextures ignores a Frames folder of the key and find a Textures one", function()
       stored(function()
         local root = model("x2", 2)

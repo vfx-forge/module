@@ -1191,7 +1191,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   }
 
   if sets.frames then
-    frame_store.warm(sets.frames)
+    frame_store.warm(sets.frames, template, sets.textures)
   end
 
   if sets.textures then

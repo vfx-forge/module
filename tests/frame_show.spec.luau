@@ -584,7 +584,7 @@ harness.suite(function()
 
       local set = frame_store.find(root, key) :: any
 
-      frame_store.warm(set)
+      frame_store.warm(set, start)
 
       return set, start
     end
@@ -593,7 +593,7 @@ harness.suite(function()
       stored(function()
         local set, start = loading("l1", 3)
 
-        frame_store.warm(set)
+        frame_store.warm(set, start)
 
         expect(#preloads).toBe(1)
         expect(#preloads[1].parts).toBe(4)

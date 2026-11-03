@@ -489,7 +489,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
   const textureSet = if attrs.TextureSet ~= "" then frame_store.findTextures(ref, attrs.TextureSet) else nil
 
   if set then
-    frame_store.warm(set)
+    frame_store.warm(set, ref:FindFirstChild("Start"), textureSet)
   end
 
   if textureSet then

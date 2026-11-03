@@ -119,7 +119,7 @@ function texture_loader.init(scope: { any })
         else nil
 
       if set then
-        frame_store.warm(set)
+        frame_store.warm(set, obj, textureSet)
       end
 
       if textureSet then
@@ -157,7 +157,7 @@ function texture_loader.init(scope: { any })
         else nil
 
       if set then
-        frame_store.warm(set)
+        frame_store.warm(set, ref, textureSet)
       end
 
       if textureSet then

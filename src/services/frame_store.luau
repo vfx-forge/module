@@ -86,9 +86,11 @@ local homes: { [Frame]: BasePart } = {}
 local out: { [Frame]: boolean } = {}
 const refused: { [string]: { any } } = {}
 const shapeless: { [Set]: boolean } = {}
-const starts: { [Set]: BasePart } = {}
-const wearers: { [Set]: Instance } = {}
 const requested: { [Set]: boolean } = {}
+
+-- whether a set's mesh copies were built wearing a surface, so a wearer that
+-- gains or loses one has them built again
+const dressed: { [Set]: boolean } = {}
 
 -- a mesh's first ApplyMesh onto a part in the world blocks until the engine holds the mesh, so a frame is
 -- applied only once its mesh has settled from a preload. a fetch status of Success is not that: a mesh
@@ -201,16 +203,6 @@ local function register(folder: Instance, key: string, kind: Kind): Set
   byEntry[entry] = set
   shapeless[set] = not kind.shaped
 
-  const start = folder.Parent and folder.Parent:FindFirstChild("Start")
-
-  if kind.shaped and start and start:IsA("MeshPart") then
-    starts[set] = start
-  end
-
-  if kind.shaped then
-    wearers[set] = start or folder.Parent
-  end
-
   return set
 end
 
@@ -307,12 +299,26 @@ const function abandon(set: Set, made: { Instance })
   logger.warn(`frame set {set.key} was not parked: a frame or its material is not Archivable, so it cannot be copied`)
 end
 
--- every copy a set parks, or none of them: the engine clones nothing for an instance that is not Archivable
-local function build(set: Set, holder: Instance): boolean
+-- the surface a set's pieces wear over its meshes: the wearer's own, else the first material of a texture set
+-- the same model plays, else none
+const function surfaceOf(wearer: Instance?, textures: Set?): Instance?
+  const own = if wearer then wearer:FindFirstChildOfClass("SurfaceAppearance") else nil
+
+  if own ~= nil then
+    return own
+  end
+
+  const first = if textures ~= nil and shapeless[textures] then textures.frames[1] else nil
+  const material = if first then materialOf(first.source) else nil
+
+  return if material ~= nil and material:IsA("SurfaceAppearance") then material else nil
+end
+
+-- every copy a set parks, or none of them: the engine clones nothing for an instance that is not Archivable. a
+-- Part only ever draws its SpecialMesh, never a surface, so only a MeshPart's copy wears one
+local function build(set: Set, holder: Instance, surface: Instance?): boolean
   const shaped = not shapeless[set]
   const made: { Instance } = {}
-  const wearer = wearers[set]
-  const surface = if wearer then wearer:FindFirstChildOfClass("SurfaceAppearance") else nil
   local textures = 0
 
   const function keep(instance: Instance?): any
@@ -325,7 +331,8 @@ local function build(set: Set, holder: Instance): boolean
 
   for _, frame in set.frames do
     const material = materialOf(frame.source) :: any
-    const mesh = if shaped then keep(parked(frame.source, true, surface)) else nil
+    const worn = if frame.source:IsA("MeshPart") then surface else nil
+    const mesh = if shaped then keep(parked(frame.source, true, worn)) else nil
     const home = if material then keep(parked(frame.source, false)) else nil
     const copy = if material then keep(frame_store.engine.clone(material)) else nil
 
@@ -356,6 +363,7 @@ local function build(set: Set, holder: Instance): boolean
 
   set.entry.textures = textures
   built[set] = true
+  dressed[set] = shaped and surface ~= nil
   refused[set.key] = nil
 
   return true
@@ -379,7 +387,41 @@ const function drop(set: Set)
   end
 
   built[set] = nil
+  dressed[set] = nil
   set.entry.parked = false
+end
+
+-- a built set's mesh copies made again under `surface`, its texture homes kept; a copy the engine will no longer
+-- make has the whole set built again
+const function redress(set: Set, holder: Instance?, surface: Instance?)
+  const made: { [Frame]: BasePart } = {}
+
+  for _, frame in set.frames do
+    const copy = parked(frame.source, true, if frame.source:IsA("MeshPart") then surface else nil)
+
+    if copy == nil then
+      for _, other in made do
+        other:Destroy()
+      end
+
+      drop(set)
+
+      return
+    end
+
+    made[frame] = copy
+  end
+
+  for frame, copy in made do
+    if frame.mesh then
+      frame.mesh:Destroy()
+    end
+
+    frame.mesh = copy
+    copy.Parent = holder
+  end
+
+  dressed[set] = surface ~= nil
 end
 
 local function let(set: Set)
@@ -408,8 +450,8 @@ const function evict(keep: frames_common.Entry?)
   end
 end
 
--- the meshes a set may apply, loaded off the frame before playback reaches them
-const function request(set: Set)
+-- the meshes a set may apply, loaded off the frame before playback reaches them, the wearer's own first
+const function request(set: Set, wearer: Instance?)
   requested[set] = true
 
   const parts: { Instance } = {}
@@ -425,8 +467,8 @@ const function request(set: Set)
     table.insert(ids, id)
   end
 
-  if starts[set] then
-    ask(starts[set], meshIdOf(starts[set]))
+  if wearer ~= nil and wearer:IsA("MeshPart") then
+    ask(wearer, meshIdOf(wearer))
   end
 
   for _, frame in set.frames do
@@ -461,9 +503,8 @@ function frame_store.init(scope: { any })
   table.clear(out)
   table.clear(refused)
   table.clear(shapeless)
-  table.clear(starts)
-  table.clear(wearers)
   table.clear(requested)
+  table.clear(dressed)
   table.clear(settled)
   table.clear(asked)
 
@@ -486,9 +527,8 @@ function frame_store.init(scope: { any })
     table.clear(homes)
     table.clear(out)
     table.clear(shapeless)
-    table.clear(starts)
-    table.clear(wearers)
     table.clear(requested)
+    table.clear(dressed)
     park = nil
   end)
 end
@@ -537,12 +577,20 @@ function frame_store.findTextures(model: Instance, key: string): Set?
   return found(model, key, TEXTURES)
 end
 
-function frame_store.warm(set: Set)
+-- `wearer` is the part the set's pieces copy, read for its surface and mesh as the set is built, and `textures`
+-- the texture set the same model plays, if any
+function frame_store.warm(set: Set, wearer: Instance?, textures: Set?)
   const entry = set.entry
   const holder = containers.of("frames")
+  const surface = if shapeless[set] then nil else surfaceOf(wearer, textures)
 
   if set.meshes and not requested[set] then
-    request(set)
+    request(set, wearer)
+  end
+
+  -- mesh copies built for a wearer that has since gained or lost a surface
+  if built[set] and not shapeless[set] and dressed[set] ~= (surface ~= nil) then
+    redress(set, if entry.parked then holder else nil, surface)
   end
 
   -- the copies under a holder that was destroyed went with it
@@ -569,7 +617,7 @@ function frame_store.warm(set: Set)
       end
     elseif refused[set.key] and same(refused[set.key], signature(set)) then
       return
-    elseif not build(set, holder) then
+    elseif not build(set, holder, surface) then
       return
     end
 
