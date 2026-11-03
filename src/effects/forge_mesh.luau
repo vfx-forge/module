@@ -718,6 +718,12 @@ const function piece(
   local writtenClear = 0
   local writtenColor = obj.Color
 
+  -- what each channel sampled last frame: one that samples the same again
+  -- has stopped moving, at a key it holds, and is written exact
+  local sampledSize: Vector3? = nil
+  local sampledClear: number? = nil
+  local sampledColor: Color3? = nil
+
   -- the share of a step each channel's first write after the spawn waits
   -- for, drawn per piece, so the pieces of one emit playing one curve cross
   -- their steps on different frames; every later write waits a whole step
@@ -742,8 +748,11 @@ const function piece(
       const moved = math.abs(sx - writtenSize.X) > step * math.max(math.abs(writtenSize.X), SIZE_FLOOR)
         or math.abs(sy - writtenSize.Y) > step * math.max(math.abs(writtenSize.Y), SIZE_FLOOR)
         or math.abs(sz - writtenSize.Z) > step * math.max(math.abs(writtenSize.Z), SIZE_FLOOR)
+      const held = stretched == sampledSize
 
-      if first or moved or (exact and stretched ~= writtenSize) then
+      sampledSize = stretched
+
+      if first or moved or ((exact or held) and stretched ~= writtenSize) then
         writtenSize = stretched
         sizeShare = if first then sizeShare else 1
 
@@ -758,8 +767,15 @@ const function piece(
 
     if first or not clearFlat then
       const clear = clearAt(t)[1]
+      const held = clear == sampledClear
 
-      if first or math.abs(clear - writtenClear) > CLEAR_STEP * clearShare or (exact and clear ~= writtenClear) then
+      sampledClear = clear
+
+      if
+        first
+        or math.abs(clear - writtenClear) > CLEAR_STEP * clearShare
+        or ((exact or held) and clear ~= writtenClear)
+      then
         writtenClear = clear
         clearShare = if first then clearShare else 1
         obj.Transparency = clear
@@ -773,8 +789,11 @@ const function piece(
       const moved = math.abs(tone.R - writtenColor.R) > step
         or math.abs(tone.G - writtenColor.G) > step
         or math.abs(tone.B - writtenColor.B) > step
+      const held = tone == sampledColor
 
-      if first or moved or (exact and tone ~= writtenColor) then
+      sampledColor = tone
+
+      if first or moved or ((exact or held) and tone ~= writtenColor) then
         writtenColor = tone
         colorShare = if first then colorShare else 1
         obj.Color = tone

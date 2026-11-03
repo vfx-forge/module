@@ -848,6 +848,26 @@ harness.suite(function()
       end)
     end)
 
+    test("a curve that reaches an interior key and holds there is written exact as it stops", function()
+      const keys = { { 0, { 0 } }, { 0.5, { 1 } }, { 1, { 1 } } }
+
+      lived({ Transparency = curveOf(1, keys) }, { DestroyDelay = 1, Lifetime = NumberRange.new(2, 2) }, function(piece)
+        -- 0.5 of a 2 s life, and a frame past it to see the curve stop
+        frames(62)
+
+        expect(piece.Transparency).toBe(1)
+      end)
+
+      lived({ Size = curveOf(3, { { 0, { 1, 1, 1 } }, { 0.5, { 2, 2, 2 } }, { 1, { 2, 2, 2 } } }) }, {
+        DestroyDelay = 1,
+        Lifetime = NumberRange.new(2, 2),
+      }, function(piece)
+        frames(62)
+
+        expect(piece.Size == Vector3.new(4, 4, 4)).toBe(true)
+      end)
+    end)
+
     test("a Transparency change under the step writes at most once before the end lands it", function()
       lived({ Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 0.015 } } }) }, { DestroyDelay = 1 }, function(piece)
         const early = watched(piece, "Transparency", 40)
