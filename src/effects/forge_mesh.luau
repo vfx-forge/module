@@ -1252,7 +1252,15 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   const cleared = modified(rows.Transparency)
   const colored = modified(rows.Color)
 
+  const census = forge_mesh.pieces
+
   for _ = 1, rows.EmitCount do
+    -- a full house draws nothing more; each piece counts itself in as it
+    -- starts, before the next is drawn
+    if census.live >= census.max then
+      break
+    end
+
     const speed, duration, spread, turn, inheritance = launch_common.draw(rows, spawned)
     const tint = if colored then gradientOr(rows.Color().at(spawned), tintRest) else tintRest
 

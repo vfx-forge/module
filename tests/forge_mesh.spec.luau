@@ -12,6 +12,7 @@ const effects = require("@srv/effects")
 const utility = require("@mod/utility")
 const registry = require("@mod/registry")
 const scheduler = require("@mod/scheduler")
+const mover = require("@srv/mover")
 const fake_pool = require("@tests/fake_pool")
 const frame_show = require("@mod/frame_show")
 const frame_store = require("@srv/frame_store")
@@ -3133,11 +3134,75 @@ harness.suite(function()
       end)
     end)
 
-    test("a template destroyed mid flight does not strand a place", function()
+    test("a piece whose step throws gives its place back", function()
+      capped(5, function()
+        staged(function()
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { EmitCount = 3, Lifetime = NumberRange.new(30, 30), Speed = STILL })
+          const move = mover.move
+
+          const ok, err = pcall(function()
+            effects.emit(0, part)
+            frames(2)
+            expect(census()).toBe(3)
+
+            mover.move = function()
+              error("a step that throws")
+            end
+
+            harness.captureWarnings(function()
+              frames(2)
+            end)
+          end)
+
+          mover.move = move
+
+          if not ok then
+            error(err, 0)
+          end
+
+          expect(census()).toBe(0)
+        end)
+      end)
+    end)
+
+    test("a full house draws nothing more for an emit", function()
+      capped(2, function()
+        staged(function()
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { EmitCount = 6, Lifetime = NumberRange.new(1, 1), Speed = STILL })
+          const draw = launch_common.draw
+          local draws = 0
+
+          launch_common.draw = function(...)
+            draws += 1
+
+            return draw(...)
+          end
+
+          const ok, err = pcall(function()
+            const env = effects.emit(0, part)
+
+            frames(1)
+            env:Clear()
+          end)
+
+          launch_common.draw = draw
+
+          if not ok then
+            error(err, 0)
+          end
+
+          expect(draws).toBe(2)
+        end)
+      end)
+    end)
+
+    test("a template destroyed mid flight lets its pieces fly on and give their places back", function()
       capped(5, function()
         staged(function(fake)
           const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-          const part = template(parent, { EmitCount = 4, Lifetime = NumberRange.new(0.5, 0.5), Speed = STILL })
+          const part = template(parent, { EmitCount = 4, Lifetime = NumberRange.new(1, 1), Speed = STILL })
 
           effects.emit(0, part)
           frames(2)
@@ -3145,9 +3210,11 @@ harness.suite(function()
 
           part:Destroy()
 
-          if fake.destroyed and fake.destroyed[part] then
-            fake.destroyed[part]()
-          end
+          -- the pieces fly on without it, still counted, and give their
+          -- places back as their lives end
+          frames(10)
+          expect(census()).toBe(4)
+          expect(#pieces(fake)).toBe(4)
 
           frames(60)
           expect(census()).toBe(0)
