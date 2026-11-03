@@ -384,7 +384,9 @@ end
 -- positions at whole steps of 1/rate, then the remainder step; under a
 -- force each step is cut as a piece's frame is. `rows` drive the
 -- acceleration, drag and force fields over the life, each read at the start
--- of a step
+-- of a step. the second return is the path's own copy of the force, its
+-- orbit's ring height where the path ended, for a path that carries on from
+-- there
 function particle_motion.path(
   start: CFrame,
   speed: number,
@@ -395,7 +397,7 @@ function particle_motion.path(
   rate: number,
   force: Force?,
   rows: Rows?
-): { vector }
+): ({ vector }, Force?)
   const origin = start.Position
   const look = start.LookVector
 
@@ -450,7 +452,7 @@ function particle_motion.path(
   end
 
   const samples = lifetime * rate
-  const remainder = if samples <= 1 then samples else samples % 1
+  const remainder = samples - math.floor(samples)
 
   for _ = 1, math.floor(samples) do
     advance(1 / rate)
@@ -464,7 +466,7 @@ function particle_motion.path(
     table.insert(points, position)
   end
 
-  return points
+  return points, own
 end
 
 return particle_motion

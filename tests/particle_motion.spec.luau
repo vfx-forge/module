@@ -141,6 +141,14 @@ harness.suite(function()
       expect(#points).toBe(42)
       expect(close(points[#points], position, 1e-4)).toBe(true)
     end)
+
+    test("a life of exactly one step is one step long", function()
+      const start = CFrame.new(0, 0, 0)
+      const points = particle_motion.path(start, 10, 0.5, vector.zero, 0, vector.zero, 2)
+
+      expect(#points).toBe(1)
+      expect(close(points[1], vector.create(0, 0, -5), 1e-4)).toBe(true)
+    end)
   end)
 
   harness.describe("particle_motion.gravity", function()
@@ -554,6 +562,28 @@ harness.suite(function()
 
       expect(math.abs(points[#points].y - 2) < 1e-3).toBe(true)
       expect(orbit.height).toBe(nil)
+    end)
+
+    test("a path hands back its orbit's ring height, so one after a bounce climbs on from it", function()
+      const orbit = {
+        kind = "Orbit",
+        center = vector.zero,
+        axis = vector.create(0, 1, 0),
+        radius = 10,
+        spin = 0.25,
+        rise = 3,
+        capture = 2,
+      } :: particle_motion.Orbit
+      const _, own = particle_motion.path(CFrame.new(10, 0, 0), 0, 2, vector.zero, 0, vector.zero, 32, orbit)
+      const ring = own :: particle_motion.Orbit
+
+      expect(math.abs((ring.height :: number) - 6) < 1e-6).toBe(true)
+
+      -- carried on from a point off the ring, it keeps the ring's height
+      const points = particle_motion.path(CFrame.new(10, 1, 0), 0, 1, vector.zero, 0, vector.zero, 32, ring)
+
+      expect(math.abs((ring.height :: number) - 6) < 1e-6).toBe(true)
+      expect(points[#points].y > 7).toBe(true)
     end)
 
     test("rows sampled over the life drive the force as it flies", function()
