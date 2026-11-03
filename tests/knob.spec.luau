@@ -205,7 +205,7 @@ harness.suite(function()
       table.sort(expected)
 
       local source = fs.readFile("src/sdk/v1/types.luau")
-      local union = string.match(source, "export type Unit = ([^\n]+)") :: string
+      local union = string.match(source, "export type Unit =(.-)\n\n") :: string
       local named = {}
 
       for unit in string.gmatch(union, '"(%w+)"') do

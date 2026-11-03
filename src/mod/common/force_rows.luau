@@ -27,9 +27,13 @@ common.rows = {
     :hidden(forceless)
     :label("ForceTarget")
     :hint("Optional. The force centers on the emitter unless a target is set."),
-  GravityMass = knob(1000):min(0):mod():hidden(gravityless):label("GravityMass"):hint(
-    "How hard the center pulls. At distance d the pull is Mass / d squared, in studs per second squared."
-  ),
+  GravityMass = knob(1000)
+    :min(0)
+    :unit("studsCubedPerSecondSquared")
+    :mod()
+    :hidden(gravityless)
+    :label("GravityMass")
+    :hint("How hard the center pulls. At distance d the pull is Mass / d squared, in studs per second squared."),
   GravitySoftening = knob(1)
     :min(0)
     :unit("studs")

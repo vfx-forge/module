@@ -2524,18 +2524,25 @@ harness.suite(function()
     test("resize scales the force card's lengths and retime its rates", function()
       staged(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { OrbitRadius = 4, OrbitRise = 3, OrbitSpin = 0.5, GravitySoftening = 1 })
+        const part = template(
+          parent,
+          { OrbitRadius = 4, OrbitRise = 3, OrbitSpin = 0.5, GravitySoftening = 1, GravityMass = 100, Drag = 1 }
+        )
 
         resize.apply(part, 2)
 
         expect(part:GetAttribute("OrbitRadius")).toBe(8)
         expect(part:GetAttribute("OrbitRise")).toBe(6)
         expect(part:GetAttribute("GravitySoftening")).toBe(2)
+        expect(part:GetAttribute("GravityMass")).toBe(800)
         expect(part:GetAttribute("OrbitSpin")).toBe(0.5)
+        expect(part:GetAttribute("Drag")).toBe(1)
 
         retime.apply(part, 2, 0.5)
 
         expect(part:GetAttribute("OrbitSpin")).toBe(1)
+        expect(part:GetAttribute("GravityMass")).toBe(3200)
+        expect(part:GetAttribute("Drag")).toBe(2)
       end)
     end)
 

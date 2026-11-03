@@ -481,7 +481,12 @@ forge_mesh.attributes = {
     :label("TurbulenceFrequency")
     :hint("How fast each piece's wander changes."),
 
-  Drag = knob(0):min(0):mod():label("Drag"):hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
+  Drag = knob(0)
+    :min(0)
+    :unit("perSecond")
+    :mod()
+    :label("Drag")
+    :hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
   LockedToPart = knob(false):label("LockedToPart"):hint("Whether pieces move with the parent after they spawn."),
   TimeScale = knob(1):min(0):mod():label("TimeScale"):hint("Multiplier on the effect's clock, 0 freezing it."),
   VelocityInheritance = knob(0)

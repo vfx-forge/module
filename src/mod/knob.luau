@@ -12,6 +12,7 @@ knob.UNITS = {
   studs = true,
   studsPerSecond = true,
   studsPerSecondSquared = true,
+  studsCubedPerSecondSquared = true,
 }
 
 -- a module lists its rows in a table that keeps no order, so each row takes a

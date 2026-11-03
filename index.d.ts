@@ -403,7 +403,8 @@ export namespace SDK {
 		| "perSecondSquared"
 		| "studs"
 		| "studsPerSecond"
-		| "studsPerSecondSquared";
+		| "studsPerSecondSquared"
+		| "studsCubedPerSecondSquared";
 
 	/** The built-ins an effect is grouped with in the adder. */
 	export type Category =

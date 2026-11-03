@@ -5,10 +5,15 @@ local registry = require("@mod/registry")
 
 local resize = {}
 
--- a length scales, and so does anything measured in lengths per time
+-- a length scales, and so does anything measured in lengths per time; a
+-- gravity mass by the cube, so its orbits keep their period at the new size
 local function factorOf(unit: string, factor: number): number?
   if unit == "studs" or unit == "studsPerSecond" or unit == "studsPerSecondSquared" then
     return factor
+  end
+
+  if unit == "studsCubedPerSecondSquared" then
+    return factor * factor * factor
   end
 
   return nil

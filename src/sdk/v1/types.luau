@@ -2,7 +2,14 @@
 export type Rule = (ctx: Ctx, attrs: any, props: any) -> any
 
 -- what a number param measures
-export type Unit = "seconds" | "perSecond" | "perSecondSquared" | "studs" | "studsPerSecond" | "studsPerSecondSquared"
+export type Unit =
+  | "seconds"
+  | "perSecond"
+  | "perSecondSquared"
+  | "studs"
+  | "studsPerSecond"
+  | "studsPerSecondSquared"
+  | "studsCubedPerSecondSquared"
 
 -- the built-ins an effect is grouped with in the adder
 export type Category = "emitters" | "meshes" | "paths" | "shockwaves" | "camera" | "motion"

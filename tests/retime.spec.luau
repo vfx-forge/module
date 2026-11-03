@@ -40,6 +40,11 @@ local function stub()
       Speed = knob(1):mod(),
       SpeedDuration = knob(0.1):aliases("Speed_Duration"):unit("seconds"):hidden(always),
       Far = knob(Vector3.new(1, 1, 1)):aliases("Old_Far"):unit("studs"),
+      Mass = knob(8):unit("studsCubedPerSecondSquared"),
+      Still = knob(0):unit("seconds"),
+      Ruled = knob(function()
+        return 3
+      end):unit("seconds"),
     },
     properties = {
       Width = knob():unit("studs"):mod(),
@@ -223,6 +228,100 @@ harness.suite(function()
       end)
 
       expect(obj:GetAttribute("Delay")).toBe(2)
+    end)
+
+    test("a row stored nowhere scales from its default, one at zero or worked out is left unstored", function()
+      stub()
+
+      local obj = Instance.new("Part")
+
+      retime.apply(obj, 2, 0.5)
+
+      expect(obj:GetAttribute("Rate")).toBe(2)
+      expect(obj:GetAttribute("Pull")).toBe(4)
+      expect(obj:GetAttribute("Reach")).toBe(nil)
+      expect(obj:GetAttribute("Still")).toBe(nil)
+      expect(obj:GetAttribute("Ruled")).toBe(nil)
+      expect(obj:GetAttribute("Plain")).toBe(nil)
+      expect(obj:GetAttribute("Width")).toBe(nil)
+
+      expect(obj:GetAttribute("SpeedDuration")).toBe(0.05)
+
+      -- a length is not time's, so it stays unstored
+      expect(obj:GetAttribute("Far")).toBe(nil)
+
+      resize.apply(obj, 2)
+
+      expect(obj:GetAttribute("Far") == Vector3.new(2, 2, 2)).toBe(true)
+      expect(obj:GetAttribute("Mass")).toBe(256)
+    end)
+
+    test("a row stored under an old spelling or quad is not written again", function()
+      stub()
+
+      local obj = Instance.new("Part")
+      obj:SetAttribute("Old_Far", Vector3.new(1, 1, 1))
+      obj:SetAttribute("Speed_Duration", 1)
+      obj:SetAttribute("Reach_Start", 1)
+
+      resize.apply(obj, 2)
+
+      expect(obj:GetAttribute("Far")).toBe(nil)
+      expect(obj:GetAttribute("Old_Far") == Vector3.new(2, 2, 2)).toBe(true)
+      expect(obj:GetAttribute("Reach")).toBe(nil)
+      expect(obj:GetAttribute("Reach_Start")).toBe(2)
+    end)
+
+    test("a gravity mass scales by the square of a retime and the cube of a resize", function()
+      stub()
+
+      local obj = Instance.new("Part")
+      obj:SetAttribute("Mass", 8)
+
+      retime.apply(obj, 2, 0.5)
+
+      expect(obj:GetAttribute("Mass")).toBe(32)
+
+      resize.apply(obj, 2)
+
+      expect(obj:GetAttribute("Mass")).toBe(256)
+
+      local fresh = Instance.new("Part")
+
+      resize.apply(fresh, 0.5)
+
+      expect(fresh:GetAttribute("Mass")).toBe(1)
+    end)
+
+    test("a lane's values scale by its row's unit while its timing scales by the inverse", function()
+      stub()
+
+      local obj = Instance.new("Part")
+      obj:SetAttribute("Rate", 1)
+      obj:SetAttribute("Delay", 1)
+      framed(obj, "attribute", "Rate", {
+        { kind = "tween", chain = false, duration = 2, start = value.lit(0), finish = value.lit(30) },
+      })
+      framed(obj, "attribute", "Delay", {
+        { kind = "tween", chain = false, duration = 2, start = value.lit(1), finish = value.lit(4) },
+      })
+      framed(obj, "attribute", "Plain", {
+        { kind = "tween", chain = false, duration = 2, start = value.lit(1), finish = value.lit(4) },
+      })
+
+      retime.apply(obj, 2, 0.5)
+
+      local rate = queueOf(obj, "attribute", "Rate")[1]
+      local delay = queueOf(obj, "attribute", "Delay")[1]
+      local plain = queueOf(obj, "attribute", "Plain")[1]
+
+      expect(rate.duration).toBe(1)
+      expect(rate.finish.v).toBe(60)
+      expect(delay.duration).toBe(1)
+      expect(delay.start.v).toBe(0.5)
+      expect(delay.finish.v).toBe(2)
+      expect(plain.duration).toBe(1)
+      expect(plain.finish.v).toBe(4)
     end)
 
     test("every lane of a row scales, not only the one that starts at the emit", function()
