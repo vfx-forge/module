@@ -402,6 +402,62 @@ function value_curve.is(v: any)
   return type(v) == "table" and type(v.channels) == "number" and type(v.keys) == "table"
 end
 
+-- a mix's index and weight pairs, each weight times `factor`
+const function scalePairs(parts: { { number } }, factor: number)
+  const out = table.create(#parts)
+
+  for c, pairs in parts do
+    const scaled = table.clone(pairs)
+
+    for at = 2, #scaled, 2 do
+      scaled[at] *= factor
+    end
+
+    out[c] = scaled
+  end
+
+  return out
+end
+
+-- the curve with every key's value, envelope and handle value offsets times
+-- `factor`, its times kept, so every sample and every draw scales with it
+function value_curve.multiply(curve: Curve, factor: number): Curve
+  const channels = curve.channels
+  const keys = table.create(#curve.keys)
+
+  for i, k in curve.keys do
+    const mix = k.mix
+    const values = table.create(channels)
+    const left = table.create(channels)
+    const right = table.create(channels)
+
+    for c = 1, channels do
+      const l, r = k.left[c], k.right[c]
+
+      values[c] = k.value[c] * factor
+      left[c] = vector.create(l.x, l.y * factor, 0)
+      right[c] = vector.create(r.x, r.y * factor, 0)
+    end
+
+    keys[i] = {
+      time = k.time,
+      value = values,
+      envelope = k.envelope * factor,
+      left = left,
+      right = right,
+      mix = if mix ~= nil
+        then {
+          value = scalePairs(mix.value, factor),
+          left = scalePairs(mix.left, factor),
+          right = scalePairs(mix.right, factor),
+        }
+        else nil,
+    }
+  end
+
+  return { channels = channels, linked = curve.linked, keys = keys, exact = curve.exact }
+end
+
 -- a handle cut to a segment the way the sampler cuts it, so a copy stores the
 -- curve the sampler draws
 const function cut(handle: vector, low: number, high: number)

@@ -1,4 +1,5 @@
 const lerp = require("@mod/lerp")
+const attr = require("@mod/attributes")
 const mods = require("@mod/mods")
 const value = require("@mod/value")
 const frame = require("@mod/modifier_frame")
@@ -47,8 +48,27 @@ const function staged(body: (fake: fake_pool.Fake) -> ())
   effects.init({ setup = true } :: any)
   registry.register(forge_mesh)
 
+  -- every emit cleared once `body` ends, so a piece of a long life left
+  -- flying never moves under the next spec, where its pool is gone
+  const emit = effects.emit
+  const emitted = {}
+
+  effects.emit = function(...)
+    const env = emit(...)
+
+    table.insert(emitted, env)
+
+    return env
+  end
+
   const fake = fake_pool.start({})
   const ok, err = pcall(body, fake)
+
+  effects.emit = emit
+
+  for _, env in emitted do
+    env:Clear()
+  end
 
   fake_pool.stop(fake)
   registry.clear()
@@ -1278,9 +1298,9 @@ harness.suite(function()
       end)
     end)
 
-    test("a piece keeps the template's own orientation as it flies", function()
+    test("a piece oriented None keeps the template's own orientation as it flies", function()
       staged(function(fake)
-        const part = attached({ Speed = NumberRange.new(10, 10) })
+        const part = attached({ Speed = NumberRange.new(10, 10), Orientation = "None" })
         const turn = CFrame.fromOrientation(0.3, 1, 0.2)
 
         part.CFrame = CFrame.new(0, 0, 0) * turn
@@ -1492,7 +1512,8 @@ harness.suite(function()
     test("Speed is the launch speed, TimeScale the clock", function()
       for _, timeScale in { 1, 0.5 } do
         staged(function(fake)
-          const part = attached({ Speed = NumberRange.new(20, 20), TimeScale = timeScale })
+          const part =
+            attached({ Speed = NumberRange.new(20, 20), TimeScale = timeScale, Lifetime = NumberRange.new(1, 1) })
 
           effects.emit(0, part)
 
@@ -1531,7 +1552,7 @@ harness.suite(function()
 
     test("RotSpeed spins an axis whose rotation rests at 0", function()
       staged(function(fake)
-        const part = attached({ Speed = STILL, RotSpeed = Vector3.new(0, 90, 0) })
+        const part = attached({ Speed = STILL, RotSpeed = Vector3.new(0, 90, 0), Orientation = "None" })
         const env = effects.emit(0, part)
         const piece = pieces(fake)[1]
 
@@ -2884,6 +2905,86 @@ harness.suite(function()
         expect(part:GetAttribute("OrbitSpin")).toBe(1)
         expect(part:GetAttribute("GravityMass")).toBe(3200)
         expect(part:GetAttribute("Drag")).toBe(2)
+      end)
+    end)
+
+    test("resize scales a mesh's Size curve and its lanes, never the template", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL })
+        const bare = template(parent, { Speed = STILL })
+        const mesh = harness.make("SpecialMesh", part) :: SpecialMesh
+
+        part.Size = Vector3.new(2, 3, 4)
+        mesh.Scale = Vector3.new(1, 2, 3)
+
+        -- keys that bend through their handles and widen by their envelopes,
+        -- so every part of the curve shows in a sample
+        const authored = value_curve.flat(1, 3)
+
+        authored.linked = false
+        authored.keys = {
+          {
+            time = 0,
+            value = { 1, 2, 0.5 },
+            envelope = 0.25,
+            left = table.create(3, vector.zero),
+            right = { vector.create(0.3, 1, 0), vector.create(0.2, -0.5, 0), vector.create(0.1, 0.25, 0) },
+          },
+          {
+            time = 1,
+            value = { 3, 1, 2 },
+            envelope = 0.5,
+            left = { vector.create(-0.3, 0.5, 0), vector.create(-0.2, 1, 0), vector.create(-0.4, -1, 0) },
+            right = table.create(3, vector.zero),
+          },
+        }
+
+        const stored = value_curve.encode(authored)
+        const before = value_curve.decode(stored) :: value_curve.Curve
+        const lane = { { kind = "tween", chain = false, start = value.lit(stored), finish = value.lit(stored) } }
+
+        -- lune refuses a non utf-8 attribute string, so the rows are cached
+        attr.cache(part)
+        attr.cache(bare)
+        attr.set(part, "Size", stored)
+        attr.set(part, mods.attrName("attribute", "Size"), frame.frame(codec.encode({ v = 1, queue = lane })))
+
+        resize.apply(part, 2)
+        resize.apply(bare, 2)
+
+        const after = value_curve.decode(attr.get(part, "Size", nil)) :: value_curve.Curve
+        const queue = codec.decode(frame.unframe(attr.get(part, mods.attrName("attribute", "Size"), nil)) :: any)
+        const tween = (queue :: any).lanes.start[1]
+        const lanes = {
+          value_curve.decode(tween.start.v) :: value_curve.Curve,
+          value_curve.decode(tween.finish.v) :: value_curve.Curve,
+        }
+
+        for _, draws in { { 0, 0 }, { 1, -1 }, { -1, 1 } } do
+          for step = 0, 8 do
+            const t = step / 8
+            const was = value_curve.at(before, t, draws)
+
+            for _, curve in { after, lanes[1], lanes[2] } do
+              const now = value_curve.at(curve, t, draws)
+
+              for c = 1, 3 do
+                expect(near1(now[c], was[c] * 2)).toBe(true)
+              end
+            end
+          end
+        end
+
+        expect(part.Size).toBe(Vector3.new(2, 3, 4))
+        expect(mesh.Scale).toBe(Vector3.new(1, 2, 3))
+
+        -- a row resting at its default takes the default scaled
+        const flat = value_curve.decode(attr.get(bare, "Size", nil)) :: value_curve.Curve
+
+        for c = 1, 3 do
+          expect(near1(value_curve.at(flat, 0.5)[c], 2)).toBe(true)
+        end
       end)
     end)
 

@@ -1757,16 +1757,18 @@ local function scaleValue(v: any, factor: number): any
   return v
 end
 
-local function scaleEndpoint(x: any, factor: number)
+local function scaleEndpoint(x: any, factor: number, scaler: ((v: any, factor: number) -> any)?)
   if type(x) ~= "table" then
     return
   end
 
+  const by = scaler or scaleValue
+
   if x.t == "lit" then
-    x.v = scaleValue(x.v, factor)
+    x.v = by(x.v, factor)
   elseif x.t == "draw" then
-    x.a = scaleValue(x.a, factor)
-    x.b = scaleValue(x.b, factor)
+    x.a = by(x.a, factor)
+    x.b = by(x.b, factor)
   end
 end
 
@@ -1792,13 +1794,14 @@ function mods.scaleTime(lanes: { [string]: { any } }, factor: number)
   end
 end
 
--- every numeric endpoint in a lane map. a var names a value that is not the
+-- every numeric endpoint in a lane map, or every endpoint through `scaler`
+-- for a row whose values are no number. a var names a value that is not the
 -- row's to scale
-function mods.scaleValues(lanes: { [string]: { any } }, factor: number)
+function mods.scaleValues(lanes: { [string]: { any } }, factor: number, scaler: ((v: any, factor: number) -> any)?)
   for _, queue in lanes do
     for _, m in queue do
-      scaleEndpoint(m.start, factor)
-      scaleEndpoint(m.finish, factor)
+      scaleEndpoint(m.start, factor, scaler)
+      scaleEndpoint(m.finish, factor, scaler)
     end
   end
 end

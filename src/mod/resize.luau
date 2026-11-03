@@ -1,7 +1,9 @@
+local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
 local retime = require("@mod/retime")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
+local value_curve = require("@mod/value_curve")
 
 local resize = {}
 
@@ -25,13 +27,15 @@ resize.PROPERTY_UNITS = {
   Sound = { RollOffMaxDistance = "studs" },
 }
 
--- ratios the old resize scaled as if they were lengths, kept so a resized
--- effect looks as it did. the flag says whether the resting value scales with
--- them: a spin model's scale is its absolute size, where a beam's length scale
--- multiplies the attachment distance that scaleShape already scales
+-- ratios resize scales as if they were lengths. the flag says whether the
+-- resting value scales with them: a spin model's scale is its absolute size,
+-- where a beam's length scale multiplies the attachment distance that
+-- scaleShape already scales. a mesh's Size is a curve of factors on its
+-- template, scaled in place of the template as a ParticleEmitter's Size is
 resize.RATIOS = {
   model_spin = { Scale = true },
   beam = { LengthScale = false },
+  forge_mesh = { Size = true },
 }
 
 -- a property the instance does not have throws on the read, which is the
@@ -60,6 +64,48 @@ local function scaleQueue(obj: Instance, source: string, key: string, f: number)
   end)
 end
 
+-- a lane endpoint of a value curve row, stored encoded; anything else the
+-- reader would refuse is left as it is
+const function scaleCurve(v: any, f: number): any
+  if value_curve.is(v) then
+    return value_curve.multiply(v, f)
+  end
+
+  const decoded = if type(v) == "string" then value_curve.decode(v) else nil
+
+  return if decoded ~= nil then value_curve.encode(value_curve.multiply(decoded, f)) else v
+end
+
+-- a value curve row's stored curve, or its default when none is stored, and
+-- every curve its lanes hold
+const function scaleCurveRow(obj: Instance, name: string, row: any, f: number)
+  local stored = false
+
+  for _, key in { name, table.unpack(row.names) } do
+    const raw = attr.get(obj, key, nil)
+
+    utility.rescaleQueue(obj, "attribute", key, function(lanes)
+      mods.scaleValues(lanes, f, scaleCurve)
+    end)
+
+    if raw == nil then
+      continue
+    end
+
+    stored = true
+
+    const decoded = if type(raw) == "string" then value_curve.decode(raw) else nil
+
+    if decoded ~= nil then
+      attr.set(obj, key, value_curve.encode(value_curve.multiply(decoded, f)))
+    end
+  end
+
+  if not stored and value_curve.is(row.default) then
+    attr.set(obj, name, value_curve.encode(value_curve.multiply(row.default, f)))
+  end
+end
+
 -- the geometry a few effects keep outside their rows
 local function scaleShape(obj: any, module: registry.Module, factor: number)
   local id = module.id
@@ -81,14 +127,6 @@ local function scaleShape(obj: any, module: registry.Module, factor: number)
         startMesh.Scale *= factor
         goalMesh.Scale *= factor
       end
-    end
-  elseif id == "forge_mesh" then
-    obj.Size *= factor
-
-    const mesh = obj:FindFirstChildOfClass("SpecialMesh")
-
-    if mesh then
-      mesh.Scale *= factor
     end
   elseif id == "shockwave_debris" then
     obj.Size *= factor
@@ -124,6 +162,11 @@ function resize.apply(obj: Instance, factor: number)
       local row = module.attributes[name]
 
       if row == nil then
+        continue
+      end
+
+      if row.kind == "ValueCurve" then
+        scaleCurveRow(obj, name, row, factor)
         continue
       end
 
