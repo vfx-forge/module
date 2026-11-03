@@ -6,7 +6,9 @@ export type Gravity = { kind: "Gravity", target: vector, mass: number, softening
 
 -- `height` is where the piece's own ring sits along the axis, from the height
 -- it spawned at climbing at `rise` studs per second; a path left without one
--- takes it from where it starts. `spin` is in turns per second
+-- takes it from where it starts. `spin` is in turns per second. `angle` is
+-- where around the ring a piece on the axis sets off when its velocity runs
+-- along the axis too, drawn per piece so the ring fills
 export type Orbit = {
   kind: "Orbit",
   center: vector,
@@ -16,6 +18,7 @@ export type Orbit = {
   rise: number,
   capture: number,
   height: number?,
+  angle: number?,
 }
 
 export type Force = Gravity | Orbit
@@ -82,42 +85,32 @@ end
 
 -- where a piece stands about a center and unit axis: its height along the
 -- axis, its distance off it and its angle in the plane across it. a piece on
--- the axis takes the angle of its velocity, else the plane's first direction
+-- the axis takes the angle of its velocity, else `fallback`, else the plane's
+-- first direction
 const function aroundOf(
   position: vector,
   velocity: vector,
   center: vector,
-  axis: vector
+  axis: vector,
+  fallback: number?
 ): (number, number, number, vector, vector)
   const first, second = basisOf(axis)
   const offset = position - center
   const height = vector.dot(offset, axis)
   const radial = offset - axis * height
+  const distance = vector.magnitude(radial)
 
   local x, y = vector.dot(radial, first), vector.dot(radial, second)
 
   if x * x + y * y <= 1e-12 then
     x, y = vector.dot(velocity, first), vector.dot(velocity, second)
+
+    if x * x + y * y <= 1e-12 and fallback ~= nil then
+      return height, distance, fallback, first, second
+    end
   end
 
-  return height, vector.magnitude(radial), math.atan2(y, x), first, second
-end
-
--- the value `t` of the way through a list sampled evenly, between the two
--- samples either side of it
-const function sampledOf(list: { any }, t: number): any
-  const count = #list
-
-  if count == 1 then
-    return list[1]
-  end
-
-  const at = math.clamp(t, 0, 1) * (count - 1)
-  const i = math.floor(at)
-  const a = list[i + 1]
-  const b = list[math.min(i + 2, count)]
-
-  return a + (b - a) * (at - i)
+  return height, distance, math.atan2(y, x), first, second
 end
 
 -- the angle between two steps, 0 when either has no length
@@ -258,7 +251,7 @@ end
 function particle_motion.ring(position: vector, velocity: vector, orbit: Orbit, dt: number): (vector, vector)
   const axis = orbit.axis
   const center = orbit.center
-  const along, distance, angle, first, second = aroundOf(position, velocity, center, axis)
+  const along, distance, angle, first, second = aroundOf(position, velocity, center, axis, orbit.angle)
   const settle = math.exp(-math.max(orbit.capture, 0) * dt)
   const climb = orbit.rise * dt
   const rest = (orbit.height or along) + climb
@@ -309,7 +302,18 @@ end
 -- the value `t` of the way through a list sampled evenly, between the two
 -- samples either side of it
 function particle_motion.sampled(list: { any }, t: number): any
-  return sampledOf(list, t)
+  const count = #list
+
+  if count == 1 then
+    return list[1]
+  end
+
+  const at = math.clamp(t, 0, 1) * (count - 1)
+  const i = math.floor(at)
+  const a = list[i + 1]
+  const b = list[math.min(i + 2, count)]
+
+  return a + (b - a) * (at - i)
 end
 
 -- the points of a dense path worth drawing, at most `most`: both ends, a

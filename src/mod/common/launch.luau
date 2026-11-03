@@ -12,16 +12,19 @@ common.DRIVEN = table.freeze({
 })
 
 -- a row's vector under every host, which lune spells apart from Vector3
-const function isVector(v: any)
+function common.isVector(v: any)
   const kind = typeof(v)
 
   return kind == "Vector3" or kind == "vector"
 end
 
 -- a drawn number, or `fallback` where a modifier drew none a clock can use
-const function numberOr(v: any, fallback: number)
+function common.numberOr(v: any, fallback: number)
   return if type(v) == "number" and v == v then v else fallback
 end
+
+const isVector = common.isVector
+const numberOr = common.numberOr
 
 -- whether a row's track carries a modifier, so each piece reads its own
 function common.modified(track: any): boolean

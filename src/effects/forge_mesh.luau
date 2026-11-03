@@ -41,6 +41,10 @@ const COLOR_STEP = 2 / 255
 
 const WORLD_UP = vector.create(0, 1, 0)
 
+const isVector = launch_common.isVector
+const numberOr = launch_common.numberOr
+const modified = launch_common.modified
+
 const function always()
   return true
 end
@@ -77,9 +81,15 @@ const function textureSynced(_, attrs: any)
   return attrs.TextureSyncDuration == true
 end
 
+-- the force card's rows are not this module's, so a rule reads its Force off
+-- the instance
+const function ringed(ctx: any)
+  return force_rows.kindOf(ctx) == "Orbit"
+end
+
 -- a mod row reaches a rule as its track
-const function dragless(_, attrs: any)
-  return attrs.Drag.value <= 0
+const function dragless(ctx: any, attrs: any)
+  return attrs.Drag.value <= 0 or ringed(ctx)
 end
 
 -- whether a Turbulence track wanders at all, its base or a modifier lifting it
@@ -165,22 +175,10 @@ const function originOf(template: BasePart): (CFrame, Vector3)
   return template.CFrame, Vector3.zero
 end
 
--- a row's vector under every host, which lune spells apart from Vector3
-const function isVector(v: any)
-  const kind = typeof(v)
-
-  return kind == "Vector3" or kind == "vector"
-end
-
 -- upper case, the spelling a row's vector and an authored Vector3 both answer
 -- to under every host
 const function toVector(v: Vector3): vector
   return vector.create(v.X, v.Y, v.Z)
-end
-
--- a drawn number, or `fallback` where a modifier drew none a clock can use
-const function numberOr(v: any, fallback: number)
-  return if type(v) == "number" and v == v then v else fallback
 end
 
 -- a drawn curve, or `fallback` where a modifier drew none of its width
@@ -191,11 +189,6 @@ end
 -- a drawn gradient, or `fallback` where a modifier drew none
 const function gradientOr(v: any, fallback: ColorSequence): ColorSequence
   return if typeof(v) == "ColorSequence" then v else fallback
-end
-
--- whether a row's track carries a modifier, so each piece reads its own
-const function modified(track: reader.Track)
-  return track.has("start") or track.has("end")
 end
 
 -- whether every keypoint of a gradient holds one color
@@ -269,6 +262,22 @@ type Flight = {
   keypoints: { ColorSequenceKeypoint },
 }
 
+const forge_mesh = {}
+
+-- the engine calls, held here so a spec can stand in for them under lune
+forge_mesh.engine = {
+  alive = function(inst: Instance): boolean
+    return inst:IsDescendantOf(game)
+  end,
+  pivot = function(model: Model): CFrame
+    return model:GetPivot()
+  end,
+}
+
+-- every piece alive across all emitters and emits, and the most that may be;
+-- a spec lowers max, nothing else writes either
+forge_mesh.pieces = { live = 0, max = 500 }
+
 -- where a force's target stands and its up axis, nil for a class that has no
 -- place. the place is read on its own, lune keeping it apart from the frame
 const function poseOf(target: Instance): (vector?, vector)
@@ -277,19 +286,19 @@ const function poseOf(target: Instance): (vector?, vector)
   end
 
   if target:IsA("Attachment") then
-    return toVector(target.WorldPosition), toVector(target.WorldCFrame.UpVector)
+    const world = target.WorldCFrame
+
+    return toVector(world.Position), toVector(world.UpVector)
   end
 
   if target:IsA("Model") then
-    const pivot = target:GetPivot()
+    const pivot = forge_mesh.engine.pivot(target)
 
     return toVector(pivot.Position), toVector(pivot.UpVector)
   end
 
   return nil, WORLD_UP
 end
-
-const forge_mesh = {}
 
 -- the force's center and up axis this frame, read from the engine by the
 -- first piece to ask and kept for the rest of the emit's pieces. with no
@@ -318,13 +327,6 @@ const function standingNow(flight: Flight, template: BasePart): (vector?, vector
 
   return flight.standing, flight.up
 end
-
--- the engine calls, held here so a spec can stand in for them under lune
-forge_mesh.engine = {
-  alive = function(inst: Instance): boolean
-    return inst:IsDescendantOf(game)
-  end,
-}
 
 forge_mesh.id = "forge_mesh"
 forge_mesh.display = { name = "Mesh", icon = "forge_mesh", order = 95 }
@@ -398,6 +400,7 @@ forge_mesh.attributes = {
   Speed = knob(NumberRange.new(5, 5))
     :unit("studsPerSecond")
     :mod()
+    :hidden(force_rows.speedless)
     :label("Speed")
     :hint("Speed each piece launches at along its emission direction, drawn per piece."),
   SpreadAngle = knob(vector.zero)
@@ -466,6 +469,7 @@ forge_mesh.attributes = {
   Acceleration = knob(vector.zero)
     :unit("studsPerSecondSquared")
     :mod()
+    :hidden(ringed)
     :label("Acceleration")
     :hint("Constant acceleration on each piece, in the parent's frame while LockedToPart."),
   Turbulence = knob(0)
@@ -485,12 +489,14 @@ forge_mesh.attributes = {
     :min(0)
     :unit("perSecond")
     :mod()
+    :hidden(ringed)
     :label("Drag")
     :hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
   LockedToPart = knob(false):label("LockedToPart"):hint("Whether pieces move with the parent after they spawn."),
   TimeScale = knob(1):min(0):mod():label("TimeScale"):hint("Multiplier on the effect's clock, 0 freezing it."),
   VelocityInheritance = knob(0)
     :mod()
+    :hidden(ringed)
     :label("VelocityInheritance")
     :hint("Share of the parent part's velocity each piece launches with."),
   WindAffectsDrag = knob(false)
@@ -630,10 +636,6 @@ function forge_mesh.duration(_, attrs: any)
 end
 
 forge_mesh.constant = true
-
--- every piece alive across all emitters and emits, and the most that may be;
--- a spec lowers max, nothing else writes either
-forge_mesh.pieces = { live = 0, max = 500 }
 
 -- one piece: a bare copy of the template flown from its launch for its life,
 -- wearing the look, its nested effects run on it
@@ -821,12 +823,26 @@ const function piece(
     drag = v
   end)
 
+  -- a driven row that draws no number rests where the row does, and keeps to
+  -- the row's floor whatever a modifier reaches
   if pull ~= nil then
     for row, field in launch_common.DRIVEN[pull.kind] do
-      tween.drive(scope, attrs[row](nil, duration), function(v: any)
-        pull[field] = numberOr(v, 0)
+      const track = attrs[row]
+      const rest = numberOr(track.value, 0)
+      const lower = force_rows.rows[row].lower
+
+      tween.drive(scope, track(nil, duration), function(v: any)
+        const drawn = numberOr(v, rest)
+
+        pull[field] = if lower ~= nil then math.max(drawn, lower) else drawn
       end)
     end
+  end
+
+  -- an orbit piece on the axis whose launch runs along it sets off from an
+  -- angle of its own
+  if pull ~= nil and pull.kind == "Orbit" then
+    pull.angle = flight.rng:NextNumber(0, 2 * math.pi)
   end
 
   const wobbles = turbulent(attrs.Turbulence)
@@ -860,9 +876,12 @@ const function piece(
   -- template leaves it, so a destroyed parent never snaps a locked piece
   const anchor = template.Parent
   local held = origin
+  local heldOn = -1
 
+  -- read once a frame, however many of the piece's steps ask
   const function live()
-    if template.Parent == anchor then
+    if heldOn ~= clock.frame and template.Parent == anchor then
+      heldOn = clock.frame
       held = (originOf(template))
     end
 
@@ -919,23 +938,27 @@ const function piece(
     pull.axis = axis
 
     -- a piece's own ring sits at the height it spawned at
-    if pull.kind == "Orbit" and pull.height == nil then
+    if pull.height == nil then
       pull.height = vector.dot(position - at, axis)
     end
 
     return pull
   end
 
-  -- an orbit launch trades the launch's speed for the circular orbit's about
-  -- where the center stands, in the frame the piece flies in
+  -- an orbit launch trades the launch's speed for a share of the circular
+  -- orbit's about where the center stands, in the frame the piece flies in. a
+  -- piece at the center has no circle to fly, and keeps its launch
   if pull ~= nil and pull.kind == "Gravity" and attrs.OrbitLaunch and pull.mass ~= 0 then
     const standing, up = standingNow(flight, template)
 
     if standing ~= nil then
       const look = toVector(launch.spawn.LookVector)
+      const circular =
+        particle_motion.orbit(position, unplaced(standing), look, unturned(up), pull.mass, pull.softening)
 
-      velocity = particle_motion.orbit(position, unplaced(standing), look, unturned(up), pull.mass, pull.softening)
-        + launch.inherited
+      if vector.magnitude(circular) > 0 then
+        velocity = circular * attrs.OrbitLaunchScale + launch.inherited
+      end
     end
   end
 

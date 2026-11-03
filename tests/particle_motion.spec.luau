@@ -249,6 +249,50 @@ harness.suite(function()
       expect(back).toBe(true)
     end)
 
+    test("a retime by k plays the same gravity path k times faster at k squared the mass", function()
+      const function flown(mass: number, speed: number, seconds: number, steps: number): vector
+        const target = vector.zero
+
+        local position = vector.create(10, 0, 0)
+        local velocity = vector.create(-0.3, 0, 1) * speed
+
+        for _ = 1, steps do
+          position, velocity =
+            particle_motion.verlet(position, velocity, vector.zero, target, mass, 1, 0, vector.zero, seconds / steps)
+        end
+
+        return position
+      end
+
+      -- rows at their units' factors: a mass by k squared, a speed by k
+      const original = flown(1000, 8, 4, 4000)
+      const retimed = flown(1000 * 4, 8 * 2, 2, 4000)
+
+      expect(close(original, retimed, 1e-3)).toBe(true)
+    end)
+
+    test("a resize by s plays the same gravity path s times larger at s cubed the mass", function()
+      const function flown(scale: number, mass: number): vector
+        const target = vector.zero
+
+        local position = vector.create(10, 0, 0) * scale
+        local velocity = vector.create(-0.3, 0, 1) * 8 * scale
+
+        for _ = 1, 4000 do
+          position, velocity =
+            particle_motion.verlet(position, velocity, vector.zero, target, mass, scale, 0, vector.zero, 4 / 4000)
+        end
+
+        return position
+      end
+
+      -- a length, its softening and a speed by s, the mass by s cubed
+      const original = flown(1, 1000)
+      const resized = flown(2, 1000 * 8)
+
+      expect(close(original * 2, resized, 1e-3)).toBe(true)
+    end)
+
     test("verlet of mass 0 is the plain step", function()
       const position, velocity = vector.create(1, 2, 3), vector.create(4, -5, 6)
       const acceleration, wind = vector.create(0, -9, 1), vector.create(2, 0, -1)

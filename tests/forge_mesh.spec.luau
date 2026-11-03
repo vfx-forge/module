@@ -1630,7 +1630,7 @@ harness.suite(function()
 
     test("a target at the piece adds nothing", function()
       staged(function(fake)
-        const part = attached({ Speed = STILL, Lifetime = NumberRange.new(2, 2) })
+        const part = attached({ Speed = STILL, Lifetime = NumberRange.new(2, 2), GravitySoftening = 0 })
         const goal = harness.make("Part", part.Parent) :: BasePart
 
         goal.Position = Vector3.new(1, 12, 3)
@@ -1725,6 +1725,254 @@ harness.suite(function()
           end)
         end)
       end)
+    end)
+
+    test("an orbit launch at the center keeps the drawn launch", function()
+      staged(function(fake)
+        const part = attached({
+          Speed = NumberRange.new(5, 5),
+          Lifetime = NumberRange.new(2, 2),
+          Force = "Gravity",
+          GravityMass = 1,
+          OrbitLaunch = true,
+        })
+
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+
+        frames(30)
+
+        -- with no target the force centers on the attachment the piece spawns at
+        const moved = piece.CFrame.Position - Vector3.new(1, 12, 3)
+
+        expect(finite(piece.CFrame)).toBe(true)
+        expect(moved.Y > 1).toBe(true)
+
+        env:Clear()
+      end)
+    end)
+
+    test("OrbitLaunchScale shares out the circular speed: below 1 falls in, past 1.41 escapes", function()
+      const function flown(scale: number): (number, number)
+        local lowest, highest = math.huge, 0
+
+        staged(function(fake)
+          const part = attached({
+            Speed = NumberRange.new(5, 5),
+            Lifetime = NumberRange.new(20, 20),
+            GravityMass = 1000,
+            GravitySoftening = 0,
+            OrbitLaunch = true,
+            OrbitLaunchScale = scale,
+          })
+          const goal = harness.make("Part", part.Parent) :: BasePart
+
+          goal.Position = Vector3.new(11, 12, 3)
+
+          reachable(function()
+            return true
+          end, function()
+            targeting(part, goal, function()
+              const env = effects.emit(0, part)
+              const piece = pieces(fake)[1]
+
+              -- one orbit at radius 10 takes 2 pi seconds
+              for _ = 1, math.ceil(2 * math.pi * 60) do
+                frames(1)
+
+                const radius = (piece.CFrame.Position - goal.Position).Magnitude
+
+                lowest, highest = math.min(lowest, radius), math.max(highest, radius)
+              end
+
+              env:Clear()
+            end)
+          end)
+        end)
+
+        return lowest, highest
+      end
+
+      const circleLow, circleHigh = flown(1)
+      const innerLow, innerHigh = flown(0.7)
+      const _, outerHigh = flown(1.5)
+
+      expect(circleLow > 9.8 and circleHigh < 10.2).toBe(true)
+      expect(innerLow < 9 and innerHigh < 10.2).toBe(true)
+      expect(outerHigh > 30).toBe(true)
+    end)
+
+    test("a modifier below GravityMass's floor never pushes a piece away", function()
+      staged(function(fake)
+        const part = attached({ Speed = STILL, Lifetime = NumberRange.new(2, 2), GravityMass = 1000 })
+        const goal = harness.make("Part", part.Parent) :: BasePart
+
+        goal.Position = Vector3.new(11, 12, 3)
+        tweened(part, "GravityMass", -30000, -30000)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+
+            frames(60)
+
+            expect(near(pieces(fake)[1].CFrame.Position, Vector3.new(1, 12, 3), EPSILON)).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("an attachment target pulls from where it stands in the world", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(3, 3), GravityMass = 30000 })
+        const holder = harness.make("Part", parent)
+        const goal = harness.make("Attachment", holder) :: Attachment
+
+        goal.WorldCFrame = CFrame.new(0, 10, 30)
+
+        reachable(function()
+          return true
+        end, function()
+          targeting(part, goal, function()
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            frames(1)
+
+            const before = piece.CFrame.Position
+
+            frames(30)
+
+            const moved = piece.CFrame.Position - before
+
+            -- the pieces spawn within 2 studs of the axis toward it
+            expect(moved.Z > 1).toBe(true)
+            expect(math.abs(moved.X) < moved.Z * 0.1 and math.abs(moved.Y) < moved.Z * 0.1).toBe(true)
+
+            env:Clear()
+          end)
+        end)
+      end)
+    end)
+
+    test("a model target rings its pieces about its pivot and pivot's up", function()
+      staged(function(fake)
+        const part = attached({
+          Speed = STILL,
+          Lifetime = NumberRange.new(4, 4),
+          Force = "Orbit",
+          OrbitRadius = 5,
+          OrbitSpin = 0.5,
+          OrbitCapture = 20,
+        })
+        const goal = harness.make("Model", part.Parent)
+        const pivot = forge_mesh.engine.pivot
+
+        -- lune has no GetPivot; the pivot's up runs along x
+        forge_mesh.engine.pivot = function(model: Model)
+          return if model == goal then CFrame.new(1, 12, 3) * CFrame.Angles(0, 0, -math.pi / 2) else pivot(model)
+        end
+
+        const ok, err = pcall(function()
+          reachable(function()
+            return true
+          end, function()
+            targeting(part, goal, function()
+              const env = effects.emit(0, part)
+              const piece = pieces(fake)[1]
+
+              frames(120)
+
+              const offset = piece.CFrame.Position - Vector3.new(1, 12, 3)
+
+              expect(math.abs(offset.X) < LOOSE).toBe(true)
+              expect(math.abs(Vector3.new(0, offset.Y, offset.Z).Magnitude - 5) < 0.05).toBe(true)
+
+              env:Clear()
+            end)
+          end)
+        end)
+
+        forge_mesh.engine.pivot = pivot
+
+        if not ok then
+          error(err, 0)
+        end
+      end)
+    end)
+
+    test("orbit pieces spawned on the axis fill the ring, each at its own angle", function()
+      staged(function(fake)
+        const part = attached({
+          EmitCount = 8,
+          Speed = NumberRange.new(5, 5),
+          Lifetime = NumberRange.new(2, 2),
+          Force = "Orbit",
+          OrbitRadius = 6,
+          OrbitSpin = 0.25,
+          OrbitCapture = 20,
+        })
+        const center = Vector3.new(1, 12, 3)
+
+        const env = effects.emit(0, part)
+
+        frames(60)
+
+        const angles = {}
+
+        for _, piece in pieces(fake) do
+          const offset = piece.CFrame.Position - center
+
+          table.insert(angles, math.atan2(offset.Z, offset.X))
+        end
+
+        expect(#angles).toBe(8)
+
+        for i = 1, #angles do
+          for j = i + 1, #angles do
+            expect(math.abs(angles[i] - angles[j]) > 1e-3).toBe(true)
+          end
+        end
+
+        env:Clear()
+      end)
+    end)
+
+    test("a ring flies the same at 30 and at 144 frames a second", function()
+      const function flownAt(rate: number): Vector3
+        local at = Vector3.zero
+
+        staged(function(fake)
+          const part = attached({
+            Speed = STILL,
+            Lifetime = NumberRange.new(3, 3),
+            Force = "Orbit",
+            OrbitRadius = 6,
+            OrbitSpin = 0.5,
+            OrbitRise = 2,
+            OrbitCapture = 3,
+          })
+
+          const env = effects.emit(0, part)
+          const piece = pieces(fake)[1]
+
+          for _ = 1, 2 * rate do
+            scheduler.frame(1 / rate)
+          end
+
+          at = piece.CFrame.Position
+          env:Clear()
+        end)
+
+        return at
+      end
+
+      expect(near(flownAt(30), flownAt(144), 1e-3)).toBe(true)
     end)
 
     test("a radial fall with softening passes through the target and back, never NaN", function()
@@ -2429,6 +2677,7 @@ harness.suite(function()
             "GravityMass",
             "GravitySoftening",
             "OrbitLaunch",
+            "OrbitLaunchScale",
             "OrbitRadius",
             "OrbitSpin",
             "OrbitRise",
@@ -2459,7 +2708,7 @@ harness.suite(function()
           Orbit = { "OrbitRadius", "OrbitSpin", "OrbitRise", "OrbitCapture" },
         }
 
-        for force, own in rows do
+        for force in rows do
           const hidden = hiddenOf(template(parent, { Force = force }))
 
           expect(`{force} ForceTarget {hidden.ForceTarget}`).toBe(`{force} ForceTarget false`)
@@ -2469,8 +2718,38 @@ harness.suite(function()
               expect(`{force} {name} {hidden[name]}`).toBe(`{force} {name} {other ~= force}`)
             end
           end
+        end
+      end)
+    end)
 
-          expect(own[1] ~= nil).toBe(true)
+    test("the launch rows a force spends are hidden, the spread kept", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const spent = { "Speed", "Acceleration", "Drag", "WindAffectsDrag", "VelocityInheritance" }
+        const cases = {
+          { rows = {}, hidden = {}, scale = true },
+          { rows = { Force = "Gravity" }, hidden = {}, scale = true },
+          { rows = { Force = "Gravity", OrbitLaunch = true }, hidden = { Speed = true }, scale = false },
+          {
+            rows = { Force = "Orbit", Drag = 1 },
+            hidden = { Speed = true, Acceleration = true, Drag = true, WindAffectsDrag = true, VelocityInheritance = true },
+            scale = true,
+          },
+        }
+
+        for i, case in cases do
+          const hidden = hiddenOf(template(parent, case.rows))
+
+          for _, name in spent do
+            if name == "WindAffectsDrag" and case.rows.Drag == nil then
+              continue
+            end
+
+            expect(`{i} {name} {hidden[name] == true}`).toBe(`{i} {name} {case.hidden[name] == true}`)
+          end
+
+          expect(`{i} SpreadAngle {hidden.SpreadAngle == true}`).toBe(`{i} SpreadAngle false`)
+          expect(`{i} OrbitLaunchScale {hidden.OrbitLaunchScale}`).toBe(`{i} OrbitLaunchScale {case.scale}`)
         end
       end)
     end)
@@ -2486,6 +2765,7 @@ harness.suite(function()
           "GravityMass",
           "GravitySoftening",
           "OrbitLaunch",
+          "OrbitLaunchScale",
           "OrbitRadius",
           "OrbitSpin",
           "OrbitRise",
@@ -2511,11 +2791,22 @@ harness.suite(function()
         tweened(part, "OrbitRadius", 2, 10)
 
         const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
 
-        frames(60)
+        const function radius()
+          const offset = piece.CFrame.Position - Vector3.new(1, 12, 3)
+
+          return Vector3.new(offset.X, 0, offset.Z).Magnitude
+        end
+
+        frames(15)
+
+        const early = radius()
+
+        frames(90)
 
         expect(part:GetAttribute("OrbitRadius")).toBe(nil)
-        expect(#pieces(fake)).toBe(1)
+        expect(radius() > early + 1).toBe(true)
 
         env:Clear()
       end)
