@@ -131,6 +131,13 @@ harness.suite(function()
     end
   end)
 
+  test("a filter choice reads as its type and tag, an Include naming no tag as None", function()
+    expect({ collision_common.filter("None", "Spark") }).toEqual({ "Exclude", "" })
+    expect({ collision_common.filter("Exclude Tag", "Spark") }).toEqual({ "Exclude", "Spark" })
+    expect({ collision_common.filter("Include Tag", "Spark") }).toEqual({ "Include", "Spark" })
+    expect({ collision_common.filter("Include Tag", "") }).toEqual({ "Exclude", "" })
+  end)
+
   test("Exclude holds what the caller passed", function()
     const engine = collision_common.engine
     const original = engine.params

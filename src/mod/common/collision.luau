@@ -38,10 +38,15 @@ common.engine = {
 }
 
 -- a filter row's choice as the filter type and tag a cast reads: None leaves
--- out only what the caller excludes
+-- out only what the caller excludes. an Include naming no tag would hit
+-- nothing at all, so it reads as None
 function common.filter(choice: string, tag: string): (FilterType, string)
-  if choice == "Include Tag" then
+  if choice == "Include Tag" and tag ~= "" then
     return "Include", tag
+  end
+
+  if choice == "Include Tag" then
+    return "Exclude", ""
   end
 
   return "Exclude", if choice == "Exclude Tag" then tag else ""
