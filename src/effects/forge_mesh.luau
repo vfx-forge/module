@@ -356,7 +356,7 @@ forge_mesh.attributes = {
     :mod()
     :label("Color")
     :hint("Color of each piece over its life."),
-  Orientation = knob("None")
+  Orientation = knob("FacingCamera")
     :options(orient_common.MODES)
     :label("Orientation")
     :hint("How each piece turns as it flies: its own pose, toward the camera or along its velocity."),
@@ -381,13 +381,13 @@ forge_mesh.attributes = {
     :label("EmissionDirection")
     :hint("Face of the emitter pieces launch from."),
   Enabled = knob(false):label("Enabled"):hint("Whether the effect emits continuously at its Rate."),
-  Lifetime = knob(NumberRange.new(1, 1))
+  Lifetime = knob(NumberRange.new(5, 10))
     :min(0)
     :unit("seconds")
     :mod()
     :label("Lifetime")
     :hint("Seconds each piece flies, drawn per piece."),
-  Rate = knob(5):min(0):unit("perSecond"):hidden(disabled):label("Rate"):hint("Emits per second while Enabled."),
+  Rate = knob(20):min(0):unit("perSecond"):hidden(disabled):label("Rate"):hint("Emits per second while Enabled."),
   Rotation = knob(vector.zero)
     :mod()
     :label("Rotation")
