@@ -495,6 +495,49 @@ local function instanceOf(state: State, name: string, row: knob.Knob)
   return inst
 end
 
+-- each stored curve string decoded once and frozen, so every read of equal
+-- content is one table and a build kept under the row's resting value is
+-- kept under the content, as a number's is; let go whole once it holds too
+-- many
+const CURVES: { [string]: value_curve.Curve } = {}
+const CURVES_MAX = 512
+
+local curveCount = 0
+
+const function decodedOf(raw: string): value_curve.Curve?
+  const known = CURVES[raw]
+
+  if known ~= nil then
+    return known
+  end
+
+  const curve = value_curve.decode(raw)
+
+  if curve == nil then
+    return nil
+  end
+
+  for _, k in curve.keys do
+    table.freeze(k.value)
+    table.freeze(k.left)
+    table.freeze(k.right)
+    table.freeze(k)
+  end
+
+  table.freeze(curve.keys)
+  table.freeze(curve)
+
+  if curveCount >= CURVES_MAX then
+    table.clear(CURVES)
+    curveCount = 0
+  end
+
+  CURVES[raw] = curve
+  curveCount += 1
+
+  return curve
+end
+
 -- a value curve row, the decoded string under its name or an old spelling. a
 -- missing, malformed or wrong width curve reads as the row's default
 local function curveOf(state: State, name: string, row: knob.Knob)
@@ -511,7 +554,7 @@ local function curveOf(state: State, name: string, row: knob.Knob)
     end
   end
 
-  local curve = value_curve.decode(if type(v) == "string" then v else nil)
+  local curve = if type(v) == "string" then decodedOf(v) else nil
 
   if curve == nil or curve.channels ~= row.channels then
     if v ~= nil then
