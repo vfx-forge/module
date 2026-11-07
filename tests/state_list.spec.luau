@@ -212,6 +212,31 @@ harness.suite(function()
       expect(state_list.decode(4 :: any)).toBe(nil)
     end)
 
+    test("a value the format cannot hold raises instead of encoding a lost list", function()
+      const function raises(field: string, v: any)
+        const list = sample()
+
+        list[2][field] = v
+
+        const ok, problem = pcall(state_list.encode, list)
+
+        expect(ok).toBe(false)
+        expect(string.find(tostring(problem), field, 1, true) ~= nil).toBe(true)
+      end
+
+      raises("transparency", 0 / 0)
+      raises("time", 1.5)
+      raises("time", -1e-9)
+      raises("reflectance", 1e40)
+      raises("material", string.rep("x", 65536))
+
+      const list = sample()
+
+      list[1].decals.Base.rotation = math.huge
+
+      expect(pcall(state_list.encode, list)).toBe(false)
+    end)
+
     test("a list past the cap keeps its first states by time", function()
       const list = {}
 
@@ -298,6 +323,25 @@ harness.suite(function()
 
       expect(string.find(wrong :: string, "uvScale", 1, true) ~= nil).toBe(true)
       expect(string.find(wrong :: string, "Base", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a value no f32 holds is refused by name", function()
+      const plain = state_list.toPlain(sample())
+
+      plain[1].surface.emissiveStrength = 1e40
+
+      const list, problem = state_list.fromPlain(plain)
+
+      expect(list).toBe(nil)
+      expect(string.find(problem :: string, "emissiveStrength", 1, true) ~= nil).toBe(true)
+
+      const moved = state_list.toPlain(sample())
+
+      moved[1].position = { 0, 1e40, 0 }
+
+      const _, wrong = state_list.fromPlain(moved)
+
+      expect(string.find(wrong :: string, "position", 1, true) ~= nil).toBe(true)
     end)
 
     test("a list past the cap is refused", function()

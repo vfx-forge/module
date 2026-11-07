@@ -1,6 +1,5 @@
 const color = require("@mod/color/color")
 const curves = require("@mod/curves")
-const logger = require("@mod/logger")
 const value_curve = require("@mod/value_curve")
 
 export type Surface = {
@@ -76,6 +75,9 @@ const EPSILON = 1e-4
 
 -- how near a segment's handles must sit to a preset's to read as it
 const MATCH = 1e-3
+
+-- the largest magnitude an f32 holds; anything past it is stored as inf
+const F32_MAX = 3.4028234663852886e38
 
 const LINEAR = curves.linear()
 
@@ -158,6 +160,11 @@ const function finite(v: any)
   return type(v) == "number" and v == v and v > -math.huge and v < math.huge
 end
 
+-- a number an f32 holds, short of its rounding
+const function storable(v: any)
+  return finite(v) and math.abs(v) <= F32_MAX
+end
+
 -- a serialized curve path: an anchor every 24 bytes, two anchors at least
 const function isPath(s: string)
   return #s >= 48 and #s % 24 == 0
@@ -186,6 +193,65 @@ const function stringIndex(w: Writer, s: string)
   return #w.strings - 1
 end
 
+-- a vector's axes in either of the engine's spellings of one
+const function axes(v: any): (number, number, number)
+  if typeof(v) == "Vector3" then
+    return v.X, v.Y, v.Z
+  end
+
+  return v.x, v.y, v.z
+end
+
+-- why a value of a field's kind would encode to a string no decode reads
+-- back, or nil when it is one a list can hold
+const function unstorable(kind: string, v: any): string?
+  if kind == "time" then
+    if not storable(v) or v < 0 or v > 1 then
+      return "is a number from 0 to 1"
+    end
+
+    return nil
+  end
+
+  if kind == "number" then
+    return if storable(v) then nil else "is a finite number within the f32 range"
+  end
+
+  if kind == "integer" then
+    if not finite(v) or v % 1 ~= 0 or math.abs(v) > 2 ^ 31 - 1 then
+      return "is a whole number"
+    end
+
+    return nil
+  end
+
+  if kind == "string" or kind == "easing" then
+    if type(v) ~= "string" or #v > 65535 then
+      return "is a string of at most 65535 bytes"
+    end
+
+    return if kind == "easing" and not isPath(v) then "is a curve path" else nil
+  end
+
+  const t = typeof(v)
+
+  if kind == "vector" and (t == "vector" or t == "Vector3") then
+    const x, y, z = axes(v)
+
+    return if storable(x) and storable(y) and storable(z) then nil else "has an axis no f32 holds"
+  end
+
+  if kind == "Color3" and t == "Color3" then
+    return if storable(v.R) and storable(v.G) and storable(v.B) then nil else "has a channel no f32 holds"
+  end
+
+  if kind == "Vector2" and t == "Vector2" then
+    return if storable(v.X) and storable(v.Y) then nil else "has an axis no f32 holds"
+  end
+
+  return `is a {kind}`
+end
+
 const function writeValue(w: Writer, kind: string, v: any)
   const buf, at = w.buf, w.at
 
@@ -194,9 +260,11 @@ const function writeValue(w: Writer, kind: string, v: any)
   elseif kind == "integer" then
     buffer.writei32(buf, at, v)
   elseif kind == "vector" then
-    buffer.writef32(buf, at, v.x)
-    buffer.writef32(buf, at + 4, v.y)
-    buffer.writef32(buf, at + 8, v.z)
+    const x, y, z = axes(v)
+
+    buffer.writef32(buf, at, x)
+    buffer.writef32(buf, at + 4, y)
+    buffer.writef32(buf, at + 8, z)
   elseif kind == "Color3" then
     buffer.writef32(buf, at, v.R)
     buffer.writef32(buf, at + 4, v.G)
@@ -212,8 +280,19 @@ const function writeValue(w: Writer, kind: string, v: any)
 end
 
 -- a mask of the fields written, then each of them in order; `extra` is ored
--- into the mask
-const function writeRecord(w: Writer, fields: { Field }, record: any, maskSize: number, extra: number)
+-- into the mask. answers why the record cannot be stored, when it cannot
+const function writeRecord(
+  w: Writer,
+  fields: { Field },
+  record: any,
+  maskSize: number,
+  extra: number,
+  where: string
+): string?
+  if type(record) ~= "table" then
+    return `{where} is no table`
+  end
+
   const maskAt = w.at
   local mask = extra
 
@@ -222,13 +301,18 @@ const function writeRecord(w: Writer, fields: { Field }, record: any, maskSize: 
   for i, field in fields do
     const v = record[field.name]
 
-    -- a list missing one would encode to a string no decode reads back
     if v == nil and field.rest == nil and not field.optional then
-      logger.error(`a state has no {field.name}`)
+      return `{where} has no {field.name}`
     end
 
     if v == nil or (field.rest ~= nil and v == field.rest) then
       continue
+    end
+
+    const problem = unstorable(field.kind, v)
+
+    if problem ~= nil then
+      return `{where}: {field.name} {problem}`
     end
 
     mask = bit32.bor(mask, bit32.lshift(1, i - 1))
@@ -240,6 +324,8 @@ const function writeRecord(w: Writer, fields: { Field }, record: any, maskSize: 
   else
     buffer.writeu16(w.buf, maskAt, mask)
   end
+
+  return nil
 end
 
 const function sortedNames(decals: { [string]: any })
@@ -256,8 +342,13 @@ end
 
 -- version, the strings every state indexes into, the state count, then each
 -- state's fields, its surface and its decals by name. names are sorted, so
--- equal lists encode to equal strings
+-- equal lists encode to equal strings. a value the format cannot hold raises,
+-- since the string would decode to nil and lose every state
 function common.encode(list: List): string
+  if #list > 65535 then
+    error(`a list holds at most 65535 states to encode, not {#list}`, 2)
+  end
+
   local bound = 0
 
   for _, state in list do
@@ -273,24 +364,45 @@ function common.encode(list: List): string
 
   const w: Writer = { buf = buffer.create(bound), at = 0, strings = {}, index = {} }
 
-  for _, state in list do
+  for i, state in list do
+    const where = `state {i}`
     const decals = state.decals or {}
     const names = sortedNames(decals)
+    local problem = writeRecord(w, STATE, state, 2, if state.surface ~= nil then SURFACE_BIT else 0, where)
 
-    writeRecord(w, STATE, state, 2, if state.surface ~= nil then SURFACE_BIT else 0)
+    if problem == nil and state.surface ~= nil then
+      problem = writeRecord(w, SURFACE, state.surface, 1, 0, `{where} surface`)
+    end
 
-    if state.surface ~= nil then
-      writeRecord(w, SURFACE, state.surface, 1, 0)
+    if problem == nil and #names > 65535 then
+      problem = `{where} has more than 65535 decals`
+    end
+
+    if problem ~= nil then
+      error(problem, 2)
     end
 
     buffer.writeu16(w.buf, w.at, #names)
     w.at += 2
 
     for _, name in names do
+      if type(name) ~= "string" or name == "" or #name > 65535 then
+        error(`{where}: a decal name is a string of 1 to 65535 bytes`, 2)
+      end
+
       buffer.writeu16(w.buf, w.at, stringIndex(w, name))
       w.at += 2
-      writeRecord(w, DECAL, decals[name], 2, 0)
+
+      const wrong = writeRecord(w, DECAL, decals[name], 2, 0, `{where} decal {name}`)
+
+      if wrong ~= nil then
+        error(wrong, 2)
+      end
     end
+  end
+
+  if #w.strings > 65535 then
+    error(`a list holds at most 65535 distinct strings to encode, not {#w.strings}`, 2)
   end
 
   local head = 3
@@ -565,7 +677,7 @@ end
 
 const function valueOut(kind: string, v: any): any
   if kind == "vector" then
-    return { v.x, v.y, v.z }
+    return { axes(v) }
   end
 
   if kind == "Color3" then
@@ -628,7 +740,7 @@ const function numbers(v: any, count: number)
   end
 
   for i = 1, count do
-    if not finite(v[i]) then
+    if not storable(v[i]) then
       return false
     end
   end
@@ -665,7 +777,7 @@ end
 -- a plain value as a field's kind, or nil and what it should be
 const function valueIn(kind: string, v: any): (any, string?)
   if kind == "time" then
-    if not finite(v) or v < 0 or v > 1 then
+    if not storable(v) or v < 0 or v > 1 then
       return nil, "is a number from 0 to 1"
     end
 
@@ -673,7 +785,7 @@ const function valueIn(kind: string, v: any): (any, string?)
   end
 
   if kind == "number" then
-    return if finite(v) then v else nil, "is a number"
+    return if storable(v) then v else nil, "is a finite number within the f32 range"
   end
 
   if kind == "integer" then
