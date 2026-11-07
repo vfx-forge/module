@@ -1210,12 +1210,16 @@ const function mix(kind: string, a: any, b: any, rest: any, u: number): any
     return b
   end
 
-  if b == nil or u == 0 or kind == "switch" then
+  if b == nil or u == 0 or kind == "switch" or a == b then
     return a
   end
 
   if kind == "Color3" then
     return color.blend(a, b, u)
+  end
+
+  if kind == "Vector2" then
+    return a:Lerp(b, u)
   end
 
   return a + (b - a) * u
@@ -1244,13 +1248,17 @@ function common.pose(base: CFrame, position: vector, rotation: vector): CFrame
 end
 
 -- a function writing what the list reads at `t` into `out`, built once per
--- list: it makes no table after the first call into one `out`. before the
+-- list: it makes no table after the first call into one `out`, and what
+-- remains is userdata: one CFrame while a pose moves, and one Color3 for each
+-- color that changes. before the
 -- first state and after the last it holds that state; between two, the
 -- arriving state's easing shapes the way in. a surface or decal field set on
 -- one side blends from `rest`'s value, or holds the side that has it
 function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sample
   const count = #list
   const rotations = table.create(count)
+  const poses = table.create(count)
+  const idle = table.create(count)
   const ease = table.create(count)
   const surfaceEase = table.create(count)
   const decalEase = table.create(count)
@@ -1259,7 +1267,14 @@ function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sa
 
   for i, state in list do
     rotations[i] = CFrame.fromOrientation(state.rotation.x, state.rotation.y, state.rotation.z)
+    poses[i] = CFrame.new(state.position.x, state.position.y, state.position.z) * rotations[i]
     ease[i] = curve.sampler(state.easing)
+
+    -- a segment into this state that neither moves nor turns the piece
+    idle[i] = i > 1
+      and state.spin == vector.zero
+      and state.position == list[i - 1].position
+      and state.rotation == list[i - 1].rotation
 
     const surface = state.surface
 
@@ -1321,8 +1336,7 @@ function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sa
       us = surfaceEase[ib](f)
     end
 
-    local rotation = rotations[ia]
-    local position = a.position
+    local pose = poses[ia]
     local size = a.size
     local tint = a.color
     local transparency = a.transparency
@@ -1330,9 +1344,19 @@ function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sa
     local vertexColor = a.vertexColor
 
     if not hold then
-      rotation = rotation:Lerp(rotations[ib], u)
-        * CFrame.fromOrientation(2 * math.pi * b.spin.x * u, 2 * math.pi * b.spin.y * u, 2 * math.pi * b.spin.z * u)
-      position = mix("vector", position, b.position, nil, u)
+      if not idle[ib] then
+        const spin = b.spin
+        local turn = rotations[ia]:Lerp(rotations[ib], u)
+
+        if spin ~= vector.zero then
+          turn *= CFrame.fromOrientation(2 * math.pi * spin.x * u, 2 * math.pi * spin.y * u, 2 * math.pi * spin.z * u)
+        end
+
+        const at = mix("vector", a.position, b.position, nil, u)
+
+        pose = turn + Vector3.new(at.x, at.y, at.z)
+      end
+
       size = mix("vector", size, b.size, nil, u)
       tint = mix("Color3", tint, b.color, nil, u)
       transparency = mix("number", transparency, b.transparency, nil, u)
@@ -1340,7 +1364,7 @@ function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sa
       vertexColor = mix("vector", vertexColor, b.vertexColor, nil, u)
     end
 
-    out.cframe = CFrame.new(position.x, position.y, position.z) * rotation
+    out.cframe = pose
     out.size = size
     out.color = tint
     out.transparency = transparency

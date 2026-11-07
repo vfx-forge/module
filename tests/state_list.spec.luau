@@ -589,12 +589,16 @@ harness.suite(function()
       } :: any)
       const out: any = {}
       const decals = read(0, out).decals
+      const mark = decals.Mark
+      const surface = out.surface
 
       for i = 1, 1000 do
         expect(read(i / 1000, out)).toBe(out)
       end
 
       expect(out.decals).toBe(decals)
+      expect(out.decals.Mark).toBe(mark)
+      expect(out.surface).toBe(surface)
       expect(close(out.decals.Mark.transparency, 1)).toBe(true)
     end)
   end)
