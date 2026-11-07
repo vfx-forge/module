@@ -891,6 +891,23 @@ harness.suite(function()
       end, glowing)
     end)
 
+    test("a Color glow with no color in the state lights the decal's own", function()
+      const function glowing(part: BasePart)
+        const decal = decalOn(part, "Glow")
+
+        decal:SetAttribute("GlowMode", "Color")
+        decal.Color3 = Color3.new(0.5, 0.25, 0.1)
+      end
+
+      stated({}, { stateOf(0, { decals = { Glow = { glowStrength = 2 } } }) }, function(piece)
+        frames(1)
+
+        const decal = piece:FindFirstChild("Glow") :: Decal
+
+        expect(nearColor(decal.Color3, Color3.new(1, 0.5, 0.2))).toBe(true)
+      end, glowing)
+    end)
+
     test("a state's surface multiplies the surface the piece wears", function()
       const function surfaced(part: BasePart)
         (harness.make("SurfaceAppearance", part) :: any).Color = Color3.new(1, 1, 1)

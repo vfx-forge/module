@@ -361,6 +361,9 @@ type Named = {
   name: string,
   glow: string,
   colors: boolean,
+  -- the template decal's own color, which a Color glow lights when the state
+  -- sets none; the piece's own may still hold a glow a pooled life lit
+  base: Color3,
   color: Gate,
   transparency: Gate,
   uvOffset: Gate,
@@ -398,7 +401,8 @@ const function dresser(
   decals: look_common.Decals,
   mesh: SpecialMesh?,
   rest: Vector3,
-  stagger: number
+  stagger: number,
+  rests: { [string]: state_list.DecalState }
 )
   const own = obj:FindFirstChildOfClass("SurfaceAppearance")
   const named: { Named } = {}
@@ -417,6 +421,7 @@ const function dresser(
       name = decal.Name,
       glow = attr.get(decal, "GlowMode", "None", true),
       colors = not (animated ~= nil and animated.Color3),
+      base = if rests[decal.Name] ~= nil then rests[decal.Name].color or decal.Color3 else decal.Color3,
       color = gate(stagger),
       transparency = gate(stagger),
       uvOffset = gate(stagger),
@@ -434,6 +439,10 @@ const function dresser(
   const function write(entry: Named, state: state_list.DecalState, first: boolean, exact: boolean)
     const decal = entry.decal
     local c = state.color
+
+    if c == nil and entry.glow == "Color" and state.glowStrength ~= nil then
+      c = entry.base
+    end
 
     -- a Color glow multiplies the color, never clamped, so past 1 it glows
     if c ~= nil and entry.glow == "Color" then
@@ -606,6 +615,9 @@ type Flight = {
   -- what a piece moving through its states samples them with, built once
   -- for the emit's list; nil for a particle or a list of no state
   states: ((t: number, out: state_list.Sample) -> state_list.Sample)?,
+
+  -- the template decals' own values, read once for the emit's states
+  decals: { [string]: state_list.DecalState },
 }
 
 const forge_mesh = {}
@@ -1193,7 +1205,16 @@ const function piece(
 
   -- the states write a stated piece's look, its rows a particle's
   const dress = if sample ~= nil
-    then dresser(obj, sample, look, decals, if meshed then objMesh else nil, rest, flight.rng:NextNumber())
+    then dresser(
+      obj,
+      sample,
+      look,
+      decals,
+      if meshed then objMesh else nil,
+      rest,
+      flight.rng:NextNumber(),
+      flight.decals
+    )
     else appear
 
   dress(0, true, false)
@@ -1680,12 +1701,16 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     force = launch_common.force(rows),
     keypoints = (rows.Color.value :: ColorSequence).Keypoints,
     states = nil,
+    decals = {},
   }
 
   const list = rows.States :: state_list.List
 
   if rows.Motion == "States" and #list > 0 then
-    flight.states = state_list.sampler(list, restOf(template))
+    const own = restOf(template)
+
+    flight.states = state_list.sampler(list, own)
+    flight.decals = own.decals
   end
 
   if rows.CollisionMode ~= "Off" then
