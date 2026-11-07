@@ -73,13 +73,34 @@ harness.suite(function()
       done(emit)
     end)
 
-    test("writes nothing at once at speed 1 for a texture speed nothing animates", function()
+    test("writes nothing at once at speed 1 for a texture speed resting on the property", function()
+      local emit, fx = effect()
+      local written = 0
+      local beam = setmetatable({}, {
+        __index = function()
+          return 3
+        end,
+        __newindex = function()
+          written += 1
+        end,
+      })
+
+      adapters.beam(fx, beam, 3, false)
+
+      expect(written).toBe(0)
+
+      done(emit)
+    end)
+
+    -- a modifier holding one value is not animated, and the copy the beam plays
+    -- on still wears the property it was copied with
+    test("writes a texture speed nothing animates that rests away from the property", function()
       local emit, fx = effect()
       local beam = { TextureSpeed = 5 }
 
       adapters.beam(fx, beam, 3, false)
 
-      expect(beam.TextureSpeed).toBe(5)
+      expect(beam.TextureSpeed).toBe(3)
 
       done(emit)
     end)
