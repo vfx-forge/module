@@ -40,10 +40,13 @@ export type Edit = {
 type Cluster = { time: number, keys: { [string]: { number } } }
 
 -- a state as `apply` carries it: where it ends up, the cluster its keys come
--- from, the fields an edit set and the last edit that touched it
+-- from, the clusters of states it took the place of that its rows without a
+-- key of their own take keys from, the fields an edit set and the last edit
+-- that touched it
 type Entry = {
   time: number,
   source: Cluster?,
+  borrowed: { [string]: Cluster },
   fields: { [string]: any },
   easing: string?,
   order: number,
@@ -291,13 +294,44 @@ const function settle(time: number)
   return t
 end
 
+-- the cluster a state's keys on one row come from
+const function clusterFor(e: Entry, row: string): Cluster?
+  return e.borrowed[row] or e.source
+end
+
+const function keysFor(e: Entry, row: string): { number }
+  const cluster = clusterFor(e, row)
+
+  return if cluster ~= nil then cluster.keys[row] else {}
+end
+
+-- `winner` taking the place of `loser` at one time: on a row where the winner
+-- has no key it takes the loser's keys, and the loser's field when it has
+-- none of its own, so a row only the loser keyed keeps its keys
+const function absorb(winner: Entry, loser: Entry)
+  for _, row in FIELDS do
+    if #keysFor(winner, row) > 0 then
+      continue
+    end
+
+    if #keysFor(loser, row) > 0 then
+      winner.borrowed[row] = clusterFor(loser, row) :: Cluster
+    end
+
+    if winner.fields[row] == nil then
+      winner.fields[row] = loser.fields[row]
+    end
+  end
+end
+
 -- the states the edits leave, sorted by time; of those landing within
--- EPSILON of one time, the one an edit touched last
+-- EPSILON of one time, the one an edit touched last, holding what the others
+-- keyed on rows it has no key on
 const function entriesOf(clusters: { Cluster }, edits: { Edit }): { Entry }
   const entries: { Entry } = {}
 
   for _, cluster in clusters do
-    table.insert(entries, { time = cluster.time, source = cluster, fields = {}, order = 0 })
+    table.insert(entries, { time = cluster.time, source = cluster, borrowed = {}, fields = {}, order = 0 })
   end
 
   for order, edit in edits do
@@ -316,7 +350,7 @@ const function entriesOf(clusters: { Cluster }, edits: { Edit }): { Entry }
         continue
       end
     elseif edit.time ~= nil then
-      entry = { time = settle(edit.time), fields = {}, order = order }
+      entry = { time = settle(edit.time), borrowed = {}, fields = {}, order = order }
       table.insert(entries, entry :: Entry)
     else
       logger.warn("a new state needs a time")
@@ -330,8 +364,12 @@ const function entriesOf(clusters: { Cluster }, edits: { Edit }): { Entry }
       continue
     end
 
+    -- a time within EPSILON of where the state stands is no move
     if edit.time ~= nil then
-      e.time = settle(edit.time)
+      const time = settle(edit.time)
+      const source = e.source
+
+      e.time = if source ~= nil and math.abs(time - source.time) < EPSILON then source.time else time
     end
 
     for _, field in FIELDS do
@@ -365,17 +403,33 @@ const function entriesOf(clusters: { Cluster }, edits: { Edit }): { Entry }
     return a.order < b.order
   end)
 
-  const kept: { Entry } = {}
+  const runs: { { Entry } } = {}
 
   local start = -math.huge
 
   for _, e in live do
     if e.time - start >= EPSILON then
       start = e.time
-      table.insert(kept, e)
-    elseif e.order > kept[#kept].order then
-      kept[#kept] = e
+      table.insert(runs, {})
     end
+
+    table.insert(runs[#runs], e)
+  end
+
+  const kept: { Entry } = table.create(#runs)
+
+  for i, run in runs do
+    table.sort(run, function(a: Entry, b: Entry)
+      return a.order > b.order
+    end)
+
+    const winner = run[1]
+
+    for at = 2, #run do
+      absorb(winner, run[at])
+    end
+
+    kept[i] = winner
   end
 
   return kept
@@ -403,12 +457,26 @@ const function blankKey(time: number, value: { number }): Key
   }
 end
 
--- `from`'s handle on one side, `old` its neighbor there in the input, fit to
--- `new`, the neighbor `key` has there now: its time scaled by the new width
--- over the old and its value by the new change over the old, so the segment
--- keeps its shape. one that gains a neighbor it had none on starts flat, as a
--- held end that becomes a segment does in value_curve
-const function fit(handle: vector, from: Key, old: Key?, key: Key, new: Key?, c: number)
+-- the preset whose time handles a segment's two handles trace
+const function timedAs(leave: vector, enter: vector, width: number): string?
+  for _, name in EASINGS do
+    const points = POINTS[name]
+
+    if math.abs(leave.x / width - points[1].x) < MATCH and math.abs(1 + enter.x / width - points[2].x) < MATCH then
+      return name
+    end
+  end
+
+  return nil
+end
+
+-- `from`'s handle on one side (`leaving` for its right), `old` its neighbor
+-- there in the input, fit to `new`, the neighbor `key` has there now: its time
+-- scaled by the new width over the old and its value by the new change over
+-- the old, so the segment keeps its shape. one that gains a neighbor it had
+-- none on starts flat, as a held end that becomes a segment does in
+-- value_curve
+const function fit(handle: vector, from: Key, old: Key?, key: Key, new: Record?, c: number, leaving: boolean)
   if new == nil then
     return handle
   end
@@ -417,10 +485,11 @@ const function fit(handle: vector, from: Key, old: Key?, key: Key, new: Key?, c:
     return vector.zero
   end
 
+  const near = new.key
   const oldWidth = math.abs(old.time - from.time)
-  const newWidth = math.abs(new.time - key.time)
+  const newWidth = math.abs(near.time - key.time)
   const oldChange = old.value[c] - from.value[c]
-  const newChange = new.value[c] - key.value[c]
+  const newChange = near.value[c] - key.value[c]
 
   local x, y = handle.x, handle.y
 
@@ -428,8 +497,22 @@ const function fit(handle: vector, from: Key, old: Key?, key: Key, new: Key?, c:
     x *= newWidth / oldWidth
   end
 
-  if newChange ~= oldChange and math.abs(oldChange) >= EPSILON and math.abs(newChange) >= EPSILON then
+  if newChange == oldChange then
+    return vector.create(x, y, 0)
+  end
+
+  if math.abs(oldChange) >= EPSILON then
     y *= newChange / oldChange
+  elseif math.abs(newChange) >= EPSILON and new.from == old and oldWidth > 0 then
+    -- a held segment has no change to keep a shape over, so one whose time
+    -- handles trace a preset takes that preset's value handles
+    const name = if leaving then timedAs(handle, old.left[c], oldWidth) else timedAs(old.right[c], handle, oldWidth)
+
+    if name ~= nil then
+      const points = POINTS[name]
+
+      y = if leaving then points[1].y * newChange else (1 - points[2].y) * newChange
+    end
   end
 
   return vector.create(x, y, 0)
@@ -457,12 +540,9 @@ const function finish(curve: Curve, records: { Record }): Curve
       continue
     end
 
-    const before = if records[i - 1] ~= nil then records[i - 1].key else nil
-    const after = if records[i + 1] ~= nil then records[i + 1].key else nil
-
     for c = 1, curve.channels do
-      k.left[c] = fit(from.left[c], from, r.prev, k, before, c)
-      k.right[c] = fit(from.right[c], from, r.next, k, after, c)
+      k.left[c] = fit(from.left[c], from, r.prev, k, records[i - 1], c, false)
+      k.right[c] = fit(from.right[c], from, r.next, k, records[i + 1], c, true)
     end
   end
 
@@ -480,9 +560,9 @@ const function buildRow(curve: Curve, row: string, kept: { Entry }): Curve
   local seq = 0
 
   for _, e in kept do
-    const source = e.source
-    const at = if source ~= nil then source.keys[row] else {}
-    const moved = source ~= nil and e.time ~= source.time
+    const source = clusterFor(e, row)
+    const at = keysFor(e, row)
+    const moved = source ~= nil and math.abs(e.time - source.time) >= EPSILON
 
     for _, i in at do
       const from = curve.keys[i]
@@ -567,9 +647,47 @@ const function sortPoints(points: { Point })
   end)
 end
 
--- the color as the kept states leave it, its ends at 0 and 1 kept by taking
--- the nearest keypoint's color, which is what the state nearest them reads
-const function buildColor(sequence: ColorSequence, kept: { Entry }): ColorSequence
+-- whether a state stands at `e` once the rows are built: some row or the
+-- color has a key at its time
+const function stands(e: Entry, rows: { [string]: Curve }, points: { Point })
+  for _, row in ROWS do
+    for _, k in rows[row].keys do
+      if math.abs(k.time - e.time) < EPSILON then
+        return true
+      end
+    end
+  end
+
+  for _, p in points do
+    if math.abs(p.Time - e.time) < EPSILON then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- the color a standing state shows: its own keypoint's, else the field an
+-- edit gave it, else what the input read where it stood
+const function colorOf(e: Entry, points: { Point }, keypoints: { ColorSequenceKeypoint }): Color3
+  for _, p in points do
+    if math.abs(p.Time - e.time) < EPSILON then
+      return p.Value
+    end
+  end
+
+  if e.fields.color ~= nil then
+    return e.fields.color
+  end
+
+  const source = e.source
+
+  return color.keypointsAt(keypoints, if source ~= nil then source.time else e.time)
+end
+
+-- the color as the kept states leave it, its ends at 0 and 1 kept: a missing
+-- end takes the color of the state left nearest it, as the input read it
+const function buildColor(sequence: ColorSequence, kept: { Entry }, rows: { [string]: Curve }): ColorSequence
   const keypoints = sequence.Keypoints
   const points: { Point } = {}
   const pending = {}
@@ -577,9 +695,9 @@ const function buildColor(sequence: ColorSequence, kept: { Entry }): ColorSequen
   local seq = 0
 
   for _, e in kept do
-    const source = e.source
-    const at = if source ~= nil then source.keys.color else {}
-    const moved = source ~= nil and e.time ~= source.time
+    const source = clusterFor(e, "color")
+    const at = keysFor(e, "color")
+    const moved = source ~= nil and math.abs(e.time - source.time) >= EPSILON
 
     for _, i in at do
       const keypoint = keypoints[i]
@@ -625,17 +743,26 @@ const function buildColor(sequence: ColorSequence, kept: { Entry }): ColorSequen
 
   sortPoints(points)
 
-  if #points == 0 then
-    table.insert(points, { Time = 0, Value = keypoints[1].Value, seq = 0 })
-    table.insert(points, { Time = 1, Value = keypoints[#keypoints].Value, seq = 0 })
+  const standing = {}
+
+  for _, e in kept do
+    if stands(e, rows, points) then
+      table.insert(standing, e)
+    end
   end
 
-  if points[1].Time ~= 0 then
-    table.insert(points, 1, { Time = 0, Value = points[1].Value, seq = 0 })
+  const first, last = standing[1], standing[#standing]
+
+  if #points == 0 or points[1].Time ~= 0 then
+    const value = if first ~= nil then colorOf(first, points, keypoints) else keypoints[1].Value
+
+    table.insert(points, 1, { Time = 0, Value = value, seq = 0 })
   end
 
   if points[#points].Time ~= 1 then
-    table.insert(points, { Time = 1, Value = points[#points].Value, seq = 0 })
+    const value = if last ~= nil then colorOf(last, points, keypoints) else keypoints[#keypoints].Value
+
+    table.insert(points, { Time = 1, Value = value, seq = 0 })
   end
 
   const out = table.create(#points)
@@ -648,11 +775,13 @@ const function buildColor(sequence: ColorSequence, kept: { Entry }): ColorSequen
 end
 
 const function build(source: Curves, kept: { Entry }): Curves
-  const out: any = { color = buildColor(source.color, kept) }
+  const out: any = {}
 
   for _, row in ROWS do
     out[row] = buildRow((source :: any)[row], row, kept)
   end
+
+  out.color = buildColor(source.color, kept, out)
 
   return out :: Curves
 end

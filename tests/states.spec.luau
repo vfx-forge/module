@@ -1,4 +1,3 @@
-const curves = require("@mod/curves")
 const harness = require("@tests/harness")
 const value_curve = require("@mod/value_curve")
 
@@ -375,7 +374,84 @@ harness.suite(function()
       end
     end)
 
-    test("more than twenty states keeps the first twenty", function()
+    test("a missing color end takes the nearest state's color as read", function()
+      const source = template()
+
+      source.offset = curveOf({ key(0.2, { 0, 2, 0 }) })
+      source.color = sequence({ { 0, RED }, { 0.5, GREEN }, { 1, BLUE } })
+
+      const read = (stateAt(states_common.read(source), 0.2) :: states_common.State).color
+      const after = states_common.apply(source, { { from = 0, removed = true } })
+      const keypoints = after.color.Keypoints
+
+      expect(keypoints[1].Time).toBe(0)
+      expect(sameColor(keypoints[1].Value, read)).toBe(true)
+      expect(sameColor(keypoints[2].Value, GREEN)).toBe(true)
+    end)
+
+    test("a state set equal to its neighbor holds still", function()
+      const source = template()
+
+      source.offset = rising()
+
+      const eased = states_common.apply(source, { { from = 1, easing = "EaseIn" } })
+      const level = states_common.apply(eased, { { from = 1, offset = vector.zero } })
+
+      source.offset = curveOf({ key(0, { 0, 0, 0 }), key(0.5, { 0, 10, 0 }), key(1, { 0, 0, 0 }) })
+
+      const peaked = states_common.apply(source, {
+        { from = 0.5, easing = "EaseIn" },
+        { from = 1, easing = "EaseOut" },
+      })
+
+      const flattened = states_common.apply(peaked, { { from = 0.5, removed = true } })
+
+      for step = 0, 20 do
+        expect(near(value_curve.at(level.offset, step / 20)[2], 0)).toBe(true)
+        expect(near(value_curve.at(flattened.offset, step / 20)[2], 0)).toBe(true)
+      end
+    end)
+
+    test("a collapse keeps the loser's keys on rows the winner lacks", function()
+      const source = template()
+
+      source.size = curveOf({ key(0, { 1, 1, 1 }), key(1, { 3, 3, 3 }) })
+      source.transparency = curveOf({ key(0, { 0 }), key(0.5, { 0.6 }) })
+      source.color = sequence({ { 0, RED }, { 1, BLUE } })
+
+      const after = states_common.apply(source, { { from = 0.5, time = 1 } })
+      const last = states_common.read(after)[2]
+
+      expect(#states_common.read(after)).toBe(2)
+      expect(keysAt(after.size, 1)[1].value).toEqual({ 3, 3, 3 })
+      expect(keysAt(after.transparency, 1)[1].value).toEqual({ 0.6 })
+      expect(sameColor(last.color, BLUE)).toBe(true)
+    end)
+
+    test("a time within EPSILON of where a state stands writes nothing", function()
+      const source = template()
+      const custom = { vector.zero, vector.create(-0.2, 3, 0), vector.zero }
+
+      source.offset = curveOf({ key(0, { 0, 0, 0 }), key(0.5, { 0, 4, 0 }, custom), key(1, { 0, 10, 0 }) })
+
+      const before = snapshot(source)
+      const after = states_common.apply(source, { { from = 0.5, time = 0.5 + 1e-6 } })
+
+      expect(after.offset.keys).toEqual(before.offset)
+    end)
+
+    test("an easing set on a held segment survives a drag", function()
+      const source = template()
+
+      source.offset = curveOf({ key(0, { 0, 0, 0 }), key(1, { 0, 0, 0 }) })
+
+      const eased = states_common.apply(source, { { from = 1, easing = "EaseIn" } })
+      const dragged = states_common.apply(eased, { { from = 1, offset = vector.create(0, 5, 0) } })
+
+      expect(easingAt(dragged, 1)).toBe("EaseIn")
+    end)
+
+    test("more than twenty states keeps the first nineteen and the last", function()
       const source = template()
       const edits = {}
 
@@ -398,22 +474,25 @@ harness.suite(function()
     end)
 
     test("the easing points are the curve presets'", function()
-      const presets = { EaseIn = "easeIn", EaseOut = "easeOut", EaseInOut = "easeInOut" }
+      const presets = {
+        EaseIn = { vector.create(0.55, 0.055, 0), vector.create(0.675, 0.19, 0) },
+        EaseOut = { vector.create(0.215, 0.61, 0), vector.create(0.355, 1, 0) },
+        EaseInOut = { vector.create(0.645, 0.045, 0), vector.create(0.355, 1, 0) },
+      }
 
-      for name, preset in presets do
+      for name, points in presets do
         const source = template()
 
         source.offset = curveOf({ key(0.25, { 0, 1, 0 }), key(0.75, { 0, 3, 0 }) })
 
         const eased = states_common.apply(source, { { from = 0.75, easing = name } })
-        const points = curves.points(preset)
         const from, into = eased.offset.keys[1], eased.offset.keys[2]
         const c1 = vector.create(from.right[2].x / 0.5, from.right[2].y / 2, 0)
         const c2 = vector.create(1 + into.left[2].x / 0.5, 1 + into.left[2].y / 2, 0)
 
-        expect(nearVector(c1, points[2])).toBe(true)
-        expect(nearVector(c2, points[3])).toBe(true)
-        expect(nearVector(from.right[1], vector.create(points[2].x * 0.5, 0, 0))).toBe(true)
+        expect(nearVector(c1, points[1])).toBe(true)
+        expect(nearVector(c2, points[2])).toBe(true)
+        expect(nearVector(from.right[1], vector.create(points[1].x * 0.5, 0, 0))).toBe(true)
       end
     end)
   end)
