@@ -468,7 +468,7 @@ harness.suite(function()
       expect(easingAt(dragged, 1)).toBe("EaseIn")
     end)
 
-    test("more than twenty states keeps the first nineteen and the last", function()
+    test("new states past twenty are refused, the latest edited first", function()
       const source = template()
       const edits = {}
 
@@ -488,6 +488,83 @@ harness.suite(function()
       expect(#states).toBe(states_common.MAX)
       expect(states[#states].time).toBe(1)
       expect(near(states[#states - 1].time, 18 / 25)).toBe(true)
+    end)
+
+    test("a template past twenty states keeps every key through an edit", function()
+      const source = template()
+      const keys = {}
+
+      for i = 0, 21 do
+        table.insert(keys, key(i / 21, { (i % 5) / 5 }))
+      end
+
+      source.transparency = curveOf(keys)
+
+      const before = snapshot(source)
+      const edited = states_common.apply(source, { { from = 5 / 21, transparency = 0.9 } })
+      const added = states_common.apply(source, { { time = 0.5 / 21, transparency = 0.7 } })
+
+      expect(#edited.transparency.keys).toBe(22)
+      expect(#added.transparency.keys).toBe(22)
+      expect(#states_common.read(edited)).toBe(22)
+
+      for i, k in edited.transparency.keys do
+        const was = before.transparency[i]
+
+        expect(k.time).toBe(was.time)
+        expect(k.value[1]).toBe(if i == 6 then 0.9 else was.value[1])
+        expect(added.transparency.keys[i].value[1]).toBe(was.value[1])
+      end
+    end)
+
+    test("a color at twenty keypoints is never pushed past twenty", function()
+      const source = template()
+      const points = {}
+      const keys = { key(0.5 / 19, { 0.5 }) }
+
+      for i = 0, 19 do
+        table.insert(points, { i / 19, Color3.new(i / 19, 1 - i / 19, (i % 3) / 3) })
+        table.insert(keys, key(i / 19, { 0 }))
+      end
+
+      table.sort(keys, function(a: any, b: any)
+        return a.time < b.time
+      end)
+
+      source.color = sequence(points)
+      source.transparency = curveOf(keys)
+
+      const recolored = states_common.apply(source, { { from = 0.5 / 19, color = BLUE } })
+      const pinned = states_common.apply(source, { { from = 1 / 19, time = 1.5 / 19 } })
+      const lifted = states_common.apply(source, { { from = 0, time = 0.2 / 19 } })
+
+      for _, after in { recolored, pinned, lifted } do
+        const keypoints = after.color.Keypoints
+
+        expect(#keypoints).toBe(20)
+        expect(keypoints[1].Time).toBe(0)
+        expect(keypoints[#keypoints].Time).toBe(1)
+      end
+
+      expect(#recolored.transparency.keys).toBe(21)
+      expect(sameColor(lifted.color.Keypoints[1].Value, points[1][2])).toBe(true)
+    end)
+
+    test("a state put into an eased segment keeps the easing on both halves", function()
+      const source = template()
+
+      source.offset = rising()
+
+      const eased = states_common.apply(source, { { from = 1, easing = "EaseInOut" } })
+      const last = stateAt(states_common.read(eased), 1) :: states_common.State
+      const after = states_common.apply(eased, { { time = 0.5, offset = vector.create(0, 3, 0) } })
+      const kept = stateAt(states_common.read(after), 1) :: states_common.State
+
+      expect(keysAt(after.offset, 0.5)[1].value).toEqual({ 0, 3, 0 })
+      expect(easingAt(after, 0.5)).toBe("EaseInOut")
+      expect(easingAt(after, 1)).toBe("EaseInOut")
+      expect(nearVector(kept.offset, last.offset)).toBe(true)
+      expect(kept.easing).toBe(last.easing)
     end)
 
     test("the easing points are the curve presets'", function()

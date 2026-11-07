@@ -57,8 +57,12 @@ type Entry = {
 -- `prev` and `next` were that key's neighbors, all nil for a key it inserts
 type Record = { key: Key, from: Key?, prev: Key?, next: Key?, seq: number }
 
--- a color keypoint `apply` builds, spelled as a keypoint so color reads it
-type Point = { Time: number, Value: Color3, seq: number }
+-- a color keypoint `apply` builds, spelled as a keypoint so color reads it;
+-- `origin` is the time of the input keypoint it copies
+type Point = { Time: number, Value: Color3, seq: number, origin: number? }
+
+-- what `apply` had to leave out, warned of once
+type Notes = { crowded: boolean }
 
 const MAX = 20
 const MIXED = "Mixed"
@@ -549,254 +553,6 @@ const function finish(curve: Curve, records: { Record }): Curve
   return { channels = curve.channels, linked = curve.linked, keys = keys, exact = curve.exact }
 end
 
--- one row as the kept states leave it. a field with no key of its own at its
--- state inserts one only where the curve does not already read it, checked
--- again after every insert, since a key moves the readings around it
-const function buildRow(curve: Curve, row: string, kept: { Entry }): Curve
-  const channels = curve.channels
-  const records: { Record } = {}
-  const pending = {}
-
-  local seq = 0
-
-  for _, e in kept do
-    const source = clusterFor(e, row)
-    const at = keysFor(e, row)
-    const moved = source ~= nil and math.abs(e.time - source.time) >= EPSILON
-
-    for _, i in at do
-      const from = curve.keys[i]
-      const k = copyKey(from)
-
-      if moved then
-        k.time = e.time
-      end
-
-      seq += 1
-      table.insert(records, { key = k, from = from, prev = curve.keys[i - 1], next = curve.keys[i + 1], seq = seq })
-    end
-
-    const field = e.fields[row]
-
-    if field == nil then
-      continue
-    end
-
-    const want = channelsOf(field, channels)
-
-    if #at == 0 then
-      table.insert(pending, { time = e.time, value = want })
-      continue
-    end
-
-    -- a channel within EPSILON keeps its value exactly
-    const value = records[#records].key.value
-
-    for c = 1, channels do
-      if math.abs(want[c] - value[c]) >= EPSILON then
-        value[c] = want[c]
-      end
-    end
-  end
-
-  while #pending > 0 do
-    const drawn = if #records > 0 then finish(curve, records) else nil
-
-    local picked = nil
-
-    for i, p in pending do
-      if drawn == nil or differs(value_curve.at(drawn, p.time), p.value) then
-        picked = i
-        break
-      end
-    end
-
-    if picked == nil then
-      break
-    end
-
-    const p = table.remove(pending, picked)
-
-    seq += 1
-    table.insert(records, { key = blankKey(p.time, p.value), seq = seq })
-  end
-
-  -- a curve needs a key, so a row left with none holds what it read at the
-  -- first state left
-  if #records == 0 then
-    const first = kept[1]
-    const time = if first ~= nil then first.time else 0
-    const source = if first ~= nil then first.source else nil
-
-    table.insert(records, {
-      key = blankKey(time, value_curve.at(curve, if source ~= nil then source.time else time)),
-      seq = 1,
-    })
-  end
-
-  return finish(curve, records)
-end
-
-const function sortPoints(points: { Point })
-  table.sort(points, function(a: Point, b: Point)
-    if a.Time ~= b.Time then
-      return a.Time < b.Time
-    end
-
-    return a.seq < b.seq
-  end)
-end
-
--- whether a state stands at `e` once the rows are built: some row or the
--- color has a key at its time
-const function stands(e: Entry, rows: { [string]: Curve }, points: { Point })
-  for _, row in ROWS do
-    for _, k in rows[row].keys do
-      if math.abs(k.time - e.time) < EPSILON then
-        return true
-      end
-    end
-  end
-
-  for _, p in points do
-    if math.abs(p.Time - e.time) < EPSILON then
-      return true
-    end
-  end
-
-  return false
-end
-
--- the color a standing state shows: its own keypoint's, else the field an
--- edit gave it, else what the input read where it stood
-const function colorOf(e: Entry, points: { Point }, keypoints: { ColorSequenceKeypoint }): Color3
-  for _, p in points do
-    if math.abs(p.Time - e.time) < EPSILON then
-      return p.Value
-    end
-  end
-
-  if e.fields.color ~= nil then
-    return e.fields.color
-  end
-
-  const source = e.source
-
-  return color.keypointsAt(keypoints, if source ~= nil then source.time else e.time)
-end
-
--- the color as the kept states leave it, its ends at 0 and 1 kept: a missing
--- end takes the color of the state left nearest it, as the input read it
-const function buildColor(sequence: ColorSequence, kept: { Entry }, rows: { [string]: Curve }): ColorSequence
-  const keypoints = sequence.Keypoints
-  const points: { Point } = {}
-  const pending = {}
-
-  local seq = 0
-
-  for _, e in kept do
-    const source = clusterFor(e, "color")
-    const at = keysFor(e, "color")
-    const moved = source ~= nil and math.abs(e.time - source.time) >= EPSILON
-
-    for _, i in at do
-      const keypoint = keypoints[i]
-
-      seq += 1
-      table.insert(points, { Time = if moved then e.time else keypoint.Time, Value = keypoint.Value, seq = seq })
-    end
-
-    const field = e.fields.color
-
-    if field == nil then
-      continue
-    end
-
-    if #at == 0 then
-      table.insert(pending, { time = e.time, value = field })
-    elseif colorDiffers(points[#points].Value, field) then
-      points[#points].Value = field
-    end
-  end
-
-  while #pending > 0 do
-    sortPoints(points)
-
-    local picked = nil
-
-    for i, p in pending do
-      if #points == 0 or colorDiffers(color.keypointsAt(points :: any, p.time), p.value) then
-        picked = i
-        break
-      end
-    end
-
-    if picked == nil then
-      break
-    end
-
-    const p = table.remove(pending, picked)
-
-    seq += 1
-    table.insert(points, { Time = p.time, Value = p.value, seq = seq })
-  end
-
-  sortPoints(points)
-
-  const standing = {}
-
-  for _, e in kept do
-    if stands(e, rows, points) then
-      table.insert(standing, e)
-    end
-  end
-
-  const first, last = standing[1], standing[#standing]
-
-  if #points == 0 or points[1].Time ~= 0 then
-    const value = if first ~= nil then colorOf(first, points, keypoints) else keypoints[1].Value
-
-    table.insert(points, 1, { Time = 0, Value = value, seq = 0 })
-  end
-
-  if points[#points].Time ~= 1 then
-    const value = if last ~= nil then colorOf(last, points, keypoints) else keypoints[#keypoints].Value
-
-    table.insert(points, { Time = 1, Value = value, seq = 0 })
-  end
-
-  const out = table.create(#points)
-
-  for i, p in points do
-    out[i] = ColorSequenceKeypoint.new(p.Time, p.Value)
-  end
-
-  return ColorSequence.new(out)
-end
-
-const function build(source: Curves, kept: { Entry }): Curves
-  const out: any = {}
-
-  for _, row in ROWS do
-    out[row] = buildRow((source :: any)[row], row, kept)
-  end
-
-  out.color = buildColor(source.color, kept, out)
-
-  return out :: Curves
-end
-
--- the cluster holding `time`, as gather made them
-const function clusterOf(clusters: { Cluster }, time: number): number?
-  for i, cluster in clusters do
-    if time >= cluster.time and time - cluster.time < EPSILON then
-      return i
-    end
-  end
-
-  return nil
-end
-
 -- one channel of the segment from `from` to `into` tracing a preset's control
 -- points, taken over its width and that channel's change, so the curve stays
 -- linked
@@ -806,35 +562,6 @@ const function shape(from: Key, into: Key, c: number, points: { vector })
 
   from.right[c] = vector.create(points[1].x * width, points[1].y * change, 0)
   into.left[c] = vector.create((points[2].x - 1) * width, (points[2].y - 1) * change, 0)
-end
-
--- each eased state's incoming handles on every row with keys at both ends
-const function ease(result: Curves, clusters: { Cluster }, kept: { Entry })
-  for _, e in kept do
-    const points = if e.easing ~= nil then POINTS[e.easing] else nil
-    const index = if points ~= nil then clusterOf(clusters, e.time) else nil
-
-    if points == nil or index == nil or index == 1 then
-      continue
-    end
-
-    const before, after = clusters[index - 1], clusters[index]
-
-    for _, row in ROWS do
-      const curve = (result :: any)[row] :: Curve
-      const a, b = before.keys[row], after.keys[row]
-
-      if #a == 0 or #b == 0 then
-        continue
-      end
-
-      const from, into = curve.keys[a[#a]], curve.keys[b[1]]
-
-      for c = 1, curve.channels do
-        shape(from, into, c, points)
-      end
-    end
-  end
 end
 
 -- the preset a whole segment traces, nil where its channels trace none, or
@@ -888,6 +615,346 @@ const function pin(curve: Curve, time: number, value: { number })
   end
 end
 
+-- one row as the kept states leave it. a field with no key of its own at its
+-- state inserts one only where the curve does not already read it, checked
+-- again after every insert, since a key moves the readings around it
+const function buildRow(curve: Curve, row: string, kept: { Entry }): Curve
+  const channels = curve.channels
+  const records: { Record } = {}
+  const pending = {}
+
+  local seq = 0
+
+  for _, e in kept do
+    const source = clusterFor(e, row)
+    const at = keysFor(e, row)
+    const moved = source ~= nil and math.abs(e.time - source.time) >= EPSILON
+
+    for _, i in at do
+      const from = curve.keys[i]
+      const k = copyKey(from)
+
+      if moved then
+        k.time = e.time
+      end
+
+      seq += 1
+      table.insert(records, { key = k, from = from, prev = curve.keys[i - 1], next = curve.keys[i + 1], seq = seq })
+    end
+
+    const field = e.fields[row]
+
+    if field == nil then
+      continue
+    end
+
+    const want = channelsOf(field, channels)
+
+    if #at == 0 then
+      table.insert(pending, { time = e.time, value = want })
+      continue
+    end
+
+    -- a channel within EPSILON keeps its value exactly
+    const value = records[#records].key.value
+
+    for c = 1, channels do
+      if math.abs(want[c] - value[c]) >= EPSILON then
+        value[c] = want[c]
+      end
+    end
+  end
+
+  -- a curve needs a key, so a row left with none takes its first insert, else
+  -- holds what it read at the first state left
+  if #records == 0 and #pending > 0 then
+    const p = table.remove(pending, 1)
+
+    table.insert(records, { key = blankKey(p.time, p.value), seq = 1 })
+  elseif #records == 0 then
+    const first = kept[1]
+    const time = if first ~= nil then first.time else 0
+    const source = if first ~= nil then first.source else nil
+
+    table.insert(records, {
+      key = blankKey(time, value_curve.at(curve, if source ~= nil then source.time else time)),
+      seq = 1,
+    })
+  end
+
+  const drawn = finish(curve, records)
+
+  -- an insert splits its segment the way a pin does, so both halves keep the
+  -- easing the segment had
+  while #pending > 0 do
+    local picked = nil
+
+    for i, p in pending do
+      if differs(value_curve.at(drawn, p.time), p.value) then
+        picked = i
+        break
+      end
+    end
+
+    if picked == nil then
+      break
+    end
+
+    const p = table.remove(pending, picked)
+
+    pin(drawn, p.time, p.value)
+  end
+
+  return drawn
+end
+
+const function sortPoints(points: { Point })
+  table.sort(points, function(a: Point, b: Point)
+    if a.Time ~= b.Time then
+      return a.Time < b.Time
+    end
+
+    return a.seq < b.seq
+  end)
+end
+
+-- whether a state stands at `e` once the rows are built: some row or the
+-- color has a key at its time
+const function stands(e: Entry, rows: { [string]: Curve }, points: { Point })
+  for _, row in ROWS do
+    for _, k in rows[row].keys do
+      if math.abs(k.time - e.time) < EPSILON then
+        return true
+      end
+    end
+  end
+
+  for _, p in points do
+    if math.abs(p.Time - e.time) < EPSILON then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- the color a standing state shows: its own keypoint's, else the field an
+-- edit gave it, else what the input read where it stood
+const function colorOf(e: Entry, points: { Point }, keypoints: { ColorSequenceKeypoint }): Color3
+  for _, p in points do
+    if math.abs(p.Time - e.time) < EPSILON then
+      return p.Value
+    end
+  end
+
+  if e.fields.color ~= nil then
+    return e.fields.color
+  end
+
+  const source = e.source
+
+  return color.keypointsAt(keypoints, if source ~= nil then source.time else e.time)
+end
+
+-- whether a keypoint at `time` would leave the color more than MAX once its
+-- ends are counted, since a ColorSequence holds no more
+const function crowded(points: { any }, time: number?)
+  local starts, ends = time == 0, time == 1
+
+  for _, p in points do
+    starts = starts or p.Time == 0
+    ends = ends or p.Time == 1
+  end
+
+  const count = #points + (if time ~= nil then 1 else 0)
+
+  return count + (if starts then 0 else 1) + (if ends then 0 else 1) > MAX
+end
+
+-- a full color missing an end: the keypoint that came from that end goes
+-- back to it, the nearest one when none did
+const function reclaim(points: { Point }, time: number)
+  local back = if time == 0 then points[1] else points[#points]
+
+  for _, p in points do
+    if p.origin == time then
+      back = p
+      break
+    end
+  end
+
+  back.Time = time
+  sortPoints(points)
+end
+
+-- the color as the kept states leave it, its ends at 0 and 1 kept: a missing
+-- end takes the color of the state left nearest it, as the input read it. a
+-- state's new key that would leave the color past MAX is left out
+const function buildColor(
+  sequence: ColorSequence,
+  kept: { Entry },
+  rows: { [string]: Curve },
+  notes: Notes
+): ColorSequence
+  const keypoints = sequence.Keypoints
+  const points: { Point } = {}
+  const pending = {}
+
+  local seq = 0
+
+  for _, e in kept do
+    const source = clusterFor(e, "color")
+    const at = keysFor(e, "color")
+    const moved = source ~= nil and math.abs(e.time - source.time) >= EPSILON
+
+    for _, i in at do
+      const keypoint = keypoints[i]
+
+      seq += 1
+      table.insert(points, {
+        Time = if moved then e.time else keypoint.Time,
+        Value = keypoint.Value,
+        seq = seq,
+        origin = keypoint.Time,
+      })
+    end
+
+    const field = e.fields.color
+
+    if field == nil then
+      continue
+    end
+
+    if #at == 0 then
+      table.insert(pending, { time = e.time, value = field })
+    elseif colorDiffers(points[#points].Value, field) then
+      points[#points].Value = field
+    end
+  end
+
+  while #pending > 0 do
+    sortPoints(points)
+
+    local picked = nil
+
+    for i, p in pending do
+      if #points == 0 or colorDiffers(color.keypointsAt(points :: any, p.time), p.value) then
+        picked = i
+        break
+      end
+    end
+
+    if picked == nil then
+      break
+    end
+
+    const p = table.remove(pending, picked)
+
+    if crowded(points, p.time) then
+      notes.crowded = true
+      continue
+    end
+
+    seq += 1
+    table.insert(points, { Time = p.time, Value = p.value, seq = seq })
+  end
+
+  sortPoints(points)
+
+  -- a full color whose end state moved keeps that end's keypoint there
+  if crowded(points, nil) and points[1].Time ~= 0 then
+    notes.crowded = true
+    reclaim(points, 0)
+  end
+
+  if crowded(points, nil) and points[#points].Time ~= 1 then
+    notes.crowded = true
+    reclaim(points, 1)
+  end
+
+  const standing = {}
+
+  for _, e in kept do
+    if stands(e, rows, points) then
+      table.insert(standing, e)
+    end
+  end
+
+  const first, last = standing[1], standing[#standing]
+
+  if #points == 0 or points[1].Time ~= 0 then
+    const value = if first ~= nil then colorOf(first, points, keypoints) else keypoints[1].Value
+
+    table.insert(points, 1, { Time = 0, Value = value, seq = 0 })
+  end
+
+  if points[#points].Time ~= 1 then
+    const value = if last ~= nil then colorOf(last, points, keypoints) else keypoints[#keypoints].Value
+
+    table.insert(points, { Time = 1, Value = value, seq = 0 })
+  end
+
+  const out = table.create(#points)
+
+  for i, p in points do
+    out[i] = ColorSequenceKeypoint.new(p.Time, p.Value)
+  end
+
+  return ColorSequence.new(out)
+end
+
+const function build(source: Curves, kept: { Entry }, notes: Notes): Curves
+  const out: any = {}
+
+  for _, row in ROWS do
+    out[row] = buildRow((source :: any)[row], row, kept)
+  end
+
+  out.color = buildColor(source.color, kept, out, notes)
+
+  return out :: Curves
+end
+
+-- the cluster holding `time`, as gather made them
+const function clusterOf(clusters: { Cluster }, time: number): number?
+  for i, cluster in clusters do
+    if time >= cluster.time and time - cluster.time < EPSILON then
+      return i
+    end
+  end
+
+  return nil
+end
+
+-- each eased state's incoming handles on every row with keys at both ends
+const function ease(result: Curves, clusters: { Cluster }, kept: { Entry })
+  for _, e in kept do
+    const points = if e.easing ~= nil then POINTS[e.easing] else nil
+    const index = if points ~= nil then clusterOf(clusters, e.time) else nil
+
+    if points == nil or index == nil or index == 1 then
+      continue
+    end
+
+    const before, after = clusters[index - 1], clusters[index]
+
+    for _, row in ROWS do
+      const curve = (result :: any)[row] :: Curve
+      const a, b = before.keys[row], after.keys[row]
+
+      if #a == 0 or #b == 0 then
+        continue
+      end
+
+      const from, into = curve.keys[a[#a]], curve.keys[b[1]]
+
+      for c = 1, curve.channels do
+        shape(from, into, c, points)
+      end
+    end
+  end
+end
+
 const function keyedAt(curve: Curve, time: number)
   for _, k in curve.keys do
     if math.abs(k.time - time) < EPSILON then
@@ -901,7 +968,7 @@ end
 -- every state no edit named keeps what the input read at it: a row whose
 -- reading there moved past EPSILON gets a key holding the old reading, checked
 -- again after each, since a key moves the readings around it
-const function pinUntouched(source: Curves, result: Curves, kept: { Entry })
+const function pinUntouched(source: Curves, result: Curves, kept: { Entry }, notes: Notes)
   const untouched = {}
 
   for _, e in kept do
@@ -957,6 +1024,11 @@ const function pinUntouched(source: Curves, result: Curves, kept: { Entry })
         continue
       end
 
+      if crowded(points, e.time) then
+        notes.crowded = true
+        continue
+      end
+
       table.insert(points, at, ColorSequenceKeypoint.new(e.time, want))
       pinned, moved = true, true
     end
@@ -967,39 +1039,68 @@ const function pinUntouched(source: Curves, result: Curves, kept: { Entry })
   end
 end
 
+-- whether an entry is a state the rows did not hold, rather than one that
+-- took the place of a state they did
+const function adds(e: Entry)
+  return e.source == nil and next(e.borrowed) == nil
+end
+
+-- the edits' new states past MAX are refused, the latest edited first; a
+-- state the rows already held is never left out, so a template authored past
+-- MAX keeps every key
+const function admit(source: Curves, kept: { Entry }): { Entry }
+  const added = {}
+  const held = {}
+
+  for _, e in kept do
+    table.insert(if adds(e) then added else held, e)
+  end
+
+  if #added == 0 then
+    return kept
+  end
+
+  const standing = #gather(build(source, held, { crowded = false }))
+  const room = math.max(MAX - standing, 0)
+
+  if #added <= room then
+    return kept
+  end
+
+  table.sort(added, function(a: Entry, b: Entry)
+    return a.order < b.order
+  end)
+
+  logger.warn(`a mesh holds at most {MAX} states, so {#added - room} new ones were left out`)
+
+  const refused = {}
+
+  for at = room + 1, #added do
+    refused[added[at]] = true
+  end
+
+  const out = {}
+
+  for _, e in kept do
+    if not refused[e] then
+      table.insert(out, e)
+    end
+  end
+
+  return out
+end
+
 function common.apply(source: Curves, edits: { Edit }): Curves
-  local kept = entriesOf(gather(source), edits)
-  local result = build(source, kept)
-  local clusters = gather(result)
+  const kept = admit(source, entriesOf(gather(source), edits))
+  const notes: Notes = { crowded = false }
+  const result = build(source, kept, notes)
 
-  if #clusters > MAX then
-    logger.warn(`a mesh holds at most {MAX} states, so the {#clusters - MAX} latest before its end were left out`)
-  end
-
-  -- the last state always stands at the color's end, so the latest before it
-  -- go, as many as it takes
-  while #clusters > MAX do
-    const left = {}
-
-    for _, e in kept do
-      const index = clusterOf(clusters, e.time)
-
-      if index == nil or index < MAX or index == #clusters then
-        table.insert(left, e)
-      end
-    end
-
-    if #left == #kept then
-      break
-    end
-
-    kept = left
-    result = build(source, kept)
-    clusters = gather(result)
-  end
-
-  pinUntouched(source, result, kept)
+  pinUntouched(source, result, kept, notes)
   ease(result, gather(result), kept)
+
+  if notes.crowded then
+    logger.warn(`a color holds at most {MAX} keypoints, so some states keep the color around them`)
+  end
 
   return result
 end
