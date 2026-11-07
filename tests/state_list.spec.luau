@@ -431,13 +431,13 @@ harness.suite(function()
   end)
 
   harness.describe("state_list.scaled", function()
-    test("doubles positions and leaves sizes alone", function()
+    test("doubles positions and sizes", function()
       const list = sample()
       const twice = state_list.scaled(list, 2)
 
       for i, s in twice do
         expect(s.position).toBe(list[i].position * 2)
-        expect(s.size).toBe(list[i].size)
+        expect(s.size).toBe(list[i].size * 2)
       end
     end)
   end)

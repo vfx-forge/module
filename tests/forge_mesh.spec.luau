@@ -3199,7 +3199,7 @@ harness.suite(function()
       end)
     end)
 
-    test("resize scales the positions of a mesh's states", function()
+    test("resize scales the positions and sizes of a mesh's states", function()
       staged(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
         const part = template(parent, { Speed = STILL, Motion = "States" })
@@ -3218,7 +3218,8 @@ harness.suite(function()
 
         expect(after[1].position).toBe(vector.create(2, 0, 0))
         expect(after[2].position).toBe(vector.create(0, 8, -4))
-        expect(after[2].size).toBe(vector.create(3, 3, 3))
+        expect(after[1].size).toBe(vector.create(2, 2, 2))
+        expect(after[2].size).toBe(vector.create(6, 6, 6))
       end)
     end)
 

@@ -1138,9 +1138,9 @@ function common.seed(rows: SeedRows): List
   return mark(list)
 end
 
--- the list with every position times `factor`, as resizing the template
--- does; sizes are factors on the template's own and stay. a surface and the
--- decals are shared with `list`
+-- the list with every position and size times `factor`, as resizing the
+-- template does; a size is a factor on the template's own, which no resize
+-- scales under states. a surface and the decals are shared with `list`
 function common.scaled(list: List, factor: number): List
   const out = table.create(#list)
 
@@ -1148,6 +1148,7 @@ function common.scaled(list: List, factor: number): List
     const copy = table.clone(state)
 
     copy.position = state.position * factor
+    copy.size = state.size * factor
     out[i] = copy
   end
 

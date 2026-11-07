@@ -109,7 +109,7 @@ const function scaleCurveRow(obj: Instance, name: string, row: any, f: number)
   end
 end
 
--- a state list row's stored list with every position scaled. the default
+-- a state list row's stored list with every position and size scaled. the default
 -- holds no state, so an unset row has nothing to scale
 const function scaleListRow(obj: Instance, name: string, row: any, f: number)
   for _, key in { name, table.unpack(row.names) } do
