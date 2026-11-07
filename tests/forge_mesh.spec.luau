@@ -1,4 +1,5 @@
 const lerp = require("@mod/lerp")
+const curves = require("@mod/curves")
 const attr = require("@mod/attributes")
 const mods = require("@mod/mods")
 const value = require("@mod/value")
@@ -24,7 +25,7 @@ const test, expect = harness.test, harness.expect
 const look_common = require("@mod/common/look")
 const force_rows = require("@mod/common/force_rows")
 const launch_common = require("@mod/common/launch")
-const states_common = require("@mod/common/states")
+const state_list = require("@mod/common/state_list")
 const collision_common = require("@mod/common/collision")
 
 const forge_mesh = require("@vfx/forge_mesh")
@@ -594,10 +595,47 @@ const function falling(rows: { [string]: any }, body: (piece: BasePart, fake: fa
   end)
 end
 
+-- a state of a mesh's list at `time` of each piece's life, as the template
+-- stands, `fields` over it
+const function stateOf(time: number, fields: { [string]: any }?): any
+  const state = {
+    time = time,
+    easing = curves.linear(),
+    position = vector.zero,
+    rotation = vector.zero,
+    spin = vector.zero,
+    size = vector.one,
+    color = Color3.new(1, 1, 1),
+    transparency = 0,
+    reflectance = 0,
+    material = "Plastic",
+    materialVariant = "",
+    decals = {},
+  }
+
+  for name, v in fields or {} do
+    state[name] = v
+  end
+
+  return state
+end
+
+-- a piece rising 10 studs along the template's own y over its life as it
+-- fades out
+const RISE = {
+  stateOf(0),
+  stateOf(1, { position = vector.create(0, 10, 0), transparency = 1 }),
+}
+
 -- one States piece of two seconds' life on a template under an attachment,
--- turned on its own z so its axes are not the world's, its Offset rising 10
--- studs along its own y over the life, `attributes` over it
-const function stated(attributes: { [string]: any }, body: (piece: BasePart, part: BasePart) -> ())
+-- turned on its own z so its axes are not the world's, moving through
+-- `list`, `attributes` over it and `dress` giving the template its children
+const function stated(
+  attributes: { [string]: any },
+  list: { any },
+  body: (piece: BasePart, part: BasePart) -> (),
+  dress: ((part: BasePart) -> ())?
+)
   framed(function(fake)
     const part = attached(attributes)
 
@@ -605,13 +643,31 @@ const function stated(attributes: { [string]: any }, body: (piece: BasePart, par
     part:SetAttribute("Lifetime", NumberRange.new(2, 2))
     part.CFrame = CFrame.new(4, 5, 6) * CFrame.fromOrientation(0, 0, math.rad(90))
 
-    stubbed(part, { Offset = curveOf(3, { { 0, { 0, 0, 0 } }, { 1, { 0, 10, 0 } } }) }, function()
+    if dress ~= nil then
+      dress(part)
+    end
+
+    -- lune refuses a non utf-8 attribute string, so the list is stubbed in
+    stubbed(part, { States = state_list.encode(list :: any) }, function()
       const env = effects.emit(0, part)
 
       body(pieces(fake)[1], part)
       env:Clear()
     end)
   end)
+end
+
+-- a decal named `name` on `part`
+const function decalOn(part: BasePart, name: string): Decal
+  const decal = harness.make("Decal", part) :: Decal
+
+  decal.Name = name
+
+  return decal
+end
+
+const function nearColor(a: Color3, b: Color3)
+  return math.abs(a.R - b.R) < LOOSE and math.abs(a.G - b.G) < LOOSE and math.abs(a.B - b.B) < LOOSE
 end
 
 -- the template's rows as an emit reads them, its force card's beside its own
@@ -751,42 +807,102 @@ harness.suite(function()
       end)
     end)
 
-    test("a States piece stands where its state rows put it", function()
-      stated({}, function(piece, part)
+    test("a States piece stands and fades where its list puts it at half its life", function()
+      stated({}, RISE, function(piece, part)
         frames(60)
 
-        const want = states_common.pose(part.CFrame, vector.create(0, 5, 0), vector.zero).Position
+        const want = state_list.pose(part.CFrame, vector.create(0, 5, 0), vector.zero).Position
 
         expect(near(piece.CFrame.Position, want, LOOSE)).toBe(true)
+
+        -- within one write step of the half way fade
+        expect(math.abs(piece.Transparency - 0.5) <= 0.02 + EPSILON).toBe(true)
       end)
     end)
 
     test("a States piece ignores the flight rows", function()
-      stated({ Speed = NumberRange.new(50, 50), Acceleration = Vector3.new(0, -100, 0) }, function(piece, part)
+      stated({ Speed = NumberRange.new(50, 50), Acceleration = Vector3.new(0, -100, 0) }, RISE, function(piece, part)
         frames(60)
 
-        const want = states_common.pose(part.CFrame, vector.create(0, 5, 0), vector.zero).Position
+        const want = state_list.pose(part.CFrame, vector.create(0, 5, 0), vector.zero).Position
 
         expect(near(piece.CFrame.Position, want, LOOSE)).toBe(true)
       end)
     end)
 
-    test("a States piece wears its turn on top of its initial rotation", function()
-      staged(function(fake)
-        const part = attached({ Motion = "States", Rotation = Vector3.new(0, 90, 0) })
+    test("a States piece leaves Rotation and RotSpeed out of its pose", function()
+      const rows = { Rotation = Vector3.new(0, 45, 0), RotSpeed = Vector3.new(0, 90, 0) }
 
-        stubbed(part, { Turn = curveOf(3, { { 0, { 0, 45, 0 } } }) }, function()
-          const env = effects.emit(0, part)
+      stated(rows, { stateOf(0) }, function(piece, part)
+        frames(30)
 
-          frames(1)
-
-          const _, y = pieces(fake)[1].CFrame:ToOrientation()
-
-          expect(math.abs(math.deg(y) - 135) < LOOSE).toBe(true)
-
-          env:Clear()
-        end)
+        expect(near(piece.CFrame.Position, part.CFrame.Position, LOOSE)).toBe(true)
+        expect(near(piece.CFrame.LookVector, part.CFrame.LookVector, LOOSE)).toBe(true)
+        expect(near(piece.CFrame.UpVector, part.CFrame.UpVector, LOOSE)).toBe(true)
       end)
+    end)
+
+    test("a state's size scales a FileMesh template's mesh, never its part", function()
+      const function meshed(part: BasePart)
+        const mesh = harness.make("SpecialMesh", part) :: SpecialMesh
+
+        mesh.MeshType = Enum.MeshType.FileMesh
+        mesh.Scale = Vector3.new(1, 2, 3)
+        part.Size = Vector3.new(2, 2, 2)
+      end
+
+      stated({}, { stateOf(0, { size = vector.create(2, 2, 2) }) }, function(piece)
+        frames(1)
+
+        const mesh = piece:FindFirstChildOfClass("SpecialMesh") :: SpecialMesh
+
+        expect(near(mesh.Scale, Vector3.new(2, 4, 6), EPSILON)).toBe(true)
+        expect(near(piece.Size, Vector3.new(2, 2, 2), EPSILON)).toBe(true)
+      end, meshed)
+    end)
+
+    test("a state sets a decal by its name, the others keeping the template's own", function()
+      const function decaled(part: BasePart)
+        decalOn(part, "Base").Transparency = 0.3
+        decalOn(part, "Glow").Transparency = 0
+      end
+
+      stated({}, { stateOf(0, { decals = { Glow = { transparency = 0.5 } } }) }, function(piece)
+        frames(1)
+
+        expect(near1((piece:FindFirstChild("Glow") :: Decal).Transparency, 0.5)).toBe(true)
+        expect(near1((piece:FindFirstChild("Base") :: Decal).Transparency, 0.3)).toBe(true)
+      end, decaled)
+    end)
+
+    test("a Color glow multiplies a state's decal color by its strength", function()
+      const function glowing(part: BasePart)
+        decalOn(part, "Glow"):SetAttribute("GlowMode", "Color")
+      end
+
+      const glow = { glowStrength = 2, color = Color3.new(0.5, 0.25, 0.1) }
+
+      stated({}, { stateOf(0, { decals = { Glow = glow } }) }, function(piece)
+        frames(1)
+
+        const decal = piece:FindFirstChild("Glow") :: Decal
+
+        expect(nearColor(decal.Color3, Color3.new(1, 0.5, 0.2))).toBe(true)
+      end, glowing)
+    end)
+
+    test("a state's surface multiplies the surface the piece wears", function()
+      const function surfaced(part: BasePart)
+        (harness.make("SurfaceAppearance", part) :: any).Color = Color3.new(1, 1, 1)
+      end
+
+      stated({}, { stateOf(0, { surface = { color = Color3.new(0.5, 0.5, 0.5) } }) }, function(piece)
+        frames(1)
+
+        const worn = piece:FindFirstChildOfClass("SurfaceAppearance") :: any
+
+        expect(nearColor(worn.Color, Color3.new(0.5, 0.5, 0.5))).toBe(true)
+      end, surfaced)
     end)
 
     test("a Kill hit ends a States piece early", function()
@@ -805,7 +921,7 @@ harness.suite(function()
       }
 
       -- a launch of no speed, so only the states move the piece into the hit
-      const ok, err = pcall(stated, { CollisionMode = "Kill", Speed = STILL }, function(piece)
+      const ok, err = pcall(stated, { CollisionMode = "Kill", Speed = STILL }, RISE, function(piece)
         frames(10)
 
         expect(piece.Parent).toBe(nil)
@@ -2892,7 +3008,13 @@ harness.suite(function()
           { rows = { Force = "Gravity", OrbitLaunch = true }, hidden = { Speed = true }, scale = false },
           {
             rows = { Force = "Orbit", Drag = 1 },
-            hidden = { Speed = true, Acceleration = true, Drag = true, WindAffectsDrag = true, VelocityInheritance = true },
+            hidden = {
+              Speed = true,
+              Acceleration = true,
+              Drag = true,
+              WindAffectsDrag = true,
+              VelocityInheritance = true,
+            },
             scale = true,
           },
         }
@@ -3077,23 +3199,26 @@ harness.suite(function()
       end)
     end)
 
-    test("resize scales a mesh's Offset curve as the lengths it holds", function()
+    test("resize scales the positions of a mesh's states", function()
       staged(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { Speed = STILL })
+        const part = template(parent, { Speed = STILL, Motion = "States" })
+        const list = {
+          stateOf(0, { position = vector.create(1, 0, 0) }),
+          stateOf(1, { position = vector.create(0, 4, -2), size = vector.create(3, 3, 3) }),
+        }
 
         -- lune refuses a non utf-8 attribute string, so the row is cached
         attr.cache(part)
-        attr.set(part, "Offset", curveOf(3, { { 0, { 1, 0, 0 } }, { 1, { 0, 4, -2 } } }, false))
+        attr.set(part, "States", state_list.encode(list :: any))
 
         resize.apply(part, 2)
 
-        const after = value_curve.decode(attr.get(part, "Offset", nil)) :: value_curve.Curve
-        const want = { 0, 8, -4 }
+        const after = state_list.decode(attr.get(part, "States", nil)) :: state_list.List
 
-        for c = 1, 3 do
-          expect(near1(value_curve.at(after, 1)[c], want[c])).toBe(true)
-        end
+        expect(after[1].position).toBe(vector.create(2, 0, 0))
+        expect(after[2].position).toBe(vector.create(0, 8, -4))
+        expect(after[2].size).toBe(vector.create(3, 3, 3))
       end)
     end)
 

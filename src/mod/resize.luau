@@ -3,6 +3,7 @@ local mods = require("@mod/mods")
 local retime = require("@mod/retime")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
+local state_list = require("@mod/common/state_list")
 local value_curve = require("@mod/value_curve")
 
 local resize = {}
@@ -32,11 +33,12 @@ resize.PROPERTY_UNITS = {
 -- where a beam's length scale multiplies the attachment distance that
 -- scaleShape already scales. a mesh's Size is a curve of factors on its
 -- template, scaled in place of the template as a ParticleEmitter's Size is,
--- and its Offset a curve of studs, which no unit reaches inside a curve
+-- and its States a list whose positions are studs, which no unit reaches
+-- inside a list
 resize.RATIOS = {
   model_spin = { Scale = true },
   beam = { LengthScale = false },
-  forge_mesh = { Size = true, Offset = true },
+  forge_mesh = { Size = true, States = true },
 }
 
 -- a property the instance does not have throws on the read, which is the
@@ -107,6 +109,19 @@ const function scaleCurveRow(obj: Instance, name: string, row: any, f: number)
   end
 end
 
+-- a state list row's stored list with every position scaled. the default
+-- holds no state, so an unset row has nothing to scale
+const function scaleListRow(obj: Instance, name: string, row: any, f: number)
+  for _, key in { name, table.unpack(row.names) } do
+    const raw = attr.get(obj, key, nil)
+    const list = if type(raw) == "string" then state_list.decode(raw) else nil
+
+    if list ~= nil then
+      attr.set(obj, key, state_list.encode(state_list.scaled(list, f)))
+    end
+  end
+end
+
 -- the geometry a few effects keep outside their rows
 local function scaleShape(obj: any, module: registry.Module, factor: number)
   local id = module.id
@@ -168,6 +183,11 @@ function resize.apply(obj: Instance, factor: number)
 
       if row.kind == "ValueCurve" then
         scaleCurveRow(obj, name, row, factor)
+        continue
+      end
+
+      if row.kind == "StateList" then
+        scaleListRow(obj, name, row, factor)
         continue
       end
 

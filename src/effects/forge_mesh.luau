@@ -11,15 +11,17 @@ const utility = require("@mod/utility")
 const lifetime = require("@mod/lifetime")
 const value_curve = require("@mod/value_curve")
 const force_rows = require("@mod/common/force_rows")
+const state_list = require("@mod/common/state_list")
 const look_common = require("@mod/common/look")
 const launch_common = require("@mod/common/launch")
-const states_common = require("@mod/common/states")
 const material_rows = require("@mod/common/material_rows")
 const orient_common = require("@mod/common/orient")
 const bezier_common = require("@mod/common/bezier")
 const collision_common = require("@mod/common/collision")
 const numeric_common = require("@mod/common/numeric")
 const particle_motion = require("@mod/particle_motion")
+
+const emitters = require("@root/emitters")
 
 const pool = require("@srv/pool")
 const containers = require("@srv/containers")
@@ -44,7 +46,14 @@ const SIZE_STEP = 0.015
 const SIZE_FLOOR = 1e-4
 const COLOR_STEP = 2 / 255
 
+-- a decal's UVs in steps of a texel of a 1024 map, its rotation in degrees
+const UV_STEP = 1 / 1024
+const TURN_STEP = 0.25
+
 const WORLD_UP = vector.create(0, 1, 0)
+const WHITE = Color3.new(1, 1, 1)
+
+const STATED_REASON = "The states set this. Edit it on a state in Edit States."
 
 const isVector = launch_common.isVector
 const numberOr = launch_common.numberOr
@@ -93,6 +102,11 @@ end
 
 const function flown(_, attrs: any)
   return attrs.Motion ~= "States"
+end
+
+-- whether the states set the look, which the rows they replace then show
+const function hasStates(_, attrs: any)
+  return attrs.Motion == "States" and #attrs.States > 0
 end
 
 -- the force card's rows are not this module's, so a rule reads its Force off
@@ -236,23 +250,315 @@ const function finite(cf: CFrame)
     and numeric_common.usable(cf.ZVector)
 end
 
--- one piece's pose through its states at `t` of its life: `base` moved by its
--- Offset and turned by its Turn, each drawn once for the whole life
-const function poser(base: CFrame, offset: value_curve.Curve, turn: value_curve.Curve, rng: Random)
-  const offsetAt = value_curve.sampler(offset, value_curve.draw(offset, rng))
-  const turnAt = value_curve.sampler(turn, value_curve.draw(turn, rng))
+-- what the template wears itself, which a state's unset field reads as. a
+-- state's surface multiplies the surface the piece wears, so its rest is no
+-- change but the alpha mode
+const function restOf(template: BasePart): state_list.Rest
+  const own = template:FindFirstChildOfClass("SurfaceAppearance")
+  const decals = {}
 
-  return function(t: number): CFrame
-    const o, r = offsetAt(t), turnAt(t)
+  for _, child in template:GetChildren() do
+    if not child:IsA("Decal") or decals[child.Name] ~= nil then
+      continue
+    end
 
-    return states_common.pose(base, vector.create(o[1], o[2], o[3]), vector.create(r[1], r[2], r[3]))
+    const decal = child :: Decal
+
+    decals[decal.Name] = {
+      color = decal.Color3,
+      transparency = decal.Transparency,
+      uvOffset = decal.UVOffset,
+      uvScale = decal.UVScale,
+      rotation = decal.Rotation,
+      zIndex = decal.ZIndex,
+      glowStrength = attr.get(decal, "GlowStrength", 1, true, function(v)
+        return if type(v) == "number" then math.max(v, 0) else 1
+      end),
+      emissiveStrength = decal.EmissiveStrength,
+      emissiveTint = decal.EmissiveTint,
+    }
+  end
+
+  return {
+    surface = {
+      color = WHITE,
+      emissiveStrength = 1,
+      emissiveTint = WHITE,
+      alphaMode = if own ~= nil then own.AlphaMode.Name else nil,
+    },
+    decals = decals,
+  }
+end
+
+-- one property of a piece the states write: what was last written, what was
+-- sampled the frame before, and the share of a step the next write waits for
+type Gate = { written: any, sampled: any, share: number }
+
+const function gate(share: number): Gate
+  return { written = nil, sampled = nil, share = share }
+end
+
+-- whether `v` lies more than `step` from `was`: a ratio and a scale relative
+-- to `was` on any axis, a number, a tone, a color and a UV in absolute terms
+-- on any channel, a switch whenever the two differ
+const function apart(kind: string, v: any, was: any, step: number): boolean
+  if kind == "number" then
+    return math.abs(v - was) > step
+  end
+
+  if kind == "ratio" then
+    return math.abs(v - was) > step * math.max(math.abs(was), SIZE_FLOOR)
+  end
+
+  if kind == "scale" then
+    return math.abs(v.x - was.x) > step * math.max(math.abs(was.x), SIZE_FLOOR)
+      or math.abs(v.y - was.y) > step * math.max(math.abs(was.y), SIZE_FLOOR)
+      or math.abs(v.z - was.z) > step * math.max(math.abs(was.z), SIZE_FLOOR)
+  end
+
+  if kind == "tone" then
+    return math.abs(v.x - was.x) > step or math.abs(v.y - was.y) > step or math.abs(v.z - was.z) > step
+  end
+
+  if kind == "Color3" then
+    return math.abs(v.R - was.R) > step or math.abs(v.G - was.G) > step or math.abs(v.B - was.B) > step
+  end
+
+  if kind == "Vector2" then
+    return math.abs(v.X - was.X) > step or math.abs(v.Y - was.Y) > step
+  end
+
+  return v ~= was
+end
+
+-- whether `v` is due a write, as a piece's rows decide one: on the first
+-- frame, once it is a step from what was written, and exactly once it holds
+-- still or the life is at an end. the first write after the spawn waits the
+-- piece's share of a step, every later one a whole step
+const function due(g: Gate, kind: string, v: any, step: number, first: boolean, exact: boolean)
+  if v == nil then
+    return false
+  end
+
+  const was = g.written
+  const held = v == g.sampled
+
+  g.sampled = v
+
+  if not (first or was == nil or apart(kind, v, was, step * g.share) or ((exact or held) and v ~= was)) then
+    return false
+  end
+
+  g.written = v
+  g.share = if first then g.share else 1
+
+  return true
+end
+
+-- a decal of the piece the states write by its name, under its glow mode
+type Named = {
+  decal: Decal,
+  name: string,
+  glow: string,
+  colors: boolean,
+  color: Gate,
+  transparency: Gate,
+  uvOffset: Gate,
+  uvScale: Gate,
+  rotation: Gate,
+  zIndex: Gate,
+  strength: Gate,
+  tint: Gate,
+
+  -- the color and strength a Color glow last multiplied, and what that made
+  tone: Color3?,
+  by: number?,
+  lit: Color3?,
+}
+
+-- a material named by a state, which the engine may refuse for a part
+const function wear(obj: BasePart, name: string)
+  const item = Enum.Material:FromName(name)
+
+  if item ~= nil then
+    pcall(function()
+      obj.Material = item
+    end)
+  end
+end
+
+-- what writes one piece's look off its sample each frame, as `appear` writes
+-- a particle's off its rows: its size on `rest`, its part's color,
+-- transparency, reflectance and materials, its mesh's vertex color, its
+-- surface and each decal the states name
+const function dresser(
+  obj: BasePart,
+  sample: state_list.Sample,
+  look: look_common.Look,
+  decals: look_common.Decals,
+  mesh: SpecialMesh?,
+  rest: Vector3,
+  stagger: number
+)
+  const own = obj:FindFirstChildOfClass("SurfaceAppearance")
+  const named: { Named } = {}
+
+  const size, tone, clear, shine = gate(stagger), gate(stagger), gate(stagger), gate(stagger)
+  const material, variant, vertex = gate(stagger), gate(stagger), gate(stagger)
+  const strength, tint, surfaceColor, alpha = gate(stagger), gate(stagger), gate(stagger), gate(stagger)
+
+  for _, decal in decals.list do
+    -- an animator on the decal's Color3 is the explicit ask, so the states
+    -- leave the color to it
+    const animated = emitters.animated(decal)
+
+    table.insert(named, {
+      decal = decal,
+      name = decal.Name,
+      glow = attr.get(decal, "GlowMode", "None", true),
+      colors = not (animated ~= nil and animated.Color3),
+      color = gate(stagger),
+      transparency = gate(stagger),
+      uvOffset = gate(stagger),
+      uvScale = gate(stagger),
+      rotation = gate(stagger),
+      zIndex = gate(stagger),
+      strength = gate(stagger),
+      tint = gate(stagger),
+      tone = nil,
+      by = nil,
+      lit = nil,
+    })
+  end
+
+  const function write(entry: Named, state: state_list.DecalState, first: boolean, exact: boolean)
+    const decal = entry.decal
+    local c = state.color
+
+    -- a Color glow multiplies the color, never clamped, so past 1 it glows
+    if c ~= nil and entry.glow == "Color" then
+      const by = state.glowStrength or 1
+
+      if c ~= entry.tone or by ~= entry.by then
+        entry.tone, entry.by = c, by
+        entry.lit = Color3.new(c.R * by, c.G * by, c.B * by)
+      end
+
+      c = entry.lit
+    end
+
+    if entry.colors and due(entry.color, "Color3", c, COLOR_STEP, first, exact) then
+      decal.Color3 = c :: Color3
+    end
+
+    if due(entry.transparency, "number", state.transparency, CLEAR_STEP, first, exact) then
+      decal.Transparency = state.transparency :: number
+    end
+
+    if due(entry.uvOffset, "Vector2", state.uvOffset, UV_STEP, first, exact) then
+      decal.UVOffset = state.uvOffset :: Vector2
+    end
+
+    if due(entry.uvScale, "Vector2", state.uvScale, UV_STEP, first, exact) then
+      decal.UVScale = state.uvScale :: Vector2
+    end
+
+    if due(entry.rotation, "number", state.rotation, TURN_STEP, first, exact) then
+      decal.Rotation = state.rotation :: number
+    end
+
+    if due(entry.zIndex, "switch", state.zIndex, 0, first, exact) then
+      decal.ZIndex = state.zIndex :: number
+    end
+
+    if entry.glow ~= "Emissive" then
+      return
+    end
+
+    if due(entry.strength, "ratio", state.emissiveStrength, SIZE_STEP, first, exact) then
+      decal.EmissiveStrength = math.max(state.emissiveStrength :: number, 0)
+    end
+
+    if due(entry.tint, "Color3", state.emissiveTint, COLOR_STEP, first, exact) then
+      decal.EmissiveTint = state.emissiveTint :: Color3
+    end
+  end
+
+  return function(t: number, first: boolean, over: boolean)
+    const exact = first or over or t <= 0 or t >= 1
+
+    if due(size, "scale", sample.size, SIZE_STEP, first, exact) then
+      const f = size.written :: vector
+      const scaled = Vector3.new(rest.X * f.x, rest.Y * f.y, rest.Z * f.z)
+
+      if mesh ~= nil then
+        mesh.Scale = scaled
+        look.refit()
+      else
+        look.size(scaled)
+      end
+    end
+
+    if due(tone, "Color3", sample.color, COLOR_STEP, first, exact) then
+      obj.Color = sample.color
+    end
+
+    if due(clear, "number", sample.transparency, CLEAR_STEP, first, exact) then
+      obj.Transparency = sample.transparency
+    end
+
+    if due(shine, "number", sample.reflectance, CLEAR_STEP, first, exact) then
+      obj.Reflectance = sample.reflectance
+    end
+
+    if due(material, "switch", sample.material, 0, first, exact) then
+      wear(obj, sample.material)
+    end
+
+    if due(variant, "switch", sample.materialVariant, 0, first, exact) then
+      obj.MaterialVariant = sample.materialVariant
+    end
+
+    if mesh ~= nil and due(vertex, "tone", sample.vertexColor, COLOR_STEP, first, exact) then
+      const v = sample.vertexColor :: vector
+
+      mesh.VertexColor = Vector3.new(v.x, v.y, v.z)
+    end
+
+    const surface = sample.surface
+
+    if surface ~= nil then
+      -- every call is made, so each gate sees this frame's sample
+      const a = due(strength, "ratio", surface.emissiveStrength, SIZE_STEP, first, exact)
+      const b = due(tint, "Color3", surface.emissiveTint, COLOR_STEP, first, exact)
+      const c = due(surfaceColor, "Color3", surface.color, COLOR_STEP, first, exact)
+
+      if a or b or c then
+        look.glow(strength.written or 1, tint.written or WHITE, surfaceColor.written or WHITE)
+      end
+
+      if own ~= nil and due(alpha, "switch", surface.alphaMode, 0, first, exact) then
+        const item = Enum.AlphaMode:FromName(surface.alphaMode :: string)
+
+        if item ~= nil then
+          own.AlphaMode = item
+        end
+      end
+    end
+
+    for _, entry in named do
+      const state = sample.decals[entry.name]
+
+      if state ~= nil then
+        write(entry, state, first, exact)
+      end
+    end
   end
 end
 
 -- what one piece draws as it spawns: its launch frame, whose look vector is
 -- the way it sets off, its speed and life, its initial turn in degrees, the
--- velocity it inherits, and the curves and gradient it plays over its life,
--- the offset and turn among them for a piece moving through its states
+-- velocity it inherits, and the curves and gradient it plays over its life
 type Launch = {
   spawn: CFrame,
   speed: number,
@@ -264,8 +570,6 @@ type Launch = {
   clear: value_curve.Curve,
   tint: ColorSequence,
   keypoints: { ColorSequenceKeypoint },
-  offset: value_curve.Curve,
-  turning: value_curve.Curve,
 }
 
 -- how pieces meet the world, built once per emit: the rays' filter, and the
@@ -298,6 +602,10 @@ type Flight = {
   -- the Color row's keypoints, read once for the emit's pieces that take it
   -- as it rests
   keypoints: { ColorSequenceKeypoint },
+
+  -- what a piece moving through its states samples them with, built once
+  -- for the emit's list; nil for a particle or a list of no state
+  states: ((t: number, out: state_list.Sample) -> state_list.Sample)?,
 }
 
 const forge_mesh = {}
@@ -392,6 +700,7 @@ forge_mesh.attributes = {
       return ColorSequence.new((ctx.ref :: BasePart).Color)
     end)
     :mod()
+    :readonly(hasStates, STATED_REASON)
     :label("Color")
     :hint("Color of each piece over its life."),
   Orientation = knob("FacingCamera")
@@ -402,16 +711,19 @@ forge_mesh.attributes = {
   Size = knob(value_curve.flat(1, 3))
     :valueCurve(3)
     :mod()
+    :readonly(hasStates, STATED_REASON)
     :label("Size")
     :hint("Factor on the template's size, or its special mesh's scale, over each piece's life."),
   Squash = knob(value_curve.flat(0, 1))
     :valueCurve(1)
     :mod()
+    :readonly(hasStates, STATED_REASON)
     :label("Squash")
     :hint("Stretch along each piece's up axis over its life, the other axes taking the opposite."),
   Transparency = knob(value_curve.flat(0, 1))
     :valueCurve(1)
     :mod()
+    :readonly(hasStates, STATED_REASON)
     :label("Transparency")
     :hint("Transparency of each piece over its life."),
 
@@ -429,11 +741,13 @@ forge_mesh.attributes = {
   Rate = knob(20):min(0):unit("perSecond"):hidden(disabled):label("Rate"):hint("Emits per second while Enabled."),
   Rotation = knob(vector.zero)
     :mod()
+    :hidden(stated)
     :label("Rotation")
     :hint("Initial rotation of each piece per axis, in degrees, drawn per piece."),
   RotSpeed = knob(vector.zero)
     :unit("perSecond")
     :mod()
+    :hidden(stated)
     :label("RotSpeed")
     :hint("Spin of each piece per axis, in degrees per second, drawn per piece."),
   Speed = knob(NumberRange.new(5, 5))
@@ -512,17 +826,8 @@ forge_mesh.attributes = {
     :options({ "Particle", "States" })
     :label("Motion")
     :hint("How each piece moves after it spawns: as a particle flies, or through the states it is given."),
-  Offset = knob(value_curve.flat(0, 3))
-    :valueCurve(3)
-    :unit("studs")
-    :mod()
-    :label("Offset")
-    :hint("Where each piece sits over its life, in studs along the template's own axes."),
-  Turn = knob(value_curve.flat(0, 3))
-    :valueCurve(3)
-    :mod()
-    :label("Turn")
-    :hint("How far each piece is turned over its life, in degrees about the template's own axes."),
+  -- the list of states each piece moves through, which Edit States writes
+  States = knob(state_list.EMPTY):stateList():hidden(always),
   Acceleration = knob(vector.zero)
     :unit("studsPerSecondSquared")
     :mod()
@@ -645,7 +950,7 @@ forge_mesh.layout = {
   },
   {
     title = "States",
-    entries = { "Offset", "Turn", { action = "edit_states", label = "Edit States" } },
+    entries = { { action = "edit_states", label = "Edit States" } },
     hidden = flown,
   },
   {
@@ -766,12 +1071,18 @@ const function piece(
   -- of the piece's own
   const decals = decalsOf(obj)
 
+  -- a piece moving through a list of states samples it into a table of its
+  -- own, once a frame, for its pose and its look alike
+  const states = flight.states
+  const sample = if states ~= nil then states(0, {} :: any) else nil
+
   const look = look_common.start(scope, obj, template, attrs, duration, sets, {
     owner = template,
     decals = decals,
     modes = true,
     rng = flight.rng,
     ownDefault = true,
+    stated = sample ~= nil,
   })
 
   -- one draw per curve for the piece's whole life, read through samplers built
@@ -880,7 +1191,12 @@ const function piece(
     end
   end
 
-  appear(0, true, false)
+  -- the states write a stated piece's look, its rows a particle's
+  const dress = if sample ~= nil
+    then dresser(obj, sample, look, decals, if meshed then objMesh else nil, rest, flight.rng:NextNumber())
+    else appear
+
+  dress(0, true, false)
 
   const locked = attrs.LockedToPart
   const windy = attrs.WindAffectsDrag
@@ -891,13 +1207,11 @@ const function piece(
   const posing = attrs.Motion == "States"
 
   -- a piece moving through its states stands on the template, moved by where
-  -- it spawned off the emitter's center, and no flight row reaches it
-  const stateAt = if posing
-    then poser(CFrame.new(at - origin.Position) * template.CFrame, launch.offset, launch.turning, flight.rng)
-    else nil
+  -- it spawned off the emitter's center, and no flight or turn row reaches it
+  const base = if posing then CFrame.new(at - origin.Position) * template.CFrame else nil
 
   -- where its states put it as it was last drawn, nil for a particle
-  local stance = if stateAt ~= nil then stateAt(0) else nil
+  local stance = if base ~= nil and sample ~= nil then base * sample.cframe else base
 
   local position = toVector(at)
   local velocity = toVector(launch.spawn.LookVector) * launch.speed + launch.inherited
@@ -917,8 +1231,13 @@ const function piece(
   const response = if collision ~= nil and not posing then table.clone(collision.config) else nil
 
   -- the initial turn, each step's spin added onto it
-  local rotation =
-    CFrame.fromOrientation(turn.x * utility.DEG_TO_RAD, turn.y * utility.DEG_TO_RAD, turn.z * utility.DEG_TO_RAD)
+  local rotation = if posing
+    then CFrame.identity
+    else CFrame.fromOrientation(
+      turn.x * utility.DEG_TO_RAD,
+      turn.y * utility.DEG_TO_RAD,
+      turn.z * utility.DEG_TO_RAD
+    )
 
   -- a piece locked to its parent accelerates in the parent's frame
   if not posing then
@@ -976,11 +1295,13 @@ const function piece(
     end)
   end
 
-  tween.drive(scope, attrs.RotSpeed(nil, duration), function(v: any)
-    if isVector(v) then
-      spin = toVector(v) * utility.DEG_TO_RAD
-    end
-  end)
+  if not posing then
+    tween.drive(scope, attrs.RotSpeed(nil, duration), function(v: any)
+      if isVector(v) then
+        spin = toVector(v) * utility.DEG_TO_RAD
+      end
+    end)
+  end
 
   -- the parent the piece spawned under, whose last pose is held once the
   -- template leaves it, so a destroyed parent never snaps a locked piece
@@ -1077,7 +1398,7 @@ const function piece(
 
   const function pose()
     if stance ~= nil then
-      return placed(stance * rotation) * look.offset()
+      return placed(stance) * look.offset()
     end
 
     const camera = if watching then workspace.CurrentCamera else nil
@@ -1176,8 +1497,8 @@ const function piece(
 
   -- one step through the states, cast from where the piece was drawn to where
   -- its states put it now: a Kill ends it there, any other hit pins it there
-  const function stand(t: number)
-    const nextStance = (stateAt :: (t: number) -> CFrame)(t)
+  const function stand()
+    const nextStance = if sample ~= nil then (base :: CFrame) * sample.cframe else base :: CFrame
     const was = stance :: CFrame
     const hit = if collision ~= nil
       then collision_common.cast(collision.params, toVector(was.Position), toVector(nextStance.Position))
@@ -1219,23 +1540,30 @@ const function piece(
 
     age += dt
 
+    const t = if duration > 0 then age / duration else 1
+
+    -- a pinned piece's look still plays through its states
+    if states ~= nil and sample ~= nil then
+      states(t, sample)
+    end
+
     if dt > 0 and not pinned then
-      if stateAt ~= nil then
-        stand(if duration > 0 then age / duration else 1)
+      if posing then
+        stand()
       else
         fly(dt)
-      end
 
-      const add = spin * dt
+        const add = spin * dt
 
-      if not pinned and moving and numeric_common.usable(add) then
-        rotation *= CFrame.fromOrientation(add.x, add.y, add.z)
+        if not pinned and moving and numeric_common.usable(add) then
+          rotation *= CFrame.fromOrientation(add.x, add.y, add.z)
+        end
       end
     end
 
     const over = not moving or age >= duration
 
-    appear(if duration > 0 then age / duration else 1, false, over)
+    dress(t, false, over)
     place()
 
     if over then
@@ -1351,7 +1679,14 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     read = -1,
     force = launch_common.force(rows),
     keypoints = (rows.Color.value :: ColorSequence).Keypoints,
+    states = nil,
   }
+
+  const list = rows.States :: state_list.List
+
+  if rows.Motion == "States" and #list > 0 then
+    flight.states = state_list.sampler(list, restOf(template))
+  end
 
   if rows.CollisionMode ~= "Off" then
     const exclude = { containers.root(), template }
@@ -1391,18 +1726,11 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   const squashRest = rows.Squash.value :: value_curve.Curve
   const clearRest = rows.Transparency.value :: value_curve.Curve
   const tintRest = rows.Color.value :: ColorSequence
-  const offsetRest = rows.Offset.value :: value_curve.Curve
-  const turnRest = rows.Turn.value :: value_curve.Curve
-
-  -- the state rows are read only by a piece moving through its states
-  const posing = rows.Motion == "States"
 
   const sized = modified(rows.Size)
   const squashed = modified(rows.Squash)
   const cleared = modified(rows.Transparency)
   const colored = modified(rows.Color)
-  const shifted = posing and modified(rows.Offset)
-  const turned = posing and modified(rows.Turn)
 
   const census = forge_mesh.pieces
 
@@ -1431,8 +1759,6 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
       clear = if cleared then curveOr(rows.Transparency().at(spawned), clearRest) else clearRest,
       tint = tint,
       keypoints = if colored then tint.Keypoints else flight.keypoints,
-      offset = if shifted then curveOr(rows.Offset().at(spawned), offsetRest) else offsetRest,
-      turning = if turned then curveOr(rows.Turn().at(spawned), turnRest) else turnRest,
     }
 
     lifetime.spawn(outstanding, piece, ctx, rows, template, launch, flight, sets)

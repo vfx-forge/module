@@ -42,12 +42,16 @@ export type Options = {
   ownDefault: boolean?,
   -- draws the random starts
   rng: { NextNumber: (self: any) -> number }?,
+  -- the piece moves through states that set its decals' transparency and
+  -- glow and its surface, so no row tweens them
+  stated: boolean?,
 }
 
 export type Look = {
   size: (size: Vector3) -> (),
   refit: () -> (),
   offset: () -> CFrame,
+  glow: (strength: number, tint: Color3, color: Color3) -> (),
   play: () -> (),
   wait: () -> (),
   linger: () -> (),
@@ -153,6 +157,7 @@ function common.start(
   const decals = if opts then opts.decals else nil
   const modes = opts ~= nil and opts.modes == true
   const rng = if opts then opts.rng else nil
+  const stated = opts ~= nil and opts.stated == true
 
   const destroyDelay = attrs.DestroyDelay or 0
 
@@ -346,6 +351,40 @@ function common.start(
     end
   end
 
+  -- the template's own surface, which the piece's copy of it wears times the
+  -- glow, read on the first glow
+  local authored: any = nil
+  local based = false
+
+  -- the surface the piece wears multiplied by these: a texture set's frame, a
+  -- mesh frame's material, else its own surface over the template's
+  function look.glow(strength: number, tint: Color3, tone: Color3)
+    if textures then
+      textures.glow(strength, tint, tone)
+      return
+    end
+
+    if shown and set and set.materials then
+      shown.glow(strength, tint, tone)
+      return
+    end
+
+    if not based then
+      based = true
+      authored = template:FindFirstChildOfClass("SurfaceAppearance")
+    end
+
+    if surface == nil or authored == nil then
+      return
+    end
+
+    const baseTint, baseColor = authored.EmissiveTint, authored.Color
+
+    surface.EmissiveStrength = authored.EmissiveStrength * strength
+    surface.EmissiveTint = Color3.new(baseTint.R * tint.R, baseTint.G * tint.G, baseTint.B * tint.B)
+    surface.Color = Color3.new(baseColor.R * tone.R, baseColor.G * tone.G, baseColor.B * tone.B)
+  end
+
   const function glow()
     const strength = attrs.EmissiveStrength(nil, duration)
     const tint = attrs.EmissiveTint(nil, duration)
@@ -363,39 +402,21 @@ function common.start(
       return
     end
 
-    const framed = set ~= nil and set.materials and textures == nil
-    const authored = template:FindFirstChildOfClass("SurfaceAppearance") :: any
-    const baseStrength = if authored then authored.EmissiveStrength else 1
-    const baseTint = if authored then authored.EmissiveTint else WHITE
-    const baseColor = if authored then authored.Color else WHITE
-
     local glowStrength, glowTint, glowColor = strength.at(0), tint.at(0), surfaceColor.at(0)
-
-    const function shine()
-      if textures then
-        textures.glow(glowStrength, glowTint, glowColor)
-      elseif shown and framed then
-        shown.glow(glowStrength, glowTint, glowColor)
-      elseif surface and authored then
-        surface.EmissiveStrength = baseStrength * glowStrength
-        surface.EmissiveTint = Color3.new(baseTint.R * glowTint.R, baseTint.G * glowTint.G, baseTint.B * glowTint.B)
-        surface.Color = Color3.new(baseColor.R * glowColor.R, baseColor.G * glowColor.G, baseColor.B * glowColor.B)
-      end
-    end
 
     tween.drive(scope, strength, function(v: number)
       glowStrength = v
-      shine()
+      look.glow(glowStrength, glowTint, glowColor)
     end)
 
     tween.drive(scope, tint, function(v: Color3)
       glowTint = v
-      shine()
+      look.glow(glowStrength, glowTint, glowColor)
     end)
 
     tween.drive(scope, surfaceColor, function(v: Color3)
       glowColor = v
-      shine()
+      look.glow(glowStrength, glowTint, glowColor)
     end)
   end
 
@@ -456,31 +477,34 @@ function common.start(
       -- a decal storing nothing holds where it rests unless its model stores
       -- a fade for it, an end or an old start alone
       const decalET = if attrs.DecalEndTransparency ~= nil then legacy_decalET else decalST
-      const decalTp = mods.track(from, "attribute", "Transparency", mods.ramp(decalST, decalET), duration)
+      -- the states set a stated piece's decals, transparency and glow
+      if not stated then
+        const decalTp = mods.track(from, "attribute", "Transparency", mods.ramp(decalST, decalET), duration)
 
-      decal.Transparency = decalTp.at(0)
+        decal.Transparency = decalTp.at(0)
 
-      if decalTp.animated then
-        tween.play(scope, curve.new(decalTp.span, "linear"), function(_, _, elapsed: number)
-          decal.Transparency = decalTp.at(elapsed)
-        end)
-      end
+        if decalTp.animated then
+          tween.play(scope, curve.new(decalTp.span, "linear"), function(_, _, elapsed: number)
+            decal.Transparency = decalTp.at(elapsed)
+          end)
+        end
 
-      const glowMode = attr.get(from, "GlowMode", "None", true)
-      const first = not glowing[decal]
+        const glowMode = attr.get(from, "GlowMode", "None", true)
+        const first = not glowing[decal]
 
-      glowing[decal] = true
+        glowing[decal] = true
 
-      -- an animator on the decal's Color3 is the explicit ask, so the mesh
-      -- leaves the color to it
-      const animated = emitters.animated(decal)
+        -- an animator on the decal's Color3 is the explicit ask, so the mesh
+        -- leaves the color to it
+        const animated = emitters.animated(decal)
 
-      if first and not (animated ~= nil and animated.Color3) then
-        decalColor(scope, decal, to.Color3, duration, glowMode == "Color")
-      end
+        if first and not (animated ~= nil and animated.Color3) then
+          decalColor(scope, decal, to.Color3, duration, glowMode == "Color")
+        end
 
-      if glowMode == "Emissive" and first then
-        emissiveGlow(scope, decal, duration)
+        if glowMode == "Emissive" and first then
+          emissiveGlow(scope, decal, duration)
+        end
       end
 
       const flipbook = found.flipbooks[from]
@@ -536,7 +560,9 @@ function common.start(
       end)
     end
 
-    glow()
+    if not stated then
+      glow()
+    end
 
     if decals and legacy_isFlipbook then
       legacyFlipbook(decals.list)

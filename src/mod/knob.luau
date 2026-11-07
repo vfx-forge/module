@@ -62,6 +62,7 @@ type Fields = {
   units: string?,
   hiddenRule: Rule?,
   readonlyRule: Rule?,
+  readonlyReason: string?,
   isSlider: boolean,
   dragLower: number?,
   dragUpper: number?,
@@ -99,6 +100,7 @@ local function make(default: any): Knob
     units = nil,
     hiddenRule = nil,
     readonlyRule = nil,
+    readonlyReason = nil,
     isSlider = false,
     dragLower = nil,
     dragUpper = nil,
@@ -165,8 +167,10 @@ function Knob.hidden(self: Knob, rule: Rule): Knob
   return self
 end
 
-function Knob.readonly(self: Knob, rule: Rule): Knob
+-- a row the rule makes read only, `reason` the plugin's tooltip on it then
+function Knob.readonly(self: Knob, rule: Rule, reason: string?): Knob
   self.readonlyRule = rule
+  self.readonlyReason = reason
   return self
 end
 
