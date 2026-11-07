@@ -117,4 +117,11 @@ function common.squash(size: Vector3, s: number): Vector3
   return Vector3.new(size.X * across, size.Y * up, size.Z * across)
 end
 
+-- the size `squash` makes this one from at the same `s`
+function common.unsquash(size: Vector3, s: number): Vector3
+  const up = if s >= 0 then 1 + s else 1 / (1 - s)
+
+  return Vector3.new(size.X * up, size.Y / up, size.Z * up)
+end
+
 return common

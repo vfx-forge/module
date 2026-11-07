@@ -71,4 +71,15 @@ function curves.preset(name: (string | buffer)?)
   logger.error(`unknown curve preset {tostring(name)}`)
 end
 
+-- a preset's chain as its points, y up, the way `PRESETS` writes them
+function curves.points(name: string): { vector }
+  const points = path.deserializePath(curves.preset(name) :: string)
+
+  for i, p in points do
+    points[i] = vector.create(p.x, 1 - p.y, 0)
+  end
+
+  return points
+end
+
 return curves
