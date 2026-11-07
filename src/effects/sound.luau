@@ -28,22 +28,30 @@ local sound = {}
 sound.id = "sound"
 sound.display = { name = "Sound", icon = "sound", order = 70 }
 sound.classifier = "Sound"
+sound.copies = true
 
 sound.attributes = {
-  EmitCount = knob(1):min(0):label("Count"):hint("The amount of effects to emit."),
+  EmitCount = knob(1)
+    :min(0)
+    :label("Count")
+    :hint("How many sounds to play, each drawn from the sound pool when the sound has one."),
   EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
-  EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
+  EmitDuration = knob(0)
+    :min(0)
+    :unit("seconds")
+    :label("StopAfter")
+    :hint("Seconds each sound plays before it is stopped, 0 to play it to its end."),
   EmitInterval = knob(NumberRange.new(0, 0))
     :min(0)
     :unit("seconds")
     :label("Interval")
-    :hint("Seconds between each emission when using continuous emit."),
-  RepeatCount = knob(1):min(0):label("Count"):hint("How many times each emitted sound is replayed."),
+    :hint("Seconds between one sound and the next."),
+  RepeatCount = knob(1):min(0):label("RepeatCount"):hint("How many times each drawn sound plays."),
   RepeatInterval = knob(NumberRange.new(0, 0))
     :min(0)
     :unit("seconds")
-    :label("Interval")
-    :hint("Seconds between each repeat of a sound."),
+    :label("RepeatInterval")
+    :hint("Seconds between the plays of one drawn sound."),
   SoundPoolTag = knob(""):label("Name"):hint("CollectionService tag grouping sounds into a shared random pool."),
   SoundPoolWeight = knob(1):min(0):label("Rarity"):hint("Weight for random selection in sound pools."),
   SoundPoolIsSource = knob(false):label("IsSource"):hint("Whether this sound is the pool's source."),
@@ -65,17 +73,39 @@ sound.properties = {
     :hint("Distance in studs the clone plays at full volume within."),
 }
 
+-- the plugin's card. a property row, or a `property` entry, is the sound's own
+-- property, which the card moves there from its engine category
 sound.layout = {
-  { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration", "EmitInterval" } },
-  { title = "Repeat", entries = { "RepeatCount", "RepeatInterval" } },
-  { title = "Playback", entries = { "Volume", "PlaybackSpeed", "RollOffMinDistance" } },
+  { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitInterval" } },
   {
-    title = "Sound Pool",
+    title = "Playback",
     entries = {
-      "SoundPoolTag",
-      "SoundPoolWeight",
-      { title = "Sound", entries = { "SoundPoolIsSource", "SoundPoolInheritAttributes" } },
+      { property = "SoundId" },
+      "Volume",
+      "PlaybackSpeed",
+      "EmitDuration",
+      { property = "Looped" },
+      { property = "PlayOnRemove" },
     },
+  },
+  {
+    title = "Emitter",
+    entries = { "RollOffMinDistance", { property = "RollOffMaxDistance" }, { property = "RollOffMode" } },
+  },
+  {
+    title = "Regions",
+    entries = { { property = "PlaybackRegionsEnabled" }, { property = "PlaybackRegion" }, { property = "LoopRegion" } },
+  },
+}
+
+-- the pool and the repeats of what it draws, a card of their own
+sound.cards = {
+  ["Sound Pool"] = {
+    {
+      title = "Pool",
+      entries = { "SoundPoolTag", "SoundPoolWeight", "SoundPoolIsSource", "SoundPoolInheritAttributes" },
+    },
+    { title = "Repeat", entries = { "RepeatCount", "RepeatInterval" } },
   },
 }
 
@@ -184,7 +214,7 @@ end
 -- one clone played to its end: its three tracks are seeded from its own
 -- properties once it has loaded, over its own asset length, through the rows
 -- of whichever sound the emit reads
-local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?, emitDuration: number)
+local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?, emitDuration: number, held: { any })
   local ref = ctx.ref :: Sound
   local scope = ctx.scope
 
@@ -205,6 +235,11 @@ local function play(ctx: reader.Ctx, props: any, clone: Sound, partClone: Part?,
   -- from); the three calls below run without a yield between them, so no
   -- other clone of this emit can move the seam in the meantime
   ctx.obj = clone
+
+  -- the clone's writers end before `held` gives it back
+  if ctx.copied then
+    ctx.copied(clone, held)
+  end
 
   local volume = props.Volume(nil, clone.TimeLength)
   local speed = props.PlaybackSpeed(nil, clone.TimeLength)
@@ -419,7 +454,14 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
         -- rows read through the registry keep the context they were read
         -- with, so play's ctx.obj = clone below never moves their seed there,
         -- which is fine since the clone is a copy of the sound they read
-        ctx = { ref = picked, obj = picked, scope = scope, effect = ctx.effect, shared = ctx.shared }
+        ctx = {
+          ref = picked,
+          obj = picked,
+          scope = scope,
+          effect = ctx.effect,
+          shared = ctx.shared,
+          copied = ctx.copied,
+        }
       end
     end
   end
@@ -448,7 +490,7 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
         local held = lifetime.hold(scope, {})
         local clone, partClone = createSoundClone(ref, sourceSound, held)
 
-        play(ctx, props, clone, partClone, emitDuration)
+        play(ctx, props, clone, partClone, emitDuration, held)
 
         lifetime.releasePlain(held)
       end)

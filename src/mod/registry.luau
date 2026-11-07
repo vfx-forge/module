@@ -423,6 +423,12 @@ local function checkLayout(found: Found, id: string, entries: { any }, rows: { [
       if not rows[entry] then
         fail(found, id, `layout names no row {entry}`)
       end
+    elseif type(entry) == "table" and entry.property ~= nil then
+      -- an engine property of the instance, which the plugin's card moves here
+      -- from its own category; the runtime reads nothing from it
+      if type(entry.property) ~= "string" then
+        fail(found, id, "a property entry needs a string property")
+      end
     elseif type(entry) == "table" and entry.action ~= nil then
       if type(entry.action) ~= "string" or type(entry.label) ~= "string" then
         fail(found, id, "an action row needs a string action and label")
@@ -444,7 +450,7 @@ local function checkLayout(found: Found, id: string, entries: { any }, rows: { [
 
       checkLayout(found, id, entry.entries, rows)
     else
-      fail(found, id, "a layout entry is a row name, an action row or a group")
+      fail(found, id, "a layout entry is a row name, a property, an action row or a group")
     end
   end
 end
@@ -652,6 +658,22 @@ function registry.problems(module: Module, except: Module?): { string }
     end
   end
 
+  -- the layouts of the plugin's cards beside the main one, which edit more
+  -- rows of the same instance
+  if module.cards ~= nil then
+    if type(module.cards) ~= "table" then
+      fail(found, id, "cards must map a card's name to its layout")
+    else
+      for name, layout in module.cards do
+        if type(name) ~= "string" or type(layout) ~= "table" then
+          fail(found, id, "cards must map a card's name to its layout")
+        else
+          checkLayout(found, id, layout, rows)
+        end
+      end
+    end
+  end
+
   return found
 end
 
@@ -694,6 +716,10 @@ function registry.register(module: Module, isCustom: boolean?, isBundled: boolea
 
   if module.layout ~= nil then
     freezeLayout(module.layout)
+  end
+
+  for _, layout in module.cards or {} do
+    freezeLayout(layout)
   end
 
   local subjects = registry.subjects(module.classifier)

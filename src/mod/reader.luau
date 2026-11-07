@@ -19,10 +19,14 @@ export type Module = {
   attributes: { [string]: knob.Knob },
   properties: { [string]: knob.Knob },
   layout: { any }?,
+  -- the layouts of the plugin's cards beside the main one, by card name
+  cards: { [string]: { any } }?,
   companions: { { [string]: knob.Knob } }?,
   duration: knob.Rule?,
   constant: boolean?,
   events: { string }?,
+  -- plays on copies of its instance, each handed to ctx.copied once made
+  copies: boolean?,
   emit: (ctx: any, attrs: any, props: any) -> (),
   selected: ((ctx: any) -> ())?,
 }
@@ -44,6 +48,10 @@ export type Ctx = {
   shared: Shared?,
   constant: boolean?,
   piece: mods.Piece?,
+
+  -- set for a module that copies: drives the queues no row owns on a copy,
+  -- until `holder` lets it go
+  copied: ((copy: Instance, holder: any) -> ())?,
 }
 
 export type Track = {

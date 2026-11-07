@@ -15,6 +15,7 @@ local particle = {}
 particle.id = "particle"
 particle.display = { name = "Particle", icon = "particle", order = 20 }
 particle.classifier = "ParticleEmitter"
+particle.copies = true
 
 particle.attributes = {
   -- a count only the plugin defaults: anywhere else a particle emits once an
@@ -139,6 +140,12 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   -- a count the reader could not make a number of, text that spells none,
   -- emits nothing rather than throwing on the compare
   if type(count) ~= "number" or (count <= 0 and duration <= 0) then
+    -- what it emits nothing from still has its queues driven, as before it
+    -- copied
+    if ctx.copied then
+      ctx.copied(ref, scope)
+    end
+
     return
   end
 
@@ -149,6 +156,10 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   end
 
   ctx.obj = obj
+
+  if ctx.copied then
+    ctx.copied(obj, scope)
+  end
 
   -- an emitter left enabled would emit on its own; one another emit's window
   -- holds is that window's to switch off

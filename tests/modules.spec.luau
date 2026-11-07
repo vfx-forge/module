@@ -248,6 +248,10 @@ harness.suite(function()
 
         walk(module.layout or {})
 
+        for _, layout in module.cards or {} do
+          walk(layout)
+        end
+
         for _, rows in { module.attributes, module.properties } do
           for name, row in rows do
             if row.hiddenRule == nil then

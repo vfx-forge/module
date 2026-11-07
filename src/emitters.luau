@@ -152,7 +152,23 @@ export type DriveOpts = {
 
   -- called once the driver is let go, however it ends
   ended: (() -> ())?,
+
+  -- the holder of the copy it drives, which ends the driver before it lets
+  -- the copy go back to the pool, so no write lands on a copy another effect
+  -- has taken since
+  owner: any?,
 }
+
+-- an effect gives its pool takes back among its cleanups and a plain holder
+-- in reverse order, so a deferred callback on one and a later entry in the
+-- other both run while the copy is still this emit's
+local function before(owner: any, release: () -> ())
+  if type(owner) == "table" and owner.emit ~= nil then
+    lifetime.defer(owner, release)
+  else
+    table.insert(owner, release)
+  end
+end
 
 -- drives one queue on one target as a child effect of the same emit, so the
 -- emit stays open while the driver runs and a clear stops it with everything
@@ -207,6 +223,12 @@ local function drive(
   end
 
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
+
+  if opts ~= nil and opts.owner ~= nil then
+    before(opts.owner, function()
+      lifetime.kill(fx)
+    end)
+  end
 
   lifetime.run(fx, function(driver)
     local failures = 0
@@ -344,6 +366,12 @@ local function applyRandomizer(target: Instance, child: legacy_mods.Child, scope
   -- an effect of its own on the same emit, so the draw outlives the dispatch
   -- that made it until the next frame and a clear still gives it back
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
+
+  if opts ~= nil and opts.owner ~= nil then
+    before(opts.owner, function()
+      lifetime.kill(fx)
+    end)
+  end
   local rule = endOf(queue)
   local writer = lifetime.write(fx, target, child.source, child.name, rule)
 
@@ -402,16 +430,23 @@ end
 -- `reflected`, a custom effect's mirrored properties, limits it to the panel
 -- queues on those: true for every property, or the set it names. `map` is the
 -- attributes a reader already read off the instance, so one with a module is
--- read once rather than once more here
+-- read once rather than once more here. `from` is the instance the queues are
+-- stored on when `obj` is a copy an effect plays on, and `owner` the holder of
+-- that copy (DriveOpts.owner)
 function emitters.applyMods(
   obj: Instance,
   scope: types.scope,
   duration: number,
   owned: { [string]: { [string]: boolean } }?,
   reflected: registry.Reflected?,
-  map: { [string]: any }?
+  map: { [string]: any }?,
+  from: Instance?,
+  owner: any?
 )
-  for key in (if map ~= nil then map else attr.map(obj)) do
+  const stored = from or obj
+  const opts = if owner ~= nil then { owner = owner } else nil
+
+  for key in (if map ~= nil then map else attr.map(stored)) do
     local source: string? = nil
     local name: string? = nil
 
@@ -436,7 +471,7 @@ function emitters.applyMods(
       continue
     end
 
-    local lanes = mods.read(obj, source :: string, name :: string)
+    local lanes = mods.read(stored, source :: string, name :: string)
     -- the applier has no clock to fire an event from and no drawn lifetime to
     -- place an end against, so it drives the one lane that starts at the emit
     local queue = if lanes ~= nil then lanes.start else nil
@@ -445,7 +480,7 @@ function emitters.applyMods(
       continue
     end
 
-    drive(obj, source :: string, name :: string, queue, scope, duration)
+    drive(obj, source :: string, name :: string, queue, scope, duration, opts)
   end
 end
 
@@ -669,7 +704,19 @@ function emitters.dispatch(
     local animates = obj:HasTag(utility.PROPERTY_ANIMATOR_TAG)
 
     if not constant and not animates and (not own or reflected ~= nil) then
-      emitters.applyMods(obj, scope, ctx.duration :: number, owned, reflected, map)
+      -- an effect that plays on a copy hands each copy over once it has made
+      -- it, or the queues would drive the instance it was copied from
+      if effect.copies then
+        ctx.copied = function(copy: Instance, holder: any)
+          if copy == obj then
+            emitters.applyMods(obj, scope, ctx.duration :: number, owned, reflected, map)
+          else
+            emitters.applyMods(copy, scope, ctx.duration :: number, owned, reflected, map, obj, holder)
+          end
+        end
+      else
+        emitters.applyMods(obj, scope, ctx.duration :: number, owned, reflected, map)
+      end
     end
 
     utility.try(`failed to emit {effect.id} with error: %s`, effect.emit, ctx, attrs, props)

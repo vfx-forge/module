@@ -563,36 +563,6 @@ forge_mesh.layout = {
   },
   { title = "EmitterShape", entries = { "Shape", "ShapeFace", "ShapePartial", "ShapeStyle" } },
   {
-    title = "Flipbook",
-    entries = {
-      {
-        title = "Mesh Frames",
-        entries = {
-          "FlipbookMode",
-          "FlipbookStartRandom",
-          "FlipbookReverse",
-          { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
-          "SyncDuration",
-          "FlipbookLoopCount",
-          "FrameTransparency",
-        },
-        hidden = noFrames,
-      },
-      {
-        title = "Material Frames",
-        entries = {
-          "TextureMode",
-          "TextureStartRandom",
-          "TextureReverse",
-          "TextureFps",
-          "TextureSyncDuration",
-          "TextureLoopCount",
-        },
-        hidden = noTextures,
-      },
-    },
-  },
-  {
     title = "Motion",
     entries = {
       "Motion",
@@ -623,6 +593,38 @@ forge_mesh.layout = {
     entries = {
       { action = "toggle_paths", label = "Show Paths" },
       { action = "toggle_textures", label = "Load Textures" },
+    },
+  },
+}
+
+-- the plugin's Flipbook card, which edits these rows of the template apart
+-- from its main card
+forge_mesh.cards = {
+  Flipbook = {
+    {
+      title = "Mesh Frames",
+      entries = {
+        "FlipbookMode",
+        "FlipbookStartRandom",
+        "FlipbookReverse",
+        { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
+        "SyncDuration",
+        "FlipbookLoopCount",
+        "FrameTransparency",
+      },
+      hidden = noFrames,
+    },
+    {
+      title = "Material Frames",
+      entries = {
+        "TextureMode",
+        "TextureStartRandom",
+        "TextureReverse",
+        "TextureFps",
+        "TextureSyncDuration",
+        "TextureLoopCount",
+      },
+      hidden = noTextures,
     },
   },
 }

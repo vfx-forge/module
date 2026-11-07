@@ -642,6 +642,7 @@ const function hiddenOf(part: BasePart): { [string]: boolean }
   end
 
   walk(forge_mesh.layout)
+  walk(forge_mesh.cards.Flipbook)
 
   return hidden
 end

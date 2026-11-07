@@ -28,7 +28,7 @@ resize.PROPERTY_UNITS = {
 }
 
 -- ratios resize scales as if they were lengths. the flag says whether the
--- resting value scales with them: a spin model's scale is its absolute size,
+-- resting value scales with them: a model's scale is its absolute size,
 -- where a beam's length scale multiplies the attachment distance that
 -- scaleShape already scales. a mesh's Size is a curve of factors on its
 -- template, scaled in place of the template as a ParticleEmitter's Size is

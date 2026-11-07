@@ -30,6 +30,7 @@ beam.classifier = "Beam"
 
 -- the beam runs the effects nested under it itself, per emit, on its clone
 beam.components = "Instance"
+beam.copies = true
 
 beam.attributes = {
   EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
@@ -43,13 +44,13 @@ beam.attributes = {
   LengthScale = knob(1)
     :aliases("Length_Scale")
     :mod()
-    :label("Scale")
+    :label("LengthScale")
     :hint("Multiplier on the distance between the beam's attachments."),
   TransparencyScale = knob(1)
     :min(0)
     :aliases("Transparency_Scale")
     :mod()
-    :label("Scale")
+    :label("TransparencyScale")
     :hint("Multiplier on the beam's transparency keypoints."),
   -- a cycle nothing authors runs over the effect's own duration, which the
   -- reader has decided by the time a row resolves
@@ -89,33 +90,60 @@ beam.properties = {
   TextureLength = knob():aliases("Length_Texture"):mod():label("Texture"):hint("Texture length over the effect."),
 }
 
+-- the plugin's card. a property row, or a `property` entry, is the beam's own
+-- property, which the card moves there from its engine category
 beam.layout = {
   { title = "Emit", entries = { "EmitDelay" } },
   { title = "Effect", entries = { "EffectDuration", "Speed" } },
   {
-    title = "Flipbook",
-    entries = {
-      { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
-      "SyncDuration",
-      "FlipbookLoop",
-      "FlipbookLoopCount",
-    },
-  },
-  {
     title = "Shape",
     entries = {
-      { title = "Widths", entries = { "Width0", "Width1" } },
-      { title = "Curve Sizes", entries = { "CurveSize0", "CurveSize1" } },
+      { property = "Attachment0" },
+      { property = "Attachment1" },
+      "Width0",
+      "Width1",
+      "CurveSize0",
+      "CurveSize1",
       "LengthScale",
+      { property = "Segments" },
+      { property = "FaceCamera" },
     },
   },
   {
     title = "Texture",
     entries = {
-      "TextureSpeed",
+      { property = "Texture" },
+      { property = "TextureMode" },
       "TextureLength",
-      "TransparencyScale",
+      "TextureSpeed",
       { action = "toggle_textures", label = "Load Textures" },
+    },
+  },
+  {
+    title = "Appearance",
+    entries = {
+      { property = "Color" },
+      { property = "Transparency" },
+      "TransparencyScale",
+      { property = "Brightness" },
+      { property = "LightEmission" },
+      { property = "LightInfluence" },
+      { property = "ZOffset" },
+    },
+  },
+}
+
+-- the flipbook's card, which the plugin shows once the beam has frames
+beam.cards = {
+  Flipbook = {
+    {
+      title = "Cycle",
+      entries = {
+        { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
+        "SyncDuration",
+        "FlipbookLoop",
+        "FlipbookLoopCount",
+      },
     },
   },
 }
@@ -167,6 +195,10 @@ local function prepare(ctx: reader.Ctx, attrs: any): Beam?
   -- the reader has already run by here, so the clone is for what this effect
   -- reads of its own below and for the plans that will read from it
   ctx.obj = clone
+
+  if ctx.copied then
+    ctx.copied(clone, scope)
+  end
 
   return clone
 end
