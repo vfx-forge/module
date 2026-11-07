@@ -63,6 +63,7 @@ type Fields = {
   hiddenRule: Rule?,
   readonlyRule: Rule?,
   readonlyReason: string?,
+  alphaRow: string?,
   isSlider: boolean,
   dragLower: number?,
   dragUpper: number?,
@@ -101,6 +102,7 @@ local function make(default: any): Knob
     hiddenRule = nil,
     readonlyRule = nil,
     readonlyReason = nil,
+    alphaRow = nil,
     isSlider = false,
     dragLower = nil,
     dragUpper = nil,
@@ -171,6 +173,12 @@ end
 function Knob.readonly(self: Knob, rule: Rule, reason: string?): Knob
   self.readonlyRule = rule
   self.readonlyReason = reason
+  return self
+end
+
+-- a color row whose editor also edits the named row as its transparency
+function Knob.alpha(self: Knob, row: string): Knob
+  self.alphaRow = row
   return self
 end
 

@@ -713,6 +713,7 @@ forge_mesh.attributes = {
     end)
     :mod()
     :readonly(hasStates, STATED_REASON)
+    :alpha("Transparency")
     :label("Color")
     :hint("Color of each piece over its life."),
   Orientation = knob("FacingCamera")
