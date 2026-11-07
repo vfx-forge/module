@@ -4,29 +4,40 @@ const reader = require("@mod/reader")
 
 const FORCES = { "None", "Gravity", "Orbit" }
 
-const function forceless(_, attrs: any)
-  return attrs.Force == "None"
+-- whether the template moves its pieces through their states, where no force
+-- reaches them, read off the instance as the Force is
+const function stated(ctx: any): boolean
+  const ref = if ctx ~= nil then ctx.ref else nil
+
+  return ref ~= nil and attr.get(ref, "Motion", nil) == "States"
 end
 
-const function gravityless(_, attrs: any)
-  return attrs.Force ~= "Gravity"
+const function forceless(ctx: any, attrs: any)
+  return stated(ctx) or attrs.Force == "None"
 end
 
-const function orbitless(_, attrs: any)
-  return attrs.Force ~= "Orbit"
+const function gravityless(ctx: any, attrs: any)
+  return stated(ctx) or attrs.Force ~= "Gravity"
 end
 
-const function unlaunched(_, attrs: any)
-  return attrs.Force ~= "Gravity" or attrs.OrbitLaunch ~= true
+const function orbitless(ctx: any, attrs: any)
+  return stated(ctx) or attrs.Force ~= "Orbit"
+end
+
+const function unlaunched(ctx: any, attrs: any)
+  return stated(ctx) or attrs.Force ~= "Gravity" or attrs.OrbitLaunch ~= true
 end
 
 const common = {}
+
+common.stated = stated
 
 -- what moves a mesh's pieces around the emitter or a target, declared apart
 -- from the effect's own rows so the force card is their one editor
 common.rows = {
   Force = knob("None")
     :options(FORCES)
+    :hidden(stated)
     :label("Force")
     :hint("What moves each piece around the emitter or a target: a pull or a ring."),
   ForceTarget = knob()

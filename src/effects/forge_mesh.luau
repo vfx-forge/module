@@ -13,6 +13,7 @@ const value_curve = require("@mod/value_curve")
 const force_rows = require("@mod/common/force_rows")
 const look_common = require("@mod/common/look")
 const launch_common = require("@mod/common/launch")
+const states_common = require("@mod/common/states")
 const material_rows = require("@mod/common/material_rows")
 const orient_common = require("@mod/common/orient")
 const bezier_common = require("@mod/common/bezier")
@@ -79,6 +80,15 @@ end
 
 const function textureSynced(_, attrs: any)
   return attrs.TextureSyncDuration == true
+end
+
+-- whether each piece moves through its states, where no flight row reaches it
+const function stated(_, attrs: any)
+  return attrs.Motion == "States"
+end
+
+const function flown(_, attrs: any)
+  return attrs.Motion ~= "States"
 end
 
 -- the force card's rows are not this module's, so a rule reads its Force off
@@ -214,9 +224,23 @@ const function finite(cf: CFrame)
     and numeric_common.usable(cf.ZVector)
 end
 
+-- one piece's pose through its states at `t` of its life: `base` moved by its
+-- Offset and turned by its Turn, each drawn once for the whole life
+const function poser(base: CFrame, offset: value_curve.Curve, turn: value_curve.Curve, rng: Random)
+  const offsetAt = value_curve.sampler(offset, value_curve.draw(offset, rng))
+  const turnAt = value_curve.sampler(turn, value_curve.draw(turn, rng))
+
+  return function(t: number): CFrame
+    const o, r = offsetAt(t), turnAt(t)
+
+    return states_common.pose(base, vector.create(o[1], o[2], o[3]), vector.create(r[1], r[2], r[3]))
+  end
+end
+
 -- what one piece draws as it spawns: its launch frame, whose look vector is
 -- the way it sets off, its speed and life, its initial turn in degrees, the
--- velocity it inherits, and the curves and gradient it plays over its life
+-- velocity it inherits, and the curves and gradient it plays over its life,
+-- the offset and turn among them for a piece moving through its states
 type Launch = {
   spawn: CFrame,
   speed: number,
@@ -228,6 +252,8 @@ type Launch = {
   clear: value_curve.Curve,
   tint: ColorSequence,
   keypoints: { ColorSequenceKeypoint },
+  offset: value_curve.Curve,
+  turning: value_curve.Curve,
 }
 
 -- how pieces meet the world, built once per emit: the rays' filter, and the
@@ -358,6 +384,7 @@ forge_mesh.attributes = {
     :hint("Color of each piece over its life."),
   Orientation = knob("FacingCamera")
     :options(orient_common.MODES)
+    :hidden(stated)
     :label("Orientation")
     :hint("How each piece turns as it flies: its own pose, toward the camera or along its velocity."),
   Size = knob(value_curve.flat(1, 3))
@@ -400,11 +427,14 @@ forge_mesh.attributes = {
   Speed = knob(NumberRange.new(5, 5))
     :unit("studsPerSecond")
     :mod()
-    :hidden(force_rows.speedless)
+    :hidden(function(ctx: any, attrs: any)
+      return stated(ctx, attrs) or force_rows.speedless(ctx)
+    end)
     :label("Speed")
     :hint("Speed each piece launches at along its emission direction, drawn per piece."),
   SpreadAngle = knob(vector.zero)
     :mod()
+    :hidden(stated)
     :label("SpreadAngle")
     :hint("Random spread of each piece's launch direction, in degrees about X and Y."),
 
@@ -414,6 +444,7 @@ forge_mesh.attributes = {
     :hint("Volume shape the pieces spawn in."),
   ShapeFace = knob("Outward")
     :options({ "InAndOut", "Inward", "Outward" })
+    :hidden(stated)
     :label("Face")
     :hint("Whether pieces launch out of the shape, into it or both."),
   ShapePartial = knob(1):min(0):max(1):hidden(boxed):label("Partial"):hint("Fraction of the shape pieces spawn in."),
@@ -465,23 +496,42 @@ forge_mesh.attributes = {
     "Cycles of the material frames to play, 0 repeating for the piece's life, below 0 until Mode leaves Loop or PingPong."
   ),
 
-  Motion = knob("Particle"):options({ "Particle" }):label("Motion"):hint("How each piece moves after it spawns."),
+  Motion = knob("Particle")
+    :options({ "Particle", "States" })
+    :label("Motion")
+    :hint("How each piece moves after it spawns: as a particle flies, or through the states it is given."),
+  Offset = knob(value_curve.flat(0, 3))
+    :valueCurve(3)
+    :unit("studs")
+    :mod()
+    :label("Offset")
+    :hint("Where each piece sits over its life, in studs along the template's own axes."),
+  Turn = knob(value_curve.flat(0, 3))
+    :valueCurve(3)
+    :mod()
+    :label("Turn")
+    :hint("How far each piece is turned over its life, in degrees about the template's own axes."),
   Acceleration = knob(vector.zero)
     :unit("studsPerSecondSquared")
     :mod()
-    :hidden(ringed)
+    :hidden(function(ctx: any, attrs: any)
+      return stated(ctx, attrs) or ringed(ctx)
+    end)
     :label("Acceleration")
     :hint("Constant acceleration on each piece, in the parent's frame while LockedToPart."),
   Turbulence = knob(0)
     :min(0)
     :unit("studs")
     :mod()
+    :hidden(stated)
     :label("Turbulence")
     :hint("How far each piece wanders off its path, drawn per piece."),
   TurbulenceFrequency = knob(1)
     :min(0)
     :unit("perSecond")
-    :hidden(calm)
+    :hidden(function(ctx: any, attrs: any)
+      return stated(ctx, attrs) or calm(ctx, attrs)
+    end)
     :label("TurbulenceFrequency")
     :hint("How fast each piece's wander changes."),
 
@@ -489,18 +539,24 @@ forge_mesh.attributes = {
     :min(0)
     :unit("perSecond")
     :mod()
-    :hidden(ringed)
+    :hidden(function(ctx: any, attrs: any)
+      return stated(ctx, attrs) or ringed(ctx)
+    end)
     :label("Drag")
     :hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
   LockedToPart = knob(false):label("LockedToPart"):hint("Whether pieces move with the parent after they spawn."),
   TimeScale = knob(1):min(0):mod():label("TimeScale"):hint("Multiplier on the effect's clock, 0 freezing it."),
   VelocityInheritance = knob(0)
     :mod()
-    :hidden(ringed)
+    :hidden(function(ctx: any, attrs: any)
+      return stated(ctx, attrs) or ringed(ctx)
+    end)
     :label("VelocityInheritance")
     :hint("Share of the parent part's velocity each piece launches with."),
   WindAffectsDrag = knob(false)
-    :hidden(dragless)
+    :hidden(function(ctx: any, attrs: any)
+      return stated(ctx, attrs) or dragless(ctx, attrs)
+    end)
     :label("WindAffectsDrag")
     :hint("Whether drag eases each piece toward the global wind rather than to rest."),
 
@@ -512,14 +568,18 @@ forge_mesh.attributes = {
     :min(0)
     :max(1)
     :mod()
-    :hidden(noBounce)
+    :hidden(function(ctx: any, attrs: any)
+      return stated(ctx, attrs) or noBounce(ctx, attrs)
+    end)
     :label("Bounce")
     :hint("Share of the speed into the surface a bounce keeps."),
   Friction = knob(0.2)
     :min(0)
     :max(1)
     :mod()
-    :hidden(noBounce)
+    :hidden(function(ctx: any, attrs: any)
+      return stated(ctx, attrs) or noBounce(ctx, attrs)
+    end)
     :label("Friction")
     :hint("Share of the speed along the surface a bounce loses."),
   CollisionFilter = knob("None")
@@ -570,6 +630,11 @@ forge_mesh.layout = {
       "Turbulence",
       "TurbulenceFrequency",
     },
+  },
+  {
+    title = "States",
+    entries = { "Offset", "Turn", { action = "edit_states", label = "Edit States" } },
+    hidden = flown,
   },
   {
     title = "Particles",
@@ -811,6 +876,16 @@ const function piece(
   const facing = flight.rotation
   const turn = launch.turn
   const at = launch.spawn.Position
+  const posing = attrs.Motion == "States"
+
+  -- a piece moving through its states stands on the template, moved by where
+  -- it spawned off the emitter's center, and no flight row reaches it
+  const stateAt = if posing
+    then poser(CFrame.new(at - origin.Position) * template.CFrame, launch.offset, launch.turning, flight.rng)
+    else nil
+
+  -- where its states put it as it was last drawn, nil for a particle
+  local stance = if stateAt ~= nil then stateAt(0) else nil
 
   local position = toVector(at)
   local velocity = toVector(launch.spawn.LookVector) * launch.speed + launch.inherited
@@ -827,22 +902,24 @@ const function piece(
   -- and its driven rows over the life
   const pull: any = if flight.force ~= nil then table.clone(flight.force) else nil
   const collision = if flight.collision ~= nil and not locked then flight.collision else nil
-  const response = if collision ~= nil then table.clone(collision.config) else nil
+  const response = if collision ~= nil and not posing then table.clone(collision.config) else nil
 
   -- the initial turn, each step's spin added onto it
   local rotation =
     CFrame.fromOrientation(turn.x * utility.DEG_TO_RAD, turn.y * utility.DEG_TO_RAD, turn.z * utility.DEG_TO_RAD)
 
   -- a piece locked to its parent accelerates in the parent's frame
-  tween.drive(scope, attrs.Acceleration(nil, duration), function(v: any)
-    if isVector(v) then
-      acceleration = toVector(if locked then origin:VectorToWorldSpace(Vector3.new(v.X, v.Y, v.Z)) else v)
-    end
-  end)
+  if not posing then
+    tween.drive(scope, attrs.Acceleration(nil, duration), function(v: any)
+      if isVector(v) then
+        acceleration = toVector(if locked then origin:VectorToWorldSpace(Vector3.new(v.X, v.Y, v.Z)) else v)
+      end
+    end)
 
-  tween.drive(scope, attrs.Drag(nil, duration), function(v: number)
-    drag = v
-  end)
+    tween.drive(scope, attrs.Drag(nil, duration), function(v: number)
+      drag = v
+    end)
+  end
 
   -- a driven row that draws no number rests where the row does, and keeps to
   -- the row's floor whatever a modifier reaches
@@ -866,7 +943,7 @@ const function piece(
     pull.angle = flight.rng:NextNumber(0, 2 * math.pi)
   end
 
-  const wobbles = turbulent(attrs.Turbulence)
+  const wobbles = not posing and turbulent(attrs.Turbulence)
   const seed = if wobbles then flight.rng:NextNumber(0, 1000) else 0
   const frequency = attrs.TurbulenceFrequency
   const calm = if wobbles then particle_motion.rest(seed) else vector.zero
@@ -987,6 +1064,10 @@ const function piece(
   local heading: CFrame? = nil
 
   const function pose()
+    if stance ~= nil then
+      return placed(stance * rotation) * look.offset()
+    end
+
     const camera = if watching then workspace.CurrentCamera else nil
     const turned =
       orient_common.rotation(mode, facing, position, velocity, if camera then camera.CFrame else nil, heading)
@@ -1028,6 +1109,82 @@ const function piece(
     end
   end
 
+  -- one step of a particle's flight, its substeps cast along what is drawn
+  const function fly(dt: number)
+    const wind = if windy then toVector(workspace.GlobalWind) else vector.zero
+
+    -- the force's target is read once a frame, a gone one adding none
+    const force = forceNow()
+
+    const steps = if collision ~= nil or drag > 0 or force ~= nil then particle_motion.substeps(dt) else 1
+    const h = dt / steps
+
+    for step = 1, steps do
+      const nextPosition, nextVelocity = particle_motion.advance(position, velocity, acceleration, drag, wind, force, h)
+
+      if not (numeric_common.usable(nextPosition) and numeric_common.usable(nextVelocity)) then
+        break
+      end
+
+      -- the ray runs along what is drawn: the flown position plus the wander
+      const nextWander = if amount > 0
+        then particle_motion.wander(seed, age - dt + h * step, frequency, amount, calm)
+        else vector.zero
+
+      const hit = if collision ~= nil
+        then collision_common.cast(collision.params, position + wander, nextPosition + nextWander)
+        else nil
+
+      wander = nextWander
+
+      if hit == nil then
+        position, velocity = nextPosition, nextVelocity
+        continue
+      end
+
+      const outcome, landed, rebound = collision_common.respond(
+        response :: collision_common.Config,
+        nextVelocity,
+        { position = toVector(hit.Position), normal = toVector(hit.Normal) }
+      )
+
+      position, velocity = landed - wander, rebound
+
+      if outcome == "kill" then
+        moving = false
+        break
+      end
+
+      if outcome == "stop" then
+        pinned = true
+        break
+      end
+    end
+  end
+
+  -- one step through the states, cast from where the piece was drawn to where
+  -- its states put it now: a Kill ends it there, any other hit pins it there
+  const function stand(t: number)
+    const nextStance = (stateAt :: (t: number) -> CFrame)(t)
+    const was = stance :: CFrame
+    const hit = if collision ~= nil
+      then collision_common.cast(collision.params, toVector(was.Position), toVector(nextStance.Position))
+      else nil
+
+    if hit == nil then
+      stance = nextStance
+      return
+    end
+
+    stance = nextStance.Rotation + hit.Position
+
+    if (collision :: Collision).config.mode == "Kill" then
+      moving = false
+    else
+      pinned = true
+    end
+  end
+
   const function advance(deltaTime: number)
     -- a piece at rest moves only with its parent or its frames
     if not moving then
@@ -1051,55 +1208,10 @@ const function piece(
     age += dt
 
     if dt > 0 and not pinned then
-      const wind = if windy then toVector(workspace.GlobalWind) else vector.zero
-
-      -- the force's target is read once a frame, a gone one adding none
-      const force = forceNow()
-
-      const steps = if collision ~= nil or drag > 0 or force ~= nil then particle_motion.substeps(dt) else 1
-      const h = dt / steps
-
-      for step = 1, steps do
-        const nextPosition, nextVelocity =
-          particle_motion.advance(position, velocity, acceleration, drag, wind, force, h)
-
-        if not (numeric_common.usable(nextPosition) and numeric_common.usable(nextVelocity)) then
-          break
-        end
-
-        -- the ray runs along what is drawn: the flown position plus the wander
-        const nextWander = if amount > 0
-          then particle_motion.wander(seed, age - dt + h * step, frequency, amount, calm)
-          else vector.zero
-
-        const hit = if collision ~= nil
-          then collision_common.cast(collision.params, position + wander, nextPosition + nextWander)
-          else nil
-
-        wander = nextWander
-
-        if hit == nil then
-          position, velocity = nextPosition, nextVelocity
-          continue
-        end
-
-        const outcome, landed, rebound = collision_common.respond(
-          response :: collision_common.Config,
-          nextVelocity,
-          { position = toVector(hit.Position), normal = toVector(hit.Normal) }
-        )
-
-        position, velocity = landed - wander, rebound
-
-        if outcome == "kill" then
-          moving = false
-          break
-        end
-
-        if outcome == "stop" then
-          pinned = true
-          break
-        end
+      if stateAt ~= nil then
+        stand(if duration > 0 then age / duration else 1)
+      else
+        fly(dt)
       end
 
       const add = spin * dt
@@ -1267,11 +1379,18 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   const squashRest = rows.Squash.value :: value_curve.Curve
   const clearRest = rows.Transparency.value :: value_curve.Curve
   const tintRest = rows.Color.value :: ColorSequence
+  const offsetRest = rows.Offset.value :: value_curve.Curve
+  const turnRest = rows.Turn.value :: value_curve.Curve
+
+  -- the state rows are read only by a piece moving through its states
+  const posing = rows.Motion == "States"
 
   const sized = modified(rows.Size)
   const squashed = modified(rows.Squash)
   const cleared = modified(rows.Transparency)
   const colored = modified(rows.Color)
+  const shifted = posing and modified(rows.Offset)
+  const turned = posing and modified(rows.Turn)
 
   const census = forge_mesh.pieces
 
@@ -1300,6 +1419,8 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
       clear = if cleared then curveOr(rows.Transparency().at(spawned), clearRest) else clearRest,
       tint = tint,
       keypoints = if colored then tint.Keypoints else flight.keypoints,
+      offset = if shifted then curveOr(rows.Offset().at(spawned), offsetRest) else offsetRest,
+      turning = if turned then curveOr(rows.Turn().at(spawned), turnRest) else turnRest,
     }
 
     lifetime.spawn(outstanding, piece, ctx, rows, template, launch, flight, sets)

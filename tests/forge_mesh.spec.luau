@@ -24,6 +24,7 @@ const test, expect = harness.test, harness.expect
 const look_common = require("@mod/common/look")
 const force_rows = require("@mod/common/force_rows")
 const launch_common = require("@mod/common/launch")
+const states_common = require("@mod/common/states")
 const collision_common = require("@mod/common/collision")
 
 const forge_mesh = require("@vfx/forge_mesh")
@@ -593,6 +594,26 @@ const function falling(rows: { [string]: any }, body: (piece: BasePart, fake: fa
   end)
 end
 
+-- one States piece of two seconds' life on a template under an attachment,
+-- turned on its own z so its axes are not the world's, its Offset rising 10
+-- studs along its own y over the life, `attributes` over it
+const function stated(attributes: { [string]: any }, body: (piece: BasePart, part: BasePart) -> ())
+  framed(function(fake)
+    const part = attached(attributes)
+
+    part:SetAttribute("Motion", "States")
+    part:SetAttribute("Lifetime", NumberRange.new(2, 2))
+    part.CFrame = CFrame.new(4, 5, 6) * CFrame.fromOrientation(0, 0, math.rad(90))
+
+    stubbed(part, { Offset = curveOf(3, { { 0, { 0, 0, 0 } }, { 1, { 0, 10, 0 } } }) }, function()
+      const env = effects.emit(0, part)
+
+      body(pieces(fake)[1], part)
+      env:Clear()
+    end)
+  end)
+end
+
 -- the template's rows as an emit reads them, its force card's beside its own
 const function rowsOf(part: BasePart): any
   const ctx = { ref = part, obj = part, effect = forge_mesh }
@@ -728,6 +749,73 @@ harness.suite(function()
 
         env:Clear()
       end)
+    end)
+
+    test("a States piece stands where its state rows put it", function()
+      stated({}, function(piece, part)
+        frames(60)
+
+        const want = states_common.pose(part.CFrame, vector.create(0, 5, 0), vector.zero).Position
+
+        expect(near(piece.CFrame.Position, want, LOOSE)).toBe(true)
+      end)
+    end)
+
+    test("a States piece ignores the flight rows", function()
+      stated({ Speed = NumberRange.new(50, 50), Acceleration = Vector3.new(0, -100, 0) }, function(piece, part)
+        frames(60)
+
+        const want = states_common.pose(part.CFrame, vector.create(0, 5, 0), vector.zero).Position
+
+        expect(near(piece.CFrame.Position, want, LOOSE)).toBe(true)
+      end)
+    end)
+
+    test("a States piece wears its turn on top of its initial rotation", function()
+      staged(function(fake)
+        const part = attached({ Motion = "States", Rotation = Vector3.new(0, 90, 0) })
+
+        stubbed(part, { Turn = curveOf(3, { { 0, { 0, 45, 0 } } }) }, function()
+          const env = effects.emit(0, part)
+
+          frames(1)
+
+          const _, y = pieces(fake)[1].CFrame:ToOrientation()
+
+          expect(math.abs(math.deg(y) - 135) < LOOSE).toBe(true)
+
+          env:Clear()
+        end)
+      end)
+    end)
+
+    test("a Kill hit ends a States piece early", function()
+      const real = collision_common.engine
+
+      collision_common.engine = {
+        params = function()
+          return { AddToFilter = function() end } :: any
+        end,
+        tagged = function()
+          return {}
+        end,
+        raycast = function(_, _, to: vector)
+          return { Position = Vector3.new(to.x, to.y, to.z), Normal = Vector3.new(0, 1, 0) } :: any
+        end,
+      }
+
+      -- a launch of no speed, so only the states move the piece into the hit
+      const ok, err = pcall(stated, { CollisionMode = "Kill", Speed = STILL }, function(piece)
+        frames(10)
+
+        expect(piece.Parent).toBe(nil)
+      end)
+
+      collision_common.engine = real
+
+      if not ok then
+        error(err, 0)
+      end
     end)
 
     test("a template with no part or attachment above it spawns at its own pose", function()
@@ -2985,6 +3073,26 @@ harness.suite(function()
 
         for c = 1, 3 do
           expect(near1(value_curve.at(flat, 0.5)[c], 2)).toBe(true)
+        end
+      end)
+    end)
+
+    test("resize scales a mesh's Offset curve as the lengths it holds", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL })
+
+        -- lune refuses a non utf-8 attribute string, so the row is cached
+        attr.cache(part)
+        attr.set(part, "Offset", curveOf(3, { { 0, { 1, 0, 0 } }, { 1, { 0, 4, -2 } } }, false))
+
+        resize.apply(part, 2)
+
+        const after = value_curve.decode(attr.get(part, "Offset", nil)) :: value_curve.Curve
+        const want = { 0, 8, -4 }
+
+        for c = 1, 3 do
+          expect(near1(value_curve.at(after, 1)[c], want[c])).toBe(true)
         end
       end)
     end)

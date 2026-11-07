@@ -62,8 +62,12 @@ end
 -- the force of one emit as it emits, from the rows that hold for a piece's
 -- whole life; each piece flies a copy. its place and axis are written as it
 -- flies, and its driven rows, DRIVEN's, start at 0 until they are. nil for
--- None
+-- None and for a piece moving through its states
 function common.force(attrs: any): particle_motion.Force?
+  if attrs.Motion == "States" then
+    return nil
+  end
+
   const kind = attrs.Force
 
   if kind == "Gravity" then

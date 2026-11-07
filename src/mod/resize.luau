@@ -31,11 +31,12 @@ resize.PROPERTY_UNITS = {
 -- resting value scales with them: a model's scale is its absolute size,
 -- where a beam's length scale multiplies the attachment distance that
 -- scaleShape already scales. a mesh's Size is a curve of factors on its
--- template, scaled in place of the template as a ParticleEmitter's Size is
+-- template, scaled in place of the template as a ParticleEmitter's Size is,
+-- and its Offset a curve of studs, which no unit reaches inside a curve
 resize.RATIOS = {
   model_spin = { Scale = true },
   beam = { LengthScale = false },
-  forge_mesh = { Size = true },
+  forge_mesh = { Size = true, Offset = true },
 }
 
 -- a property the instance does not have throws on the read, which is the
