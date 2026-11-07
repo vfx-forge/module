@@ -212,6 +212,19 @@ harness.suite(function()
       expect(state_list.decode(4 :: any)).toBe(nil)
     end)
 
+    test("a decal with an empty name decodes to nil", function()
+      const list = sample()
+
+      list[1].decals = { ["\255"] = {} }
+
+      const raw = state_list.encode(list)
+      const nameless, swaps = string.gsub(raw, "\1\0\255", "\0\0")
+
+      expect(swaps).toBe(1)
+      expect(state_list.decode(raw)).ok()
+      expect(state_list.decode(nameless)).toBe(nil)
+    end)
+
     test("a value the format cannot hold raises instead of encoding a lost list", function()
       const function raises(field: string, v: any)
         const list = sample()
@@ -342,6 +355,15 @@ harness.suite(function()
       const _, wrong = state_list.fromPlain(moved)
 
       expect(string.find(wrong :: string, "position", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("a hole in the list is refused by index", function()
+      const plain = state_list.toPlain(sample())
+      const holed = { plain[1], nil, plain[2] }
+      const list, problem = state_list.fromPlain(holed)
+
+      expect(list).toBe(nil)
+      expect(string.find(problem :: string, "state 2", 1, true) ~= nil).toBe(true)
     end)
 
     test("a list past the cap is refused", function()

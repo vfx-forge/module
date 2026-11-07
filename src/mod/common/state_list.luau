@@ -550,7 +550,7 @@ const function readState(r: Reader): State?
   for _ = 1, count do
     const name = readValue(r, "string")
 
-    if name == nil or decals[name] ~= nil then
+    if name == nil or name == "" or decals[name] ~= nil then
       return nil
     end
 
@@ -877,19 +877,29 @@ function common.fromPlain(v: any): (List?, string?)
     return nil, "states are a list"
   end
 
-  if #v > MAX then
+  local last = 0
+
+  for key in v do
+    if type(key) ~= "number" or key % 1 ~= 0 or key < 1 then
+      return nil, "states are a list"
+    end
+
+    last = math.max(last, key)
+  end
+
+  if last > MAX then
     return nil, `a mesh holds at most {MAX} states`
   end
 
-  for key in v do
-    if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > #v then
-      return nil, "states are a list"
+  const states = table.create(last)
+
+  for i = 1, last do
+    const plain = v[i]
+
+    if plain == nil then
+      return nil, `state {i} is missing from the list`
     end
-  end
 
-  const states = table.create(#v)
-
-  for i, plain in v do
     const where = `state {i}`
     const state, problem = recordIn(STATE, plain, where, STATE_EXTRA)
 
