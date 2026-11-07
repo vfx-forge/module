@@ -797,9 +797,18 @@ const function clusterOf(clusters: { Cluster }, time: number): number?
   return nil
 end
 
--- each eased state's incoming handles on every row with keys at both ends, a
--- preset's control points taken over the segment's width and each channel's
--- change, so the curve stays linked
+-- one channel of the segment from `from` to `into` tracing a preset's control
+-- points, taken over its width and that channel's change, so the curve stays
+-- linked
+const function shape(from: Key, into: Key, c: number, points: { vector })
+  const width = into.time - from.time
+  const change = into.value[c] - from.value[c]
+
+  from.right[c] = vector.create(points[1].x * width, points[1].y * change, 0)
+  into.left[c] = vector.create((points[2].x - 1) * width, (points[2].y - 1) * change, 0)
+end
+
+-- each eased state's incoming handles on every row with keys at both ends
 const function ease(result: Curves, clusters: { Cluster }, kept: { Entry })
   for _, e in kept do
     const points = if e.easing ~= nil then POINTS[e.easing] else nil
@@ -820,15 +829,141 @@ const function ease(result: Curves, clusters: { Cluster }, kept: { Entry })
       end
 
       const from, into = curve.keys[a[#a]], curve.keys[b[1]]
-      const width = into.time - from.time
 
       for c = 1, curve.channels do
-        const change = into.value[c] - from.value[c]
-
-        from.right[c] = vector.create(points[1].x * width, points[1].y * change, 0)
-        into.left[c] = vector.create((points[2].x - 1) * width, (points[2].y - 1) * change, 0)
+        shape(from, into, c, points)
       end
     end
+  end
+end
+
+-- the preset a whole segment traces, nil where its channels trace none, or
+-- disagree, or all hold their value
+const function presetOf(from: Key, into: Key, channels: number): string?
+  local answer = nil
+
+  for c = 1, channels do
+    const vote = shapeOf(from, into, c)
+
+    if vote == CUSTOM or (vote ~= nil and answer ~= nil and vote ~= answer) then
+      return nil
+    end
+
+    answer = vote or answer
+  end
+
+  return answer
+end
+
+-- a key at `time` holding `value`, put in the row between the keys around it;
+-- the segments either side take the preset the one it splits traced, else
+-- run linear
+const function pin(curve: Curve, time: number, value: { number })
+  const keys = curve.keys
+
+  local at = #keys + 1
+
+  for i, k in keys do
+    if k.time > time then
+      at = i
+      break
+    end
+  end
+
+  const before, after = keys[at - 1], keys[at]
+  const made = blankKey(time, value)
+  const name = if before ~= nil and after ~= nil then presetOf(before, after, curve.channels) else nil
+  const points = POINTS[name or "Linear"]
+
+  table.insert(keys, at, made)
+
+  for c = 1, curve.channels do
+    if before ~= nil then
+      shape(before, made, c, points)
+    end
+
+    if after ~= nil then
+      shape(made, after, c, points)
+    end
+  end
+end
+
+const function keyedAt(curve: Curve, time: number)
+  for _, k in curve.keys do
+    if math.abs(k.time - time) < EPSILON then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- every state no edit named keeps what the input read at it: a row whose
+-- reading there moved past EPSILON gets a key holding the old reading, checked
+-- again after each, since a key moves the readings around it
+const function pinUntouched(source: Curves, result: Curves, kept: { Entry })
+  const untouched = {}
+
+  for _, e in kept do
+    if e.order == 0 then
+      table.insert(untouched, e)
+    end
+  end
+
+  for _, row in ROWS do
+    const input = (source :: any)[row] :: Curve
+    const curve = (result :: any)[row] :: Curve
+
+    local moved = true
+
+    while moved do
+      moved = false
+
+      for _, e in untouched do
+        const want = value_curve.at(input, e.time)
+
+        if not keyedAt(curve, e.time) and differs(value_curve.at(curve, e.time), want) then
+          pin(curve, e.time, want)
+          moved = true
+        end
+      end
+    end
+  end
+
+  const input = source.color.Keypoints
+  const points = table.clone(result.color.Keypoints)
+
+  local pinned, moved = false, true
+
+  while moved do
+    moved = false
+
+    for _, e in untouched do
+      const want = color.keypointsAt(input, e.time)
+
+      local at = #points + 1
+      local keyed = false
+
+      for i, keypoint in points do
+        keyed = keyed or math.abs(keypoint.Time - e.time) < EPSILON
+
+        if keypoint.Time > e.time then
+          at = i
+          break
+        end
+      end
+
+      if keyed or not colorDiffers(color.keypointsAt(points, e.time), want) then
+        continue
+      end
+
+      table.insert(points, at, ColorSequenceKeypoint.new(e.time, want))
+      pinned, moved = true, true
+    end
+  end
+
+  if pinned then
+    result.color = ColorSequence.new(points)
   end
 end
 
@@ -863,7 +998,8 @@ function common.apply(source: Curves, edits: { Edit }): Curves
     clusters = gather(result)
   end
 
-  ease(result, clusters, kept)
+  pinUntouched(source, result, kept)
+  ease(result, gather(result), kept)
 
   return result
 end

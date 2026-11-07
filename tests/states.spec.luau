@@ -257,7 +257,7 @@ harness.suite(function()
       expect(sameColor(keypoints[3].Value, BLUE)).toBe(true)
     end)
 
-    test("a row whose keys all go keeps one", function()
+    test("a row whose keys all go keeps its untouched states' readings", function()
       const source = template()
 
       source.turn = curveOf({ key(0.25, { 0, 30, 0 }), key(0.5, { 0, 90, 0 }) })
@@ -267,10 +267,11 @@ harness.suite(function()
         { from = 0.5, removed = true },
       })
 
-      -- what the first state left read before
-      expect(#after.turn.keys).toBe(1)
+      expect(#after.turn.keys).toBe(2)
       expect(after.turn.keys[1].time).toBe(0)
       expect(after.turn.keys[1].value).toEqual({ 0, 30, 0 })
+      expect(after.turn.keys[2].time).toBe(1)
+      expect(after.turn.keys[2].value).toEqual({ 0, 90, 0 })
     end)
 
     test("a new state inserts only what differs", function()
@@ -374,7 +375,7 @@ harness.suite(function()
       end
     end)
 
-    test("a missing color end takes the nearest state's color as read", function()
+    test("removing an end state keeps its neighbor's color", function()
       const source = template()
 
       source.offset = curveOf({ key(0.2, { 0, 2, 0 }) })
@@ -384,9 +385,25 @@ harness.suite(function()
       const after = states_common.apply(source, { { from = 0, removed = true } })
       const keypoints = after.color.Keypoints
 
+      const kept = (stateAt(states_common.read(after), 0.2) :: states_common.State).color
+
       expect(keypoints[1].Time).toBe(0)
       expect(sameColor(keypoints[1].Value, read)).toBe(true)
-      expect(sameColor(keypoints[2].Value, GREEN)).toBe(true)
+      expect(math.abs(read.R - 0.87) < 0.01 and math.abs(read.G - 0.58) < 0.01 and read.B < 0.01).toBe(true)
+      expect(kept).toBe(read)
+    end)
+
+    test("moving the first state leaves an untouched state where it was", function()
+      const source = template()
+
+      source.offset = curveOf({ key(0, { 1, 2, 3 }) })
+
+      const after = states_common.apply(source, { { from = 0, offset = vector.create(4, 5, 6) } })
+      const states = states_common.read(after)
+
+      expect(#states).toBe(2)
+      expect(nearVector(states[1].offset, vector.create(4, 5, 6))).toBe(true)
+      expect(nearVector(states[2].offset, vector.create(1, 2, 3))).toBe(true)
     end)
 
     test("a state set equal to its neighbor holds still", function()
