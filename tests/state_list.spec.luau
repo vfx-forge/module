@@ -492,4 +492,110 @@ harness.suite(function()
       expect(#problems).toBe(1)
     end)
   end)
+  harness.describe("state_list.sampler", function()
+    const CFrame = harness.datatypes.CFrame
+    const function same(a: CFrame, b: CFrame): boolean
+      return close(a.LookVector.X, b.LookVector.X)
+        and close(a.LookVector.Y, b.LookVector.Y)
+        and close(a.LookVector.Z, b.LookVector.Z)
+        and close(a.RightVector.X, b.RightVector.X)
+        and close(a.RightVector.Y, b.RightVector.Y)
+        and close(a.RightVector.Z, b.RightVector.Z)
+    end
+
+    const fade = { state(0), state(1, { transparency = 1 }) }
+
+    test("blends between two states and holds past both ends", function()
+      const read = state_list.sampler(fade :: any)
+      const out: any = {}
+
+      expect(close(read(0.25, out).transparency, 0.25)).toBe(true)
+      expect(read(-1, out).transparency).toBe(0)
+      expect(read(2, out).transparency).toBe(1)
+    end)
+
+    test("shapes the way in with the arriving state's easing", function()
+      const read =
+        state_list.sampler({ state(0), state(1, { transparency = 1, easing = curves.PRESETS.easeIn }) } :: any)
+
+      expect(read(0.5, {} :: any).transparency < 0.5).toBe(true)
+    end)
+
+    test("switches a material at the arriving state's time", function()
+      const read = state_list.sampler({ state(0), state(0.5, { material = "Neon" }) } :: any)
+      const out: any = {}
+
+      expect(read(0.49, out).material).toBe("Plastic")
+      expect(read(0.5, out).material).toBe("Neon")
+    end)
+
+    test("adds the arriving state's spin and lands on its rotation", function()
+      const rotation = vector.create(0.2, 0.4, -0.1)
+      const base = CFrame.fromOrientation(0.2, 0.4, -0.1)
+      const read = state_list.sampler(
+        { state(0, { rotation = rotation }), state(1, { rotation = rotation, spin = vector.create(0, 1, 0) }) } :: any
+      )
+      const out: any = {}
+      const half = base * CFrame.fromOrientation(0, math.pi, 0)
+
+      expect(same(read(0.5, out).cframe, half)).toBe(true)
+      expect(same(read(1, out).cframe, base)).toBe(true)
+    end)
+
+    test("turns the short way", function()
+      const read = state_list.sampler({ state(0), state(1, { rotation = vector.create(0, math.rad(270), 0) }) } :: any)
+      const want = CFrame.fromOrientation(0, math.rad(-45), 0)
+      const got = read(0.5, {} :: any).cframe
+
+      expect(same(got, want)).toBe(true)
+    end)
+
+    test("eases a decal by its own card, else the state's", function()
+      const glow = { transparency = 0 }
+      const arrive = { transparency = 1 }
+      const read = state_list.sampler({
+        state(0, { decals = { Glow = glow, Plain = glow } }),
+        state(1, {
+          transparency = 1,
+          decals = { Glow = { transparency = 1, easing = curves.PRESETS.easeOut }, Plain = arrive },
+        }),
+      } :: any)
+      const out = read(0.5, {} :: any)
+
+      expect(close(out.transparency, 0.5)).toBe(true)
+      expect(out.decals.Glow.transparency > 0.5).toBe(true)
+      expect(close(out.decals.Plain.transparency, 0.5)).toBe(true)
+    end)
+
+    test("blends a field set on one side from the rest, else holds it", function()
+      const list = {
+        state(0, { surface = { emissiveStrength = 0 }, decals = { Mark = { glowStrength = 4 } } }),
+        state(1, { surface = {}, decals = { Mark = { glowStrength = 4 } } }),
+      }
+      const rest = { surface = { emissiveStrength = 2 }, decals = {} }
+      const withRest = state_list.sampler(list :: any, rest :: any)(0.5, {} :: any)
+      const without = state_list.sampler(list :: any)(0.5, {} :: any)
+
+      expect(close(withRest.surface.emissiveStrength, 1)).toBe(true)
+      expect(without.surface.emissiveStrength).toBe(0)
+      expect(withRest.decals.Mark.uvScale).toBe(nil)
+      expect(without.surface.color).toBe(nil)
+    end)
+
+    test("allocates no table per call", function()
+      const read = state_list.sampler({
+        state(0, { decals = { Mark = { transparency = 0 } } }),
+        state(1, { decals = { Mark = { transparency = 1 } } }),
+      } :: any)
+      const out: any = {}
+      const decals = read(0, out).decals
+
+      for i = 1, 1000 do
+        expect(read(i / 1000, out)).toBe(out)
+      end
+
+      expect(out.decals).toBe(decals)
+      expect(close(out.decals.Mark.transparency, 1)).toBe(true)
+    end)
+  end)
 end)

@@ -1,4 +1,5 @@
 const color = require("@mod/color/color")
+const curve = require("@mod/curve")
 const curves = require("@mod/curves")
 const value_curve = require("@mod/value_curve")
 
@@ -1151,6 +1152,230 @@ function common.scaled(list: List, factor: number): List
   end
 
   return mark(out)
+end
+
+export type Sample = {
+  cframe: CFrame,
+  size: vector,
+  color: Color3,
+  transparency: number,
+  reflectance: number,
+  material: string,
+  materialVariant: string,
+  vertexColor: vector?,
+  surface: Surface?,
+  decals: { [string]: DecalState },
+}
+
+export type Rest = { surface: Surface?, decals: { [string]: DecalState } }
+
+type Fields = { { name: string, kind: string } }
+
+-- a kind of "switch" holds the segment's first value until the state arrives
+const SURFACE_PLAY: Fields = {
+  { name = "color", kind = "Color3" },
+  { name = "emissiveStrength", kind = "number" },
+  { name = "emissiveTint", kind = "Color3" },
+  { name = "alphaMode", kind = "switch" },
+}
+
+const DECAL_PLAY: Fields = {
+  { name = "color", kind = "Color3" },
+  { name = "transparency", kind = "number" },
+  { name = "uvOffset", kind = "Vector2" },
+  { name = "uvScale", kind = "Vector2" },
+  { name = "rotation", kind = "number" },
+  { name = "zIndex", kind = "switch" },
+  { name = "glowStrength", kind = "number" },
+  { name = "emissiveStrength", kind = "number" },
+  { name = "emissiveTint", kind = "Color3" },
+}
+
+-- the value `u` of the way from a to b. a side that leaves the field unset
+-- reads as `rest`, or as the other side without one; both unset stays nil
+const function mix(kind: string, a: any, b: any, rest: any, u: number): any
+  if a == nil and b == nil then
+    return nil
+  end
+
+  if a == nil then
+    a = rest
+  end
+
+  if b == nil then
+    b = rest
+  end
+
+  if a == nil then
+    return b
+  end
+
+  if b == nil or u == 0 or kind == "switch" then
+    return a
+  end
+
+  if kind == "Color3" then
+    return color.blend(a, b, u)
+  end
+
+  return a + (b - a) * u
+end
+
+const function play(fields: Fields, out: any, a: any, b: any, rest: any, u: number)
+  for _, field in fields do
+    const name = field.name
+
+    out[name] = mix(
+      field.kind,
+      if a ~= nil then a[name] else nil,
+      if b ~= nil then b[name] else nil,
+      if rest ~= nil then rest[name] else nil,
+      u
+    )
+  end
+end
+
+-- a pose with the rotation about each axis in radians, applied in the order
+-- x, y, z as CFrame.fromOrientation does
+function common.pose(base: CFrame, position: vector, rotation: vector): CFrame
+  return base
+    * CFrame.new(position.x, position.y, position.z)
+    * CFrame.fromOrientation(rotation.x, rotation.y, rotation.z)
+end
+
+-- a function writing what the list reads at `t` into `out`, built once per
+-- list: it makes no table after the first call into one `out`. before the
+-- first state and after the last it holds that state; between two, the
+-- arriving state's easing shapes the way in. a surface or decal field set on
+-- one side blends from `rest`'s value, or holds the side that has it
+function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sample
+  const count = #list
+  const rotations = table.create(count)
+  const ease = table.create(count)
+  const surfaceEase = table.create(count)
+  const decalEase = table.create(count)
+  const names = {}
+  local hasSurface = false
+
+  for i, state in list do
+    rotations[i] = CFrame.fromOrientation(state.rotation.x, state.rotation.y, state.rotation.z)
+    ease[i] = curve.sampler(state.easing)
+
+    const surface = state.surface
+
+    surfaceEase[i] = if surface ~= nil and surface.easing ~= nil then curve.sampler(surface.easing) else ease[i]
+
+    const own = {}
+
+    for name, decal in state.decals do
+      names[name] = true
+
+      if decal.easing ~= nil then
+        own[name] = curve.sampler(decal.easing)
+      end
+    end
+
+    decalEase[i] = own
+
+    if surface ~= nil then
+      hasSurface = true
+    end
+  end
+
+  for i, state in list do
+    for name in names do
+      if decalEase[i][name] == nil then
+        decalEase[i][name] = ease[i]
+      end
+    end
+  end
+
+  const restSurface = if rest ~= nil then rest.surface else nil
+  const restDecals = if rest ~= nil then rest.decals else nil
+
+  return function(t: number, out: Sample): Sample
+    if count == 0 then
+      return out
+    end
+
+    local at = 0
+
+    for i = 1, count do
+      if list[i].time > t then
+        break
+      end
+
+      at = i
+    end
+
+    -- a segment runs from a to b; a hold reads one state as both ends
+    const hold = at == 0 or at == count
+    const ia = math.max(at, 1)
+    const ib = if hold then ia else at + 1
+    const a, b = list[ia], list[ib]
+    local u, us, f = 0, 0, 0
+
+    if not hold then
+      f = (t - a.time) / (b.time - a.time)
+      u = ease[ib](f)
+      us = surfaceEase[ib](f)
+    end
+
+    local rotation = rotations[ia]
+    local position = a.position
+    local size = a.size
+    local tint = a.color
+    local transparency = a.transparency
+    local reflectance = a.reflectance
+    local vertexColor = a.vertexColor
+
+    if not hold then
+      rotation = rotation:Lerp(rotations[ib], u)
+        * CFrame.fromOrientation(2 * math.pi * b.spin.x * u, 2 * math.pi * b.spin.y * u, 2 * math.pi * b.spin.z * u)
+      position = mix("vector", position, b.position, nil, u)
+      size = mix("vector", size, b.size, nil, u)
+      tint = mix("Color3", tint, b.color, nil, u)
+      transparency = mix("number", transparency, b.transparency, nil, u)
+      reflectance = mix("number", reflectance, b.reflectance, nil, u)
+      vertexColor = mix("vector", vertexColor, b.vertexColor, nil, u)
+    end
+
+    out.cframe = CFrame.new(position.x, position.y, position.z) * rotation
+    out.size = size
+    out.color = tint
+    out.transparency = transparency
+    out.reflectance = reflectance
+    out.material = a.material
+    out.materialVariant = a.materialVariant
+    out.vertexColor = vertexColor
+
+    if hasSurface then
+      out.surface = out.surface or {}
+      play(SURFACE_PLAY, out.surface, a.surface, b.surface, restSurface, us)
+    else
+      out.surface = nil
+    end
+
+    const decals = out.decals or {}
+
+    out.decals = decals
+
+    for name in names do
+      const into = decals[name] or {}
+
+      decals[name] = into
+      play(
+        DECAL_PLAY,
+        into,
+        a.decals[name],
+        b.decals[name],
+        if restDecals ~= nil then restDecals[name] else nil,
+        if hold then 0 else decalEase[ib][name](f)
+      )
+    end
+
+    return out
+  end
 end
 
 return common
