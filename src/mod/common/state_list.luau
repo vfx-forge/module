@@ -1250,8 +1250,8 @@ const function play(fields: Fields, out: any, a: any, b: any, rest: any, u: numb
   end
 end
 
--- a pose with the rotation about each axis in radians, applied in the order
--- x, y, z as CFrame.fromOrientation does
+-- a pose with the rotation about each axis in radians, applied in
+-- CFrame.fromOrientation's order
 function common.pose(base: CFrame, position: vector, rotation: vector): CFrame
   return base
     * CFrame.new(position.x, position.y, position.z)
@@ -1310,7 +1310,7 @@ function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sa
     end
   end
 
-  for i, state in list do
+  for i = 1, count do
     for name in names do
       if decalEase[i][name] == nil then
         decalEase[i][name] = ease[i]

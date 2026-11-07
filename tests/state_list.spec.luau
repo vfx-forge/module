@@ -604,6 +604,21 @@ harness.suite(function()
       expect(without.surface.color).toBe(nil)
     end)
 
+    test("blends a decal field set on one side from the rest, and switches from the rest at b", function()
+      const list = {
+        state(0, { decals = { Mark = {} } }),
+        state(0.5, { decals = { Mark = { transparency = 0.5, zIndex = 5 } } }),
+      }
+      const rest = { decals = { Mark = { transparency = 0.1, zIndex = 1 } } }
+      const read = state_list.sampler(list :: any, rest :: any)
+      const out: any = {}
+
+      expect(close(read(0.25, out).decals.Mark.transparency, 0.3)).toBe(true)
+      expect(read(0.25, out).decals.Mark.zIndex).toBe(1)
+      expect(read(0.49, out).decals.Mark.zIndex).toBe(1)
+      expect(read(0.5, out).decals.Mark.zIndex).toBe(5)
+    end)
+
     test("allocates no table per call", function()
       const read = state_list.sampler({
         state(0, { decals = { Mark = { transparency = 0 } } }),

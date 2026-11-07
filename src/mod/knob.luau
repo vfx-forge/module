@@ -63,6 +63,7 @@ type Fields = {
   hiddenRule: Rule?,
   readonlyRule: Rule?,
   readonlyReason: string?,
+  readonlyKeeps: boolean,
   alphaRow: string?,
   isSlider: boolean,
   dragLower: number?,
@@ -102,6 +103,7 @@ local function make(default: any): Knob
     hiddenRule = nil,
     readonlyRule = nil,
     readonlyReason = nil,
+    readonlyKeeps = false,
     alphaRow = nil,
     isSlider = false,
     dragLower = nil,
@@ -173,6 +175,16 @@ end
 function Knob.readonly(self: Knob, rule: Rule, reason: string?): Knob
   self.readonlyRule = rule
   self.readonlyReason = reason
+  self.readonlyKeeps = false
+  return self
+end
+
+-- a row the rule shows read only that still reads as stored, for a row
+-- something else plays over and whose value the author keeps
+function Knob.grayed(self: Knob, rule: Rule, reason: string?): Knob
+  self.readonlyRule = rule
+  self.readonlyReason = reason
+  self.readonlyKeeps = true
   return self
 end
 

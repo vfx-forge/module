@@ -361,9 +361,11 @@ type Named = {
   name: string,
   glow: string,
   colors: boolean,
-  -- the template decal's own color, which a Color glow lights when the state
-  -- sets none; the piece's own may still hold a glow a pooled life lit
+  -- the template decal's own color and glow strength, which a Color glow
+  -- lights with where the state sets none; the piece's own may still hold a
+  -- glow a pooled life lit
   base: Color3,
+  power: number,
   color: Gate,
   transparency: Gate,
   uvOffset: Gate,
@@ -378,6 +380,9 @@ type Named = {
   by: number?,
   lit: Color3?,
 }
+
+-- what a decal no state names reads as: every field the template's own
+const UNSET: state_list.DecalState = table.freeze({}) :: any
 
 -- a material named by a state, which the engine may refuse for a part
 const function wear(obj: BasePart, name: string)
@@ -415,13 +420,15 @@ const function dresser(
     -- an animator on the decal's Color3 is the explicit ask, so the states
     -- leave the color to it
     const animated = emitters.animated(decal)
+    const rested = rests[decal.Name]
 
     table.insert(named, {
       decal = decal,
       name = decal.Name,
       glow = attr.get(decal, "GlowMode", "None", true),
       colors = not (animated ~= nil and animated.Color3),
-      base = if rests[decal.Name] ~= nil then rests[decal.Name].color or decal.Color3 else decal.Color3,
+      base = if rested ~= nil and rested.color ~= nil then rested.color else decal.Color3,
+      power = if rested ~= nil and rested.glowStrength ~= nil then rested.glowStrength else 1,
       color = gate(stagger),
       transparency = gate(stagger),
       uvOffset = gate(stagger),
@@ -440,13 +447,13 @@ const function dresser(
     const decal = entry.decal
     local c = state.color
 
-    if c == nil and entry.glow == "Color" and state.glowStrength ~= nil then
-      c = entry.base
-    end
+    -- a Color glow multiplies the color, never clamped, so past 1 it glows;
+    -- what the state leaves unset is the template decal's own, as the editor
+    -- shows it
+    if entry.glow == "Color" then
+      const by = state.glowStrength or entry.power
 
-    -- a Color glow multiplies the color, never clamped, so past 1 it glows
-    if c ~= nil and entry.glow == "Color" then
-      const by = state.glowStrength or 1
+      c = c or entry.base
 
       if c ~= entry.tone or by ~= entry.by then
         entry.tone, entry.by = c, by
@@ -558,8 +565,11 @@ const function dresser(
     for _, entry in named do
       const state = sample.decals[entry.name]
 
+      -- a Color glow is lit even where no state names its decal
       if state ~= nil then
         write(entry, state, first, exact)
+      elseif entry.glow == "Color" then
+        write(entry, UNSET, first, exact)
       end
     end
   end
@@ -712,7 +722,7 @@ forge_mesh.attributes = {
       return ColorSequence.new((ctx.ref :: BasePart).Color)
     end)
     :mod()
-    :readonly(hasStates, STATED_REASON)
+    :grayed(hasStates, STATED_REASON)
     :alpha("Transparency")
     :label("Color")
     :hint("Color of each piece over its life."),
@@ -724,19 +734,19 @@ forge_mesh.attributes = {
   Size = knob(value_curve.flat(1, 3))
     :valueCurve(3)
     :mod()
-    :readonly(hasStates, STATED_REASON)
+    :grayed(hasStates, STATED_REASON)
     :label("Size")
     :hint("Factor on the template's size, or its special mesh's scale, over each piece's life."),
   Squash = knob(value_curve.flat(0, 1))
     :valueCurve(1)
     :mod()
-    :readonly(hasStates, STATED_REASON)
+    :grayed(hasStates, STATED_REASON)
     :label("Squash")
     :hint("Stretch along each piece's up axis over its life, the other axes taking the opposite."),
   Transparency = knob(value_curve.flat(0, 1))
     :valueCurve(1)
     :mod()
-    :readonly(hasStates, STATED_REASON)
+    :grayed(hasStates, STATED_REASON)
     :label("Transparency")
     :hint("Transparency of each piece over its life."),
 
@@ -1689,6 +1699,13 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     spread = vector.zero,
   }
 
+  const list = rows.States :: state_list.List
+  const stated = rows.Motion == "States" and #list > 0
+
+  -- the look rows keep what the author set under states but play no part, so
+  -- a piece takes their defaults and draws nothing off them
+  const tintRest = if stated then ColorSequence.new(template.Color) else rows.Color.value :: ColorSequence
+
   const flight: Flight = {
     origin = origin,
     rotation = template.CFrame.Rotation,
@@ -1700,14 +1717,12 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     up = toVector(origin.UpVector),
     read = -1,
     force = launch_common.force(rows),
-    keypoints = (rows.Color.value :: ColorSequence).Keypoints,
+    keypoints = tintRest.Keypoints,
     states = nil,
     decals = {},
   }
 
-  const list = rows.States :: state_list.List
-
-  if rows.Motion == "States" and #list > 0 then
+  if stated then
     const own = restOf(template)
 
     flight.states = state_list.sampler(list, own)
@@ -1748,15 +1763,15 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
 
   -- an appearance row with no modifier hands every piece the value it rests
   -- at, read here once rather than per piece
-  const sizeRest = rows.Size.value :: value_curve.Curve
-  const squashRest = rows.Squash.value :: value_curve.Curve
-  const clearRest = rows.Transparency.value :: value_curve.Curve
-  const tintRest = rows.Color.value :: ColorSequence
+  const knobs = forge_mesh.attributes
+  const sizeRest = (if stated then knobs.Size.default else rows.Size.value) :: value_curve.Curve
+  const squashRest = (if stated then knobs.Squash.default else rows.Squash.value) :: value_curve.Curve
+  const clearRest = (if stated then knobs.Transparency.default else rows.Transparency.value) :: value_curve.Curve
 
-  const sized = modified(rows.Size)
-  const squashed = modified(rows.Squash)
-  const cleared = modified(rows.Transparency)
-  const colored = modified(rows.Color)
+  const sized = not stated and modified(rows.Size)
+  const squashed = not stated and modified(rows.Squash)
+  const cleared = not stated and modified(rows.Transparency)
+  const colored = not stated and modified(rows.Color)
 
   const census = forge_mesh.pieces
 

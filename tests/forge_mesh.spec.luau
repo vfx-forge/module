@@ -908,6 +908,47 @@ harness.suite(function()
       end, glowing)
     end)
 
+    test("a Color glow no state names is lit by the template decal's own strength", function()
+      const function glowing(part: BasePart)
+        const decal = decalOn(part, "Glow")
+
+        decal:SetAttribute("GlowMode", "Color")
+        decal:SetAttribute("GlowStrength", 3)
+        decal.Color3 = Color3.new(0.2, 0.1, 0.3)
+      end
+
+      stated({}, { stateOf(0), stateOf(1, { transparency = 1 }) }, function(piece)
+        frames(1)
+
+        const decal = piece:FindFirstChild("Glow") :: Decal
+
+        expect(nearColor(decal.Color3, Color3.new(0.6, 0.3, 0.9))).toBe(true)
+      end, glowing)
+    end)
+
+    test("an authored Transparency reads as authored under states, which still play the piece", function()
+      const authored = value_curve.encode(value_curve.flat(0.7, 1))
+
+      framed(function(fake)
+        const part = attached({})
+
+        part:SetAttribute("Motion", "States")
+        part:SetAttribute("Lifetime", NumberRange.new(2, 2))
+
+        stubbed(part, { States = state_list.encode(RISE :: any), Transparency = authored }, function()
+          const rows = rowsOf(part)
+
+          expect(near1(value_curve.at(rows.Transparency.value, 0.5)[1], 0.7)).toBe(true)
+
+          const env = effects.emit(0, part)
+
+          frames(1)
+          expect(pieces(fake)[1].Transparency < 0.1).toBe(true)
+          env:Clear()
+        end)
+      end)
+    end)
+
     test("a state's surface multiplies the surface the piece wears", function()
       const function surfaced(part: BasePart)
         (harness.make("SurfaceAppearance", part) :: any).Color = Color3.new(1, 1, 1)

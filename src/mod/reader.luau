@@ -498,7 +498,7 @@ local function instanceOf(state: State, name: string, row: knob.Knob)
     mods.warnOnce(ctx.ref, name, `{name} holds a {got} where {state.module.id} wants an Instance`)
   end
 
-  if row.readonlyRule ~= nil and row.readonlyRule(ctx, state.attrs, state.props) == true then
+  if row.readonlyRule ~= nil and not row.readonlyKeeps and row.readonlyRule(ctx, state.attrs, state.props) == true then
     return nil
   end
 
@@ -574,7 +574,11 @@ local function curveOf(state: State, name: string, row: knob.Knob)
     return fallbackOf(state, row, nil)
   end
 
-  if row.readonlyRule ~= nil and row.readonlyRule(state.ctx, state.attrs, state.props) == true then
+  if
+    row.readonlyRule ~= nil
+    and not row.readonlyKeeps
+    and row.readonlyRule(state.ctx, state.attrs, state.props) == true
+  then
     return fallbackOf(state, row, nil)
   end
 
@@ -653,7 +657,11 @@ local function listOf(state: State, name: string, row: knob.Knob)
     return fallbackOf(state, row, nil)
   end
 
-  if row.readonlyRule ~= nil and row.readonlyRule(state.ctx, state.attrs, state.props) == true then
+  if
+    row.readonlyRule ~= nil
+    and not row.readonlyKeeps
+    and row.readonlyRule(state.ctx, state.attrs, state.props) == true
+  then
     return fallbackOf(state, row, nil)
   end
 
@@ -753,7 +761,7 @@ local function plainOf(state: State, source: string, name: string, row: knob.Kno
     end
   end
 
-  if row.readonlyRule ~= nil and row.readonlyRule(ctx, state.attrs, state.props) == true then
+  if row.readonlyRule ~= nil and not row.readonlyKeeps and row.readonlyRule(ctx, state.attrs, state.props) == true then
     v = fallbackOf(state, row, base)
   end
 
