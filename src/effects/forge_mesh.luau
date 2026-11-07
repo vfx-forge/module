@@ -30,6 +30,10 @@ const enabled_effects = require("@srv/enabled_effects")
 -- the template's folders of frame sets, which a piece is never handed
 const SETS = { Frames = "FrameSet", Textures = "TextureSet" }
 
+-- the plugin's folder of copies a template's states are edited as, which a
+-- piece is never handed either
+const STATES_TAG = "ForgeMeshStates"
+
 const FLIPBOOK_MODES = { "OneShot", "Loop", "PingPong" }
 
 -- how far a piece's look must move from what was last written before a write
@@ -134,11 +138,19 @@ const function untagged(_, attrs: any)
   return attrs.CollisionMode == "Off" or attrs.CollisionFilter == "None"
 end
 
--- whether a folder of the template is one of its frame sets
+-- whether a folder of the template is one of its frame sets or its states
 const function setFolder(child: Instance)
+  if not child:IsA("Folder") then
+    return false
+  end
+
+  if child:HasTag(STATES_TAG) then
+    return true
+  end
+
   const key = SETS[child.Name]
 
-  return key ~= nil and child:IsA("Folder") and child:GetAttribute(key) ~= nil
+  return key ~= nil and child:GetAttribute(key) ~= nil
 end
 
 -- the piece's own decals, each its own twin, so nothing blends between two
