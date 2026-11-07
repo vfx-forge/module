@@ -25,8 +25,9 @@ export type Module = {
   duration: knob.Rule?,
   constant: boolean?,
   events: { string }?,
-  -- plays on copies of its instance, each handed to ctx.copied once made
-  copies: boolean?,
+  -- plays on copies of its instance, each handed to ctx.copied once made, or
+  -- says per instance whether it does
+  copies: (boolean | (ref: Instance) -> boolean)?,
   emit: (ctx: any, attrs: any, props: any) -> (),
   selected: ((ctx: any) -> ())?,
 }

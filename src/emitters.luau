@@ -706,7 +706,13 @@ function emitters.dispatch(
     if not constant and not animates and (not own or reflected ~= nil) then
       -- an effect that plays on a copy hands each copy over once it has made
       -- it, or the queues would drive the instance it was copied from
-      if effect.copies then
+      local copies = effect.copies
+
+      if type(copies) == "function" then
+        copies = copies(obj)
+      end
+
+      if copies then
         ctx.copied = function(copy: Instance, holder: any)
           if copy == obj then
             emitters.applyMods(obj, scope, ctx.duration :: number, owned, reflected, map)

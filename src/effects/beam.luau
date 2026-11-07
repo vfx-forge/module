@@ -91,44 +91,45 @@ beam.properties = {
 }
 
 -- the plugin's card. a property row, or a `property` entry, is the beam's own
--- property, which the card moves there from its engine category
+-- property, which the card moves there from its engine category. groups and
+-- rows run in the order Studio's own Properties widget lists them
 beam.layout = {
   { title = "Emit", entries = { "EmitDelay" } },
   { title = "Effect", entries = { "EffectDuration", "Speed" } },
+  {
+    title = "Appearance",
+    entries = {
+      { property = "Brightness" },
+      { property = "Color" },
+      { property = "LightEmission" },
+      { property = "LightInfluence" },
+      { property = "Transparency" },
+      "TransparencyScale",
+      { property = "ZOffset" },
+    },
+  },
   {
     title = "Shape",
     entries = {
       { property = "Attachment0" },
       { property = "Attachment1" },
-      "Width0",
-      "Width1",
       "CurveSize0",
       "CurveSize1",
+      { property = "FaceCamera" },
       "LengthScale",
       { property = "Segments" },
-      { property = "FaceCamera" },
+      "Width0",
+      "Width1",
     },
   },
   {
     title = "Texture",
     entries = {
       { property = "Texture" },
-      { property = "TextureMode" },
       "TextureLength",
+      { property = "TextureMode" },
       "TextureSpeed",
       { action = "toggle_textures", label = "Load Textures" },
-    },
-  },
-  {
-    title = "Appearance",
-    entries = {
-      { property = "Color" },
-      { property = "Transparency" },
-      "TransparencyScale",
-      { property = "Brightness" },
-      { property = "LightEmission" },
-      { property = "LightInfluence" },
-      { property = "ZOffset" },
     },
   },
 }

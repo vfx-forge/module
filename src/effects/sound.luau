@@ -74,27 +74,28 @@ sound.properties = {
 }
 
 -- the plugin's card. a property row, or a `property` entry, is the sound's own
--- property, which the card moves there from its engine category
+-- property, which the card moves there from its engine category. groups and
+-- rows run in the order Studio's own Properties widget lists them
 sound.layout = {
   { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitInterval" } },
-  {
-    title = "Playback",
-    entries = {
-      { property = "SoundId" },
-      "Volume",
-      "PlaybackSpeed",
-      "EmitDuration",
-      { property = "Looped" },
-      { property = "PlayOnRemove" },
-    },
-  },
   {
     title = "Emitter",
     entries = { "RollOffMinDistance", { property = "RollOffMaxDistance" }, { property = "RollOffMode" } },
   },
   {
+    title = "Playback",
+    entries = {
+      { property = "Looped" },
+      "PlaybackSpeed",
+      { property = "PlayOnRemove" },
+      { property = "SoundId" },
+      "EmitDuration",
+      "Volume",
+    },
+  },
+  {
     title = "Regions",
-    entries = { { property = "PlaybackRegionsEnabled" }, { property = "PlaybackRegion" }, { property = "LoopRegion" } },
+    entries = { { property = "LoopRegion" }, { property = "PlaybackRegion" }, { property = "PlaybackRegionsEnabled" } },
   },
 }
 
