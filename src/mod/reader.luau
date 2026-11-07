@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local knob = require("@mod/knob")
 local value = require("@mod/value")
 local logger = require("@mod/logger")
+local state_list = require("@mod/common/state_list")
 local legacy_mods = require("@mod/legacy_mods")
 local value_curve = require("@mod/value_curve")
 local instance_value = require("@mod/instance_value")
@@ -580,6 +581,85 @@ local function curveOf(state: State, name: string, row: knob.Knob)
   return curve
 end
 
+-- each stored state list decoded once and frozen through, as a curve is
+const LISTS: { [string]: state_list.List } = {}
+const LISTS_MAX = 64
+
+local listCount = 0
+
+const function listDecodedOf(raw: string): state_list.List?
+  const known = LISTS[raw]
+
+  if known ~= nil then
+    return known
+  end
+
+  const list = state_list.decode(raw)
+
+  if list == nil then
+    return nil
+  end
+
+  for _, s in list do
+    for _, decal in s.decals do
+      table.freeze(decal)
+    end
+
+    table.freeze(s.decals)
+
+    if s.surface ~= nil then
+      table.freeze(s.surface)
+    end
+
+    table.freeze(s)
+  end
+
+  table.freeze(list)
+
+  if listCount >= LISTS_MAX then
+    table.clear(LISTS)
+    listCount = 0
+  end
+
+  LISTS[raw] = list
+  listCount += 1
+
+  return list
+end
+
+-- a state list row, the decoded string under its name or an old spelling. a
+-- missing or malformed list reads as the row's default
+local function listOf(state: State, name: string, row: knob.Knob)
+  local map = state.map
+  local v = map[name]
+
+  if v == nil then
+    for _, alias in row.names do
+      v = map[alias]
+
+      if v ~= nil then
+        break
+      end
+    end
+  end
+
+  local list = if type(v) == "string" then listDecodedOf(v) else nil
+
+  if list == nil then
+    if v ~= nil then
+      mods.warnOnce(state.ctx.ref, name, `{name} holds no state list {state.module.id} can read`)
+    end
+
+    return fallbackOf(state, row, nil)
+  end
+
+  if row.readonlyRule ~= nil and row.readonlyRule(state.ctx, state.attrs, state.props) == true then
+    return fallbackOf(state, row, nil)
+  end
+
+  return list
+end
+
 local function plainOf(state: State, source: string, name: string, row: knob.Knob)
   if source == "attribute" and row.kind == "Instance" then
     return instanceOf(state, name, row)
@@ -587,6 +667,10 @@ local function plainOf(state: State, source: string, name: string, row: knob.Kno
 
   if source == "attribute" and row.kind == "ValueCurve" then
     return curveOf(state, name, row)
+  end
+
+  if source == "attribute" and row.kind == "StateList" then
+    return listOf(state, name, row)
   end
 
   local ctx = state.ctx

@@ -1,3 +1,4 @@
+local state_list = require("@mod/common/state_list")
 local value_curve = require("@mod/value_curve")
 
 local Knob = {}
@@ -22,8 +23,8 @@ local counter = 0
 export type Rule = (ctx: any, attrs: any, props: any) -> any
 
 -- the kind a value names, with the engine's two spellings of a vector read as
--- one and a decoded value curve named for itself. the package's only answer to
--- that question: mods re-exports this one
+-- one and a decoded value curve or state list named for itself. the package's
+-- only answer to that question: mods re-exports this one
 function knob.kindOf(v: any)
   local t = typeof(v)
 
@@ -33,6 +34,10 @@ function knob.kindOf(v: any)
 
   if t == "table" and value_curve.is(v) then
     return "ValueCurve"
+  end
+
+  if t == "table" and state_list.is(v) then
+    return "StateList"
   end
 
   return t
@@ -215,6 +220,18 @@ function Knob.valueCurve(self: Knob, channels: number): Knob
 
   self.kind = "ValueCurve"
   self.channels = channels
+  return self
+end
+
+-- a row that holds a mesh's states, stored as a string the state_list codec
+-- writes. its default is a decoded list, which an unset or malformed
+-- attribute reads as
+function Knob.stateList(self: Knob): Knob
+  if not state_list.is(self.default) then
+    error("stateList() row has a default that is no state list", 2)
+  end
+
+  self.kind = "StateList"
   return self
 end
 

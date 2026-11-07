@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local reader = require("@mod/reader")
+local state_list = require("@mod/common/state_list")
 local legacy_mods = require("@mod/legacy_mods")
 
 local registry = {}
@@ -380,6 +381,17 @@ local function checkRow(
 
     if row.choices ~= nil and (typeof(row.default) ~= "string" or not table.find(row.choices, row.default)) then
       fail(found, id, `{name} has options its default is not one of`)
+    end
+  end
+
+  -- a list has no bounds and no blend, so a modifier could never move one
+  if row.kind == "StateList" then
+    if not state_list.is(row.default) then
+      fail(found, id, `{name} holds a state list but its default is none`)
+    end
+
+    if row.isMod then
+      fail(found, id, `{name} holds a state list, which no modifier can move`)
     end
   end
 
