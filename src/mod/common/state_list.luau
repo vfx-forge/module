@@ -1248,9 +1248,11 @@ function common.pose(base: CFrame, position: vector, rotation: vector): CFrame
 end
 
 -- a function writing what the list reads at `t` into `out`, built once per
--- list: it makes no table after the first call into one `out`, and what
--- remains is userdata: one CFrame while a pose moves, and one Color3 for each
--- color that changes. before the
+-- list: it makes no table after the first call into one `out`. userdata
+-- remains: a moving segment makes up to 5 (the rotation Lerp, the spin CFrame
+-- when spin is not zero, the product of the two, a Vector3 and the final
+-- sum), a changing Color3 about 4 (its Oklab round trip) and a changing
+-- Vector2 one; a hold or an idle segment makes none. before the
 -- first state and after the last it holds that state; between two, the
 -- arriving state's easing shapes the way in. a surface or decal field set on
 -- one side blends from `rest`'s value, or holds the side that has it
@@ -1352,9 +1354,9 @@ function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sa
           turn *= CFrame.fromOrientation(2 * math.pi * spin.x * u, 2 * math.pi * spin.y * u, 2 * math.pi * spin.z * u)
         end
 
-        const at = mix("vector", a.position, b.position, nil, u)
+        const pos = mix("vector", a.position, b.position, nil, u)
 
-        pose = turn + Vector3.new(at.x, at.y, at.z)
+        pose = turn + Vector3.new(pos.x, pos.y, pos.z)
       end
 
       size = mix("vector", size, b.size, nil, u)
