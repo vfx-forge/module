@@ -1601,6 +1601,46 @@ harness.suite(function()
       end
     end)
 
+    test("a locked FacingCamera piece faces the camera after its parent turns", function()
+      const camera = workspace.CurrentCamera
+      const before = camera.CFrame
+      const eye = Vector3.new(0, 10, 60)
+
+      camera.CFrame = CFrame.lookAt(eye, Vector3.new(0, 10, 0))
+
+      const ok, err = pcall(staged, function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, {
+          Motion = "States",
+          StateOrientation = "FacingCamera",
+          LockedToPart = true,
+          Speed = STILL,
+          Lifetime = NumberRange.new(2, 2),
+        })
+
+        stubbed(part, { States = state_list.encode(RISE :: any) }, function()
+          const env = effects.emit(0, part)
+
+          frames(10)
+
+          parent.CFrame = CFrame.new(0, 10, 0) * CFrame.fromOrientation(0, math.rad(90), math.rad(30))
+          frames(1)
+
+          const piece = pieces(fake)[1]
+          const at = piece.CFrame.Position
+
+          expect(piece.CFrame.LookVector:Dot((eye - at).Unit) > 0.999).toBe(true)
+          env:Clear()
+        end)
+      end)
+
+      camera.CFrame = before
+
+      if not ok then
+        error(err, 0)
+      end
+    end)
+
     test("a template with no part or attachment above it spawns at its own pose", function()
       staged(function(fake)
         const root = harness.make("Folder")

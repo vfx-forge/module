@@ -1672,13 +1672,15 @@ const function piece(
   local heading: CFrame? = nil
 
   const function pose()
+    -- the camera turn is taken where the piece is drawn, after a locked
+    -- piece's parent carried it, so the parent's own turn never reaches it
     if stance ~= nil and billboard then
       const camera = workspace.CurrentCamera
       const view = if camera then camera.CFrame else nil
-      const point = stance.Position
+      const point = if locked then placed(CFrame.new(stance.Position)).Position else stance.Position
       const turned = orient_common.rotation(stateMode, facing, toVector(point), vector.zero, view, nil)
 
-      return placed(turned * stance.Rotation + point) * look.offset()
+      return (turned * stance.Rotation + point) * look.offset()
     end
 
     if stance ~= nil then
