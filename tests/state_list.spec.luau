@@ -1,4 +1,5 @@
 const knob = require("@mod/knob")
+const curve = require("@mod/curve")
 const curves = require("@mod/curves")
 const reader = require("@mod/reader")
 const harness = require("@tests/harness")
@@ -76,6 +77,8 @@ const function state(time: number, extra: { [string]: any }?): any
     easing = curves.linear(),
     position = vector.create(0, 0, 0),
     rotation = vector.create(0, 0, 0),
+    positionOffset = vector.create(0, 0, 0),
+    rotationOffset = vector.create(0, 0, 0),
     spin = vector.create(0, 0, 0),
     size = vector.create(1, 1, 1),
     color = Color3.new(1, 1, 1),
@@ -131,6 +134,65 @@ const function sample(): any
       },
     }),
   }
+end
+
+-- what `sample()` encoded to before a state could carry offsets or
+-- randomizers, as hex
+const SAMPLE_V1 =
+  "010a0004004e656f6e0500526f75676807004f7665726c61790400426173650400476c6f773000000000000000803ff6285c3e14aec73e90c2b53e000000000000803f00000000000000000000000000000000000000003000000000000000803fcdcc0c3f85eb713fcdcc2c3f295c4f3f0000803f00000000000000000000000000000000000000000700506c61737469633000000000000000803fcdcc4c3ecdcccc3dcdcccc3ecdccccbd0000803f00000000000000000000000000000000000000003000000000000000803fcdcccc3d3333333f9a99193fcdcc4c3e0000803f000000000000000000000000000000000000000003004d1e000000000000c03f000010c000004040cdcccc3dcdcc4c3e9a9999be0000803e0000003f0000403f000001000000803f0000003f0000803e0b0000803f0000000000000000000000400200020003002700000000000000803f000000000000803e0000003f00000000020000000400400300004040cdcccc3dcdcc4c3e9a99993e0500f31b0000c03e0600000000000000004000000000000000400000003f0000a03f0000803f0000803f0000803f0000003f0000003e07000000003f0000003f0000003f1400000000000000000000803f08000100030098000000004000000040000034420000403fc31a0000803f09000000803f0000803f0000803f0000803f0700000000000000000000000000000200030002000000803f040022000000803fffffffff"
+
+const function unhex(hex: string): string
+  return (string.gsub(hex, "%x%x", function(pair: string)
+    return string.char(tonumber(pair, 16) :: number)
+  end))
+end
+
+-- two states, the first offset, both randomized; the second sets the surface
+-- and decal fields its randomizers name
+const function varied(): any
+  return {
+    state(0, {
+      positionOffset = vector.create(1, 2, 3),
+      rotationOffset = vector.create(0, math.pi / 4, 0),
+      random = { state = { transparency = { finish = 0.5 } } },
+    }),
+    state(1, {
+      surface = { emissiveStrength = 1 },
+      decals = { Glow = { transparency = 0 } },
+      random = {
+        state = {
+          positionOffset = { finish = vector.create(2, 0, 2) },
+          color = { start = Color3.new(1, 0, 0), finish = Color3.new(0, 0, 1), weight = curves.default() },
+        },
+        surface = { emissiveStrength = { finish = 4 } },
+        decals = { Glow = { transparency = { finish = 1 } } },
+      },
+    }),
+  }
+end
+
+-- a version 2 string of one white Plastic state at 0 wearing a decal Glow at
+-- transparency 0.5, with the strings past "Plastic" and "Glow" in `strings`
+-- and `entries` as its randomizer block, or no block when nil
+const function built(entries: string?, strings: { string }?): string
+  const all = { "Plastic", "Glow" }
+
+  for _, s in strings or {} do
+    table.insert(all, s)
+  end
+
+  const parts = { string.pack("<BH", 2, #all) }
+
+  for _, s in all do
+    table.insert(parts, string.pack("<s2", s))
+  end
+
+  const mask = bit32.bor(1, bit32.lshift(1, 6), bit32.lshift(1, 9), if entries ~= nil then bit32.lshift(1, 15) else 0)
+
+  table.insert(parts, string.pack("<HHffffHHHHf", 1, mask, 0, 1, 1, 1, 0, 1, 1, 2, 0.5))
+  table.insert(parts, entries or "")
+
+  return table.concat(parts)
 end
 
 -- a value curve keyed as given, each key `{ time, value }` with flat handles
@@ -202,7 +264,7 @@ harness.suite(function()
       const raw = state_list.encode(sample())
       const bumped = buffer.fromstring(raw)
 
-      buffer.writeu8(bumped, 0, 2)
+      buffer.writeu8(bumped, 0, 3)
 
       expect(state_list.decode("")).toBe(nil)
       expect(state_list.decode("garbage, not a list")).toBe(nil)
@@ -210,6 +272,111 @@ harness.suite(function()
       expect(state_list.decode(string.sub(raw, 1, -2))).toBe(nil)
       expect(state_list.decode(`{raw}x`)).toBe(nil)
       expect(state_list.decode(4 :: any)).toBe(nil)
+    end)
+
+    test("a list with no offsets or randomizers still encodes as version 1", function()
+      const raw = state_list.encode(sample())
+
+      expect(buffer.readu8(buffer.fromstring(raw), 0)).toBe(1)
+      expect(raw).toBe(unhex(SAMPLE_V1))
+
+      const back = state_list.decode(raw) :: state_list.List
+
+      expect(back[1].positionOffset).toBe(vector.zero)
+      expect(back[1].rotationOffset).toBe(vector.zero)
+      expect(back[1].random).toBe(nil)
+    end)
+
+    test("offsets and randomizers round trip", function()
+      const raw = state_list.encode(varied())
+      const back = state_list.decode(raw) :: state_list.List
+
+      expect(buffer.readu8(buffer.fromstring(raw), 0)).toBe(2)
+      expect(back).ok()
+      expect(close(back, varied())).toBe(true)
+      expect(state_list.decode(state_list.encode(back))).toEqual(back)
+      expect(state_list.encode(back)).toBe(raw)
+    end)
+
+    test("a weight curve is stored as a curve string", function()
+      const back = state_list.decode(state_list.encode(varied())) :: state_list.List
+      const weight = (back[2].random :: any).state.color.weight
+
+      expect(type(weight)).toBe("string")
+
+      for _, t in { 0.25, 0.5, 0.75 } do
+        expect(close(curve.sample(weight, t), curve.sample(curves.default(), t))).toBe(true)
+      end
+    end)
+
+    test("encode raises on a randomized field the state leaves unset", function()
+      const function raises(list: any, field: string)
+        const ok, problem = pcall(state_list.encode, list)
+
+        expect(ok).toBe(false)
+        expect(string.find(tostring(problem), field, 1, true) ~= nil).toBe(true)
+      end
+
+      const decal = varied()
+
+      decal[2].random.decals.Glow.color = { finish = Color3.new(1, 1, 1) }
+      raises(decal, "color")
+
+      const vertex = varied()
+
+      vertex[1].random.state.vertexColor = { finish = vector.create(1, 1, 1) }
+      raises(vertex, "vertexColor")
+
+      const missing = varied()
+
+      missing[2].random.decals.Other = { transparency = { finish = 1 } }
+      raises(missing, "transparency")
+    end)
+
+    test("encode raises on a randomizer of a field RANDOMIZABLE does not name", function()
+      const list = varied()
+
+      list[1].random.state.material = { finish = "Neon" }
+
+      const ok, problem = pcall(state_list.encode, list)
+
+      expect(ok).toBe(false)
+      expect(string.find(tostring(problem), "material", 1, true) ~= nil).toBe(true)
+    end)
+
+    test("decode refuses a decal the state lacks, a field past RANDOMIZABLE and a finish of the wrong kind", function()
+      -- card, decal name index, field index, flags, then the values
+      const glowFade = string.pack("<BHBBf", 2, 1, 2, 0, 1)
+      const past = #state_list.RANDOMIZABLE.state + 1
+
+      expect(state_list.decode(built(nil))).ok()
+
+      const fine = state_list.decode(built(`{string.pack("<H", 1)}{glowFade}`)) :: state_list.List
+
+      expect(fine).ok()
+      expect((fine[1].random :: any).decals.Glow.transparency.finish).toBe(1)
+
+      -- a decal the state does not wear
+      expect(state_list.decode(built(string.pack("<HBHBBf", 1, 2, 2, 2, 0, 1), { "Other" }))).toBe(nil)
+
+      -- past the state card's last field, and before its first
+      expect(state_list.decode(built(string.pack("<HBBBf", 1, 0, past, 0, 1)))).toBe(nil)
+      expect(state_list.decode(built(string.pack("<HBBBf", 1, 0, 0, 0, 1)))).toBe(nil)
+
+      -- a card no list has
+      expect(state_list.decode(built(string.pack("<HBBBf", 1, 3, 1, 0, 1)))).toBe(nil)
+
+      -- a color finish only a number long, and one no f32 reads
+      expect(state_list.decode(built(string.pack("<HBBBf", 1, 0, 5, 0, 1)))).toBe(nil)
+      expect(state_list.decode(built(string.pack("<HBBBfff", 1, 0, 5, 0, 1, 0 / 0, 1)))).toBe(nil)
+
+      -- a vertex color the state never sets
+      expect(state_list.decode(built(string.pack("<HBBBfff", 1, 0, 8, 0, 1, 1, 1)))).toBe(nil)
+
+      -- an empty block, the same randomizer twice, and a flag no field owns
+      expect(state_list.decode(built(string.pack("<H", 0)))).toBe(nil)
+      expect(state_list.decode(built(`{string.pack("<H", 2)}{glowFade}{glowFade}`))).toBe(nil)
+      expect(state_list.decode(built(string.pack("<HBHBBf", 1, 2, 1, 2, 4, 1)))).toBe(nil)
     end)
 
     test("a decal with an empty name decodes to nil", function()
@@ -269,6 +436,17 @@ harness.suite(function()
     test("32 states with 8 decals and a surface fit the length the module notes", function()
       const list = {}
 
+      -- a randomizer with both ends and a weight on every field that takes one
+      const function every(record: any, fields: { string })
+        const out = {}
+
+        for _, name in fields do
+          out[name] = { start = record[name], finish = record[name], weight = curves.PRESETS.easeIn }
+        end
+
+        return out
+      end
+
       for i = 1, state_list.MAX do
         const decals = {}
 
@@ -299,6 +477,8 @@ harness.suite(function()
             reflectance = 0.5,
             materialVariant = "Rough",
             vertexColor = vector.create(1, 1, 1),
+            positionOffset = vector.create(1, 2, 3),
+            rotationOffset = vector.create(0.1, 0.2, 0.3),
             surface = {
               color = Color3.new(1, 1, 1),
               emissiveStrength = 1,
@@ -309,9 +489,24 @@ harness.suite(function()
             decals = decals,
           })
         )
+
+        const s = list[i]
+        const randomizable = state_list.RANDOMIZABLE
+        const random =
+          { state = every(s, randomizable.state), surface = every(s.surface, randomizable.surface), decals = {} }
+
+        for name, decal in decals do
+          random.decals[name] = every(decal, randomizable.decal)
+        end
+
+        s.random = random
       end
 
-      expect(#state_list.encode(list)).toBe(21154)
+      const raw = state_list.encode(list)
+
+      expect(#raw).toBe(73666)
+      expect(#raw < 100000).toBe(true)
+      expect(state_list.decode(raw)).ok()
     end)
   end)
 
@@ -320,6 +515,41 @@ harness.suite(function()
       const list = state_list.decode(state_list.encode(sample())) :: state_list.List
 
       expect(state_list.fromPlain(state_list.toPlain(list))).toEqual(list)
+    end)
+
+    test("offsets and randomizers round-trip through the plain form", function()
+      const list = state_list.decode(state_list.encode(varied())) :: state_list.List
+      const plain = state_list.toPlain(list)
+
+      expect(state_list.fromPlain(plain)).toEqual(list)
+      expect(plain[2].random.state.color.weight).toBe("easeOut")
+      expect(plain[2].positionOffset).toBe(nil)
+      expect(plain[2].rotationOffset).toBe(nil)
+      expect(plain[1].random.state.transparency.start).toBe(nil)
+
+      const quiet = state_list.toPlain(state_list.decode(state_list.encode(sample())) :: state_list.List)
+
+      expect(quiet[1].positionOffset).toBe(nil)
+      expect(quiet[1].random).toBe(nil)
+    end)
+
+    test("a plain randomizer on a field the state leaves unset or no card names is refused by name", function()
+      const unset = state_list.toPlain(state_list.decode(state_list.encode(varied())) :: state_list.List)
+
+      unset[2].random.decals.Glow.color = { finish = { 1, 1, 1 } }
+
+      const list, problem = state_list.fromPlain(unset)
+
+      expect(list).toBe(nil)
+      expect(string.find(problem :: string, "color", 1, true) ~= nil).toBe(true)
+
+      const unknown = state_list.toPlain(state_list.decode(state_list.encode(varied())) :: state_list.List)
+
+      unknown[1].random.state.material = { finish = "Neon" }
+
+      const _, wrong = state_list.fromPlain(unknown)
+
+      expect(string.find(wrong :: string, "material", 1, true) ~= nil).toBe(true)
     end)
 
     test("a bad field is named", function()
@@ -461,6 +691,27 @@ harness.suite(function()
         expect(s.position).toBe(list[i].position * 2)
         expect(s.size).toBe(list[i].size * 2)
       end
+    end)
+
+    test("scales offsets and the ends of position and size randomizers", function()
+      const list = varied()
+      const own = list[2].random.state
+
+      own.positionOffset.start = vector.create(1, 1, 1)
+      own.size = { finish = vector.create(3, 3, 3) }
+
+      const twice = state_list.scaled(list, 2)
+      const random = (twice[2].random :: any).state
+
+      expect(twice[1].positionOffset).toBe(vector.create(2, 4, 6))
+      expect(twice[1].rotationOffset).toBe(list[1].rotationOffset)
+      expect(random.positionOffset.start).toBe(vector.create(2, 2, 2))
+      expect(random.positionOffset.finish).toBe(vector.create(4, 0, 4))
+      expect(random.size.finish).toBe(vector.create(6, 6, 6))
+      expect(random.color.start).toBe(own.color.start)
+      expect(random.color.finish).toBe(own.color.finish)
+      expect(own.positionOffset.finish).toBe(vector.create(2, 0, 2))
+      expect(own.size.finish).toBe(vector.create(3, 3, 3))
     end)
   end)
 

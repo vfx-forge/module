@@ -24,15 +24,28 @@ export type DecalState = {
   easing: string?,
 }
 
+-- the other end of a row's draw: `start` nil reads the state's own value, and
+-- `weight` is a curve shaping the draw, nil drawing evenly
+export type Randomizer = { start: any?, finish: any, weight: string? }
+
+export type Random = {
+  state: { [string]: Randomizer }?,
+  surface: { [string]: Randomizer }?,
+  decals: { [string]: { [string]: Randomizer } }?,
+}
+
 -- a pose and a look relative to the template; easing is the shape of the
 -- segment arriving here, spin the whole turns per template axis added on the
 -- way in. a decal a state does not name, or a field it leaves nil, reads as
--- the template decal's own
+-- the template decal's own. the offsets add to the pose in its own frame, and
+-- `random` gives each piece its own value of the fields it names
 export type State = {
   time: number,
   easing: string,
   position: vector,
   rotation: vector,
+  positionOffset: vector,
+  rotationOffset: vector,
   spin: vector,
   size: vector,
   color: Color3,
@@ -43,6 +56,7 @@ export type State = {
   vertexColor: vector?,
   surface: Surface?,
   decals: { [string]: DecalState },
+  random: Random?,
 }
 
 export type List = { State }
@@ -63,12 +77,14 @@ export type SeedRows = {
   ends: boolean,
 }
 
-type Field = { name: string, kind: string, rest: any, optional: boolean? }
+type Field = { name: string, kind: string, rest: any, optional: boolean?, sparse: boolean? }
 
-const VERSION = 1
+const VERSION = 2
 
 -- 32 states with 8 decals and a surface, every field of every card set,
--- encode to 21154 bytes, 655 a state and the strings once
+-- encode to 21154 bytes as version 1, 655 a state and the strings once; with
+-- the offsets set and a randomizer of both ends and a weight on every field
+-- that takes one, to 73666, 2296 a state
 const MAX = 32
 
 -- key times closer than this read as one state
@@ -84,7 +100,7 @@ const LINEAR = curves.linear()
 
 -- a state's own fields in the order they are stored. one is written only when
 -- it differs from its rest; one with no rest is always written, unless it is
--- optional and nil
+-- optional and nil. a sparse one is left out of the plain form at its rest
 const STATE: { Field } = {
   { name = "time", kind = "time" },
   { name = "easing", kind = "easing", rest = LINEAR },
@@ -98,7 +114,12 @@ const STATE: { Field } = {
   { name = "material", kind = "string" },
   { name = "materialVariant", kind = "string", rest = "" },
   { name = "vertexColor", kind = "vector", optional = true },
+  { name = "positionOffset", kind = "vector", rest = vector.zero, sparse = true },
+  { name = "rotationOffset", kind = "vector", rest = vector.zero, sparse = true },
 }
+
+-- the state fields version 1 stored, before the offsets
+const STATE_V1 = table.move(STATE, 1, 12, 1, {})
 
 const SURFACE: { Field } = {
   { name = "color", kind = "Color3", optional = true },
@@ -121,10 +142,72 @@ const DECAL: { Field } = {
   { name = "easing", kind = "easing", optional = true },
 }
 
--- the bit past a state's fields that says a surface follows
-const SURFACE_BIT = bit32.lshift(1, #STATE)
+-- the fields each card takes a randomizer on, in the order they are stored
+const RANDOMIZABLE = table.freeze({
+  state = table.freeze({
+    "positionOffset",
+    "rotationOffset",
+    "spin",
+    "size",
+    "color",
+    "transparency",
+    "reflectance",
+    "vertexColor",
+  }),
+  surface = table.freeze({ "color", "emissiveStrength", "emissiveTint" }),
+  decal = table.freeze({
+    "color",
+    "transparency",
+    "uvOffset",
+    "uvScale",
+    "rotation",
+    "glowStrength",
+    "emissiveStrength",
+    "emissiveTint",
+  }),
+})
+
+-- the cards as a randomizer stores them, from 0
+const CARDS = { "state", "surface", "decal" }
+
+-- per card, each randomizable field by name and its place in RANDOMIZABLE
+const RANDOM_FIELDS: { [string]: { [string]: Field } } = {}
+const RANDOM_SLOTS: { [string]: { [string]: number } } = {}
+
+for card, fields in { state = STATE, surface = SURFACE, decal = DECAL } do
+  const byName = {}
+  const slots = {}
+
+  for _, field in fields do
+    byName[field.name] = field
+  end
+
+  for slot, name in RANDOMIZABLE[card] do
+    slots[name] = slot
+  end
+
+  RANDOM_FIELDS[card] = byName
+  RANDOM_SLOTS[card] = slots
+end
+
+-- what a version stores of a state: its fields, then the mask bits past them
+-- saying a surface and a randomizer block follow
+type Layout = { fields: { Field }, surface: number, random: number, extra: number }
+
+const LAYOUTS: { [number]: Layout } = {
+  [1] = { fields = STATE_V1, surface = bit32.lshift(1, #STATE_V1), random = 0, extra = 1 },
+  [2] = { fields = STATE, surface = bit32.lshift(1, #STATE), random = bit32.lshift(1, #STATE + 1), extra = 2 },
+}
 
 const WIDTH = { time = 4, number = 4, integer = 4, vector = 12, Color3 = 12, Vector2 = 8, string = 2, easing = 2 }
+
+-- the most bytes one randomizer takes: card, decal name, field, flags, two
+-- ends and a weight
+const RANDOMIZER_WIDEST = 1 + 2 + 1 + 1 + 12 + 12 + 2
+
+-- a randomizer's flags: its start is stored, its weight is stored
+const START_FLAG = 1
+const WEIGHT_FLAG = 2
 
 -- the most bytes a record of these fields takes, its mask included
 const function widest(fields: { Field }, mask: number)
@@ -155,6 +238,7 @@ const common = {}
 
 common.MAX = MAX
 common.VERSION = VERSION
+common.RANDOMIZABLE = RANDOMIZABLE
 common.EMPTY = table.freeze(setmetatable({}, List)) :: List
 
 const function finite(v: any)
@@ -341,35 +425,226 @@ const function sortedNames(decals: { [string]: any })
   return names
 end
 
+type Entry = { card: number, decal: string?, slot: number, kind: string, randomizer: Randomizer }
+
+-- the card's own record a randomizer of it reads, nil when the state has none
+const function holder(state: any, card: string, decal: string?): any
+  if card == "state" then
+    return state
+  end
+
+  if card == "surface" then
+    return state.surface
+  end
+
+  return if type(state.decals) == "table" then state.decals[decal] else nil
+end
+
+-- the randomizers of one card in stored order, appended to `entries`, or why
+-- one cannot be stored. a field the state leaves unset takes none
+const function addCard(entries: { Entry }, state: any, card: number, decal: string?, given: any, where: string): string?
+  const name = CARDS[card + 1]
+  const fields = RANDOM_FIELDS[name]
+  const own = holder(state, name, decal)
+
+  if type(given) ~= "table" then
+    return `{where} is no table`
+  end
+
+  for key in given do
+    if RANDOM_SLOTS[name][key] == nil then
+      return `{where}: {tostring(key)} takes no randomizer`
+    end
+  end
+
+  for slot, key in RANDOMIZABLE[name] do
+    const randomizer = given[key]
+    const field = fields[key]
+
+    if randomizer == nil then
+      continue
+    end
+
+    if own == nil or (own[key] == nil and field.rest == nil) then
+      return `{where}: {key} is randomized but the state leaves it unset`
+    end
+
+    if type(randomizer) ~= "table" then
+      return `{where}: {key} is no table`
+    end
+
+    if randomizer.finish == nil then
+      return `{where}: {key} has no finish`
+    end
+
+    const problem = (if randomizer.start ~= nil then unstorable(field.kind, randomizer.start) else nil)
+      or unstorable(field.kind, randomizer.finish)
+      or (if randomizer.weight ~= nil then unstorable("easing", randomizer.weight) else nil)
+
+    if problem ~= nil then
+      return `{where}: {key} randomizer {problem}`
+    end
+
+    table.insert(entries, { card = card, decal = decal, slot = slot, kind = field.kind, randomizer = randomizer })
+  end
+
+  return nil
+end
+
+-- a state's randomizers in the order they are stored: the state card, the
+-- surface, then each decal by name, every card in RANDOMIZABLE's order
+const function entriesOf(state: any, where: string): ({ Entry }?, string?)
+  const random = state.random
+  const entries = {}
+
+  if random == nil then
+    return entries, nil
+  end
+
+  if type(random) ~= "table" then
+    return nil, `{where}: random is no table`
+  end
+
+  for key in random do
+    if key ~= "state" and key ~= "surface" and key ~= "decals" then
+      return nil, `{where}: random has no card {tostring(key)}`
+    end
+  end
+
+  for card, key in { "state", "surface" } do
+    if random[key] == nil then
+      continue
+    end
+
+    const problem = addCard(entries, state, card - 1, nil, random[key], `{where} random {key}`)
+
+    if problem ~= nil then
+      return nil, problem
+    end
+  end
+
+  const decals = random.decals
+
+  if decals == nil then
+    return entries, nil
+  end
+
+  if type(decals) ~= "table" then
+    return nil, `{where}: random decals is no table`
+  end
+
+  for name in decals do
+    if type(name) ~= "string" then
+      return nil, `{where}: random decals is a table by decal name`
+    end
+  end
+
+  for _, name in sortedNames(decals) do
+    const problem = addCard(entries, state, 2, name, decals[name], `{where} random decal {name}`)
+
+    if problem ~= nil then
+      return nil, problem
+    end
+  end
+
+  return entries, nil
+end
+
+const function writeEntries(w: Writer, entries: { Entry })
+  buffer.writeu16(w.buf, w.at, #entries)
+  w.at += 2
+
+  for _, entry in entries do
+    const randomizer = entry.randomizer
+    local flags = 0
+
+    if randomizer.start ~= nil then
+      flags = bit32.bor(flags, START_FLAG)
+    end
+
+    if randomizer.weight ~= nil then
+      flags = bit32.bor(flags, WEIGHT_FLAG)
+    end
+
+    buffer.writeu8(w.buf, w.at, entry.card)
+    w.at += 1
+
+    if entry.decal ~= nil then
+      writeValue(w, "string", entry.decal)
+    end
+
+    buffer.writeu8(w.buf, w.at, entry.slot)
+    buffer.writeu8(w.buf, w.at + 1, flags)
+    w.at += 2
+
+    if randomizer.start ~= nil then
+      writeValue(w, entry.kind, randomizer.start)
+    end
+
+    writeValue(w, entry.kind, randomizer.finish)
+
+    if randomizer.weight ~= nil then
+      writeValue(w, "easing", randomizer.weight)
+    end
+  end
+end
+
+-- whether a value moves a pose off its rest, which version 1 cannot store
+const function moved(v: any)
+  return v ~= nil and v ~= vector.zero
+end
+
 -- version, the strings every state indexes into, the state count, then each
--- state's fields, its surface and its decals by name. names are sorted, so
--- equal lists encode to equal strings. a value the format cannot hold raises,
--- since the string would decode to nil and lose every state
+-- state's fields, its surface, its decals by name and its randomizers. names
+-- are sorted, so equal lists encode to equal strings. a list with no offset
+-- and no randomizer is written as version 1, byte for byte as before either
+-- was stored. a value the format cannot hold raises, since the string would
+-- decode to nil and lose every state
 function common.encode(list: List): string
   if #list > 65535 then
     error(`a list holds at most 65535 states to encode, not {#list}`, 2)
   end
 
   local bound = 0
+  local version = 1
+  const plans = table.create(#list)
 
-  for _, state in list do
+  for i, state in list do
     const decals = state.decals or {}
+    const entries, problem = entriesOf(state, `state {i}`)
     local count = 0
+
+    if entries == nil then
+      error(problem, 2)
+    end
+
+    if #entries > 65535 then
+      error(`state {i} has more than 65535 randomizers`, 2)
+    end
 
     for _ in decals do
       count += 1
     end
 
-    bound += STATE_WIDEST + SURFACE_WIDEST + 2 + count * (2 + DECAL_WIDEST)
+    if #entries > 0 or moved(state.positionOffset) or moved(state.rotationOffset) then
+      version = VERSION
+    end
+
+    plans[i] = entries
+    bound += STATE_WIDEST + SURFACE_WIDEST + 2 + count * (2 + DECAL_WIDEST) + 2 + #entries * RANDOMIZER_WIDEST
   end
 
+  const layout = LAYOUTS[version]
   const w: Writer = { buf = buffer.create(bound), at = 0, strings = {}, index = {} }
 
   for i, state in list do
     const where = `state {i}`
     const decals = state.decals or {}
     const names = sortedNames(decals)
-    local problem = writeRecord(w, STATE, state, 2, if state.surface ~= nil then SURFACE_BIT else 0, where)
+    const entries = plans[i]
+    const extra =
+      bit32.bor(if state.surface ~= nil then layout.surface else 0, if #entries > 0 then layout.random else 0)
+    local problem = writeRecord(w, layout.fields, state, 2, extra, where)
 
     if problem == nil and state.surface ~= nil then
       problem = writeRecord(w, SURFACE, state.surface, 1, 0, `{where} surface`)
@@ -400,6 +675,10 @@ function common.encode(list: List): string
         error(wrong, 2)
       end
     end
+
+    if #entries > 0 then
+      writeEntries(w, entries)
+    end
   end
 
   if #w.strings > 65535 then
@@ -414,7 +693,7 @@ function common.encode(list: List): string
 
   const out = buffer.create(head + 2 + w.at)
 
-  buffer.writeu8(out, 0, VERSION)
+  buffer.writeu8(out, 0, version)
   buffer.writeu16(out, 1, #w.strings)
 
   local at = 3
@@ -523,14 +802,126 @@ const function readRecord(r: Reader, fields: { Field }, maskSize: number, extraB
   return record, mask
 end
 
-const function readState(r: Reader): State?
-  const state, mask = readRecord(r, STATE, 2, 1)
+type Place = { card: number, decal: string?, slot: number }
+
+-- whether a randomizer is stored after the one before it, which keeps one
+-- order for equal lists and refuses the same randomizer twice
+const function after(place: Place, last: Place?)
+  if last == nil then
+    return true
+  end
+
+  if place.card ~= last.card then
+    return place.card > last.card
+  end
+
+  if place.decal ~= last.decal then
+    return (place.decal :: string) > (last.decal :: string)
+  end
+
+  return place.slot > last.slot
+end
+
+-- the randomizers a state's block holds, or nil when one is malformed, out of
+-- order, or names a field the state leaves unset
+const function readRandom(r: Reader, state: any): Random?
+  if r.at + 2 > r.size then
+    return nil
+  end
+
+  const count = buffer.readu16(r.buf, r.at)
+  const random: any = {}
+  local last: Place? = nil
+
+  r.at += 2
+
+  if count == 0 then
+    return nil
+  end
+
+  for _ = 1, count do
+    if r.at + 1 > r.size then
+      return nil
+    end
+
+    const card = buffer.readu8(r.buf, r.at)
+    const name = CARDS[card + 1]
+
+    r.at += 1
+
+    if name == nil then
+      return nil
+    end
+
+    const decal = if card == 2 then readValue(r, "string") else nil
+
+    if (card == 2 and decal == nil) or r.at + 2 > r.size then
+      return nil
+    end
+
+    const slot, flags = buffer.readu8(r.buf, r.at), buffer.readu8(r.buf, r.at + 1)
+    const key = RANDOMIZABLE[name][slot]
+    const place = { card = card, decal = decal, slot = slot }
+
+    r.at += 2
+
+    if key == nil or bit32.rshift(flags, 2) ~= 0 or not after(place, last) then
+      return nil
+    end
+
+    const own = holder(state, name, decal)
+
+    if own == nil or own[key] == nil then
+      return nil
+    end
+
+    const kind = RANDOM_FIELDS[name][key].kind
+    const started = bit32.band(flags, START_FLAG) ~= 0
+    const weighted = bit32.band(flags, WEIGHT_FLAG) ~= 0
+    const start = if started then readValue(r, kind) else nil
+
+    if started and start == nil then
+      return nil
+    end
+
+    const finish = readValue(r, kind)
+    const weight = if weighted then readValue(r, "easing") else nil
+
+    if finish == nil or (weighted and weight == nil) then
+      return nil
+    end
+
+    local into = nil
+
+    if card == 2 then
+      random.decals = random.decals or {}
+      random.decals[decal] = random.decals[decal] or {}
+      into = random.decals[decal]
+    else
+      random[name] = random[name] or {}
+      into = random[name]
+    end
+
+    into[key] = { start = start, finish = finish, weight = weight }
+    last = place
+  end
+
+  return random
+end
+
+const function readState(r: Reader, layout: Layout): State?
+  const state, mask = readRecord(r, layout.fields, 2, layout.extra)
 
   if state == nil then
     return nil
   end
 
-  if bit32.band(mask, SURFACE_BIT) ~= 0 then
+  -- a field this version does not store reads as its rest
+  for i = #layout.fields + 1, #STATE do
+    state[STATE[i].name] = STATE[i].rest
+  end
+
+  if bit32.band(mask, layout.surface) ~= 0 then
     state.surface = readRecord(r, SURFACE, 1, 0)
 
     if state.surface == nil then
@@ -565,6 +956,14 @@ const function readState(r: Reader): State?
 
   state.decals = decals
 
+  if bit32.band(mask, layout.random) ~= 0 then
+    state.random = readRandom(r, state)
+
+    if state.random == nil then
+      return nil
+    end
+  end
+
   return state
 end
 
@@ -597,7 +996,7 @@ const function byTime(states: { State }): { State }
 end
 
 -- the list a string holds, sorted by time and cut to the first MAX, or nil
--- for anything that is not exactly one list of this version
+-- for anything that is not exactly one list of a version this module reads
 function common.decode(raw: string): List?
   if type(raw) ~= "string" or #raw < 5 then
     return nil
@@ -605,8 +1004,9 @@ function common.decode(raw: string): List?
 
   const buf = buffer.fromstring(raw)
   const size = #raw
+  const layout = LAYOUTS[buffer.readu8(buf, 0)]
 
-  if buffer.readu8(buf, 0) ~= VERSION then
+  if layout == nil then
     return nil
   end
 
@@ -637,7 +1037,7 @@ function common.decode(raw: string): List?
   const states = table.create(count)
 
   for i = 1, count do
-    const state = readState(r)
+    const state = readState(r, layout)
 
     if state == nil then
       return nil
@@ -702,7 +1102,7 @@ const function recordOut(fields: { Field }, record: any)
   for _, field in fields do
     const v = record[field.name]
 
-    if v ~= nil then
+    if v ~= nil and not (field.sparse and v == field.rest) then
       out[field.name] = valueOut(field.kind, v)
     end
   end
@@ -710,9 +1110,48 @@ const function recordOut(fields: { Field }, record: any)
   return out
 end
 
+const function cardOut(card: string, given: { [string]: Randomizer })
+  const out = {}
+
+  for key, randomizer in given do
+    const kind = RANDOM_FIELDS[card][key].kind
+
+    out[key] = {
+      start = if randomizer.start ~= nil then valueOut(kind, randomizer.start) else nil,
+      finish = valueOut(kind, randomizer.finish),
+      weight = if randomizer.weight ~= nil then valueOut("easing", randomizer.weight) else nil,
+    }
+  end
+
+  return out
+end
+
+const function randomOut(random: Random)
+  const out: any = {}
+
+  if random.state ~= nil then
+    out.state = cardOut("state", random.state)
+  end
+
+  if random.surface ~= nil then
+    out.surface = cardOut("surface", random.surface)
+  end
+
+  if random.decals ~= nil then
+    out.decals = {}
+
+    for name, given in random.decals do
+      out.decals[name] = cardOut("decal", given)
+    end
+  end
+
+  return out
+end
+
 -- the list as numbers, strings, arrays and objects: vectors and colors as
--- arrays, an easing as a preset's name or the f32 numbers of its path, y
--- down as stored, decals as an object by name
+-- arrays, an easing or a weight as a preset's name or the f32 numbers of its
+-- path, y down as stored, decals as an object by name. the offsets and
+-- `random` are left out when unset
 function common.toPlain(list: List): { any }
   const out = table.create(#list)
 
@@ -726,6 +1165,10 @@ function common.toPlain(list: List): { any }
 
     for name, decal in state.decals do
       decals[name] = recordOut(DECAL, decal)
+    end
+
+    if state.random ~= nil then
+      plain.random = randomOut(state.random)
     end
 
     plain.decals = decals
@@ -868,7 +1311,133 @@ const function recordIn(fields: { Field }, v: any, where: string, extra: { [stri
   return record, nil
 end
 
-const STATE_EXTRA = { surface = true, decals = true }
+const RANDOMIZER_KEYS = { start = true, finish = true, weight = true }
+
+const function randomizerIn(kind: string, v: any, where: string): (Randomizer?, string?)
+  if type(v) ~= "table" then
+    return nil, `{where} is an object`
+  end
+
+  for key in v do
+    if not RANDOMIZER_KEYS[key] then
+      return nil, `{where} has no field {tostring(key)}`
+    end
+  end
+
+  if v.finish == nil then
+    return nil, `{where}: finish is missing`
+  end
+
+  local start = nil
+
+  if v.start ~= nil then
+    const read, problem = valueIn(kind, v.start)
+
+    if read == nil then
+      return nil, `{where}: start {problem}`
+    end
+
+    start = read
+  end
+
+  const finish, problem = valueIn(kind, v.finish)
+
+  if finish == nil then
+    return nil, `{where}: finish {problem}`
+  end
+
+  local weight = nil
+
+  if v.weight ~= nil then
+    const read, wrong = easingIn(v.weight)
+
+    if read == nil then
+      return nil, `{where}: weight {wrong}`
+    end
+
+    weight = read
+  end
+
+  return { start = start, finish = finish, weight = weight }, nil
+end
+
+-- a card's randomizers from their plain form, nil when it holds none
+const function cardIn(card: string, v: any, where: string): ({ [string]: Randomizer }?, string?)
+  if type(v) ~= "table" then
+    return nil, `{where} is an object by field`
+  end
+
+  const out = {}
+
+  for key, given in v do
+    const field = RANDOM_FIELDS[card][key]
+
+    if RANDOM_SLOTS[card][key] == nil then
+      return nil, `{where}: {tostring(key)} takes no randomizer`
+    end
+
+    const randomizer, problem = randomizerIn(field.kind, given, `{where} {key}`)
+
+    if randomizer == nil then
+      return nil, problem
+    end
+
+    out[key] = randomizer
+  end
+
+  return if next(out) ~= nil then out else nil, nil
+end
+
+-- a state's randomizers from their plain form, empty cards dropped, so one
+-- naming none reads as nil
+const function randomIn(v: any, where: string): (Random?, string?)
+  if type(v) ~= "table" then
+    return nil, `{where}: random is an object by card`
+  end
+
+  const random: any = {}
+
+  for key, given in v do
+    if key ~= "state" and key ~= "surface" and key ~= "decals" then
+      return nil, `{where}: random has no card {tostring(key)}`
+    end
+
+    if key == "decals" then
+      continue
+    end
+
+    const card, problem = cardIn(key, given, `{where} random {key}`)
+
+    if problem ~= nil then
+      return nil, problem
+    end
+
+    random[key] = card
+  end
+
+  if v.decals ~= nil and type(v.decals) ~= "table" then
+    return nil, `{where}: random decals is an object by decal name`
+  end
+
+  for name, given in v.decals or {} do
+    if type(name) ~= "string" then
+      return nil, `{where}: random decals is an object by decal name`
+    end
+
+    const card, problem = cardIn("decal", given, `{where} random decal {name}`)
+
+    if problem ~= nil then
+      return nil, problem
+    end
+
+    random.decals = random.decals or {}
+    random.decals[name] = card
+  end
+
+  return if next(random) ~= nil then random else nil, nil
+end
+
+const STATE_EXTRA = { surface = true, decals = true, random = true }
 
 -- a list from its plain form, sorted by time, or nil and the field that is
 -- wrong. a field with a rest may be left out and reads as it
@@ -938,6 +1507,23 @@ function common.fromPlain(v: any): (List?, string?)
     end
 
     state.decals = decals
+
+    if plain.random ~= nil then
+      const random, wrong = randomIn(plain.random, where)
+
+      if wrong ~= nil then
+        return nil, wrong
+      end
+
+      state.random = random
+    end
+
+    const _, unset = entriesOf(state, where)
+
+    if unset ~= nil then
+      return nil, unset
+    end
+
     states[i] = state
   end
 
@@ -1148,17 +1734,43 @@ function common.seed(rows: SeedRows): List
   return mark(list)
 end
 
--- the list with every position and size times `factor`, as resizing the
--- template does; a size is a factor on the template's own, which no resize
--- scales under states. a surface and the decals are shared with `list`
+-- the randomizer with both ends times `factor`
+const function scaledEnds(randomizer: Randomizer, factor: number): Randomizer
+  return {
+    start = if randomizer.start ~= nil then randomizer.start * factor else nil,
+    finish = randomizer.finish * factor,
+    weight = randomizer.weight,
+  }
+end
+
+-- the list with every position, position offset and size times `factor`, and
+-- the ends of their randomizers, as resizing the template does; a size is a
+-- factor on the template's own, which no resize scales under states. a
+-- surface, the decals and every other randomizer are shared with `list`
 function common.scaled(list: List, factor: number): List
   const out = table.create(#list)
 
   for i, state in list do
     const copy = table.clone(state)
+    const random = state.random
 
     copy.position = state.position * factor
+    copy.positionOffset = state.positionOffset * factor
     copy.size = state.size * factor
+
+    if random ~= nil and random.state ~= nil then
+      const own = table.clone(random.state)
+
+      for _, key in { "positionOffset", "size" } do
+        if own[key] ~= nil then
+          own[key] = scaledEnds(own[key], factor)
+        end
+      end
+
+      copy.random = table.clone(random)
+      copy.random.state = own
+    end
+
     out[i] = copy
   end
 
@@ -1251,11 +1863,17 @@ const function play(fields: Fields, out: any, a: any, b: any, rest: any, u: numb
 end
 
 -- a pose with the rotation about each axis in radians, applied in
--- CFrame.fromOrientation's order
-function common.pose(base: CFrame, position: vector, rotation: vector): CFrame
-  return base
+-- CFrame.fromOrientation's order, then `turn` the same way after it
+function common.pose(base: CFrame, position: vector, rotation: vector, turn: vector?): CFrame
+  const posed = base
     * CFrame.new(position.x, position.y, position.z)
     * CFrame.fromOrientation(rotation.x, rotation.y, rotation.z)
+
+  if turn == nil then
+    return posed
+  end
+
+  return posed * CFrame.fromOrientation(turn.x, turn.y, turn.z)
 end
 
 -- a function writing what the list reads at `t` into `out`, built once per
