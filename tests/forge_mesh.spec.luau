@@ -231,6 +231,24 @@ const function tweened(obj: Instance, name: string, low: any, high: any)
   obj:SetAttribute(mods.attrName("attribute", name), frame.frame(codec.encode({ v = 1, queue = queue })))
 end
 
+-- tweens on the row `name` that play in turn, `each` seconds apiece, from
+-- each of `values` to the next
+const function stepped(obj: Instance, name: string, values: { any }, each: number)
+  const queue = {}
+
+  for i = 1, #values - 1 do
+    table.insert(queue, {
+      kind = "tween",
+      chain = false,
+      duration = each,
+      start = value.lit(values[i]),
+      finish = value.lit(values[i + 1]),
+    })
+  end
+
+  obj:SetAttribute(mods.attrName("attribute", name), frame.frame(codec.encode({ v = 1, queue = queue })))
+end
+
 -- every piece in the order it spawned while `body` runs, put back once it ends
 const function spawning(body: (spawned: { BasePart }) -> ())
   const start = look_common.start
@@ -2833,6 +2851,64 @@ harness.suite(function()
 
         env:Clear()
       end)
+    end)
+
+    test("a lock and release hands a flying piece back the velocity it had, whatever the parent did", function()
+      for _, cycles in { 1, 5 } do
+        staged(function(fake)
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, { Speed = NumberRange.new(3, 3), Lifetime = NumberRange.new(5, 5) })
+          const values = { false }
+
+          for _ = 1, cycles do
+            table.insert(values, true)
+            table.insert(values, false)
+          end
+
+          -- each lock and release lands at the middle of its 0.4 s tween,
+          -- the first lock at 0.2 s
+          stepped(part, "LockedToPart", values, 0.4)
+
+          const env = effects.emit(0, part)
+          const piece = pieces(fake)[1]
+          local x = 0
+          local speed = 6
+
+          const function run(count: number): Vector3
+            const from = piece.CFrame.Position
+
+            for _ = 1, count do
+              x += speed * FRAME
+              parent.CFrame = CFrame.new(x, 10, 0)
+              frames(1)
+            end
+
+            return (piece.CFrame.Position - from) / (count * FRAME)
+          end
+
+          const before = run(10)
+
+          -- held, it rides the parent on top of its own velocity
+          run(4)
+
+          expect(near(run(10), before + Vector3.new(6, 0, 0), LOOSE)).toBe(true)
+
+          -- while held, the parent changes its velocity, which the release
+          -- hands on as a change since the grip
+          if cycles == 1 then
+            speed = 9
+          end
+
+          -- on past the last release, at 0.8 s a cycle less 0.2 s
+          run(math.ceil((0.8 * cycles - 0.2) / FRAME) + 2 - 24)
+
+          const gained = Vector3.new(if cycles == 1 then 3 else 0, 0, 0)
+
+          expect(near(run(10), before + gained, LOOSE)).toBe(true)
+
+          env:Clear()
+        end)
+      end
     end)
   end)
 
