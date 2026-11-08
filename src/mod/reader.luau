@@ -203,6 +203,9 @@ local STILL = mods.piece(nil)
 -- the lane map wrapped around each old queue, one per queue table
 local LEGACY_LANES: { [any]: { [string]: { any } } } = setmetatable({}, { __mode = "k" }) :: any
 
+-- each stored map moved onto the event a row plays from, one per map and event
+const HOMED: { [string]: { [any]: { [string]: { any } } } } = {}
+
 -- the builds every instance storing the same content shares: the lanes a row
 -- was found under are one table per distinct content, and a row of another
 -- instance found under that same table, resting at the same value over the
@@ -284,6 +287,39 @@ local function aliasOf(
   return nil, nil
 end
 
+-- the lanes of a row its module plays from an event: the start lane an old
+-- format or an earlier plugin stored for it is that event's, where the module
+-- always ran it, and it replaces one stored beside it, which never ran at all
+const function homedOf(lanes: { [string]: { any } }, row: knob.Knob): { [string]: { any } }
+  const home = row.homeLane
+
+  if home == nil or lanes.start == nil then
+    return lanes
+  end
+
+  local moved = HOMED[home]
+
+  if moved == nil then
+    moved = setmetatable({}, { __mode = "k" }) :: any
+    HOMED[home] = moved
+  end
+
+  const known = moved[lanes]
+
+  if known ~= nil then
+    return known
+  end
+
+  const out = table.clone(lanes)
+
+  out[home] = lanes.start
+  out.start = nil
+  table.freeze(out)
+  moved[lanes] = out
+
+  return out
+end
+
 -- the lanes a row carries, looked for under its name and then each alias: any
 -- framed map first, on the row's own side and then, for a property row, on the
 -- attribute side old content authored on; then the old shapes, in the same
@@ -314,7 +350,7 @@ local function queueOf(
   end
 
   if lanes ~= nil then
-    return lanes, true, under
+    return homedOf(lanes, row), true, under
   end
 
   local children = childrenOf(state)
@@ -347,7 +383,7 @@ local function queueOf(
     LEGACY_LANES[queue] = wrapped
   end
 
-  return wrapped, false, under
+  return homedOf(wrapped, row), false, under
 end
 
 local function usableDuration(d: any)
@@ -1038,8 +1074,8 @@ local function trackOf(
   -- somewhere, so the build is told where rather than left to read it off a
   -- lead that is not there. a drawn range names both its corners and every
   -- other row takes the shared option table
-  local opts: { ownStart: boolean?, value: any? }? = if declared ~= nil
-    then { ownStart = seeded, value = rest }
+  local opts: { ownStart: boolean?, value: any?, home: string? }? = if declared ~= nil
+    then { ownStart = seeded, value = rest, home = row.homeLane }
     elseif seeded then SEEDED
     else nil
   -- an attribute row builds under the name its queue was found under, since

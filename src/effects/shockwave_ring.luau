@@ -33,8 +33,8 @@ local function sizeFromCorners(_, attrs: any)
   return mods.draw(attrs.MinSize, attrs.MaxSize)
 end
 
--- the exits are the despawn lane's defaults on the offset and size rows, and
--- these rows say where each goes, for how long and how
+-- the exits are the despawn lane's defaults on the offset, size and
+-- transparency rows, and these rows say where each goes, for how long and how
 local function shrinkEnd(_, attrs: any)
   return attrs.ShrinkScale
 end
@@ -57,6 +57,10 @@ end
 
 local function offsetOutCurve(_, attrs: any)
   return attrs.OffsetOutCurve
+end
+
+local function transparencyDuration(_, attrs: any)
+  return attrs.TransparencyDuration
 end
 
 local ring = {}
@@ -94,9 +98,10 @@ ring.attributes = {
     :hint("Maximum per-axis size for each ring piece."),
   Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
   -- the entry phases rest where the old defaults left them: the offset where
-  -- it stands, the size on a rise from nothing to the drawn size, the fade
-  -- from where a piece rests to the end. the spans the old quads ran over
-  -- are rows of their own, so the defaults keep them and retime reaches them
+  -- it stands, the size on a rise from nothing to the drawn size. the fade
+  -- runs only once a piece despawns, from where it rests to the end, so the
+  -- row plays from that lane alone. the spans the old quads ran over are rows
+  -- of their own, so the defaults keep them and retime reaches them
   OffsetIn = knob(vector.zero)
     :unit("studs")
     :mod(mod.to(offsetOutEnd):duration(offsetOutDuration):curve(offsetOutCurve):lane("despawn"))
@@ -123,9 +128,8 @@ ring.attributes = {
     :hidden(always),
   Transparency = knob(0)
     :aliases("Transparency_Start")
-    :mod(mod.to(0):duration(function(_, attrs)
-      return attrs.TransparencyDuration
-    end))
+    :lane("despawn")
+    :mod(mod.to(0):duration(transparencyDuration):lane("despawn"))
     :label("Transparency")
     :hint("Transparency each piece rests at before its fade."),
   TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"):unit("seconds"):hidden(always),
@@ -251,14 +255,6 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
       part.Transparency = attrs.Transparency.value
     end
 
-    -- the fade a segment runs after its dwell goes from where the segment
-    -- rests, which a segment inheriting its hit surface knows only now, to
-    -- where the row ends. a framed queue names both ends and is taken at its
-    -- word
-    local fade = attrs.Transparency(part.Transparency)
-
-    part.Transparency = fade.at(0)
-
     part.Size = Vector3.zero
 
     local rx = -math.cos(angle)
@@ -277,15 +273,23 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
     local offsetIn = attrs.OffsetIn(nil, nil, piece)
     local sizeIn = attrs.SizeScaleIn(nil, nil, piece)
 
+    -- the fade goes from where the segment rests, which a segment inheriting
+    -- its hit surface knows only now
+    local fade = attrs.Transparency(part.Transparency, nil, piece)
+
     -- where each row last put the piece, so an exit writes only what moved
     local currentOffset = offsetIn.at(0)
     local currentFactor = sizeIn.at(0)
+    local currentFade = fade.at(0)
+
+    part.Transparency = currentFade
 
     -- the first pose is written at once, so a reused piece never shows a
     -- frame where its last holder let it go
     part.CFrame = CFrame.new(currentOffset) * rotCF
 
     local sizeTween
+    local fadeTween
     local offsetTween
 
     -- every piece carries the despawn lane, so a track is animated whether or
@@ -310,6 +314,15 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
         if typeof(factor) == "Vector3" then
           currentFactor = factor
           part.Size = size * factor
+        end
+      end)
+    end
+
+    if fade.has("end") then
+      fadeTween = tween.drive(scope, fade, function(v: any)
+        if typeof(v) == "number" then
+          currentFade = v
+          part.Transparency = v
         end
       end)
     end
@@ -366,6 +379,10 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
             sizeTween:Disconnect()
           end
 
+          if fadeTween then
+            fadeTween:Disconnect()
+          end
+
           if offsetTween then
             offsetTween:Disconnect()
           end
@@ -373,16 +390,19 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
           piece:fire("despawn", fired)
 
           local sizeReach = sizeIn.reach("despawn")
+          local fadeReach = fade.reach("despawn")
           local offsetReach = offsetIn.reach("despawn")
 
           -- a row whose despawn lane leaves it where it stands is written once,
           -- where it stands, and the exit still runs as long as its reach says
           local sizeUntil = if sizeIn.still("despawn", fired) then 0 else sizeReach
+          local fadeUntil = if fade.still("despawn", fired) then 0 else fadeReach
           local offsetUntil = if offsetIn.still("despawn", fired) then 0 else offsetReach
 
           -- each row is sampled until its own exit lands and never after, so a row
           -- that snaps is written once and the shorter exit stops first
           local sizeMoving = true
+          local fadeMoving = true
           local offsetMoving = true
 
           local function exitAt(since: number)
@@ -407,11 +427,22 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
                 mover.move(scope, part, CFrame.new(offset) * rotCF)
               end
             end
+
+            if fadeMoving then
+              fadeMoving = since < fadeUntil
+
+              local v = fade.at(fired + math.min(since, fadeUntil))
+
+              if typeof(v) == "number" and v ~= currentFade then
+                currentFade = v
+                part.Transparency = v
+              end
+            end
           end
 
-          -- one stepper runs both exits over the longer of them, on the piece's
+          -- one stepper runs every exit over the longest of them, on the piece's
           -- clock from the fire
-          local exitLength = math.max(sizeReach, offsetReach)
+          local exitLength = math.max(sizeReach, offsetReach, fadeReach)
 
           -- a despawn lane is never cut: the emit awaits every exit, however far
           -- past the ring's run it reaches. a teardown closes the body waiting on
@@ -431,14 +462,6 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
             end, nil, lifetime.add(outstanding))
           else
             exitAt(0)
-          end
-
-          if fade.animated then
-            tween.drive(scope, fade, function(v: any)
-              if typeof(v) == "number" then
-                part.Transparency = v
-              end
-            end)
           end
 
           scope.effects.emitOnFinish(emitOnFinish, part, scope.depth + 1, scope, outstanding)

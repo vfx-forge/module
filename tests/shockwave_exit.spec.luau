@@ -1,4 +1,6 @@
+local mod = require("@mod/mod")
 local attr = require("@mod/attributes")
+local knob = require("@mod/knob")
 local mods = require("@mod/mods")
 local path = require("@mod/common/path")
 local codec = require("@mod/modifier_codec")
@@ -106,6 +108,61 @@ local function pieceOf(id: string, authored: { [string]: any }): (any, any)
   local module = registry.get(id) :: any
 
   return registry.read(ref, module), module
+end
+
+-- the Transparency row each piece module declared before its fade moved onto
+-- the despawn lane: a default on the start lane the module drove from a
+-- piece's despawn, on a clock of its own
+local function oldFadeModule(finish: number)
+  local function noop() end
+
+  return {
+    id = "old_fade",
+    display = { name = "Old fade" },
+    classifier = "Part",
+    attributes = {
+      Transparency = knob(0):aliases("Transparency_Start"):mod(mod.to(finish):duration(function(_, attrs)
+        return attrs.TransparencyDuration
+      end)),
+      TransparencyDuration = knob(0.5):min(0):aliases("Transparency_Duration"),
+    },
+    properties = {},
+    emit = noop,
+  }
+end
+
+local FADE_ENDS = { shockwave_ring = 0, shockwave_line = 0, shockwave_debris = 1 }
+local FADE_TIMES = { 0, 0.05, 0.1, 0.2, 0.25, 0.4, 0.5, 0.75, 1, 2 }
+
+-- a piece's fade as the module plays it now, fired at `fired`, against the
+-- old reading of the same instance started from its own zero at the fire
+local function sameFade(id: string, authored: { [string]: any }, rest: number)
+  local fired = 1.5
+  local attrs, module = pieceOf(id, authored)
+  local ref = attrs.Transparency.state.ctx.ref
+  local old = reader.resolve(oldFadeModule(FADE_ENDS[id]) :: any, { ref = ref, obj = ref })
+  local before = old.Transparency(rest)
+  local piece = mods.piece(module.events)
+  local after = attrs.Transparency(rest, nil, piece)
+
+  expect(after.has("start")).toBe(false)
+  expect(near(after.at(0), rest)).toBe(true)
+
+  piece:fire("despawn", fired)
+
+  for _, e in FADE_TIMES do
+    local was, now = before.at(e), after.at(fired + e)
+
+    assert(near(was, now), `{id} {e} s after the despawn: {was} before, {now} now`)
+  end
+
+  -- a fade that moved ran its span from the despawn, and the lane reaches as
+  -- far. one that never moved is held where it rests, which the samples say
+  if before.animated then
+    local length, reach = before.duration, after.reach("despawn")
+
+    assert(near(length, reach), `{id}: the old fade ran {length} s, the despawn lane reaches {reach} s`)
+  end
 end
 
 harness.suite(function()
@@ -612,6 +669,111 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("the shockwave fade as the despawn lane", function()
+    local function tween(start: number?, finish: number, duration: number): any
+      return {
+        kind = "tween",
+        chain = false,
+        duration = duration,
+        start = if start ~= nil then value.lit(start) else nil,
+        finish = value.lit(finish),
+      }
+    end
+
+    local function framed(lanes: { [string]: { any } }): string
+      return frame.frame(codec.encode({ v = 2, lanes = lanes }))
+    end
+
+    test("an old fade quad plays from the despawn as it did", function()
+      for id in FADE_ENDS do
+        for _, rest in { 0, 0.3 } do
+          sameFade(id, {
+            Transparency_Start = 0,
+            Transparency_End = 1,
+            Transparency_Duration = 0.4,
+            Transparency_Curve = curves.PRESETS.easeInOut,
+          }, rest)
+        end
+      end
+    end)
+
+    test("an old fade quad that ends where it starts stays still from the despawn", function()
+      for id in FADE_ENDS do
+        sameFade(id, { Transparency_Start = 0, Transparency_End = 0, Transparency_Duration = 0.5 }, 0)
+      end
+    end)
+
+    test("an old half quad is completed from the row as it was", function()
+      for id in FADE_ENDS do
+        for _, rest in { 0, 0.3 } do
+          sameFade(id, { Transparency_End = 0.8 }, rest)
+          sameFade(id, { Transparency_Start = 0.2, Transparency_Duration = 0.3 }, rest)
+        end
+      end
+    end)
+
+    test("an unauthored fade plays from the despawn as it did", function()
+      for id in FADE_ENDS do
+        for _, rest in { 0, 0.3, 1 } do
+          sameFade(id, {}, rest)
+          sameFade(id, { TransparencyDuration = 0.25 }, rest)
+        end
+      end
+    end)
+
+    test("a start lane stored for the fade plays from the despawn as it did", function()
+      local delayed = {
+        { kind = "delay", chain = false, wait = value.lit(0.1) },
+        tween(0.2, 1, 0.3),
+      }
+
+      for id in FADE_ENDS do
+        for _, rest in { 0, 0.3 } do
+          sameFade(id, { [mods.attrName("attribute", "Transparency")] = framed({ start = delayed }) }, rest)
+        end
+      end
+    end)
+
+    test("a start lane stored beside a despawn lane is the one that plays", function()
+      for id in FADE_ENDS do
+        local attrs, module = pieceOf(id, {
+          [mods.attrName("attribute", "Transparency")] = framed({
+            start = { tween(0, 1, 0.4) },
+            despawn = { tween(0, 0.5, 2) },
+          }),
+        })
+
+        local piece = mods.piece(module.events)
+        local fade = attrs.Transparency(0, nil, piece)
+
+        piece:fire("despawn", 1)
+
+        expect(near(fade.reach("despawn"), 0.4)).toBe(true)
+        expect(near(fade.at(1.2), 0.5)).toBe(true)
+        expect(near(fade.at(1.4), 1)).toBe(true)
+      end
+    end)
+
+    test("a despawn lane stored for the fade plays from the despawn", function()
+      for id in FADE_ENDS do
+        local attrs, module = pieceOf(id, {
+          [mods.attrName("attribute", "Transparency")] = framed({ despawn = { tween(0.1, 0.9, 0.4) } }),
+        })
+
+        local piece = mods.piece(module.events)
+        local fade = attrs.Transparency(0, nil, piece)
+
+        expect(fade.at(0.5)).toBe(0)
+
+        piece:fire("despawn", 1)
+
+        expect(near(fade.at(1), 0.1)).toBe(true)
+        expect(near(fade.at(1.2), 0.5)).toBe(true)
+        expect(near(fade.at(1.4), 0.9)).toBe(true)
+      end
+    end)
+  end)
+
   harness.describe("the debris exit", function()
     -- the old emit waited out ShrinkDuration after the longest dwell; the
     -- despawn lane's reach is what it waits now
@@ -705,8 +867,8 @@ harness.suite(function()
         ),
       })
 
-      local fadeDuration = if attrs.Transparency.animated then attrs.Transparency.duration else 0
-      local exit = math.max(fadeDuration, attrs.SizeScale.reach("despawn"))
+      local fadeLength = if attrs.Transparency.animated then attrs.Transparency.reach("despawn") else 0
+      local exit = math.max(fadeLength, attrs.SizeScale.reach("despawn"))
       local piece = mods.piece(module.events)
       local sizeScale = attrs.SizeScale(nil, nil, piece)
 
@@ -729,11 +891,11 @@ harness.suite(function()
       local attrs = pieceOf("shockwave_debris", { Transparency_Duration = 2 })
 
       expect(attrs.TransparencyDuration).toBe(2)
-      expect(attrs.Transparency(0).duration).toBe(2)
+      expect(attrs.Transparency(0).reach("despawn")).toBe(2)
 
       local plain = pieceOf("shockwave_debris", {})
 
-      expect(plain.Transparency(0).duration).toBe(0.5)
+      expect(plain.Transparency(0).reach("despawn")).toBe(0.5)
     end)
   end)
 end)

@@ -434,6 +434,12 @@ local function checkRow(
     end
   end
 
+  local home = row.homeLane
+
+  if home ~= nil and (events == nil or table.find(events, home) == nil) then
+    fail(found, id, `{name} plays from {home}, which this module never declares`)
+  end
+
   for _, field in { "hiddenRule", "readonlyRule", "rule" } do
     if row[field] ~= nil and type(row[field]) ~= "function" then
       fail(found, id, `{field} of {name} is not a function`)

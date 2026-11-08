@@ -1142,14 +1142,17 @@ local function buildNow(
   env: { [string]: any }?,
   lanes: { [string]: { any } }?,
   framed: boolean,
-  opts: { ownStart: boolean?, value: any? }?,
+  opts: { ownStart: boolean?, value: any?, home: string? }?,
   piece: Piece?
 ): (Track, ((other: Piece) -> Track?)?)
   -- a table is a map of lanes, unless it is a value curve the row rests at
   local fallback: { [string]: { any } }? = if mods.kindOf(default) == "table" then default else nil
   local rest: any = if fallback then nil else default
 
-  local lead = if fallback then leadTween(fallback.start) else nil
+  -- the lane an old half quad completes from: the start's, or the event's a
+  -- row is played from, which its old shapes are read onto
+  const home = if opts ~= nil and opts.home ~= nil then opts.home else "start"
+  local lead = if fallback then leadTween(fallback[home]) else nil
 
   -- a default made of lanes may put nothing on the row's own lane, so there is
   -- no lead to read a resting value off and the caller says where it rests
@@ -1160,7 +1163,9 @@ local function buildNow(
   local want: string? = nil
 
   if lead ~= nil then
-    fillStart = lead.start
+    -- a lead on an event lane chains and names no start, and the half it
+    -- leaves is where the row rests, which is where it chains from too
+    fillStart = if lead.start ~= nil then lead.start else legacy_mods.endpoint(source, name, stated)
     fillFinish = lead.finish
 
     if fillStart and value.isLit(fillStart) then
@@ -1588,7 +1593,7 @@ function mods.build(
   env: { [string]: any }?,
   lanes: { [string]: { any } }?,
   framed: boolean,
-  opts: { ownStart: boolean?, value: any? }?,
+  opts: { ownStart: boolean?, value: any?, home: string? }?,
   piece: Piece?
 ): (Track, ((other: Piece) -> Track?)?)
   local simple = simpleOf(default, span, lanes, opts)
@@ -1736,7 +1741,7 @@ function mods.track(
   default: any,
   span: number,
   env: { [string]: any }?,
-  opts: { ownStart: boolean?, value: any? }?,
+  opts: { ownStart: boolean?, value: any?, home: string? }?,
   piece: Piece?
 ): Track
   local lanes, framed = mods.read(ref, source, name)

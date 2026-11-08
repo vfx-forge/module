@@ -23,8 +23,8 @@ local function always()
   return true
 end
 
--- the exit is the despawn lane's default on SizeScale, and the shrink rows say
--- where it goes, for how long and how
+-- the exits are the despawn lane's defaults on SizeScale and Transparency, and
+-- the shrink and fade rows say where each goes, for how long and how
 local function shrinkEnd(_, attrs: any)
   return attrs.ShrinkScale
 end
@@ -105,9 +105,12 @@ debris.attributes = {
     end)
     :aliases("SizeScaleOut_Curve", "Size_End_Curve", "Size_Curve")
     :hidden(always),
+  -- the fade runs only once a piece despawns, so the row plays from that lane
+  -- alone
   Transparency = knob(0)
     :aliases("Transparency_Start")
-    :mod(mod.to(1):duration(transparencyDuration))
+    :lane("despawn")
+    :mod(mod.to(1):duration(transparencyDuration):lane("despawn"))
     :label("Transparency")
     :hint("Transparency applied to spawned debris without an inherited surface."),
   -- the span the old fade ran over, read under its old name when nothing else
@@ -246,12 +249,11 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
   local fadeSeed = attrs.Transparency.value
 
   -- the exit every piece runs after its dwell, which the emit waits out too:
-  -- the fade or the despawn lane, whichever is longer. a resting fade holds
-  -- nothing open. the fire lends the lane this length, so an entry on it
-  -- naming no duration runs out the exit rather than what is left of the
-  -- dwell ceiling
-  local fadeDuration = if attrs.Transparency.animated then attrs.Transparency.duration else 0
-  local exitLength = math.max(fadeDuration, attrs.SizeScale.reach("despawn"))
+  -- the longer of the two despawn lanes. a resting fade holds nothing open.
+  -- the fire lends the lanes this length, so an entry on one naming no
+  -- duration runs out the exit rather than what is left of the dwell ceiling
+  local fadeLength = if attrs.Transparency.animated then attrs.Transparency.reach("despawn") else 0
+  local exitLength = math.max(fadeLength, attrs.SizeScale.reach("despawn"))
 
   local count = rng:NextInteger(amount.Min, amount.Max)
 
@@ -366,12 +368,23 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
       part.Transparency = fadeSeed
     end
 
-    -- the fade a piece runs after its dwell continues from where the piece
-    -- rests, which a piece inheriting a nearby part knows only now. a framed
-    -- queue names its own start and is taken at its word
-    local fade = attrs.Transparency(part.Transparency)
+    -- the fade continues from where the piece rests, which a piece inheriting
+    -- a nearby part knows only now
+    local fade = attrs.Transparency(part.Transparency, nil, piece)
+    local currentFade = fade.at(0)
 
-    part.Transparency = fade.at(0)
+    part.Transparency = currentFade
+
+    local fadeTween
+
+    if fade.has("end") then
+      fadeTween = tween.drive(scope, fade, function(v: any)
+        if typeof(v) == "number" then
+          currentFade = v
+          part.Transparency = v
+        end
+      end)
+    end
 
     lifetime.hold(scope, function()
       local index = table.find(physicsParts, part)
@@ -447,32 +460,47 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
             scaleTween:Disconnect()
           end
 
+          if fadeTween then
+            fadeTween:Disconnect()
+          end
+
           piece:fire("despawn", fired, exitLength)
 
-          -- the emit's exit, or longer for a piece whose lane drew its own
+          -- the emit's exit, or longer for a piece whose lanes drew their own
           -- length. a no-duration entry runs out the exit the fire lent it,
           -- which can outlast the lane's own reach, so the whole of it is
           -- sampled
-          local length = math.max(exitLength, sizeScale.reach("despawn"))
+          local length = math.max(exitLength, sizeScale.reach("despawn"), fade.reach("despawn"))
 
-          -- a lane that leaves the size where it stands is written once, where
-          -- it stands, and sampled until it lands and never after
+          -- a lane that leaves its row where it stands is written once, where
+          -- it stands, and each is sampled until it lands and never after
           local sizeUntil = if sizeScale.still("despawn", fired) then 0 else length
+          local fadeUntil = if fade.still("despawn", fired) then 0 else length
           local sizeMoving = true
+          local fadeMoving = true
 
           local function exitAt(since: number)
-            if not sizeMoving then
-              return
+            if sizeMoving then
+              sizeMoving = since < sizeUntil
+
+              local factor = sizeScale.at(fired + math.min(since, sizeUntil))
+
+              if typeof(factor) == "Vector3" and factor ~= currentFactor then
+                currentFactor = factor
+                part.Size = size * factor
+                resized(part)
+              end
             end
 
-            sizeMoving = since < sizeUntil
+            if fadeMoving then
+              fadeMoving = since < fadeUntil
 
-            local factor = sizeScale.at(fired + math.min(since, sizeUntil))
+              local v = fade.at(fired + math.min(since, fadeUntil))
 
-            if typeof(factor) == "Vector3" and factor ~= currentFactor then
-              currentFactor = factor
-              part.Size = size * factor
-              resized(part)
+              if typeof(v) == "number" and v ~= currentFade then
+                currentFade = v
+                part.Transparency = v
+              end
             end
           end
 
@@ -494,14 +522,6 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
             end, nil, lifetime.add(outstanding))
           else
             exitAt(0)
-          end
-
-          if fade.animated then
-            tween.drive(scope, fade, function(v: any)
-              if typeof(v) == "number" then
-                part.Transparency = v
-              end
-            end)
           end
 
           scope.effects.emitOnFinish(emitOnFinish, part, scope.depth + 1, scope, outstanding)

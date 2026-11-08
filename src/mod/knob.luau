@@ -76,6 +76,7 @@ type Fields = {
   isSeed: boolean,
   isMod: boolean,
   modDefault: any,
+  homeLane: string?,
   recolors: boolean?,
   order: number,
 }
@@ -116,6 +117,7 @@ local function make(default: any): Knob
     isSeed = false,
     isMod = false,
     modDefault = nil,
+    homeLane = nil,
     recolors = nil,
     order = counter,
   }, Knob)
@@ -226,6 +228,14 @@ function Knob.mod(self: Knob, ...: any): Knob
     self.modDefault = { ... }
   end
 
+  return self
+end
+
+-- a row the module plays from one of its events and never from the emit: the
+-- old shapes and a start lane stored for it are that event's lane, since the
+-- module only ever ran them from there
+function Knob.lane(self: Knob, event: string): Knob
+  self.homeLane = event
   return self
 end
 
