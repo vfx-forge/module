@@ -30,15 +30,15 @@ resize.PROPERTY_UNITS = {
 }
 
 -- ratios resize scales as if they were lengths. the flag says whether the
--- resting value scales with them: a model's scale is its absolute size,
--- where a beam's length scale multiplies the attachment distance that
--- scaleShape already scales. a mesh's Size is a curve of factors on its
--- template, scaled in place of the template as a ParticleEmitter's Size is,
--- and its States a list whose positions are studs, which no unit reaches
--- inside a list. its Path is a curve of studs, scaled the same way
+-- resting value scales with them: a model's scale is its absolute size. a
+-- mesh's Size is a curve of factors on its template, scaled in place of the
+-- template as a ParticleEmitter's Size is, and its States a list whose
+-- positions are studs, which no unit reaches inside a list. its Path is a
+-- curve of studs, scaled the same way. a beam's LengthScale is not here: it
+-- multiplies the attachment distance scaleShape already scales, so scaling
+-- it too grew the beam's length by the factor squared
 resize.RATIOS = {
   model_spin = { Scale = true },
-  beam = { LengthScale = false },
   forge_mesh = { Size = true, States = true, Path = true },
 }
 

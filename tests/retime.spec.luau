@@ -400,10 +400,17 @@ harness.suite(function()
       expect(obj.Size.Keypoints[2].Value).toBe(2)
     end)
 
-    test("a beam's length scales its attachments, never its resting value", function()
-      effectStub("beam", "Beam", { LengthScale = knob(1):aliases("Length_Scale"):mod() })
+    -- the length scale multiplies the attachment distance, which resize
+    -- scales already, so scaling the length scale too grew the beam's length
+    -- by the factor squared where its widths grew by the factor
+    test("a beam's length scales its attachments, never its length scale", function()
+      local beam = require("@vfx/beam")
 
-      local obj = Instance.new("Beam")
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(beam)
+
+      local obj = Instance.new("Beam") :: any
       local a0 = Instance.new("Attachment")
       local a1 = Instance.new("Attachment")
 
@@ -412,16 +419,31 @@ harness.suite(function()
 
       obj.Attachment0 = a0
       obj.Attachment1 = a1
+      obj.Width0 = 1
 
-      obj:SetAttribute("LengthScale", 1)
-      obj:SetAttribute("Length_Scale_Start", 1)
+      obj:SetAttribute("LengthScale", 1.5)
+      obj:SetAttribute("Length_Scale_Start", NumberRange.new(2, 2))
+      obj:SetAttribute("Length_Scale_End", NumberRange.new(3, 3))
+      framed(
+        obj,
+        "attribute",
+        "LengthScale",
+        { { kind = "tween", chain = false, start = value.lit(2), finish = value.lit(4) } }
+      )
 
       resize.apply(obj, 2)
 
       expect(a0.Position == Vector3.new(-2, 0, 0)).toBe(true)
       expect(a1.Position == Vector3.new(2, 0, 0)).toBe(true)
-      expect(obj:GetAttribute("LengthScale")).toBe(1)
-      expect(obj:GetAttribute("Length_Scale_Start")).toBe(2)
+      expect(obj.Width0).toBe(2)
+      expect(obj:GetAttribute("LengthScale")).toBe(1.5)
+      expect(obj:GetAttribute("Length_Scale_Start") == NumberRange.new(2, 2)).toBe(true)
+      expect(obj:GetAttribute("Length_Scale_End") == NumberRange.new(3, 3)).toBe(true)
+
+      local queue = queueOf(obj, "attribute", "LengthScale") :: any
+
+      expect(queue[1].start.v).toBe(2)
+      expect(queue[1].finish.v).toBe(4)
     end)
 
     test("a spin model's resting scale is its size", function()
