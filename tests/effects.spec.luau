@@ -2192,20 +2192,38 @@ harness.suite(function()
       return inst, seen
     end
 
-    test("an untagged mesh window ticks", function()
-      local model, seen = untagged(mesh, function()
+    -- a mesh model with its Start and End, tagged when `tag` is given and
+    -- switched off, so only the window could tick it
+    local function meshModel(tag: string?)
+      return function()
         local model = harness.make("Model", harness.make("Folder"))
         local start = harness.make("Part", model)
         local goal = harness.make("Part", model)
 
         start.Name = "Start"
         goal.Name = "End"
+        model:SetAttribute("Enabled", false)
+
+        if tag then
+          model:AddTag(tag)
+        end
 
         return model
-      end)
+      end
+    end
+
+    test("an untagged mesh opens no window, as v2 ignored its EmitDuration", function()
+      local model, seen = untagged(mesh, meshModel())
+
+      expect(seen).toEqual({})
+      expect(model:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
+    end)
+
+    test("a tagged mesh window ticks", function()
+      local model, seen = untagged(mesh, meshModel(utility.ENABLED_VFX_TAG))
 
       expect(seen).toEqual({ true, true, true })
-      expect(model:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
+      expect(model:HasTag(utility.ENABLED_VFX_TAG)).toBe(true)
     end)
 
     -- a bolt as its emit needs it to reach the window: under a part, with its

@@ -467,6 +467,10 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
     return
   end
 
+  -- only a tagged model runs its EmitDuration as a window, as v2 did; read
+  -- before the switch, which takes the tag off in edit mode
+  const windowed = attrs.EmitDuration > 0 and ref:HasTag(utility.ENABLED_VFX_TAG) and not ctx.constant
+
   -- a plain emit of an enabled model switches it off; the tick's own emits
   -- leave it as it is
   if attrs.Enabled and not ctx.constant then
@@ -475,7 +479,7 @@ function mesh.emit(ctx: reader.Ctx, attrs: any)
 
   lifetime.wait(scope, attrs.EmitDelay)
 
-  if attrs.EmitDuration > 0 and not ctx.constant then
+  if windowed then
     enabled_effects.window(ctx, mesh, attrs.EmitDuration, attrs.Speed)
     return
   end
