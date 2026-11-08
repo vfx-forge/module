@@ -11,6 +11,7 @@ local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
+local reader = require("@mod/reader")
 local harness = require("@tests/harness")
 local effects = require("@srv/effects")
 local utility = require("@mod/utility")
@@ -2353,6 +2354,70 @@ harness.suite(function()
 
       return beam, built
     end
+
+    -- the beam's property rows as an emit reads them, for a beam whose
+    -- properties are `props` and whose attributes are `attributes`
+    local function beamRows(props: { [string]: any }, attributes: { [string]: any })
+      local beam, built = beamOf(attributes)
+
+      for name, v in props do
+        beam[name] = v
+      end
+
+      local module = require("@vfx/beam")
+      local _, rows = reader.resolve(module :: any, { ref = beam, obj = beam, effect = module } :: any)
+
+      return rows, built
+    end
+
+    -- v2.1 through v2.4.0 played these quads only when they moved, so a still
+    -- one left the beam's own property, which every v2 asset was authored
+    -- against
+    test("a still old quad on a curve size or texture row keeps the beam's property", function()
+      local rows, built = beamRows({ CurveSize0 = 15, CurveSize1 = 4, TextureSpeed = 2, TextureLength = 3 }, {
+        CurveSize0_Start = -22.5,
+        CurveSize0_End = -22.5,
+        CurveSize1_Start = 7,
+        CurveSize1_End = 7,
+        Speed_Texture_Start = 9,
+        Speed_Texture_End = 9,
+        Length_Texture_Start = 5,
+        Length_Texture_End = 5,
+      })
+
+      for name, rest in { CurveSize0 = 15, CurveSize1 = 4, TextureSpeed = 2, TextureLength = 3 } do
+        expect(rows[name].animated).toBe(false)
+        expect(rows[name].at(0.5)).toBe(rest)
+      end
+
+      built.restore()
+    end)
+
+    test("a moving old quad on a curve size or texture row still tweens", function()
+      local rows, built = beamRows({ CurveSize0 = 15, TextureSpeed = 2, TextureLength = 3 }, {
+        CurveSize0_Start = -22.5,
+        CurveSize0_End = 0,
+        Speed_Texture_Start = 1,
+        Speed_Texture_End = 9,
+        Length_Texture_Start = 5,
+        Length_Texture_End = 1,
+      })
+
+      expect(rows.CurveSize0.animated).toBe(true)
+      expect(rows.CurveSize0.at(0)).toBe(-22.5)
+      expect(rows.TextureSpeed.at(0)).toBe(1)
+      expect(rows.TextureLength.at(0)).toBe(5)
+
+      built.restore()
+    end)
+
+    test("a still old width quad is still applied, as v2 applied it", function()
+      local rows, built = beamRows({ Width0 = 1 }, { Width0_Start = 3, Width0_End = 3 })
+
+      expect(rows.Width0.at(0.5)).toBe(3)
+
+      built.restore()
+    end)
 
     test("a beam plays out its duration on its clock, then its handle resolves", function()
       local beam, built = beamOf({ EffectDuration = harness.datatypes.NumberRange.new(0.5, 0.5), Speed = 0.5 })

@@ -419,12 +419,47 @@ local function remember(key: string, queue: { any }): { any }
   return queue
 end
 
+-- the rows whose quad v2 played only when it moved, by class: a beam's curve
+-- sizes and texture rows kept the beam's own property when the start equaled
+-- the end. a still width or transparency scale applied, so neither is here
+legacy_mods.MOVING_ONLY = {
+  Beam = {
+    CurveSize0 = true,
+    CurveSize1 = true,
+    Speed_Texture = true,
+    Length_Texture = true,
+  },
+}
+
+local function heldStill(ref: Instance, name: string, startV: any, finishV: any): boolean
+  const rows = legacy_mods.MOVING_ONLY[ref.ClassName]
+
+  return rows ~= nil and rows[name] == true and startV ~= nil and startV == finishV
+end
+
+-- whether the quad stored under `name` is one v2 never applied, which reads as
+-- no quad at all
+function legacy_mods.isHeldStill(ref: Instance, name: string, map: { [string]: any }?): boolean
+  const keys = keysOf(name)
+
+  return heldStill(
+    ref,
+    name,
+    legacy_mods.alias(ref, keys.start, nil, map),
+    legacy_mods.alias(ref, keys.finish, nil, map)
+  )
+end
+
 function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
   local keys = keysOf(name)
   local startV = legacy_mods.alias(ref, keys.start, nil, map)
   local finishV = legacy_mods.alias(ref, keys.finish, nil, map)
 
   if startV == nil and finishV == nil then
+    return nil
+  end
+
+  if heldStill(ref, name, startV, finishV) then
     return nil
   end
 
