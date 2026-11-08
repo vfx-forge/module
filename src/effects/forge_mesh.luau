@@ -78,8 +78,6 @@ const FACES = {
 
 const WHITE = Color3.new(1, 1, 1)
 
-const STATED_REASON = "The states set this. Edit it on a state in Edit States."
-
 const isVector = launch_common.isVector
 const numberOr = launch_common.numberOr
 const modified = launch_common.modified
@@ -153,6 +151,17 @@ end
 -- whether the states set the look, which the rows they replace then show
 const function hasStates(_, attrs: any)
   return attrs.Motion == "States" and #attrs.States > 0
+end
+
+-- whether the emission direction moves nothing: under States it only picks a
+-- surface box's face, a cylinder's or disc's axis and a part sphere's cap
+const function aimless(_, attrs: any)
+  if attrs.Motion ~= "States" then
+    return false
+  end
+
+  return (attrs.Shape == "Box" and attrs.ShapeStyle ~= "Surface")
+    or (attrs.Shape == "Sphere" and attrs.ShapePartial >= 1)
 end
 
 -- the force card's rows are not this module's, so a rule reads its Force off
@@ -833,7 +842,7 @@ forge_mesh.attributes = {
       return ColorSequence.new((ctx.ref :: BasePart).Color)
     end)
     :mod()
-    :grayed(hasStates, STATED_REASON)
+    :hidden(hasStates)
     :alpha("Transparency")
     :label("Color")
     :hint("Color of each piece over its life."),
@@ -845,24 +854,25 @@ forge_mesh.attributes = {
   Size = knob(value_curve.flat(1, 3))
     :valueCurve(3)
     :mod()
-    :grayed(hasStates, STATED_REASON)
+    :hidden(hasStates)
     :label("Size")
     :hint("Factor on the template's size, or its special mesh's scale, over each piece's life."),
   Squash = knob(value_curve.flat(0, 1))
     :valueCurve(1)
     :mod()
-    :grayed(hasStates, STATED_REASON)
+    :hidden(hasStates)
     :label("Squash")
     :hint("Stretch along each piece's up axis over its life, the other axes taking the opposite."),
   Transparency = knob(value_curve.flat(0, 1))
     :valueCurve(1)
     :mod()
-    :grayed(hasStates, STATED_REASON)
+    :hidden(hasStates)
     :label("Transparency")
     :hint("Transparency of each piece over its life."),
 
   EmissionDirection = knob("Top")
     :options({ "Back", "Bottom", "Front", "Left", "Right", "Top" })
+    :hidden(aimless)
     :label("EmissionDirection")
     :hint("Face of the emitter pieces launch from."),
   Enabled = knob(false):label("Enabled"):hint("Whether the effect emits continuously at its Rate."),
