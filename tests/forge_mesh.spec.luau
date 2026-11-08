@@ -2,6 +2,7 @@ const lerp = require("@mod/lerp")
 const curves = require("@mod/curves")
 const attr = require("@mod/attributes")
 const mods = require("@mod/mods")
+const color = require("@mod/color/color")
 const value = require("@mod/value")
 const frame = require("@mod/modifier_frame")
 const codec = require("@mod/modifier_codec")
@@ -42,12 +43,16 @@ const EPSILON = 1e-4
 const LOOSE = 1e-3
 const FRAME = 1 / 60
 
+-- the draws one States piece of no randomizers makes
+const PIECE_DRAWS = 6
+
 -- a launch of no speed, so a piece stands where it spawned
 const STILL = NumberRange.new(0, 0)
 
 -- the effect registered on the effects service and on a pool that clones
--- every take whole into its folder, put back once `body` ends
-const function staged(body: (fake: fake_pool.Fake) -> ())
+-- every take whole into its folder, or reuses a copy of a class `lists` names
+-- the properties of, put back once `body` ends
+const function staged(body: (fake: fake_pool.Fake) -> (), lists: { [string]: { string } }?)
   registry.clear()
   registry.configure({ query = harness.query })
   harness.reset()
@@ -67,7 +72,7 @@ const function staged(body: (fake: fake_pool.Fake) -> ())
     return env
   end
 
-  const fake = fake_pool.start({})
+  const fake = fake_pool.start(lists or {})
   const ok, err = pcall(body, fake)
 
   effects.emit = emit
@@ -86,7 +91,7 @@ end
 
 -- `staged` with the frame store started under a terrain of its own and both
 -- frame engine seams stood in
-const function framed(body: (fake: fake_pool.Fake) -> ())
+const function framed(body: (fake: fake_pool.Fake) -> (), lists: { [string]: { string } }?)
   const protect, terrain = utility.protectParent, workspace.Terrain
   const constructor, store, show = Instance, frame_store.engine, frame_show.engine
   const scope = {}
@@ -120,7 +125,7 @@ const function framed(body: (fake: fake_pool.Fake) -> ())
   const ok, err = pcall(staged, function(fake)
     frame_store.init(scope)
     body(fake)
-  end)
+  end, lists)
 
   utility.cleanupScope(scope)
   frame_store.engine, frame_show.engine = store, show
@@ -176,6 +181,38 @@ const function seeding(body: () -> ())
   if not ok then
     error(err, 0)
   end
+end
+
+-- the draws every Random built while `body` runs makes, put back once it ends
+const function counted(body: () -> ()): number
+  const new = Random.new
+  local draws = 0
+
+  -- selene: allow(incorrect_standard_library_use)
+  Random.new = function(...: any)
+    const rng = new(...) :: any
+
+    return setmetatable({}, {
+      __index = function(_, name: string)
+        return function(_, ...: any)
+          draws += 1
+
+          return rng[name](rng, ...)
+        end
+      end,
+    }) :: any
+  end
+
+  const ok, err = pcall(body)
+
+  -- selene: allow(incorrect_standard_library_use)
+  Random.new = new
+
+  if not ok then
+    error(err, 0)
+  end
+
+  return draws
 end
 
 -- a randomizer from `low` to `high` on the row `name`, drawn per component
@@ -677,12 +714,13 @@ end
 const TURNED = CFrame.new(0, 10, 0) * CFrame.fromOrientation(0, math.rad(30), math.rad(20))
 
 -- the States pieces of one emit off a part of `size` at TURNED, the template
--- aligned with it and its one state 10 studs up its own y, each handed with
--- the frame it spawned at
+-- aligned with it and moving through `list`, or else one state 10 studs up its
+-- own y, each handed with the frame it spawned at
 const function launched(
   attributes: { [string]: any },
   size: Vector3,
-  body: (spawns: { { piece: BasePart, spawn: CFrame } }, part: BasePart, parent: BasePart) -> ()
+  body: (spawns: { { piece: BasePart, spawn: CFrame } }, part: BasePart, parent: BasePart) -> (),
+  list: { any }?
 )
   framed(function()
     const _, parent = parentPart(TURNED, size)
@@ -705,10 +743,10 @@ const function launched(
       return cframe
     end
 
-    const list = { stateOf(0, { position = vector.create(0, 10, 0) }) }
+    const states = list or { stateOf(0, { position = vector.create(0, 10, 0) }) }
 
     const ok, err = pcall(spawning, function(spawned)
-      stubbed(part, { States = state_list.encode(list :: any) }, function()
+      stubbed(part, { States = state_list.encode(states :: any) }, function()
         const env = effects.emit(0, part)
 
         frames(1)
@@ -1124,6 +1162,168 @@ harness.suite(function()
         end
 
         expect(tilted).toBe(true)
+      end)
+    end)
+
+    test("a randomized offset gives each piece its own place", function()
+      const rows = { Shape = "Box", ShapeStyle = "Surface", EmissionDirection = "Top", EmitCount = 20 }
+      const list = {
+        stateOf(0, {
+          positionOffset = vector.zero,
+          random = { state = { positionOffset = { start = vector.zero, finish = vector.create(4, 0, 0) } } },
+        }),
+      }
+
+      launched(rows, Vector3.new(4, 2, 4), function(spawns, _, parent)
+        expect(#spawns).toBe(20)
+
+        local low, high = math.huge, -math.huge
+
+        for _, launch in spawns do
+          const offset = parent.CFrame:VectorToObjectSpace(launch.piece.CFrame.Position - launch.spawn.Position)
+
+          expect(offset.X >= -EPSILON and offset.X <= 4 + EPSILON).toBe(true)
+          expect(math.abs(offset.Y) < EPSILON and math.abs(offset.Z) < EPSILON).toBe(true)
+          low = math.min(low, offset.X)
+          high = math.max(high, offset.X)
+        end
+
+        expect(high - low > 1).toBe(true)
+      end, list)
+    end)
+
+    test("a mesh with no randomizers draws as before", function()
+      const function drawn(count: number)
+        const rows = { Shape = "Box", ShapeStyle = "Surface", EmissionDirection = "Top", EmitCount = count }
+
+        return counted(function()
+          launched(rows, Vector3.new(4, 2, 4), function() end)
+        end)
+      end
+
+      -- measured on the runtime before any piece drew its own states
+      expect((drawn(4) - drawn(1)) / 3).toBe(PIECE_DRAWS)
+    end)
+
+    test("a piece's draw holds across states", function()
+      const red, blue = Color3.new(1, 0, 0), Color3.new(0, 0, 1)
+      const random = { state = { color = { finish = blue } } }
+      const list = {
+        stateOf(0, { color = red, random = random }),
+        stateOf(1, { color = red, random = random }),
+      }
+
+      -- the alpha along red to blue nearest `c`, and how far off that blend it is
+      const function alphaOf(c: Color3): (number, number)
+        const lab = color.toOklab(c)
+        local best, off = 0, math.huge
+
+        for step = 0, 1000 do
+          const gap = (color.toOklab(color.blend(red, blue, step / 1000)) - lab).Magnitude
+
+          if gap < off then
+            best, off = step / 1000, gap
+          end
+        end
+
+        return best, off
+      end
+
+      stated({}, list, function(piece)
+        const early, earlyOff = alphaOf(piece.Color)
+
+        frames(110)
+
+        const late, lateOff = alphaOf(piece.Color)
+
+        expect(earlyOff < LOOSE and lateOff < LOOSE).toBe(true)
+        expect(early > 0.001).toBe(true)
+        expect(math.abs(early - late) <= 0.002).toBe(true)
+      end)
+    end)
+
+    test("a pooled piece draws again on its next life", function()
+      const list = {
+        stateOf(0, {
+          positionOffset = vector.zero,
+          random = { state = { positionOffset = { start = vector.zero, finish = vector.create(4, 4, 4) } } },
+        }),
+      }
+
+      const lists = { Part = { "Color", "Size", "Transparency", "Material", "Anchored", "CanCollide", "Locked" } }
+
+      seeding(function()
+        framed(function(fake)
+          const part = attached({ Motion = "States", Lifetime = NumberRange.new(2, 2) })
+
+          spawning(function(spawned)
+            stubbed(part, { States = state_list.encode(list :: any) }, function()
+              const env = effects.emit(0, part)
+
+              frames(1)
+
+              const was = spawned[1].CFrame.Position - ATTACHED
+
+              env:Clear()
+              frames(1)
+
+              const again = effects.emit(0, part)
+
+              frames(1)
+
+              const now = spawned[2].CFrame.Position - ATTACHED
+
+              expect(fake.stable(spawned[2]) == fake.stable(spawned[1])).toBe(true)
+              expect(near(was, now, LOOSE)).toBe(false)
+              again:Clear()
+            end)
+          end)
+        end, lists)
+      end)
+    end)
+
+    test("FacingCamera turns a piece's states toward the camera", function()
+      const camera = workspace.CurrentCamera
+      const before = camera.CFrame
+
+      camera.CFrame = CFrame.new(0, 0, 50)
+
+      const ok, err = pcall(stated, { StateOrientation = "FacingCamera" }, { stateOf(0) }, function(piece)
+        const function faces(from: Vector3)
+          return piece.CFrame.LookVector:Dot((from - ATTACHED).Unit) > 0.999
+        end
+
+        expect(faces(Vector3.new(0, 0, 50))).toBe(true)
+        frames(1)
+        expect(faces(Vector3.new(0, 0, 50))).toBe(true)
+
+        camera.CFrame = CFrame.new(50, 0, 0) * CFrame.fromOrientation(0, math.rad(90), 0)
+        frames(1)
+        expect(faces(Vector3.new(50, 0, 0))).toBe(true)
+      end)
+
+      camera.CFrame = before
+
+      if not ok then
+        error(err, 0)
+      end
+    end)
+
+    test("an unset StateOrientation reads None", function()
+      const rows = { Shape = "Sphere", ShapeStyle = "Surface", EmissionDirection = "Top", EmitCount = 5 }
+
+      launched(rows, Vector3.new(4, 4, 4), function(spawns, part, parent)
+        expect(rowsOf(part).StateOrientation).toBe("None")
+
+        for _, launch in spawns do
+          const turn = particle_motion.launchTurn(launch.spawn, parent.CFrame, Enum.NormalId.Top)
+          const want = CFrame.new(launch.spawn.Position) * turn * part.CFrame.Rotation * CFrame.new(0, 10, 0)
+          const got = launch.piece.CFrame
+
+          expect(near(got.Position, want.Position, EPSILON)).toBe(true)
+          expect(near(got.LookVector, want.LookVector, EPSILON)).toBe(true)
+          expect(near(got.UpVector, want.UpVector, EPSILON)).toBe(true)
+        end
       end)
     end)
 

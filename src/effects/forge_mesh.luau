@@ -677,6 +677,10 @@ type Launch = {
   clear: value_curve.Curve,
   tint: ColorSequence,
   keypoints: { ColorSequenceKeypoint },
+
+  -- the piece's own draw of a list its randomizers vary, nil to sample the
+  -- emit's
+  states: ((t: number, out: state_list.Sample) -> state_list.Sample)?,
 }
 
 -- how pieces meet the world, built once per emit: the rays' filter, and the
@@ -877,6 +881,11 @@ forge_mesh.attributes = {
     :hidden(stated)
     :label("Orientation")
     :hint("How each piece turns as it flies: its own pose, toward the camera or along its velocity."),
+  StateOrientation = knob("None")
+    :options({ "None", "FacingCamera", "FacingCameraWorldUp" })
+    :hidden(flown)
+    :label("Orientation")
+    :hint("How each piece's states turn: as it launched, or toward the camera."),
   Size = knob(value_curve.flat(1, 3))
     :valueCurve(3)
     :mod()
@@ -1135,7 +1144,7 @@ forge_mesh.properties = {}
 
 forge_mesh.layout = {
   { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration", "DestroyDelay" } },
-  { title = "Appearance", entries = { "Color", "Orientation", "Size", "Squash", "Transparency" } },
+  { title = "Appearance", entries = { "Color", "Orientation", "StateOrientation", "Size", "Squash", "Transparency" } },
   {
     title = "Emission",
     entries = {
@@ -1302,7 +1311,7 @@ const function piece(
 
   -- a piece moving through a list of states samples it into a table of its
   -- own, once a frame, for its pose and its look alike
-  const states = flight.states
+  const states = launch.states or flight.states
   const sample = if states ~= nil then states(0, {} :: any) else nil
 
   const look = look_common.start(scope, obj, template, attrs, duration, sets, {
@@ -1443,17 +1452,33 @@ const function piece(
   const turn = launch.turn
   const at = launch.spawn.Position
   const posing = attrs.Motion == "States"
+  const billboard = facesCamera(nil, attrs)
+  const stateMode = attrs.StateOrientation :: orient_common.Mode
+  const spot = toVector(at)
 
   -- a piece moving through its states stands where it spawned on the emitter,
   -- as a particle or a path piece does, turned as its launch was and then as
   -- the template is; where the template itself sits plays no part, and no
   -- other flight or turn row reaches it
-  const base = if posing
+  const base = if posing and not billboard
     then CFrame.new(at) * particle_motion.launchTurn(launch.spawn, origin, flight.normal) * template.CFrame.Rotation
     else nil
 
+  -- the frame its states play in this frame: the launch's, or under a camera
+  -- orientation the camera's from where it spawned, read again every frame
+  const function baseNow(): CFrame
+    if base ~= nil then
+      return base
+    end
+
+    const camera = workspace.CurrentCamera
+    const view = if camera then camera.CFrame else nil
+
+    return CFrame.new(at) * orient_common.rotation(stateMode, facing, spot, vector.zero, view, nil)
+  end
+
   -- where its states put it as it was last drawn, nil for a particle
-  local stance = if base ~= nil and sample ~= nil then base * sample.cframe else base
+  local stance = if not posing then nil elseif sample ~= nil then baseNow() * sample.cframe else baseNow()
 
   local position = toVector(at)
   local velocity = toVector(launch.spawn.LookVector) * launch.speed + launch.inherited
@@ -1815,7 +1840,8 @@ const function piece(
   -- one step through the states, cast from where the piece was drawn to where
   -- its states put it now: a Kill ends it there, any other hit pins it there
   const function stand()
-    const nextStance = if sample ~= nil then (base :: CFrame) * sample.cframe else base :: CFrame
+    const frame = baseNow()
+    const nextStance = if sample ~= nil then frame * sample.cframe else frame
     const was = stance :: CFrame
     const hit = if collision ~= nil
       then collision_common.cast(collision.params, toVector(was.Position), toVector(nextStance.Position))
@@ -1990,6 +2016,8 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
 
   const list = rows.States :: state_list.List
   const stated = rows.Motion == "States" and #list > 0
+  const varied = stated and state_list.varied(list)
+  const own = if stated then restOf(template) else nil
 
   -- the look rows keep what the author set under states but play no part, so
   -- a piece takes their defaults and draws nothing off them
@@ -2013,9 +2041,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     path = if rows.Motion == "Path" then pathOf(rows, origin) else nil,
   }
 
-  if stated then
-    const own = restOf(template)
-
+  if own ~= nil then
     flight.states = state_list.sampler(list, own)
     flight.decals = own.decals
   end
@@ -2101,7 +2127,14 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
       clear = if cleared then curveOr(rows.Transparency().at(spawned), clearRest) else clearRest,
       tint = tint,
       keypoints = if colored then tint.Keypoints else flight.keypoints,
+      states = nil,
     }
+
+    -- each piece draws its own values of a list its randomizers vary, on a
+    -- sampler of its own; a list of none draws nothing more
+    if varied then
+      launch.states = state_list.sampler(state_list.resolve(list, flight.rng), own)
+    end
 
     lifetime.spawn(outstanding, piece, ctx, rows, template, launch, flight, sets)
   end
