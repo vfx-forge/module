@@ -710,6 +710,91 @@ const function spawnedOn(part: BasePart): CFrame
   return CFrame.new(ATTACHED) * part.CFrame.Rotation
 end
 
+-- the heights of one States piece of two seconds' life, spawned at ATTACHED
+-- on an unturned template and moving through `list` under `rows`, once a
+-- frame over its life, between walls across the world's y that each turn back
+-- a ray crossing them against their `normal`: -1 a ceiling, 1 a floor
+const function walledStates(
+  rows: { [string]: any },
+  list: { any },
+  walls: { { y: number, normal: number } }
+): { Vector3 }
+  const real = collision_common.engine
+  const seen = {}
+
+  collision_common.engine = {
+    params = function()
+      return { AddToFilter = function() end } :: any
+    end,
+    tagged = function()
+      return {}
+    end,
+    raycast = function(_, from: vector, to: vector)
+      local nearest = nil
+      local share = math.huge
+
+      for _, wall in walls do
+        const crosses = if wall.normal < 0
+          then from.y < wall.y and to.y >= wall.y
+          else from.y > wall.y and to.y <= wall.y
+        const reached = if crosses then (wall.y - from.y) / (to.y - from.y) else math.huge
+
+        if reached < share then
+          nearest, share = wall, reached
+        end
+      end
+
+      if nearest == nil then
+        return nil
+      end
+
+      const at = from + (to - from) * share
+
+      return { Position = Vector3.new(at.x, at.y, at.z), Normal = Vector3.new(0, nearest.normal, 0) } :: any
+    end,
+  }
+
+  const ok, err = pcall(framed, function(fake)
+    const part = attached(rows)
+
+    part:SetAttribute("Motion", "States")
+    part:SetAttribute("Lifetime", NumberRange.new(2, 2))
+    part:SetAttribute("Speed", STILL)
+
+    stubbed(part, { States = state_list.encode(list :: any) }, function()
+      const env = effects.emit(0, part)
+      const piece = pieces(fake)[1]
+
+      for k = 1, 119 do
+        frames(1)
+        seen[k] = piece.CFrame.Position
+      end
+
+      env:Clear()
+    end)
+  end)
+
+  collision_common.engine = real
+
+  if not ok then
+    error(err, 0)
+  end
+
+  return seen
+end
+
+-- states that carry a piece 10 studs up over its life, and `side` studs
+-- along x
+const function climb(side: number): { any }
+  return {
+    stateOf(0),
+    stateOf(1, { position = vector.create(side, 10, 0) }),
+  }
+end
+
+-- a ceiling 5 studs above ATTACHED, met half way through a climb
+const CEILING = { { y = 17, normal = -1 } }
+
 -- a parent part turned off the world's axes
 const TURNED = CFrame.new(0, 10, 0) * CFrame.fromOrientation(0, math.rad(30), math.rad(20))
 
@@ -1599,6 +1684,92 @@ harness.suite(function()
       if not ok then
         error(err, 0)
       end
+    end)
+
+    test("a Bounce mirrors a States piece's climb back down from the ceiling it meets", function()
+      const seen = walledStates({ CollisionMode = "Bounce", Bounce = 1, Friction = 0 }, climb(0), CEILING)
+
+      -- the ceiling is met at frame 60, so frame 60 + k is frame 60 - k
+      -- turned back, less the surface offset
+      for k = 1, 58 do
+        const up, down = seen[60 - k], seen[60 + k]
+
+        expect(near(down, up - Vector3.new(0, 0.01, 0), LOOSE)).toBe(true)
+      end
+
+      -- no jump at the hit past one frame's climb and the surface offset
+      for k = 2, 119 do
+        expect((seen[k] - seen[k - 1]).Magnitude <= 5 * FRAME + 0.01 + LOOSE).toBe(true)
+      end
+
+      expect(seen[119].Y < 12.2).toBe(true)
+    end)
+
+    test("a Bounce of 0.5 halves how far a States piece goes back out", function()
+      const seen = walledStates({ CollisionMode = "Bounce", Bounce = 0.5, Friction = 0 }, climb(0), CEILING)
+
+      for k = 1, 58 do
+        const up, down = seen[60 - k], seen[60 + k]
+        const want = 17 - 0.01 - (17 - up.Y) * 0.5
+
+        expect(math.abs(down.Y - want) < LOOSE).toBe(true)
+      end
+    end)
+
+    test("a Friction of 1 stops a bounced States piece along the surface", function()
+      const kept = walledStates({ CollisionMode = "Bounce", Bounce = 1, Friction = 0 }, climb(10), CEILING)
+      const lost = walledStates({ CollisionMode = "Bounce", Bounce = 1, Friction = 1 }, climb(10), CEILING)
+      const hit = lost[60]
+
+      expect(math.abs(hit.X - (ATTACHED.X + 5)) < LOOSE).toBe(true)
+      expect(math.abs(kept[119].X - (ATTACHED.X + 10 * 119 / 120)) < LOOSE).toBe(true)
+
+      for k = 61, 119 do
+        expect(math.abs(lost[k].X - hit.X) < LOOSE).toBe(true)
+        expect(math.abs(lost[k].Y - kept[k].Y) < LOOSE).toBe(true)
+      end
+    end)
+
+    test("a Stop still pins a States piece at the ceiling it meets", function()
+      const seen = walledStates({ CollisionMode = "Stop" }, climb(0), CEILING)
+
+      for k = 60, 119 do
+        expect(near(seen[k], Vector3.new(ATTACHED.X, 17, ATTACHED.Z), LOOSE)).toBe(true)
+      end
+    end)
+
+    test("a States piece bounces again off a second surface its mirrored path meets", function()
+      const list = { stateOf(0), stateOf(1, { position = vector.create(0, 20, 0) }) }
+      const walls = { { y = 17, normal = -1 }, { y = 14, normal = 1 } }
+      const seen = walledStates({ CollisionMode = "Bounce", Bounce = 1, Friction = 0 }, list, walls)
+
+      local turns = 0
+      local rising = true
+
+      for k = 2, 119 do
+        const y = seen[k].Y
+
+        expect(y <= 17 + LOOSE).toBe(true)
+
+        if k > 30 then
+          expect(y >= 14 - LOOSE).toBe(true)
+        end
+
+        if (y > seen[k - 1].Y) ~= rising then
+          rising = not rising
+          turns += 1
+        end
+      end
+
+      -- up into the ceiling, down to the floor and back up, at least
+      expect(turns >= 2).toBe(true)
+    end)
+
+    test("a States piece locked to its parent never bounces", function()
+      const seen =
+        walledStates({ CollisionMode = "Bounce", Bounce = 1, Friction = 0, LockedToPart = true }, climb(0), CEILING)
+
+      expect(seen[119].Y > 21.8).toBe(true)
     end)
 
     test("a locked FacingCamera piece faces the camera after its parent turns", function()

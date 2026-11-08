@@ -302,6 +302,12 @@ const function toVector(v: Vector3): vector
   return vector.create(v.X, v.Y, v.Z)
 end
 
+-- the cast of a piece that meets nothing: locked to its parent, or under no
+-- collision
+const function unhit(_: vector, _: vector): collision_common.Hit?
+  return nil
+end
+
 -- a drawn curve, or `fallback` where a modifier drew none of its width
 const function curveOr(v: any, fallback: value_curve.Curve): value_curve.Curve
   return if value_curve.is(v) and v.channels == fallback.channels then v else fallback
@@ -1110,18 +1116,14 @@ forge_mesh.attributes = {
     :min(0)
     :max(1)
     :mod()
-    :hidden(function(ctx: any, attrs: any)
-      return stated(ctx, attrs) or noBounce(ctx, attrs)
-    end)
+    :hidden(noBounce)
     :label("Bounce")
     :hint("Share of the speed into the surface a bounce keeps."),
   Friction = knob(0.2)
     :min(0)
     :max(1)
     :mod()
-    :hidden(function(ctx: any, attrs: any)
-      return stated(ctx, attrs) or noBounce(ctx, attrs)
-    end)
+    :hidden(noBounce)
     :label("Friction")
     :hint("Share of the speed along the surface a bounce loses."),
   CollisionFilter = knob("None")
@@ -1483,8 +1485,10 @@ const function piece(
     return if billboard then own.Rotation + frame.Position else frame
   end
 
-  -- where its states put it as it was last drawn, nil for a particle
+  -- where its states put it as it was last drawn, nil for a particle, and
+  -- the surfaces they bounced off
   local stance = if posing then stanceNow() else nil
+  const mirror = if stance ~= nil then collision_common.mirror(toVector(stance.Position)) else nil
 
   local position = toVector(at)
   local velocity = toVector(launch.spawn.LookVector) * launch.speed + launch.inherited
@@ -1501,7 +1505,8 @@ const function piece(
   -- and its driven rows over the life
   const pull: any = if flight.force ~= nil then table.clone(flight.force) else nil
   const collision = if flight.collision ~= nil and (lockTrack ~= nil or not locked) then flight.collision else nil
-  const response = if collision ~= nil and not posing then table.clone(collision.config) else nil
+  const responds = collision ~= nil and (not posing or collision.config.mode == "Bounce")
+  const response = if responds then table.clone((collision :: Collision).config) else nil
 
   -- the initial turn, each step's spin added onto it
   local rotation = if posing
@@ -1899,27 +1904,30 @@ const function piece(
     end
   end
 
-  -- one step through the states, cast from where the piece stood to where its
-  -- states put it now: a Kill ends it there, any other hit pins it there
-  const function stand()
-    const nextStance = stanceNow()
-    const was = stance :: CFrame
-    const hit = if collision ~= nil and not locked
-      then strike(toVector(was.Position), toVector(nextStance.Position))
-      else nil
+  const function responded(): collision_common.Config
+    return response or (collision :: Collision).config
+  end
 
-    if hit == nil then
+  -- one step through the states, cast from where the piece was drawn to
+  -- where its states put it now: a Kill ends it at a hit, a Stop pins it
+  -- there and a Bounce mirrors the rest of its states across the surface. the
+  -- states' own turn is kept whatever the mirror does
+  const function stand(dt: number)
+    const nextStance = stanceNow()
+    const cast = if collision ~= nil and not locked then strike else unhit
+    const outcome, at =
+      collision_common.step(mirror :: collision_common.Mirror, responded, toVector(nextStance.Position), dt, cast)
+
+    if outcome == "move" and (mirror :: collision_common.Mirror).bounces == 0 then
       stance = nextStance
       return
     end
 
-    const at = hit.position
-
     stance = nextStance.Rotation + Vector3.new(at.x, at.y, at.z)
 
-    if (collision :: Collision).config.mode == "Kill" then
+    if outcome == "kill" then
       moving = false
-    else
+    elseif outcome == "stop" then
       pinned = true
     end
   end
@@ -2004,7 +2012,7 @@ const function piece(
 
     if dt > 0 and not pinned then
       if posing then
-        stand()
+        stand(dt)
       else
         if onPath then
           trail(dt)

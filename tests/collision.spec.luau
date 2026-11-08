@@ -158,4 +158,149 @@ harness.suite(function()
     expect(made.added[3]).toBe(parent)
     expect((made :: any).FilterType).toBe(Enum.RaycastFilterType.Exclude)
   end)
+
+  test("a fold turns the share Bounce of the part into a surface back and loses the share Friction along it", function()
+    const v = vector.create(4, 6, 0)
+
+    expect(near(collision_common.fold(v, UP, 1, 0), vector.create(4, -6, 0))).toBe(true)
+    expect(near(collision_common.fold(v, UP, 0.5, 0), vector.create(4, -3, 0))).toBe(true)
+    expect(near(collision_common.fold(v, UP, 1, 1), vector.create(0, -6, 0))).toBe(true)
+    expect(near(collision_common.fold(v, UP, 0, 0.25), vector.create(3, 0, 0))).toBe(true)
+  end)
+
+  -- a ceiling at y 5 facing down, hit by any ray that crosses it going up
+  const function ceiling(from: vector, to: vector): collision_common.Hit?
+    if not (from.y < 5 and to.y >= 5) then
+      return nil
+    end
+
+    return { position = from + (to - from) * ((5 - from.y) / (to.y - from.y)), normal = -UP }
+  end
+
+  const function responding(over: any)
+    const own = config(over)
+
+    return function()
+      return own
+    end
+  end
+
+  test("a mirror draws a path as it is until it bounces", function()
+    const mirror = collision_common.mirror(vector.zero)
+    const outcome, at = collision_common.step(mirror, responding({}), vector.create(1, 4, 2), 1, ceiling)
+
+    expect(outcome).toBe("move")
+    expect(at).toEqual(vector.create(1, 4, 2))
+    expect(collision_common.mirrored(mirror, vector.create(7, 8, 9))).toEqual(vector.create(7, 8, 9))
+  end)
+
+  test("a step across a surface folds the rest of the path from the hit", function()
+    const mirror = collision_common.mirror(vector.create(0, 4, 0))
+    const told = {}
+    const outcome, at = collision_common.step(
+      mirror,
+      responding({ bounce = 1, friction = 0 }),
+      vector.create(2, 6, 0),
+      1,
+      ceiling,
+      function(hit: vector, incoming: vector, rebound: vector)
+        table.insert(told, { hit, incoming, rebound })
+      end
+    )
+
+    expect(outcome).toBe("move")
+    expect(near(at, vector.create(2, 3.99, 0))).toBe(true)
+    expect(#told).toBe(1)
+    expect(near(told[1][1], vector.create(1, 5, 0))).toBe(true)
+    expect(near(told[1][2], vector.create(2, 2, 0))).toBe(true)
+    expect(near(told[1][3], vector.create(2, -2, 0))).toBe(true)
+
+    -- the rest of the path stays mirrored from the hit
+    const _, later = collision_common.step(mirror, responding({}), vector.create(3, 10, 0), 1, ceiling)
+
+    expect(near(later, vector.create(3, -0.01, 0))).toBe(true)
+  end)
+
+  test("the response is read at the share of the step the hit lands at", function()
+    const mirror = collision_common.mirror(vector.create(0, 1, 0))
+    local asked = -1
+
+    collision_common.step(mirror, function(share: number)
+      asked = share
+      return config({})
+    end, vector.create(0, 9, 0), 1, ceiling)
+
+    expect(math.abs(asked - 0.5) < EPSILON).toBe(true)
+  end)
+
+  test("a step that meets a surface too slowly stops at the hit", function()
+    const mirror = collision_common.mirror(vector.create(0, 4.9, 0))
+    const outcome, at = collision_common.step(mirror, responding({}), vector.create(0, 5.1, 0), 1, ceiling)
+
+    expect(outcome).toBe("stop")
+    expect(near(at, vector.create(0, 5, 0))).toBe(true)
+  end)
+
+  test("a Bounce of 0 slides along the surface rather than stopping", function()
+    const mirror = collision_common.mirror(vector.create(0, 4, 0))
+    const outcome, at =
+      collision_common.step(mirror, responding({ bounce = 0, friction = 0 }), vector.create(2, 6, 0), 1, ceiling)
+
+    expect(outcome).toBe("move")
+    expect(near(at, vector.create(2, 4.99, 0))).toBe(true)
+  end)
+
+  test("Kill and Stop end a step at the hit", function()
+    for mode, want in { Kill = "kill", Stop = "stop" } do
+      const mirror = collision_common.mirror(vector.create(0, 4, 0))
+      const outcome, at = collision_common.step(mirror, responding({ mode = mode }), vector.create(0, 6, 0), 1, ceiling)
+
+      expect(outcome).toBe(want)
+      expect(near(at, vector.create(0, 5, 0))).toBe(true)
+    end
+  end)
+
+  test("a step bounces again off a second surface, up to MAX_BOUNCES, and stops past it", function()
+    -- a floor at y 0 under the ceiling
+    const function walls(from: vector, to: vector): collision_common.Hit?
+      if from.y > 0 and to.y <= 0 then
+        return { position = from + (to - from) * (from.y / (from.y - to.y)), normal = UP }
+      end
+
+      return ceiling(from, to)
+    end
+
+    const mirror = collision_common.mirror(vector.create(0, 1, 0))
+    local bounces = 0
+
+    const function counted()
+      bounces += 1
+    end
+
+    const outcome, at = collision_common.step(
+      mirror,
+      responding({ bounce = 1, friction = 0 }),
+      vector.create(0, 12, 0),
+      1,
+      walls,
+      counted
+    )
+
+    expect(outcome).toBe("move")
+    expect(bounces).toBe(2)
+    expect(near(at, vector.create(0, 2.02, 0))).toBe(true)
+
+    const far, landed = collision_common.step(
+      mirror,
+      responding({ bounce = 1, friction = 0 }),
+      vector.create(0, 1000, 0),
+      1000,
+      walls,
+      counted
+    )
+
+    expect(far).toBe("stop")
+    expect(bounces).toBe(collision_common.MAX_BOUNCES)
+    expect(math.abs(landed.y) < EPSILON or math.abs(landed.y - 5) < EPSILON).toBe(true)
+  end)
 end)
