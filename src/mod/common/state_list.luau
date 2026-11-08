@@ -1886,9 +1886,12 @@ end
 -- Vector2 one; a hold or an idle segment makes none. before the
 -- first state and after the last it holds that state; between two, the
 -- arriving state's easing shapes the way in. a surface or decal field set on
--- one side blends from `rest`'s value, or holds the side that has it
+-- one side blends from `rest`'s value, or holds the side that has it. the
+-- offsets fold into each state's pose here, once, so a call does the same
+-- work with or without them
 function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sample
   const count = #list
+  const positions = table.create(count)
   const rotations = table.create(count)
   const poses = table.create(count)
   const idle = table.create(count)
@@ -1899,15 +1902,23 @@ function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sa
   local hasSurface = false
 
   for i, state in list do
-    rotations[i] = CFrame.fromOrientation(state.rotation.x, state.rotation.y, state.rotation.z)
-    poses[i] = CFrame.new(state.position.x, state.position.y, state.position.z) * rotations[i]
+    -- a state built by hand without offsets reads them as zero
+    const offset = state.positionOffset or vector.zero
+    const turn = state.rotationOffset or vector.zero
+    const position = state.position + offset
+    local rotation = CFrame.fromOrientation(state.rotation.x, state.rotation.y, state.rotation.z)
+
+    if turn ~= vector.zero then
+      rotation *= CFrame.fromOrientation(turn.x, turn.y, turn.z)
+    end
+
+    positions[i] = position
+    rotations[i] = rotation
+    poses[i] = CFrame.new(position.x, position.y, position.z) * rotation
     ease[i] = curve.sampler(state.easing)
 
     -- a segment into this state that neither moves nor turns the piece
-    idle[i] = i > 1
-      and state.spin == vector.zero
-      and state.position == list[i - 1].position
-      and state.rotation == list[i - 1].rotation
+    idle[i] = i > 1 and state.spin == vector.zero and position == positions[i - 1] and rotation == rotations[i - 1]
 
     const surface = state.surface
 
@@ -1985,7 +1996,7 @@ function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sa
           turn *= CFrame.fromOrientation(2 * math.pi * spin.x * u, 2 * math.pi * spin.y * u, 2 * math.pi * spin.z * u)
         end
 
-        const pos = mix("vector", a.position, b.position, nil, u)
+        const pos = mix("vector", positions[ia], positions[ib], nil, u)
 
         pose = turn + Vector3.new(pos.x, pos.y, pos.z)
       end
@@ -2033,6 +2044,153 @@ function common.sampler(list: List, rest: Rest?): (t: number, out: Sample) -> Sa
 
     return out
   end
+end
+
+-- whether any state gives each piece its own value of a field
+function common.varied(list: List)
+  for _, state in list do
+    if state.random ~= nil then
+      return true
+    end
+  end
+
+  return false
+end
+
+-- a randomized field, drawn once for every state that randomizes it
+type Draw = { card: string, decal: string?, field: string }
+
+-- the offsets draw each axis on its own, so their ends name a box
+const PER_AXIS = { positionOffset = true, rotationOffset = true }
+
+-- every randomized field of the list, keyed `card:decal:field` and sorted, so
+-- the draws run in an order no table's iteration decides
+const function drawsOf(list: List): ({ string }, { [string]: Draw })
+  const keys = {}
+  const draws = {}
+
+  const function add(card: string, decal: string?, given: { [string]: Randomizer }?)
+    for field in given or {} do
+      const key = `{card}:{decal or ""}:{field}`
+
+      if draws[key] == nil then
+        draws[key] = { card = card, decal = decal, field = field }
+        table.insert(keys, key)
+      end
+    end
+  end
+
+  for _, state in list do
+    const random = state.random
+
+    if random == nil then
+      continue
+    end
+
+    add("state", nil, random.state)
+    add("surface", nil, random.surface)
+
+    for name, card in random.decals or {} do
+      add("decal", name, card)
+    end
+  end
+
+  table.sort(keys)
+
+  return keys, draws
+end
+
+-- the randomizer a state holds for a draw, nil when it holds none
+const function randomizerOf(random: Random?, draw: Draw): Randomizer?
+  if random == nil then
+    return nil
+  end
+
+  const decals = random.decals
+  const card = if draw.card ~= "decal"
+    then (random :: any)[draw.card]
+    elseif decals ~= nil then decals[draw.decal :: string]
+    else nil
+
+  return if card ~= nil then card[draw.field] else nil
+end
+
+-- the state with its own copy of every record a randomizer of it writes into,
+-- and no randomizers
+const function unshared(state: State): State
+  const copy = table.clone(state)
+  const random = state.random :: Random
+
+  copy.random = nil
+
+  if random.surface ~= nil then
+    copy.surface = table.clone(state.surface :: Surface)
+  end
+
+  if random.decals ~= nil then
+    copy.decals = table.clone(state.decals)
+
+    for name in random.decals do
+      copy.decals[name] = table.clone(state.decals[name])
+    end
+  end
+
+  return copy
+end
+
+const function weighted(weight: string?, draw: number)
+  return if weight ~= nil then curve.sample(weight, draw) else draw
+end
+
+-- the list one piece plays: every randomized field drawn once and set on each
+-- state that randomizes it, at the draw along that state's own ends shaped by
+-- its own weight. a list nothing varies is answered as is
+function common.resolve(list: List, rng: typeof(Random.new())): List
+  if not common.varied(list) then
+    return list
+  end
+
+  const keys, draws = drawsOf(list)
+  const out = table.create(#list)
+
+  for i, state in list do
+    out[i] = if state.random ~= nil then unshared(state) else state
+  end
+
+  for _, key in keys do
+    const draw = draws[key]
+    const field = draw.field
+    const kind = RANDOM_FIELDS[draw.card][field].kind
+    const perAxis = draw.card == "state" and PER_AXIS[field] == true
+    const x = rng:NextNumber()
+    const y = if perAxis then rng:NextNumber() else 0
+    const z = if perAxis then rng:NextNumber() else 0
+
+    for i, state in list do
+      const randomizer = randomizerOf(state.random, draw)
+
+      if randomizer == nil then
+        continue
+      end
+
+      const into = holder(out[i], draw.card, draw.decal)
+      const from = if randomizer.start ~= nil then randomizer.start else into[field]
+      const finish = randomizer.finish
+      const weight = randomizer.weight
+
+      if perAxis then
+        into[field] = vector.create(
+          from.x + (finish.x - from.x) * weighted(weight, x),
+          from.y + (finish.y - from.y) * weighted(weight, y),
+          from.z + (finish.z - from.z) * weighted(weight, z)
+        )
+      else
+        into[field] = mix(kind, from, finish, nil, weighted(weight, x))
+      end
+    end
+  end
+
+  return mark(out)
 end
 
 return common

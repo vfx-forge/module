@@ -1,4 +1,5 @@
 const knob = require("@mod/knob")
+const color = require("@mod/color/color")
 const curve = require("@mod/curve")
 const curves = require("@mod/curves")
 const reader = require("@mod/reader")
@@ -9,6 +10,7 @@ const value_curve = require("@mod/value_curve")
 const test, expect = harness.test, harness.expect
 const Color3 = harness.datatypes.Color3
 const Vector2 = harness.datatypes.Vector2
+const Vector3 = harness.datatypes.Vector3
 const Instance = harness.datatypes.Instance
 const ColorSequence = harness.datatypes.ColorSequence
 
@@ -907,6 +909,214 @@ harness.suite(function()
       expect(out.decals.Mark).toBe(mark)
       expect(out.surface).toBe(surface)
       expect(close(out.decals.Mark.transparency, 1)).toBe(true)
+    end)
+
+    test("a zero offset samples exactly as before", function()
+      const list = sample()
+      const bare = {}
+
+      list[2].position = vector.create(-1, 4, 0.5)
+      list[3].position = vector.create(2, 0, -3)
+      list[3].rotation = vector.create(0.4, -0.2, 0.9)
+
+      for i, s in list do
+        const copy = table.clone(s)
+
+        copy.positionOffset = nil
+        copy.rotationOffset = nil
+        bare[i] = copy
+      end
+
+      const zeroed = state_list.sampler(list :: any)
+      const unset = state_list.sampler(bare :: any)
+
+      for _, t in { 0, 0.3, 1 } do
+        expect(zeroed(t, {} :: any).cframe == unset(t, {} :: any).cframe).toBe(true)
+      end
+    end)
+
+    test("a position offset moves a state along the template's axes", function()
+      const read = state_list.sampler({ state(0, { positionOffset = vector.create(2, 0, 0) }) } :: any)
+
+      expect(read(0.5, {} :: any).cframe.Position).toBe(Vector3.new(2, 0, 0))
+    end)
+
+    test("a rotation offset turns after the rotation", function()
+      const read = state_list.sampler({
+        state(0, { rotation = vector.create(0, math.pi / 2, 0), rotationOffset = vector.create(math.pi / 4, 0, 0) }),
+      } :: any)
+      const want = CFrame.fromOrientation(0, math.pi / 2, 0) * CFrame.fromOrientation(math.pi / 4, 0, 0)
+
+      expect(same(read(0.5, {} :: any).cframe, want)).toBe(true)
+    end)
+  end)
+
+  harness.describe("state_list.resolve", function()
+    const red = Color3.new(1, 0, 0)
+    const blue = Color3.new(0, 0, 1)
+    const green = Color3.new(0, 1, 0)
+    const white = Color3.new(1, 1, 1)
+
+    -- a quadratic ease in: 0.5 reads as 0.25
+    const QUADRATIC = shaped(1 / 3, 0, 2 / 3, 1 / 3)
+
+    -- an rng answering `draws` in turn, the last one ever after, counting calls
+    const function stubbed(draws: { number }): any
+      const rng = { calls = 0 }
+
+      function rng.NextNumber(self: any)
+        self.calls += 1
+
+        return draws[math.min(self.calls, #draws)]
+      end
+
+      return rng
+    end
+
+    const function colored(a: Color3, b: Color3, c: Color3, d: Color3, weight: string?): any
+      return {
+        state(0, { color = a, random = { state = { color = { finish = b } } } }),
+        state(1, { color = c, random = { state = { color = { finish = d, weight = weight } } } }),
+      }
+    end
+
+    test("resolve draws once per row and shares the draw across states", function()
+      const rng = stubbed({ 0.5 })
+      const list = state_list.decode(state_list.encode(colored(red, blue, red, blue))) :: state_list.List
+      const resolved = state_list.resolve(list, rng)
+      const want = color.blend(red, blue, 0.5)
+
+      expect(rng.calls).toBe(1)
+      expect(state_list.is(resolved)).toBe(true)
+      expect(state_list.varied(list)).toBe(true)
+      expect(state_list.varied(resolved)).toBe(false)
+      expect(close(resolved[1].color, want)).toBe(true)
+      expect(close(resolved[2].color, want)).toBe(true)
+      expect(list[1].random).ok()
+
+      const apart = state_list.resolve(colored(red, blue, green, white) :: any, stubbed({ 0.5 }))
+
+      expect(close(apart[1].color, want)).toBe(true)
+      expect(close(apart[2].color, color.blend(green, white, 0.5))).toBe(true)
+    end)
+
+    test("resolve draws each axis of an offset on its own", function()
+      const list = {
+        state(0, {
+          random = { state = { positionOffset = { start = vector.zero, finish = vector.create(2, 2, 2) } } },
+        }),
+      }
+      const rng = stubbed({ 0, 0.5, 1 })
+      const resolved = state_list.resolve(list :: any, rng)
+
+      expect(rng.calls).toBe(3)
+      expect(resolved[1].positionOffset).toBe(vector.create(0, 1, 2))
+    end)
+
+    test("resolve draws in a fixed order", function()
+      const function build(order: { string }): any
+        const s = state(0, {
+          transparency = 0.25,
+          surface = { emissiveStrength = 1, color = white },
+          decals = { Base = { transparency = 0.5 }, Glow = { glowStrength = 2 } },
+          random = { state = {}, surface = {}, decals = { Base = {}, Glow = {} } },
+        })
+        const by = {
+          color = function()
+            s.random.state.color = { finish = blue }
+          end,
+          transparency = function()
+            s.random.state.transparency = { finish = 1 }
+          end,
+          size = function()
+            s.random.state.size = { finish = vector.create(3, 3, 3) }
+          end,
+          spin = function()
+            s.random.state.spin = { finish = vector.create(1, 2, 3) }
+          end,
+          emissiveStrength = function()
+            s.random.surface.emissiveStrength = { finish = 5 }
+          end,
+          surfaceColor = function()
+            s.random.surface.color = { finish = green }
+          end,
+          base = function()
+            s.random.decals.Base.transparency = { finish = 1 }
+          end,
+          glow = function()
+            s.random.decals.Glow.glowStrength = { finish = 8 }
+          end,
+        }
+
+        for _, key in order do
+          by[key]()
+        end
+
+        return { s }
+      end
+
+      const forward = { "color", "transparency", "size", "spin", "emissiveStrength", "surfaceColor", "base", "glow" }
+      const backward = table.clone(forward)
+
+      for i = 1, #forward do
+        backward[i] = forward[#forward + 1 - i]
+      end
+
+      const a = state_list.resolve(build(forward), Random.new(7))
+      const b = state_list.resolve(build(backward), Random.new(7))
+
+      expect(close(a, b)).toBe(true)
+      expect(a[1].color == b[1].color and a[1].spin == b[1].spin).toBe(true)
+      expect(a[1].transparency ~= 0.25).toBe(true)
+    end)
+
+    test("a weight shapes each state's draw", function()
+      const resolved = state_list.resolve(colored(red, blue, green, white, QUADRATIC) :: any, stubbed({ 0.5 }))
+
+      expect(close(curve.sample(QUADRATIC, 0.5), 0.25)).toBe(true)
+      expect(close(resolved[1].color, color.blend(red, blue, 0.5))).toBe(true)
+      expect(close(resolved[2].color, color.blend(green, white, curve.sample(QUADRATIC, 0.5)))).toBe(true)
+    end)
+
+    test("a resolved value lies between its ends", function()
+      const from, into = Color3.new(0.9, 0.2, 0.1), Color3.new(0.1, 0.6, 0.8)
+      const list = {
+        state(0, {
+          transparency = 0.2,
+          color = from,
+          decals = { Glow = { uvOffset = Vector2.new(-1, 3) } },
+          random = {
+            state = { transparency = { finish = 0.7 }, color = { finish = into } },
+            decals = { Glow = { uvOffset = { finish = Vector2.new(2, -1) } } },
+          },
+        }),
+      }
+      const low, high = { R = 1, G = 1, B = 1 }, { R = 0, G = 0, B = 0 }
+
+      for i = 0, 1000 do
+        const c = color.blend(from, into, i / 1000)
+
+        for _, channel in { "R", "G", "B" } do
+          low[channel] = math.min(low[channel], (c :: any)[channel])
+          high[channel] = math.max(high[channel], (c :: any)[channel])
+        end
+      end
+
+      const rng = Random.new(1)
+
+      for _ = 1, 200 do
+        const s = state_list.resolve(list :: any, rng)[1]
+        const uv = s.decals.Glow.uvOffset :: Vector2
+
+        expect(s.transparency >= 0.2 and s.transparency <= 0.7).toBe(true)
+        expect(uv.X >= -1 and uv.X <= 2 and uv.Y >= -1 and uv.Y <= 3).toBe(true)
+
+        for _, channel in { "R", "G", "B" } do
+          const v = (s.color :: any)[channel]
+
+          expect(v >= low[channel] - 1e-4 and v <= high[channel] + 1e-4).toBe(true)
+        end
+      end
     end)
   end)
 end)
