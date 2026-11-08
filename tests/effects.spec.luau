@@ -2393,6 +2393,26 @@ harness.suite(function()
       built.restore()
     end)
 
+    -- v2 ran a beam's clock at 1 unless its Speed quad moved
+    test("a still old Speed quad leaves a beam's clock at 1", function()
+      local beam, built = beamOf({ Speed_Start = 2, Speed_End = 2 })
+      local module = require("@vfx/beam")
+      local attrs = reader.resolve(module :: any, { ref = beam, obj = beam, effect = module } :: any)
+
+      expect(attrs.Speed.animated).toBe(false)
+      expect(attrs.Speed.at(0)).toBe(1)
+
+      built.restore()
+
+      local moving, again = beamOf({ Speed_Start = 2, Speed_End = 1 })
+      local ramp = reader.resolve(module :: any, { ref = moving, obj = moving, effect = module } :: any)
+
+      expect(ramp.Speed.animated).toBe(true)
+      expect(ramp.Speed.at(0)).toBe(2)
+
+      again.restore()
+    end)
+
     test("a moving old quad on a curve size or texture row still tweens", function()
       local rows, built = beamRows({ CurveSize0 = 15, TextureSpeed = 2, TextureLength = 3 }, {
         CurveSize0_Start = -22.5,

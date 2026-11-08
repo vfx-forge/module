@@ -421,9 +421,11 @@ end
 
 -- the rows whose quad v2 played only when it moved, by class: a beam's curve
 -- sizes and texture rows kept the beam's own property when the start equaled
--- the end. a still width or transparency scale applied, so neither is here
+-- the end, and its clock ran at 1. a still width or transparency scale
+-- applied, so neither is here
 legacy_mods.MOVING_ONLY = {
   Beam = {
+    Speed = true,
     CurveSize0 = true,
     CurveSize1 = true,
     Speed_Texture = true,
