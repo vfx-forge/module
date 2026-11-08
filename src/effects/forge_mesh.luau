@@ -2041,9 +2041,10 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     path = if rows.Motion == "Path" then pathOf(rows, origin) else nil,
   }
 
+  -- a varied list samples per piece, so it builds no shared sampler
   if own ~= nil then
-    flight.states = state_list.sampler(list, own)
     flight.decals = own.decals
+    flight.states = if varied then nil else state_list.sampler(list, own)
   end
 
   if rows.CollisionMode ~= "Off" then
