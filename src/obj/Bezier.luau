@@ -332,24 +332,66 @@ function Bezier.atUniform(self: Bezier, u: number): vector
   return point(points[i], points[i + 1], points[i + 2], points[i + 3], s)
 end
 
+-- the unit way segment k leaves its end (s = 1, from the anchor before) or
+-- its start (s = 0) where its derivative vanishes, as a handle standing on
+-- its anchor makes it: the limit of its direction, toward the nearest point
+-- that differs, a segment of no length stepping on to its neighbor. zero for
+-- a chain of no length
+local function limit(self: Bezier, k: number, s: number): vector
+  local points = self.points
+  local ending = s >= 1
+
+  while k >= 1 and k <= self.segments do
+    local i = k * 3 - 2
+
+    for j = 1, 3 do
+      local way = if ending then points[i + 3] - points[i + 3 - j] else points[i + j] - points[i]
+      local length = vector.magnitude(way)
+
+      if length > 0 then
+        return way / length
+      end
+    end
+
+    k += if ending then -1 else 1
+  end
+
+  return vector.zero
+end
+
 -- the unit direction of travel u of the way along the curve by distance, 0
--- to 1, or zero where the curve stands still
-function Bezier.tangentUniform(self: Bezier, u: number): vector
+-- to 1, where it leaves a handle standing on its anchor too, or zero for a
+-- curve of no length. a point on an anchor between segments is read on the
+-- segment before it when `arriving`, as a walk forward reaches it, else on
+-- the one after
+function Bezier.tangentUniform(self: Bezier, u: number, arriving: boolean?): vector
   if self.stale then
     measure(self)
   end
 
-  if self.total <= 0 or u <= 0 then
-    return self:tangent(0)
+  if self.total <= 0 then
+    return vector.zero
   end
+
+  local k, s = 1, 0
 
   if u >= 1 then
-    return self:tangent(1)
+    k, s = self.segments, 1
+  elseif u > 0 then
+    k, s = seek(self, u)
   end
 
-  local k, s = seek(self, u)
+  if arriving and s <= 0 and k > 1 then
+    k, s = k - 1, 1
+  end
 
-  return heading(self.points, k, s)
+  local way = heading(self.points, k, s)
+
+  if way ~= vector.zero then
+    return way
+  end
+
+  return limit(self, k, s)
 end
 
 return Bezier

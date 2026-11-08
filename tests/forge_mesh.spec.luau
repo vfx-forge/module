@@ -4468,6 +4468,64 @@ harness.suite(function()
       )
     end)
 
+    test("Continue leaves a path whose end handle was deleted along its last run in", function()
+      const curve = {
+        { position = vector.zero, right = vector.create(0, 4, -3) },
+        { position = vector.create(0, 0, -10) },
+      } :: any
+      const finish = freeAt(curve, TOP, 1)
+      const way = freeWay(curve, TOP, Vector3.new(0, -4, -7))
+
+      pathed(
+        { AfterPath = "Continue", FlightTime = NumberRange.new(1, 1), Speed = NumberRange.new(10, 10) },
+        curve,
+        function(piece)
+          frames(150)
+
+          expect(near(piece.CFrame.Position, finish + way * 5, 0.05)).toBe(true)
+        end
+      )
+    end)
+
+    test("Reverse leaves a path whose start handle was deleted along its first run out, backward", function()
+      const curve = {
+        { position = vector.zero },
+        { position = vector.create(0, 0, -10), left = vector.create(0, 4, 3) },
+      } :: any
+      const finish = freeAt(curve, TOP, 0)
+      const way = freeWay(curve, TOP, Vector3.new(0, -4, 7))
+
+      pathed(
+        { AfterPath = "Continue", Reverse = true, FlightTime = NumberRange.new(1, 1), Speed = NumberRange.new(10, 10) },
+        curve,
+        function(piece)
+          frames(150)
+
+          expect(near(piece.CFrame.Position, finish + way * 5, 0.05)).toBe(true)
+        end
+      )
+    end)
+
+    test("Continue leaves a path ending on a segment of no length along the segment before it", function()
+      const curve = {
+        { position = vector.zero, right = vector.create(0, 4, -3) },
+        { position = vector.create(0, 0, -10), left = vector.create(0, 4, 3) },
+        { position = vector.create(0, 0, -10) },
+      } :: any
+      const finish = freeAt(curve, TOP, 1)
+      const way = freeWay(curve, TOP, Vector3.new(0, -4, -3))
+
+      pathed(
+        { AfterPath = "Continue", FlightTime = NumberRange.new(1, 1), Speed = NumberRange.new(10, 10) },
+        curve,
+        function(piece)
+          frames(150)
+
+          expect(near(piece.CFrame.Position, finish + way * 5, 0.05)).toBe(true)
+        end
+      )
+    end)
+
     test("a fade over life spans the flight", function()
       const rows = { Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }
 

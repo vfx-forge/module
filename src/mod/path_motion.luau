@@ -145,7 +145,8 @@ end
 -- distance as the walk is, run backward under Reverse and when Progress last
 -- ran back. never the walk's last step: one easing to a stop moves too little
 -- over its last frame for f32 points to give a direction. an end whose handle
--- stands on its anchor has no tangent there and leaves along the chord
+-- stands on its anchor leaves along the curve's limit there, and only a curve
+-- that gives no tangent at all leaves along the chord
 function path_motion.leaving(
   bezier: any,
   drawn: path_curve.Drawn,
@@ -156,7 +157,10 @@ function path_motion.leaving(
 )
   const reached = math.clamp(progress(1)[1], 0, 1)
   const before = if pathTime > 0 then math.clamp(progress(1 - math.min(FRAME / pathTime, 1))[1], 0, 1) else reached
-  const tangent = bezier:tangentUniform(if reverse then 1 - reached else reached)
+
+  -- whether the walk last ran the way the curve was drawn
+  const forward = reverse == (reached < before)
+  const tangent = bezier:tangentUniform(if reverse then 1 - reached else reached, forward)
   const way = if vector.magnitude(tangent) > STILL
     then tangent
     elseif drawn.length > STILL then drawn.chord / drawn.length
@@ -164,7 +168,7 @@ function path_motion.leaving(
   const turned = frame:VectorToWorldSpace(Vector3.new(way.x, way.y, way.z))
   const along = vector.create(turned.X, turned.Y, turned.Z)
 
-  return if reverse ~= (reached < before) then -along else along
+  return if forward then along else -along
 end
 
 return path_motion
