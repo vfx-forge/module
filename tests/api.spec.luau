@@ -409,6 +409,10 @@ harness.suite(function()
     test("disable stops the passive loop and leaves an open window ticking", function()
       passive(function(stand: any)
         local m = model()
+
+        -- a mesh opens its window only while tagged, as v2 did
+        m:AddTag(utility.ENABLED_VFX_TAG)
+
         local env = effects.emit(0, m)
 
         stand.vfx.enable(m)

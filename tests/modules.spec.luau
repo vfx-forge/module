@@ -414,7 +414,9 @@ harness.suite(function()
       expect(tint.at(0)).toEqual(Color3.new(1, 1, 1))
     end)
 
-    test("a mesh decal's end is clear only where the model stores an old start for it", function()
+    -- v2.4.0 faded a decal storing nothing to clear, so the end is 1 unless
+    -- the model stores one of its own
+    test("a mesh decal's end is clear unless the model stores one", function()
       loadAll()
 
       local function endOf(stored: { [string]: any }, decal: boolean?)
@@ -431,7 +433,7 @@ harness.suite(function()
         return registry.read(made.mesh).DecalEndTransparency
       end
 
-      expect(endOf({})).toBe(nil)
+      expect(endOf({})).toBe(1)
       expect(endOf({ Decal_StartTransparency = 0 })).toBe(1)
       expect(endOf({ DecalStartTransparency = 0.2 })).toBe(1)
       expect(endOf({ StartTransparency = 0 })).toBe(1)
