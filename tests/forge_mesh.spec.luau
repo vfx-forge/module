@@ -239,13 +239,16 @@ const function parentPart(cframe: CFrame, size: Vector3): (Instance, BasePart)
   return root, part
 end
 
--- a template under an attachment standing at (1, 12, 3), unturned
+-- where `attached` puts its attachment
+const ATTACHED = Vector3.new(1, 12, 3)
+
+-- a template under an attachment standing at ATTACHED, unturned
 const function attached(attributes: { [string]: any }): BasePart
   const _, part = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
   const attachment = harness.make("Attachment", part) :: Attachment
 
   -- lune works out no world frame for an attachment, so it is written
-  attachment.WorldCFrame = CFrame.new(1, 12, 3)
+  attachment.WorldCFrame = CFrame.new(ATTACHED)
 
   return template(attachment, attributes)
 end
@@ -634,8 +637,9 @@ const RISE = {
 }
 
 -- one States piece of two seconds' life on a template under an attachment,
--- turned on its own z so its axes are not the world's, moving through
--- `list`, `attributes` over it and `dress` giving the template its children
+-- set apart from it and turned on its own z so its axes are not the world's,
+-- moving through `list`, `attributes` over it and `dress` giving the template
+-- its children
 const function stated(
   attributes: { [string]: any },
   list: { any },
@@ -661,6 +665,12 @@ const function stated(
       env:Clear()
     end)
   end)
+end
+
+-- the frame a `stated` piece's states are posed in: where it spawned, the
+-- attachment, turned as its template is
+const function spawnedOn(part: BasePart): CFrame
+  return CFrame.new(ATTACHED) * part.CFrame.Rotation
 end
 
 -- where a path piece's parent part stands
@@ -925,7 +935,7 @@ harness.suite(function()
       stated({}, RISE, function(piece, part)
         frames(60)
 
-        const want = state_list.pose(part.CFrame, vector.create(0, 5, 0), vector.zero).Position
+        const want = state_list.pose(spawnedOn(part), vector.create(0, 5, 0), vector.zero).Position
 
         expect(near(piece.CFrame.Position, want, LOOSE)).toBe(true)
 
@@ -934,11 +944,31 @@ harness.suite(function()
       end)
     end)
 
+    test("a States piece spawns on its parent part's shape, wherever the template sits", function()
+      framed(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Motion = "States", Lifetime = NumberRange.new(2, 2), Shape = "Box" })
+
+        part.CFrame = CFrame.new(40, 0, -30)
+
+        stubbed(part, { States = state_list.encode({ stateOf(0) } :: any) }, function()
+          const env = effects.emit(0, part)
+
+          frames(1)
+
+          const at = parent.CFrame:PointToObjectSpace(pieces(fake)[1].CFrame.Position)
+
+          expect(math.abs(at.X) <= 2 + LOOSE and math.abs(at.Y) <= 1 + LOOSE and math.abs(at.Z) <= 2 + LOOSE).toBe(true)
+          env:Clear()
+        end)
+      end)
+    end)
+
     test("a States piece ignores the flight rows", function()
       stated({ Speed = NumberRange.new(50, 50), Acceleration = Vector3.new(0, -100, 0) }, RISE, function(piece, part)
         frames(60)
 
-        const want = state_list.pose(part.CFrame, vector.create(0, 5, 0), vector.zero).Position
+        const want = state_list.pose(spawnedOn(part), vector.create(0, 5, 0), vector.zero).Position
 
         expect(near(piece.CFrame.Position, want, LOOSE)).toBe(true)
       end)
@@ -950,7 +980,7 @@ harness.suite(function()
       stated(rows, { stateOf(0) }, function(piece, part)
         frames(30)
 
-        expect(near(piece.CFrame.Position, part.CFrame.Position, LOOSE)).toBe(true)
+        expect(near(piece.CFrame.Position, ATTACHED, LOOSE)).toBe(true)
         expect(near(piece.CFrame.LookVector, part.CFrame.LookVector, LOOSE)).toBe(true)
         expect(near(piece.CFrame.UpVector, part.CFrame.UpVector, LOOSE)).toBe(true)
       end)

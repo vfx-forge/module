@@ -1408,9 +1408,10 @@ const function piece(
   const at = launch.spawn.Position
   const posing = attrs.Motion == "States"
 
-  -- a piece moving through its states stands on the template, moved by where
-  -- it spawned off the emitter's center, and no flight or turn row reaches it
-  const base = if posing then CFrame.new(at - origin.Position) * template.CFrame else nil
+  -- a piece moving through its states stands where it spawned on the emitter,
+  -- as a particle or a path piece does, turned as the template is; where the
+  -- template itself sits plays no part, and no flight or turn row reaches it
+  const base = if posing then CFrame.new(at) * template.CFrame.Rotation else nil
 
   -- where its states put it as it was last drawn, nil for a particle
   local stance = if base ~= nil and sample ~= nil then base * sample.cframe else base
