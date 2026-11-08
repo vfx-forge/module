@@ -3044,6 +3044,37 @@ harness.suite(function()
       end, { rows = rows })
     end)
 
+    test("a Progress key's band gives each piece of an emit its own pace", function()
+      const rows = { Progress = curveOf(1, { { 0, { 0 } }, { 0.5, { 0.5 }, 0.5 }, { 1, { 1 } } }) }
+
+      spawning(function(spawned)
+        pathed({ EmitCount = 2 }, path_curve.DEFAULT, function()
+          frames(60)
+
+          expect(#spawned).toBe(2)
+          expect(near(spawned[1].CFrame.Position, spawned[2].CFrame.Position, LOOSE)).toBe(false)
+        end, { rows = rows })
+      end)
+    end)
+
+    test("RotSpeed spins a path piece as it walks", function()
+      pathed(
+        {
+          Orientation = "None",
+          RotSpeed = Vector3.new(0, 180, 0),
+          AfterPath = "Stop",
+        },
+        path_curve.DEFAULT,
+        function(piece)
+          const start = piece.CFrame.LookVector
+
+          frames(60)
+
+          expect(near(piece.CFrame.LookVector, -start, LOOSE)).toBe(true)
+        end
+      )
+    end)
+
     test("Center ends every piece on the emitter's center", function()
       spawning(function(spawned)
         pathed({ PathEnd = "Center", EmitCount = 4 }, path_curve.DEFAULT, function()
@@ -3094,6 +3125,18 @@ harness.suite(function()
 
         expect(near(piece.CFrame.Position, freeAt(path_curve.DEFAULT, TOP, 0.5), LOOSE)).toBe(true)
       end)
+    end)
+
+    test("an EndPoint already gone at emit plays as Free", function()
+      pathed({ PathEnd = "Target" }, path_curve.DEFAULT, function(piece)
+        frames(60)
+
+        expect(near(piece.CFrame.Position, freeAt(path_curve.DEFAULT, TOP, 0.5), LOOSE)).toBe(true)
+      end, {
+        wrap = endingAt(Vector3.new(20, 10, 0), function() end, function()
+          return false
+        end),
+      })
     end)
 
     test("a destroyed EndPoint holds its last pose", function()
@@ -3309,6 +3352,22 @@ harness.suite(function()
           for _, name in flying do
             expect(`{i} {name} {hidden[name] == true}`).toBe(`{i} {name} {case.hidden}`)
           end
+        end
+
+        -- under Path Speed is always the exit speed and no orbit launch
+        -- reaches a piece
+        const launched = { Force = "Gravity", OrbitLaunch = true, AfterPath = "Continue" }
+        const walking = table.clone(launched)
+
+        walking.Motion = "Path"
+
+        const path = hiddenOf(template(parent, walking))
+        const particle = hiddenOf(template(parent, launched))
+
+        for _, name in { "Speed", "OrbitLaunch", "OrbitLaunchScale" } do
+          expect(`{name} {path[name] == true} {particle[name] == true}`).toBe(
+            `{name} {name ~= "Speed"} {name == "Speed"}`
+          )
         end
       end)
     end)

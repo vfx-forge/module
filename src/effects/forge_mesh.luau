@@ -629,8 +629,8 @@ end
 -- what one piece draws as it spawns: its launch frame, whose look vector is
 -- the way it sets off, its speed and whole life, its initial turn in degrees,
 -- the velocity it inherits, and the curves and gradient it plays over its
--- life. on a path, the share of the life it walks it, its roll and where it
--- ends off the end point
+-- life. on a path, the share of the life it walks it, its roll, where it
+-- ends off the end point and its Progress draws
 type Launch = {
   spawn: CFrame,
   speed: number,
@@ -638,6 +638,7 @@ type Launch = {
   pathTime: number,
   roll: number,
   offset: vector,
+  pace: { number }?,
   turn: vector,
   inherited: vector,
   size: value_curve.Curve,
@@ -779,12 +780,12 @@ const function endNow(flight: Flight): vector?
 end
 
 -- what every piece of an emit walks: the curve built once, its ends fit to
--- the emitter's center or the EndPoint where it stands now, an EndPoint unset
--- or of no place walked as drawn
+-- the emitter's center or the EndPoint where it stands now, an EndPoint unset,
+-- gone or of no place walked as drawn
 const function pathOf(rows: any, origin: CFrame): path_motion.Path
   const curve = rows.Path :: path_curve.Curve
   const target = if rows.PathEnd == "Target" then rows.EndPoint :: Instance? else nil
-  const finish = if target ~= nil then (poseOf(target)) else nil
+  const finish = if target ~= nil and forge_mesh.engine.alive(target) then (poseOf(target)) else nil
   const ends = if rows.PathEnd == "Target" and finish == nil then "Free" else rows.PathEnd
   const face = FACES[rows.EmissionDirection] or FACES.Top
 
@@ -799,7 +800,7 @@ const function pathOf(rows: any, origin: CFrame): path_motion.Path
     axis = toVector(origin:VectorToWorldSpace(Vector3.new(face.x, face.y, face.z))),
     center = toVector(origin.Position),
     flight = rows.FlightTime,
-    progress = (value_curve.sampler(rows.Progress)),
+    progress = rows.Progress,
     target = if finish ~= nil then target else nil,
     finish = finish,
     read = clock.frame,
@@ -887,7 +888,7 @@ forge_mesh.attributes = {
     :unit("studsPerSecond")
     :mod()
     :hidden(function(ctx: any, attrs: any)
-      return grounded(ctx, attrs) or force_rows.speedless(ctx)
+      return grounded(ctx, attrs) or (unpathed(ctx, attrs) and force_rows.speedless(ctx))
     end)
     :label("Speed")
     :hint("Speed each piece launches at along its emission direction, or leaves its path at, drawn per piece."),
@@ -1580,7 +1581,7 @@ const function piece(
   -- an orbit launch trades the launch's speed for a share of the circular
   -- orbit's about where the center stands, in the frame the piece flies in. a
   -- piece at the center has no circle to fly, and keeps its launch
-  if pull ~= nil and pull.kind == "Gravity" and attrs.OrbitLaunch and pull.mass ~= 0 then
+  if pull ~= nil and pull.kind == "Gravity" and attrs.OrbitLaunch and pull.mass ~= 0 and flight.path == nil then
     const standing, up = standingNow(flight, template)
 
     if standing ~= nil then
@@ -1826,10 +1827,12 @@ const function piece(
     if dt > 0 and not pinned then
       if posing then
         stand()
-      elseif onPath then
-        trail(dt)
       else
-        fly(dt)
+        if onPath then
+          trail(dt)
+        else
+          fly(dt)
+        end
 
         const add = spin * dt
 
@@ -2038,7 +2041,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
 
     -- a path piece's Lifetime is the time it walks its path, its life that
     -- and the time it flies on
-    const roll, offset, flightTime = path_motion.draw(flight.path, flight.rng, spawn)
+    const roll, offset, flightTime, pace = path_motion.draw(flight.path, flight.rng, spawn)
 
     const launch: Launch = {
       spawn = spawn,
@@ -2047,6 +2050,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
       pathTime = duration,
       roll = roll,
       offset = offset,
+      pace = pace,
       turn = turn,
       inherited = if inheritance ~= 0 and moved
         then toVector((parent :: BasePart).AssemblyLinearVelocity) * inheritance

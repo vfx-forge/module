@@ -32,6 +32,14 @@ const function unflown(ctx: any): boolean
     and attr.get(ref, "CollisionMode", nil) ~= "Bounce"
 end
 
+-- whether the template's pieces walk a path, which sets their launch, so no
+-- orbit launch reaches them
+const function walking(ctx: any): boolean
+  const ref = if ctx ~= nil then ctx.ref else nil
+
+  return ref ~= nil and attr.get(ref, "Motion", nil) == "Path"
+end
+
 const function forceless(ctx: any, attrs: any)
   return unflown(ctx) or attrs.Force == "None"
 end
@@ -44,8 +52,12 @@ const function orbitless(ctx: any, attrs: any)
   return unflown(ctx) or attrs.Force ~= "Orbit"
 end
 
+const function launchless(ctx: any, attrs: any)
+  return walking(ctx) or gravityless(ctx, attrs)
+end
+
 const function unlaunched(ctx: any, attrs: any)
-  return unflown(ctx) or attrs.Force ~= "Gravity" or attrs.OrbitLaunch ~= true
+  return launchless(ctx, attrs) or attrs.OrbitLaunch ~= true
 end
 
 const common = {}
@@ -76,7 +88,7 @@ common.rows = {
     "Smooths the pull close to the center, so a piece passing through it is not flung away. At 0 a piece passing through the center is flung."
   ),
   OrbitLaunch = knob(false)
-    :hidden(gravityless)
+    :hidden(launchless)
     :label("OrbitLaunch")
     :hint("Launch each piece sideways at the speed of a circular orbit around the center."),
   OrbitLaunchScale = knob(1):min(0):hidden(unlaunched):label("OrbitLaunchScale"):hint(

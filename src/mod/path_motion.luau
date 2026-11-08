@@ -1,5 +1,6 @@
 --!native
 --!optimize 2
+const value_curve = require("@mod/value_curve")
 const path_curve = require("@mod/common/path_curve")
 
 -- a velocity under this is no direction to leave a path along
@@ -7,8 +8,8 @@ const STILL = 1e-6
 
 -- what every piece of one emit walking a path shares, read once as it emits:
 -- the curve and its drawn frame, how its ends are fit, the emitter's center
--- and emission axis, and the EndPoint, which `finish` holds as it last stood
--- on frame `read`
+-- and emission axis, the Progress curve each piece draws its own band of, and
+-- the EndPoint, which `finish` holds as it last stood on frame `read`
 export type Path = {
   bezier: any,
   drawn: path_curve.Drawn,
@@ -20,7 +21,7 @@ export type Path = {
   axis: vector,
   center: vector,
   flight: NumberRange,
-  progress: (t: number) -> { number },
+  progress: value_curve.Curve,
   target: Instance?,
   finish: vector?,
   read: number,
@@ -32,6 +33,7 @@ export type Launch = {
   pathTime: number,
   roll: number,
   offset: vector,
+  pace: { number }?,
 }
 
 const path_motion = {}
@@ -57,11 +59,11 @@ function path_motion.walker(opts: {
 end
 
 -- one piece's draws after its spawn, in this order: the roll, where its path
--- ends off the end point, then how long it flies on. nothing is drawn off a
--- piece with no path
-function path_motion.draw(path: Path?, rng: Random, spawn: CFrame): (number, vector, number)
+-- ends off the end point, how long it flies on, then one per Progress key for
+-- its band. nothing is drawn off a piece with no path
+function path_motion.draw(path: Path?, rng: Random, spawn: CFrame): (number, vector, number, { number }?)
   if path == nil then
-    return 0, vector.zero, 0
+    return 0, vector.zero, 0, nil
   end
 
   const at = vector.create(spawn.Position.X, spawn.Position.Y, spawn.Position.Z)
@@ -69,8 +71,9 @@ function path_motion.draw(path: Path?, rng: Random, spawn: CFrame): (number, vec
   const roll = rng:NextNumber() * 2 * math.pi
   const offset = path_curve.ending(rng, finish, at, path.radius)
   const flight = rng:NextNumber(path.flight.Min, path.flight.Max)
+  const pace = value_curve.draw(path.progress, rng)
 
-  return roll, offset, if path.after == "Continue" then math.max(flight, 0) else 0
+  return roll, offset, if path.after == "Continue" then math.max(flight, 0) else 0, pace
 end
 
 -- a piece's walk along its path, `age` into its path time, and the way the
@@ -82,16 +85,16 @@ function path_motion.follow(
   launch: Launch,
   standing: () -> vector?,
   unplaced: (at: vector) -> vector
-): ((age: number) -> vector, () -> vector)
+): (((age: number) -> vector)?, (() -> vector)?)
   if path == nil then
-    return nil :: any, nil :: any
+    return nil, nil
   end
 
   const drawn, ends, offset = path.drawn, path.ends, launch.offset
   const walk = path_motion.walker({
     bezier = path.bezier,
     drawn = drawn,
-    progress = path.progress,
+    progress = (value_curve.sampler(path.progress, launch.pace)),
     pathTime = launch.pathTime,
     reverse = path.reverse,
   })
