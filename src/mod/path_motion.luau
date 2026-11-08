@@ -3,8 +3,12 @@
 const value_curve = require("@mod/value_curve")
 const path_curve = require("@mod/common/path_curve")
 
--- a velocity under this is no direction to leave a path along
+-- a tangent under this is no direction to leave a path along
 const STILL = 1e-6
+
+-- the path time Progress is read back over, a frame at 60 per second, to
+-- tell which way a walk last ran
+const FRAME = 1 / 60
 
 -- what every piece of one emit walking a path shares, read once as it emits:
 -- the curve and its drawn frame, how its ends are fit, the emitter's center
@@ -130,19 +134,29 @@ function path_motion.follow(
   end
 
   const function heading()
-    const reached = math.clamp(progress(1)[1], 0, 1)
-
-    return path_motion.leaving(path.bezier, drawn, frame, path.reverse, reached)
+    return path_motion.leaving(path.bezier, drawn, frame, path.reverse, progress, launch.pathTime)
   end
 
   return point, heading
 end
 
--- the unit way a placed path runs where its walk ends, `reached` of the way
--- along: the curve's tangent there, run backward under Reverse. an end whose
--- handle stands on its anchor has no tangent there and leaves along the chord
-function path_motion.leaving(bezier: any, drawn: path_curve.Drawn, frame: CFrame, reverse: boolean, reached: number)
-  const tangent = bezier:tangent(if reverse then 1 - reached else reached)
+-- the unit way a piece leaves a placed path where its walk, paced by
+-- `progress` over `pathTime`, ends: the curve's tangent there, taken by
+-- distance as the walk is, run backward under Reverse and when Progress last
+-- ran back. never the walk's last step: one easing to a stop moves too little
+-- over its last frame for f32 points to give a direction. an end whose handle
+-- stands on its anchor has no tangent there and leaves along the chord
+function path_motion.leaving(
+  bezier: any,
+  drawn: path_curve.Drawn,
+  frame: CFrame,
+  reverse: boolean,
+  progress: (t: number) -> { number },
+  pathTime: number
+)
+  const reached = math.clamp(progress(1)[1], 0, 1)
+  const before = if pathTime > 0 then math.clamp(progress(1 - math.min(FRAME / pathTime, 1))[1], 0, 1) else reached
+  const tangent = bezier:tangentUniform(if reverse then 1 - reached else reached)
   const way = if vector.magnitude(tangent) > STILL
     then tangent
     elseif drawn.length > STILL then drawn.chord / drawn.length
@@ -150,14 +164,7 @@ function path_motion.leaving(bezier: any, drawn: path_curve.Drawn, frame: CFrame
   const turned = frame:VectorToWorldSpace(Vector3.new(way.x, way.y, way.z))
   const along = vector.create(turned.X, turned.Y, turned.Z)
 
-  return if reverse then -along else along
-end
-
--- the unit way `velocity` runs, or `fallback`'s when it stands still
-function path_motion.unit(velocity: vector, fallback: () -> vector)
-  const speed = vector.magnitude(velocity)
-
-  return if speed > STILL then velocity / speed else fallback()
+  return if reverse ~= (reached < before) then -along else along
 end
 
 return path_motion

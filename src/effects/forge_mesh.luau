@@ -1816,8 +1816,8 @@ const function piece(
   local onPath = walk ~= nil
   local since = 0
 
-  -- off its path's end a piece stops, or under Continue flies on the way it
-  -- was going at its Speed; whether it flies on
+  -- off its path's end a piece stops, or under Continue flies on along the
+  -- path's end at its Speed; whether it flies on
   const function depart()
     onPath = false
     since = pathTime
@@ -1826,7 +1826,7 @@ const function piece(
       return false
     end
 
-    velocity = path_motion.unit(velocity, departure) * launch.speed + launch.inherited
+    velocity = (departure :: () -> vector)() * launch.speed + launch.inherited
 
     return true
   end

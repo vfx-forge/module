@@ -188,11 +188,10 @@ function Bezier.at(self: Bezier, t: number): vector
   return point(points[i], points[i + 1], points[i + 2], points[i + 3], s)
 end
 
--- the unit direction of travel at t, or zero where the curve stands still
-function Bezier.tangent(self: Bezier, t: number): vector
-  local k, s = locate(self, t)
+-- the unit direction of travel at parameter s of segment k, or zero where
+-- the curve stands still
+local function heading(points: { vector }, k: number, s: number): vector
   local i = k * 3 - 2
-  local points = self.points
   local v = velocity(points[i], points[i + 1], points[i + 2], points[i + 3], s)
   local speed = vector.magnitude(v)
 
@@ -201,6 +200,13 @@ function Bezier.tangent(self: Bezier, t: number): vector
   end
 
   return v / speed
+end
+
+-- the unit direction of travel at t, or zero where the curve stands still
+function Bezier.tangent(self: Bezier, t: number): vector
+  local k, s = locate(self, t)
+
+  return heading(self.points, k, s)
 end
 
 -- every moved segment measured again, stretch by stretch, and the running
@@ -247,22 +253,9 @@ function Bezier.length(self: Bezier): number
   return self.total
 end
 
--- the point u of the way along the curve by distance, 0 to 1
-function Bezier.atUniform(self: Bezier, u: number): vector
-  if self.stale then
-    measure(self)
-  end
-
-  local points = self.points
-
-  if self.total <= 0 or u <= 0 then
-    return points[1]
-  end
-
-  if u >= 1 then
-    return points[self.segments * 3 + 1]
-  end
-
+-- the segment u of the way along a measured chain of some length by
+-- distance, inside 0 to 1, and the parameter inside it
+local function seek(self: Bezier, u: number): (number, number)
   local want = u * self.total
   local before = self.before
   local low, high = 1, self.segments
@@ -293,6 +286,7 @@ function Bezier.atUniform(self: Bezier, u: number): vector
   local from = (j - 1) / PARTS
   local to = j / PARTS
   local i = k * 3 - 2
+  local points = self.points
   local p0, p1, p2, p3 = points[i], points[i + 1], points[i + 2], points[i + 3]
   local s = from + (if part > 0 then math.min(want / part, 1) else 0) / PARTS
 
@@ -313,7 +307,49 @@ function Bezier.atUniform(self: Bezier, u: number): vector
     end
   end
 
-  return point(p0, p1, p2, p3, s)
+  return k, s
+end
+
+-- the point u of the way along the curve by distance, 0 to 1
+function Bezier.atUniform(self: Bezier, u: number): vector
+  if self.stale then
+    measure(self)
+  end
+
+  local points = self.points
+
+  if self.total <= 0 or u <= 0 then
+    return points[1]
+  end
+
+  if u >= 1 then
+    return points[self.segments * 3 + 1]
+  end
+
+  local k, s = seek(self, u)
+  local i = k * 3 - 2
+
+  return point(points[i], points[i + 1], points[i + 2], points[i + 3], s)
+end
+
+-- the unit direction of travel u of the way along the curve by distance, 0
+-- to 1, or zero where the curve stands still
+function Bezier.tangentUniform(self: Bezier, u: number): vector
+  if self.stale then
+    measure(self)
+  end
+
+  if self.total <= 0 or u <= 0 then
+    return self:tangent(0)
+  end
+
+  if u >= 1 then
+    return self:tangent(1)
+  end
+
+  local k, s = seek(self, u)
+
+  return heading(self.points, k, s)
 end
 
 return Bezier

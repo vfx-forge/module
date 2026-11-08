@@ -933,6 +933,20 @@ const function freeAt(curve: any, spawn: CFrame, u: number): Vector3
   return Vector3.new(at.x, at.y, at.z)
 end
 
+-- `way`, given in `curve`'s drawn frame, in the world once the curve is laid
+-- as drawn from `spawn`
+const function freeWay(curve: any, spawn: CFrame, way: Vector3): Vector3
+  const drawn = path_curve.drawn(curve)
+  const frame = path_curve.place(drawn, "Free", spawn, nil, vector.zero, vector.zero, "AsDrawn", 0)
+
+  return frame:VectorToWorldSpace(way).Unit
+end
+
+-- the way `curve` laid as drawn from `spawn` runs `u` of the way along it
+const function freeTangent(curve: any, spawn: CFrame, u: number): Vector3
+  return (freeAt(curve, spawn, u + 1e-3) - freeAt(curve, spawn, u - 1e-3)).Unit
+end
+
 -- one Path piece of two seconds' life walking `curve`, on a template under a
 -- part at PARENT of `opts.size` (a point unless given), held a second past
 -- its motion, `attributes` over it and `opts.rows` stubbed beside the path;
@@ -4377,6 +4391,78 @@ harness.suite(function()
 
           expect(math.abs(flown.Magnitude - 10) < 0.05).toBe(true)
           expect(flown.Unit:Dot(tangent) > 0.999).toBe(true)
+        end,
+        { rows = rows }
+      )
+    end)
+
+    test("Continue leaves along the end tangent when Progress eases into the end", function()
+      const finish = freeAt(path_curve.DEFAULT, TOP, 1)
+      const tangent = freeWay(path_curve.DEFAULT, TOP, Vector3.new(0, -4, -3))
+      const eased = value_curve.decode(curveOf(1, { { 0, { 0 } }, { 1, { 1 } } })) :: value_curve.Curve
+
+      -- fast early, then all but still over the last frames
+      eased.keys[1].right = { vector.create(0.2, 1, 0) }
+      eased.keys[2].left = { vector.create(-0.6, 0, 0) }
+
+      pathed(
+        {
+          AfterPath = "Continue",
+          Lifetime = NumberRange.new(1, 1),
+          FlightTime = NumberRange.new(4, 4),
+          Speed = NumberRange.new(20, 20),
+        },
+        path_curve.DEFAULT,
+        function(piece)
+          frames(180)
+
+          expect(near(piece.CFrame.Position, finish + tangent * 40, 0.05)).toBe(true)
+        end,
+        { rows = { Progress = value_curve.encode(eased) } }
+      )
+    end)
+
+    test("Continue leaves a lopsided curve along its tangent where Progress holds", function()
+      const curve = {
+        { position = vector.zero, right = vector.create(0, 8, -1) },
+        { position = vector.create(0, 0, -10), left = vector.create(0, 1, 1) },
+      } :: any
+      const stopped = freeAt(curve, TOP, 0.5)
+      const tangent = freeTangent(curve, TOP, 0.5)
+      const rows = { Progress = curveOf(1, { { 0, { 0 } }, { 0.5, { 0.5 } }, { 1, { 0.5 } } }) }
+
+      pathed(
+        {
+          AfterPath = "Continue",
+          FlightTime = NumberRange.new(1, 1),
+          Speed = NumberRange.new(10, 10),
+        },
+        curve,
+        function(piece)
+          frames(150)
+
+          expect(near(piece.CFrame.Position, stopped + tangent * 5, 0.05)).toBe(true)
+        end,
+        { rows = rows }
+      )
+    end)
+
+    test("Continue leaves backward along the path when Progress runs back into its end", function()
+      const stopped = freeAt(path_curve.DEFAULT, TOP, 0.5)
+      const tangent = freeTangent(path_curve.DEFAULT, TOP, 0.5)
+      const rows = { Progress = curveOf(1, { { 0, { 0 } }, { 0.5, { 1 } }, { 1, { 0.5 } } }) }
+
+      pathed(
+        {
+          AfterPath = "Continue",
+          FlightTime = NumberRange.new(1, 1),
+          Speed = NumberRange.new(10, 10),
+        },
+        path_curve.DEFAULT,
+        function(piece)
+          frames(150)
+
+          expect(near(piece.CFrame.Position, stopped - tangent * 5, 0.05)).toBe(true)
         end,
         { rows = rows }
       )
