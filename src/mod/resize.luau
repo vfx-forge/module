@@ -123,16 +123,30 @@ const function scaleListRow(obj: Instance, name: string, row: any, f: number)
   end
 end
 
--- a path row's stored curve with every position and handle scaled. the default
--- is the resting value, so an unset row has nothing to scale
+-- a path row's stored curve with every position and handle scaled, or its
+-- default when none is stored. an unreadable string counts as stored and is
+-- left as it was
 const function scalePathRow(obj: Instance, name: string, row: any, f: number)
+  local stored = false
+
   for _, key in { name, table.unpack(row.names) } do
     const raw = attr.get(obj, key, nil)
+
+    if raw == nil then
+      continue
+    end
+
+    stored = true
+
     const curve = if type(raw) == "string" then path_curve.decode(raw) else nil
 
     if curve ~= nil then
       attr.set(obj, key, path_curve.encode(path_curve.scaled(curve, f)))
     end
+  end
+
+  if not stored and path_curve.is(row.default) then
+    attr.set(obj, name, path_curve.encode(path_curve.scaled(row.default, f)))
   end
 end
 

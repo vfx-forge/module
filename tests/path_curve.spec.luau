@@ -470,7 +470,8 @@ harness.suite(function()
       end).toThrow()
     end)
 
-    test("resize scales a mesh's path", function()
+    -- resize a mesh whose Path attribute reads stored, answering what it wrote
+    const function resized(stored: string?)
       registry.clear()
       registry.configure({ query = harness.query })
       registry.register({
@@ -483,7 +484,6 @@ harness.suite(function()
       })
 
       const part = harness.make("Part")
-      const stored = path_curve.encode(MIDDLE_LEFT :: any)
       const written = {}
       const get, set = attr.get, attr.set
 
@@ -512,11 +512,27 @@ harness.suite(function()
         error(err, 0)
       end
 
-      const back = path_curve.decode(written.Path)
+      return written
+    end
+
+    test("resize scales a mesh's path", function()
+      const back = path_curve.decode(resized(path_curve.encode(MIDDLE_LEFT :: any)).Path)
 
       expect(back ~= nil).toBe(true)
       expect(near((back :: any)[2].position, vector.create(2.2, 4.4, -6.6))).toBe(true)
       expect(near((back :: any)[2].left, vector.create(1, 0.5, 0.2))).toBe(true)
+    end)
+
+    test("resize writes the scaled default for an unset path", function()
+      const back = path_curve.decode(resized(nil).Path)
+
+      expect(back ~= nil).toBe(true)
+      expect(near((back :: any)[2].position, vector.create(0, 0, -20))).toBe(true)
+      expect(near((back :: any)[1].right, vector.create(0, 8, -6))).toBe(true)
+    end)
+
+    test("resize leaves an unreadable path string as it was", function()
+      expect(resized("junk").Path).toBe(nil)
     end)
 
     test("ramp samples linearly", function()

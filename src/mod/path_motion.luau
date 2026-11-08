@@ -77,7 +77,7 @@ function path_motion.draw(path: Path?, rng: Random, spawn: CFrame): (number, vec
 end
 
 -- a piece's walk along its path, `age` into its path time, and the way the
--- placed path runs from its start to its end. the end is placed again only
+-- placed path runs where it ends (`leaving`). the end is placed again only
 -- when it moved: a target read by `standing`, a world point mapped by
 -- `unplaced` into the frame the piece flies in. nil for no path
 function path_motion.follow(
@@ -129,14 +129,25 @@ function path_motion.follow(
   end
 
   const function heading()
-    const chord = if drawn.length > STILL then drawn.chord / drawn.length else vector.create(0, 0, -1)
-    const way = frame:VectorToWorldSpace(Vector3.new(chord.x, chord.y, chord.z))
-    const along = vector.create(way.X, way.Y, way.Z)
-
-    return if path.reverse then -along else along
+    return path_motion.leaving(path.bezier, drawn, frame, path.reverse)
   end
 
   return point, heading
+end
+
+-- the unit way a placed path runs where its walk ends: the curve's tangent at
+-- 1, or at 0 run backward under Reverse. an end whose handle stands on its
+-- anchor has no tangent there and leaves along the chord
+function path_motion.leaving(bezier: any, drawn: path_curve.Drawn, frame: CFrame, reverse: boolean)
+  const tangent = bezier:tangent(if reverse then 0 else 1)
+  const way = if vector.magnitude(tangent) > STILL
+    then tangent
+    elseif drawn.length > STILL then drawn.chord / drawn.length
+    else vector.create(0, 0, -1)
+  const turned = frame:VectorToWorldSpace(Vector3.new(way.x, way.y, way.z))
+  const along = vector.create(turned.X, turned.Y, turned.Z)
+
+  return if reverse then -along else along
 end
 
 -- the unit way `velocity` runs, or `fallback`'s when it stands still

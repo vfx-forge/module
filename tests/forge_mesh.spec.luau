@@ -3215,6 +3215,30 @@ harness.suite(function()
       end)
     end)
 
+    test("Continue leaves along the end tangent when Progress arrives early and holds", function()
+      const finish = freeAt(path_curve.DEFAULT, TOP, 1)
+      const tangent = (finish - freeAt(path_curve.DEFAULT, TOP, 1 - 1e-4)).Unit
+      const rows = { Progress = curveOf(1, { { 0, { 0 } }, { 0.5, { 1 } }, { 1, { 1 } } }) }
+
+      pathed(
+        {
+          AfterPath = "Continue",
+          FlightTime = NumberRange.new(1, 1),
+          Speed = NumberRange.new(10, 10),
+        },
+        path_curve.DEFAULT,
+        function(piece)
+          frames(190)
+
+          const flown = piece.CFrame.Position - finish
+
+          expect(math.abs(flown.Magnitude - 10) < 0.05).toBe(true)
+          expect(flown.Unit:Dot(tangent) > 0.999).toBe(true)
+        end,
+        { rows = rows }
+      )
+    end)
+
     test("a fade over life spans the flight", function()
       const rows = { Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }
 
@@ -3659,20 +3683,23 @@ harness.suite(function()
           { OrbitRadius = 4, OrbitRise = 3, OrbitSpin = 0.5, GravitySoftening = 1, GravityMass = 100, Drag = 1 }
         )
 
+        -- lune refuses a non utf-8 attribute string, and an unset Path is
+        -- written scaled, so the rows are cached
+        attr.cache(part)
         resize.apply(part, 2)
 
-        expect(part:GetAttribute("OrbitRadius")).toBe(8)
-        expect(part:GetAttribute("OrbitRise")).toBe(6)
-        expect(part:GetAttribute("GravitySoftening")).toBe(2)
-        expect(part:GetAttribute("GravityMass")).toBe(800)
-        expect(part:GetAttribute("OrbitSpin")).toBe(0.5)
-        expect(part:GetAttribute("Drag")).toBe(1)
+        expect(attr.get(part, "OrbitRadius", nil)).toBe(8)
+        expect(attr.get(part, "OrbitRise", nil)).toBe(6)
+        expect(attr.get(part, "GravitySoftening", nil)).toBe(2)
+        expect(attr.get(part, "GravityMass", nil)).toBe(800)
+        expect(attr.get(part, "OrbitSpin", nil)).toBe(0.5)
+        expect(attr.get(part, "Drag", nil)).toBe(1)
 
         retime.apply(part, 2, 0.5)
 
-        expect(part:GetAttribute("OrbitSpin")).toBe(1)
-        expect(part:GetAttribute("GravityMass")).toBe(3200)
-        expect(part:GetAttribute("Drag")).toBe(2)
+        expect(attr.get(part, "OrbitSpin", nil)).toBe(1)
+        expect(attr.get(part, "GravityMass", nil)).toBe(3200)
+        expect(attr.get(part, "Drag", nil)).toBe(2)
       end)
     end)
 
