@@ -2178,13 +2178,13 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   }
 
   const list = rows.States :: state_list.List
-  const stated = rows.Motion == "States" and #list > 0
-  const varied = stated and state_list.varied(list)
-  const own = if stated then restOf(template) else nil
+  const listed = rows.Motion == "States" and #list > 0
+  const varied = listed and state_list.varied(list)
+  const own = if listed then restOf(template) else nil
 
   -- the look rows keep what the author set under states but play no part, so
   -- a piece takes their defaults and draws nothing off them
-  const tintRest = if stated then ColorSequence.new(template.Color) else rows.Color.value :: ColorSequence
+  const tintRest = if listed then ColorSequence.new(template.Color) else rows.Color.value :: ColorSequence
 
   const flight: Flight = {
     origin = origin,
@@ -2245,14 +2245,14 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
   -- an appearance row with no modifier hands every piece the value it rests
   -- at, read here once rather than per piece
   const knobs = forge_mesh.attributes
-  const sizeRest = (if stated then knobs.Size.default else rows.Size.value) :: value_curve.Curve
-  const squashRest = (if stated then knobs.Squash.default else rows.Squash.value) :: value_curve.Curve
-  const clearRest = (if stated then knobs.Transparency.default else rows.Transparency.value) :: value_curve.Curve
+  const sizeRest = (if listed then knobs.Size.default else rows.Size.value) :: value_curve.Curve
+  const squashRest = (if listed then knobs.Squash.default else rows.Squash.value) :: value_curve.Curve
+  const clearRest = (if listed then knobs.Transparency.default else rows.Transparency.value) :: value_curve.Curve
 
-  const sized = not stated and modified(rows.Size)
-  const squashed = not stated and modified(rows.Squash)
-  const cleared = not stated and modified(rows.Transparency)
-  const colored = not stated and modified(rows.Color)
+  const sized = not listed and modified(rows.Size)
+  const squashed = not listed and modified(rows.Squash)
+  const cleared = not listed and modified(rows.Transparency)
+  const colored = not listed and modified(rows.Color)
 
   const census = forge_mesh.pieces
 
