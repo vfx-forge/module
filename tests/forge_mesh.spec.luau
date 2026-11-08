@@ -3239,6 +3239,30 @@ harness.suite(function()
       )
     end)
 
+    test("Continue leaves from where Progress holds short of the end, along the tangent there", function()
+      const stopped = freeAt(path_curve.DEFAULT, TOP, 0.5)
+      const tangent = (stopped - freeAt(path_curve.DEFAULT, TOP, 0.5 - 1e-4)).Unit
+      const rows = { Progress = curveOf(1, { { 0, { 0 } }, { 0.5, { 0.5 } }, { 1, { 0.5 } } }) }
+
+      pathed(
+        {
+          AfterPath = "Continue",
+          FlightTime = NumberRange.new(1, 1),
+          Speed = NumberRange.new(10, 10),
+        },
+        path_curve.DEFAULT,
+        function(piece)
+          frames(190)
+
+          const flown = piece.CFrame.Position - stopped
+
+          expect(math.abs(flown.Magnitude - 10) < 0.05).toBe(true)
+          expect(flown.Unit:Dot(tangent) > 0.999).toBe(true)
+        end,
+        { rows = rows }
+      )
+    end)
+
     test("a fade over life spans the flight", function()
       const rows = { Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }
 

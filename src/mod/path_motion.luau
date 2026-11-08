@@ -91,10 +91,11 @@ function path_motion.follow(
   end
 
   const drawn, ends, offset = path.drawn, path.ends, launch.offset
+  const progress = value_curve.sampler(path.progress, launch.pace)
   const walk = path_motion.walker({
     bezier = path.bezier,
     drawn = drawn,
-    progress = (value_curve.sampler(path.progress, launch.pace)),
+    progress = progress,
     pathTime = launch.pathTime,
     reverse = path.reverse,
   })
@@ -129,17 +130,19 @@ function path_motion.follow(
   end
 
   const function heading()
-    return path_motion.leaving(path.bezier, drawn, frame, path.reverse)
+    const reached = math.clamp(progress(1)[1], 0, 1)
+
+    return path_motion.leaving(path.bezier, drawn, frame, path.reverse, reached)
   end
 
   return point, heading
 end
 
--- the unit way a placed path runs where its walk ends: the curve's tangent at
--- 1, or at 0 run backward under Reverse. an end whose handle stands on its
--- anchor has no tangent there and leaves along the chord
-function path_motion.leaving(bezier: any, drawn: path_curve.Drawn, frame: CFrame, reverse: boolean)
-  const tangent = bezier:tangent(if reverse then 0 else 1)
+-- the unit way a placed path runs where its walk ends, `reached` of the way
+-- along: the curve's tangent there, run backward under Reverse. an end whose
+-- handle stands on its anchor has no tangent there and leaves along the chord
+function path_motion.leaving(bezier: any, drawn: path_curve.Drawn, frame: CFrame, reverse: boolean, reached: number)
+  const tangent = bezier:tangent(if reverse then 1 - reached else reached)
   const way = if vector.magnitude(tangent) > STILL
     then tangent
     elseif drawn.length > STILL then drawn.chord / drawn.length
