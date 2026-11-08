@@ -80,18 +80,26 @@ function path_motion.draw(path: Path?, rng: Random, spawn: CFrame): (number, vec
   return roll, offset, if path.after == "Continue" then math.max(flight, 0) else 0, pace
 end
 
--- a piece's walk along its path, `age` into its path time, and the way the
--- placed path runs where it ends (`leaving`). the end is placed again only
--- when it moved: a target read by `standing`, a world point mapped by
--- `unplaced` into the frame the piece flies in. nil for no path
+-- a way in a placed path's drawn frame, in the frame the piece moves in
+const function turned(frame: CFrame, way: vector): vector
+  const along = frame:VectorToWorldSpace(Vector3.new(way.x, way.y, way.z))
+
+  return vector.create(along.X, along.Y, along.Z)
+end
+
+-- a piece's walk along its path, `age` into its path time, the velocity it
+-- walked at between two ages (`pace`) and the way the placed path runs where
+-- it ends (`leaving`). the end is placed again only when it moved: a target
+-- read by `standing`, a world point mapped by `unplaced` into the frame the
+-- piece flies in. nil for no path
 function path_motion.follow(
   path: Path?,
   launch: Launch,
   standing: () -> vector?,
   unplaced: (at: vector) -> vector
-): (((age: number) -> vector)?, (() -> vector)?)
+): (((age: number) -> vector)?, (() -> vector)?, ((from: number, to: number) -> vector?)?)
   if path == nil then
-    return nil, nil
+    return nil, nil, nil
   end
 
   const drawn, ends, offset = path.drawn, path.ends, launch.offset
@@ -137,7 +145,43 @@ function path_motion.follow(
     return path_motion.leaving(path.bezier, drawn, frame, path.reverse, progress, launch.pathTime)
   end
 
-  return point, heading
+  -- the curve's tangent where the walk got to at `to`, at the rate Progress
+  -- moved it from `from`, under the placement the walk last made. never the
+  -- step between two points, which easing to a stop moves too little a frame
+  -- to give a direction. zero where Progress held still, so a facing keeps
+  -- the turn it last had; nil over no path time
+  const function pace(from: number, to: number): vector?
+    const pathTime = launch.pathTime
+
+    if pathTime <= 0 then
+      return nil
+    end
+
+    const t0 = math.clamp(from / pathTime, 0, 1)
+    const t1 = math.clamp(to / pathTime, 0, 1)
+    const span = (t1 - t0) * pathTime
+
+    if span <= 0 then
+      return nil
+    end
+
+    const u0 = math.clamp(progress(t0)[1], 0, 1)
+    const u1 = math.clamp(progress(t1)[1], 0, 1)
+
+    -- how far the walk ran the way the curve was drawn
+    const run = if path.reverse then u0 - u1 else u1 - u0
+
+    if run == 0 then
+      return vector.zero
+    end
+
+    const bezier = path.bezier
+    const tangent = bezier:tangentUniform(if path.reverse then 1 - u1 else u1, run > 0)
+
+    return turned(frame, tangent) * (run * bezier:length() * scale / span)
+  end
+
+  return point, heading, pace
 end
 
 -- the unit way a piece leaves a placed path where its walk, paced by
@@ -165,8 +209,7 @@ function path_motion.leaving(
     then tangent
     elseif drawn.length > STILL then drawn.chord / drawn.length
     else vector.create(0, 0, -1)
-  const turned = frame:VectorToWorldSpace(Vector3.new(way.x, way.y, way.z))
-  const along = vector.create(turned.X, turned.Y, turned.Z)
+  const along = turned(frame, way)
 
   return if forward then along else -along
 end

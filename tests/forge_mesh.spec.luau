@@ -947,6 +947,20 @@ const function freeTangent(curve: any, spawn: CFrame, u: number): Vector3
   return (freeAt(curve, spawn, u + 1e-3) - freeAt(curve, spawn, u - 1e-3)).Unit
 end
 
+-- the most degrees a piece's up vector stands off `way` over the next
+-- `count` frames
+const function turnedOff(piece: BasePart, way: Vector3, count: number)
+  local worst = 0
+
+  for _ = 1, count do
+    frames(1)
+
+    worst = math.max(worst, math.deg(math.acos(math.clamp(piece.CFrame.UpVector:Dot(way), -1, 1))))
+  end
+
+  return worst
+end
+
 -- one Path piece of two seconds' life walking `curve`, on a template under a
 -- part at PARENT of `opts.size` (a point unless given), held a second past
 -- its motion, `attributes` over it and `opts.rows` stubbed beside the path;
@@ -4419,6 +4433,50 @@ harness.suite(function()
           expect(near(piece.CFrame.Position, finish + tangent * 40, 0.05)).toBe(true)
         end,
         { rows = { Progress = value_curve.encode(eased) } }
+      )
+    end)
+
+    test("VelocityParallel faces along the path while Progress eases into its end", function()
+      const tangent = freeWay(path_curve.DEFAULT, TOP, Vector3.new(0, -4, -3))
+      const eased = value_curve.decode(curveOf(1, { { 0, { 0 } }, { 1, { 1 } } })) :: value_curve.Curve
+
+      eased.keys[1].right = { vector.create(0.2, 1, 0) }
+      eased.keys[2].left = { vector.create(-0.6, 0, 0) }
+
+      pathed(
+        {
+          AfterPath = "Stop",
+          Orientation = "VelocityParallel",
+          Lifetime = NumberRange.new(1, 1),
+        },
+        path_curve.DEFAULT,
+        function(piece)
+          frames(50)
+
+          -- the last eased frames, then the hold DestroyDelay keeps
+          expect(turnedOff(piece, tangent, 40) < 0.5).toBe(true)
+        end,
+        { rows = { Progress = value_curve.encode(eased) } }
+      )
+    end)
+
+    test("VelocityParallel keeps its facing where Progress holds still mid path", function()
+      const tangent = freeTangent(path_curve.DEFAULT, TOP, 0.5)
+      const rows = { Progress = curveOf(1, { { 0, { 0 } }, { 0.5, { 0.5 } }, { 1, { 0.5 } } }) }
+
+      pathed(
+        {
+          AfterPath = "Stop",
+          Orientation = "VelocityParallel",
+          Lifetime = NumberRange.new(1, 1),
+        },
+        path_curve.DEFAULT,
+        function(piece)
+          frames(32)
+
+          expect(turnedOff(piece, tangent, 40) < 0.5).toBe(true)
+        end,
+        { rows = rows }
       )
     end)
 

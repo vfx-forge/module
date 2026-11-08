@@ -60,7 +60,7 @@ const UV_STEP = 1 / 1024
 const TURN_STEP = 0.25
 
 -- how far into its path a piece looks ahead to face the way it sets off, and
--- the shortest step whose motion reads as its velocity
+-- the shortest share of a frame on its path its velocity is read over
 const PROBE = 1 / 60
 const SHORT_STEP = 1e-6
 
@@ -1748,15 +1748,13 @@ const function piece(
   -- a piece on a path walks it for its path time, its first pose facing the
   -- way the path sets off
   const pathTime = launch.pathTime
-  const walk, departure = path_motion.follow(flight.path, launch, function()
+  const walk, departure, pace = path_motion.follow(flight.path, launch, function()
     return endNow(flight)
   end, unplaced)
 
   if walk ~= nil then
-    const probe = math.min(pathTime, PROBE)
-
     position = walk(0)
-    velocity = if probe > 0 then (walk(probe) - position) / probe else departure()
+    velocity = pace(0, PROBE) or departure()
   end
 
   -- the turn the velocity last gave, held once the piece stops
@@ -1899,7 +1897,7 @@ const function piece(
   const function trail(dt: number)
     const along = math.min(dt, pathTime - (age - dt))
     const nextPosition = walk(age)
-    const nextVelocity = if along > SHORT_STEP then (nextPosition - position) / along else velocity
+    const nextVelocity = if along > SHORT_STEP then pace(age - dt, age) or velocity else velocity
     const hit = if collision ~= nil and not locked then strike(position, nextPosition) else nil
 
     if hit == nil then
