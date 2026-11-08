@@ -4651,6 +4651,37 @@ harness.suite(function()
       )
     end)
 
+    test("Collision Bounce rebounds off a step that grazes a path's low point", function()
+      -- down to a corner 0.2 studs under the floor and back up beside it: the
+      -- step that crosses the floor ends past the corner, already climbing
+      const dip = {
+        { position = vector.zero },
+        { position = vector.create(0, 0, -10.2) },
+        { position = vector.create(0, 10, 0) },
+      } :: any
+
+      pathed(
+        {
+          EmissionDirection = "Bottom",
+          CollisionMode = "Bounce",
+          Bounce = 1,
+          Friction = 0,
+          Lifetime = NumberRange.new(1, 1),
+        },
+        dip,
+        function(piece)
+          frames(35)
+
+          expect(piece.CFrame.Position.Y > 1).toBe(true)
+        end,
+        {
+          wrap = function(_, parent, run)
+            walled(parent, run)
+          end,
+        }
+      )
+    end)
+
     test("LockedToPart moves a path's start with the parent", function()
       pathed({ LockedToPart = true }, path_curve.DEFAULT, function(piece, _, parent)
         frames(60)

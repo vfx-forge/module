@@ -1753,8 +1753,13 @@ const function piece(
   end, unplaced)
 
   if walk ~= nil then
+    const probe = math.min(pathTime, PROBE)
+
+    -- the walk's last point is its spawn again, the probe one before it
+    walk(0)
+    walk(probe)
+    velocity = pace(probe) or departure()
     position = walk(0)
-    velocity = pace(0, PROBE) or departure()
   end
 
   -- the turn the velocity last gave, held once the piece stops
@@ -1897,7 +1902,8 @@ const function piece(
   const function trail(dt: number)
     const along = math.min(dt, pathTime - (age - dt))
     const nextPosition = walk(age)
-    const nextVelocity = if along > SHORT_STEP then pace(age - dt, age) or velocity else velocity
+    const stepped = along > SHORT_STEP
+    const nextVelocity = if stepped then pace(along) or velocity else velocity
     const hit = if collision ~= nil and not locked then strike(position, nextPosition) else nil
 
     if hit == nil then
@@ -1910,7 +1916,11 @@ const function piece(
       return
     end
 
-    const outcome, landed, rebound = collision_common.respond(response :: collision_common.Config, nextVelocity, hit)
+    -- a hit answers the step it was cast along, as the preview's does: the
+    -- tangent past a hit that grazes a low point can already run off the
+    -- surface, and would rebound at no speed
+    const chord = if stepped then (nextPosition - position) / along else velocity
+    const outcome, landed, rebound = collision_common.respond(response :: collision_common.Config, chord, hit)
 
     position, velocity = landed, rebound
     onPath = false

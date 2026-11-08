@@ -33,6 +33,12 @@ export type Bezier = typeof(setmetatable(
     moved: { boolean },
     stale: boolean,
     total: number,
+
+    -- the last share `seek` found and where it found it, so a point and the
+    -- tangent there cost one search
+    sought: number,
+    soughtK: number,
+    soughtS: number,
   },
   Bezier
 ))
@@ -103,6 +109,9 @@ local function size(self: Bezier, points: { vector })
   self.moved = table.create(segments, true)
   self.stale = true
   self.total = 0
+  self.sought = -1
+  self.soughtK = 1
+  self.soughtS = 0
 
   copy(points, self.points)
 end
@@ -242,6 +251,7 @@ local function measure(self: Bezier)
 
   self.total = total
   self.stale = false
+  self.sought = -1
 end
 
 -- the length in studs
@@ -256,6 +266,10 @@ end
 -- the segment u of the way along a measured chain of some length by
 -- distance, inside 0 to 1, and the parameter inside it
 local function seek(self: Bezier, u: number): (number, number)
+  if u == self.sought then
+    return self.soughtK, self.soughtS
+  end
+
   local want = u * self.total
   local before = self.before
   local low, high = 1, self.segments
@@ -306,6 +320,8 @@ local function seek(self: Bezier, u: number): (number, number)
       s = to
     end
   end
+
+  self.sought, self.soughtK, self.soughtS = u, k, s
 
   return k, s
 end

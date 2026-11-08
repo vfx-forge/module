@@ -43,14 +43,15 @@ export type Launch = {
 const path_motion = {}
 
 -- the point `age` into a path's time under a placement, Progress pacing it
--- evenly along the curve, at its end from `pathTime` on
+-- evenly along the curve, at its end from `pathTime` on, and the share of the
+-- path Progress put it at
 function path_motion.walker(opts: {
   bezier: any,
   drawn: path_curve.Drawn,
   progress: (t: number) -> { number },
   pathTime: number,
   reverse: boolean,
-}): (age: number, frame: CFrame, scale: number) -> vector
+}): (age: number, frame: CFrame, scale: number) -> (vector, number)
   const bezier, drawn, progress = opts.bezier, opts.drawn, opts.progress
   const pathTime, reverse = opts.pathTime, opts.reverse
 
@@ -58,7 +59,7 @@ function path_motion.walker(opts: {
     const t = if pathTime > 0 then math.clamp(age / pathTime, 0, 1) else 1
     const u = math.clamp(progress(t)[1], 0, 1)
 
-    return path_curve.at(bezier, drawn, frame, scale, if reverse then 1 - u else u)
+    return path_curve.at(bezier, drawn, frame, scale, if reverse then 1 - u else u), u
   end
 end
 
@@ -88,8 +89,8 @@ const function turned(frame: CFrame, way: vector): vector
 end
 
 -- a piece's walk along its path, `age` into its path time, the velocity it
--- walked at between two ages (`pace`) and the way the placed path runs where
--- it ends (`leaving`). the end is placed again only when it moved: a target
+-- walked at between its last two points (`pace`) and the way the placed path
+-- runs where it ends (`leaving`). the end is placed again only when it moved: a target
 -- read by `standing`, a world point mapped by `unplaced` into the frame the
 -- piece flies in. nil for no path
 function path_motion.follow(
@@ -97,7 +98,7 @@ function path_motion.follow(
   launch: Launch,
   standing: () -> vector?,
   unplaced: (at: vector) -> vector
-): (((age: number) -> vector)?, (() -> vector)?, ((from: number, to: number) -> vector?)?)
+): (((age: number) -> vector)?, (() -> vector)?, ((span: number) -> vector?)?)
   if path == nil then
     return nil, nil, nil
   end
@@ -115,6 +116,9 @@ function path_motion.follow(
   local frame, scale = CFrame.identity, 0
   local placedAt: vector? = nil
   local placed = false
+
+  -- the share of the path the walk's last two points stood at
+  local before, now = 0, 0
 
   const function finish(): vector?
     if ends == "Center" then
@@ -138,45 +142,37 @@ function path_motion.follow(
       frame, scale = path_curve.place(drawn, ends, launch.spawn, at, path.center, path.axis, path.bend, launch.roll)
     end
 
-    return walk(age, frame, scale)
+    const at, u = walk(age, frame, scale)
+
+    before, now = now, u
+
+    return at
   end
 
   const function heading()
     return path_motion.leaving(path.bezier, drawn, frame, path.reverse, progress, launch.pathTime)
   end
 
-  -- the curve's tangent where the walk got to at `to`, at the rate Progress
-  -- moved it from `from`, under the placement the walk last made. never the
-  -- step between two points, which easing to a stop moves too little a frame
-  -- to give a direction. zero where Progress held still, so a facing keeps
-  -- the turn it last had; nil over no path time
-  const function pace(from: number, to: number): vector?
-    const pathTime = launch.pathTime
-
-    if pathTime <= 0 then
-      return nil
-    end
-
-    const t0 = math.clamp(from / pathTime, 0, 1)
-    const t1 = math.clamp(to / pathTime, 0, 1)
-    const span = (t1 - t0) * pathTime
-
+  -- the curve's tangent where the walk's last point stands, at the rate
+  -- Progress moved it from the point before over `span` of path time, under
+  -- the placement the walk last made. never the step between the two points,
+  -- which easing to a stop moves too little a frame to give a direction. zero
+  -- where Progress held still, so a facing keeps the turn it last had; nil
+  -- over no path time
+  const function pace(span: number): vector?
     if span <= 0 then
       return nil
     end
 
-    const u0 = math.clamp(progress(t0)[1], 0, 1)
-    const u1 = math.clamp(progress(t1)[1], 0, 1)
-
     -- how far the walk ran the way the curve was drawn
-    const run = if path.reverse then u0 - u1 else u1 - u0
+    const run = if path.reverse then before - now else now - before
 
     if run == 0 then
       return vector.zero
     end
 
     const bezier = path.bezier
-    const tangent = bezier:tangentUniform(if path.reverse then 1 - u1 else u1, run > 0)
+    const tangent = bezier:tangentUniform(if path.reverse then 1 - now else now, run > 0)
 
     return turned(frame, tangent) * (run * bezier:length() * scale / span)
   end
