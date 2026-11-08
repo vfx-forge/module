@@ -1282,24 +1282,107 @@ harness.suite(function()
       end)
     end)
 
-    test("FacingCamera turns a piece's states toward the camera", function()
+    test("FacingCamera places a piece where None does and faces it to the camera", function()
       const camera = workspace.CurrentCamera
       const before = camera.CFrame
+      const eye = Vector3.new(30, 40, 50)
+
+      camera.CFrame = CFrame.lookAt(eye, Vector3.zero)
+
+      const function placedUnder(mode: string)
+        const rows = {
+          Shape = "Sphere",
+          ShapeStyle = "Surface",
+          EmissionDirection = "Top",
+          SpreadAngle = Vector3.new(20, 20, 0),
+          StateOrientation = mode,
+          EmitCount = 10,
+        }
+
+        const out = {}
+        const spawn = particle_motion.spawn
+        local drawn = 0
+
+        -- the shape draws an unseeded point from a generator of its own
+        particle_motion.spawn = function(origin: CFrame, size: Vector3, config: any, rng: Random)
+          drawn += 1
+
+          return spawn(origin, size, config, rng, drawn)
+        end
+
+        const ok, err = pcall(seeding, function()
+          launched(rows, Vector3.new(4, 4, 4), function(spawns)
+            for i, launch in spawns do
+              out[i] = launch.piece.CFrame
+            end
+          end)
+        end)
+
+        particle_motion.spawn = spawn
+
+        if not ok then
+          error(err, 0)
+        end
+
+        return out
+      end
+
+      const ok, err = pcall(function()
+        const still = placedUnder("None")
+        const facing = placedUnder("FacingCamera")
+
+        expect(#facing).toBe(10)
+        expect(#still).toBe(10)
+
+        for i, cf in facing do
+          expect(near(cf.Position, still[i].Position, EPSILON)).toBe(true)
+          expect(cf.LookVector:Dot((eye - cf.Position).Unit) > 0.999).toBe(true)
+        end
+      end)
+
+      camera.CFrame = before
+
+      if not ok then
+        error(err, 0)
+      end
+    end)
+
+    test("a FacingCamera piece follows the camera and not its template's turn", function()
+      const camera = workspace.CurrentCamera
+      const before = camera.CFrame
+      const list = { stateOf(0, { rotation = vector.create(0, 0, 0.5) }) }
 
       camera.CFrame = CFrame.new(0, 0, 50)
 
-      const ok, err = pcall(stated, { StateOrientation = "FacingCamera" }, { stateOf(0) }, function(piece)
-        const function faces(from: Vector3)
-          return piece.CFrame.LookVector:Dot((from - ATTACHED).Unit) > 0.999
-        end
+      const function drawnOn(yaw: number)
+        local drawn: CFrame? = nil
 
-        expect(faces(Vector3.new(0, 0, 50))).toBe(true)
-        frames(1)
-        expect(faces(Vector3.new(0, 0, 50))).toBe(true)
+        stated({ StateOrientation = "FacingCamera" }, list, function(piece)
+          const function faces(from: Vector3)
+            return piece.CFrame.LookVector:Dot((from - piece.CFrame.Position).Unit) > 0.999
+          end
 
-        camera.CFrame = CFrame.new(50, 0, 0) * CFrame.fromOrientation(0, math.rad(90), 0)
-        frames(1)
-        expect(faces(Vector3.new(50, 0, 0))).toBe(true)
+          expect(faces(Vector3.new(0, 0, 50))).toBe(true)
+          frames(1)
+          drawn = piece.CFrame
+
+          camera.CFrame = CFrame.new(50, 0, 0) * CFrame.fromOrientation(0, math.rad(90), 0)
+          frames(1)
+          expect(faces(Vector3.new(50, 0, 0))).toBe(true)
+          camera.CFrame = CFrame.new(0, 0, 50)
+        end, function(part)
+          part.CFrame = CFrame.new(4, 5, 6) * CFrame.fromOrientation(0, yaw, 0)
+        end)
+
+        return drawn :: CFrame
+      end
+
+      const ok, err = pcall(function()
+        const straight = drawnOn(0)
+        const turned = drawnOn(math.rad(40))
+
+        expect(near(straight.LookVector, turned.LookVector, EPSILON)).toBe(true)
+        expect(near(straight.UpVector, turned.UpVector, EPSILON)).toBe(true)
       end)
 
       camera.CFrame = before
@@ -1471,6 +1554,47 @@ harness.suite(function()
       end)
 
       collision_common.engine = real
+
+      if not ok then
+        error(err, 0)
+      end
+    end)
+
+    test("a pinned FacingCamera piece holds its place and still faces the camera", function()
+      const real = collision_common.engine
+      const camera = workspace.CurrentCamera
+      const before = camera.CFrame
+
+      collision_common.engine = {
+        params = function()
+          return { AddToFilter = function() end } :: any
+        end,
+        tagged = function()
+          return {}
+        end,
+        raycast = function(_, _, to: vector)
+          return { Position = Vector3.new(to.x, to.y, to.z), Normal = Vector3.new(0, 1, 0) } :: any
+        end,
+      }
+
+      camera.CFrame = CFrame.new(0, 0, 50)
+
+      const rows = { CollisionMode = "Stop", StateOrientation = "FacingCamera", Speed = STILL }
+      const ok, err = pcall(stated, rows, RISE, function(piece)
+        frames(10)
+
+        const pinned = piece.CFrame.Position
+        const eye = Vector3.new(50, 0, 0)
+
+        camera.CFrame = CFrame.lookAt(eye, pinned)
+        frames(10)
+
+        expect(near(piece.CFrame.Position, pinned, EPSILON)).toBe(true)
+        expect(piece.CFrame.LookVector:Dot((eye - pinned).Unit) > 0.999).toBe(true)
+      end)
+
+      collision_common.engine = real
+      camera.CFrame = before
 
       if not ok then
         error(err, 0)
@@ -3952,13 +4076,15 @@ harness.suite(function()
       end)
     end)
 
-    test("SpreadAngle and Face show under States", function()
+    test("SpreadAngle and Face show under States, toward the camera too", function()
       staged(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const hidden = hiddenOf(template(parent, { Motion = "States" }))
 
-        expect(hidden.SpreadAngle).toBe(false)
-        expect(hidden.ShapeFace).toBe(false)
+        for _, mode in { "None", "FacingCamera", "FacingCameraWorldUp" } do
+          const hidden = hiddenOf(template(parent, { Motion = "States", StateOrientation = mode }))
+
+          expect(`{mode} {hidden.SpreadAngle == true} {hidden.ShapeFace == true}`).toBe(`{mode} false false`)
+        end
       end)
     end)
 
@@ -3973,6 +4099,16 @@ harness.suite(function()
           { rows = { Shape = "Box", ShapeStyle = "Volume", ShapeFace = "Inward" }, hidden = false },
           { rows = { Shape = "Box", ShapeStyle = "Volume", ShapeFace = "InAndOut" }, hidden = false },
           { rows = { Shape = "Box", ShapeStyle = "Volume", Motion = "Particle" }, hidden = false },
+          { rows = { Shape = "Box", ShapeStyle = "Volume", StateOrientation = "FacingCamera" }, hidden = true },
+          {
+            rows = {
+              Shape = "Box",
+              ShapeStyle = "Volume",
+              SpreadAngle = Vector3.new(30, 30, 0),
+              StateOrientation = "FacingCamera",
+            },
+            hidden = false,
+          },
         }
 
         for i, case in cases do
