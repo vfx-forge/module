@@ -592,6 +592,14 @@ const LISTS_MAX = 64
 
 local listCount = 0
 
+const function freezeCard(card: { [string]: state_list.Randomizer })
+  for _, randomizer in card do
+    table.freeze(randomizer)
+  end
+
+  table.freeze(card)
+end
+
 const function listDecodedOf(raw: string): state_list.List?
   const known = LISTS[raw]
 
@@ -614,6 +622,28 @@ const function listDecodedOf(raw: string): state_list.List?
 
     if s.surface ~= nil then
       table.freeze(s.surface)
+    end
+
+    const random = s.random
+
+    if random ~= nil then
+      if random.state ~= nil then
+        freezeCard(random.state)
+      end
+
+      if random.surface ~= nil then
+        freezeCard(random.surface)
+      end
+
+      if random.decals ~= nil then
+        for _, card in random.decals do
+          freezeCard(card)
+        end
+
+        table.freeze(random.decals)
+      end
+
+      table.freeze(random)
     end
 
     table.freeze(s)

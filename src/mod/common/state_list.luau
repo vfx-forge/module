@@ -1719,6 +1719,8 @@ function common.seed(rows: SeedRows): List
       easing = if i > 1 then easingOf(rows, times[i - 1], t) else LINEAR,
       position = vector.zero,
       rotation = vector.zero,
+      positionOffset = vector.zero,
+      rotationOffset = vector.zero,
       spin = vector.zero,
       size = vector.create(size[1], size[2], size[3]),
       color = if rows.color ~= nil then color.keypointsAt(rows.color.Keypoints, t) else rows.color0,

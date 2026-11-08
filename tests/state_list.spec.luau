@@ -619,6 +619,8 @@ harness.suite(function()
       expect(list[2].time).toBe(1)
       expect(list[1].transparency).toBe(0)
       expect(list[2].transparency).toBe(1)
+      expect(list[1].positionOffset).toBe(vector.zero)
+      expect(list[1].rotationOffset).toBe(vector.zero)
 
       for _, s in list do
         expect(s.size).toBe(vector.create(1, 1, 1))
@@ -749,6 +751,23 @@ harness.suite(function()
       expect(table.isfrozen(read)).toBe(true)
       expect(table.isfrozen(read[1].decals.Base)).toBe(true)
       expect(resolve(knob(state_list.EMPTY):stateList(), raw)).toBe(read)
+
+      const random = resolve(knob(state_list.EMPTY):stateList(), state_list.encode(varied()))[2].random
+
+      for _, frozen in
+        {
+          random,
+          random.state,
+          random.state.color,
+          random.surface,
+          random.surface.emissiveStrength,
+          random.decals,
+          random.decals.Glow,
+          random.decals.Glow.transparency,
+        }
+      do
+        expect(table.isfrozen(frozen)).toBe(true)
+      end
     end)
 
     test("a bad or unset attribute reads its default", function()
