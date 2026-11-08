@@ -20,6 +20,7 @@ const orient_common = require("@mod/common/orient")
 const bezier_common = require("@mod/common/bezier")
 const collision_common = require("@mod/common/collision")
 const numeric_common = require("@mod/common/numeric")
+const parent_turn = require("@mod/common/parent_turn")
 const path_motion = require("@mod/path_motion")
 const particle_motion = require("@mod/particle_motion")
 
@@ -294,6 +295,18 @@ const function originOf(template: BasePart): (CFrame, Vector3)
   end
 
   return template.CFrame, Vector3.zero
+end
+
+-- the turn pieces play at: the template's own, carried by its parent's turn
+-- since the plugin last measured the template against it. a template under an
+-- attachment never moves with it, nor one cloned into a rig, so its own world
+-- pose cannot say where the parent has turned
+const function turnOf(template: BasePart, origin: CFrame): CFrame
+  const parent = template.Parent
+  const framed = parent ~= nil and (parent:IsA("BasePart") or parent:IsA("Attachment"))
+  const stored = template:GetAttribute(parent_turn.ATTRIBUTE)
+
+  return parent_turn.turned(template.CFrame, if framed then origin else nil, stored)
 end
 
 -- upper case, the spelling a row's vector and an authored Vector3 both answer
@@ -703,6 +716,8 @@ type Collision = {
 -- what every piece of one emit shares, read once as it emits
 type Flight = {
   origin: CFrame,
+
+  -- the template's turn as the emit plays it, carried by its parent's turn
   rotation: CFrame,
   rng: Random,
   collision: Collision?,
@@ -1469,10 +1484,10 @@ const function piece(
 
   -- a piece moving through its states stands where it spawned on the emitter,
   -- as a particle or a path piece does, turned as its launch was and then as
-  -- the template is; where the template itself sits plays no part, and no
-  -- other flight or turn row reaches it
+  -- the template is in its parent's frame; where the template itself sits
+  -- plays no part, and no other flight or turn row reaches it
   const base = if posing
-    then CFrame.new(at) * particle_motion.launchTurn(launch.spawn, origin, flight.normal) * template.CFrame.Rotation
+    then CFrame.new(at) * particle_motion.launchTurn(launch.spawn, origin, flight.normal) * facing
     else nil
 
   -- where its states put it now. under a camera orientation the launch still
@@ -2173,7 +2188,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
 
   const flight: Flight = {
     origin = origin,
-    rotation = template.CFrame.Rotation,
+    rotation = turnOf(template, origin),
     rng = Random.new(),
     collision = nil,
     normal = config.normal,

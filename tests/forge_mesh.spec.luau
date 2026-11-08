@@ -30,6 +30,7 @@ const launch_common = require("@mod/common/launch")
 const state_list = require("@mod/common/state_list")
 const path_curve = require("@mod/common/path_curve")
 const collision_common = require("@mod/common/collision")
+const parent_turn = require("@mod/common/parent_turn")
 
 const forge_mesh = require("@vfx/forge_mesh")
 
@@ -726,6 +727,18 @@ end
 -- attachment, turned as its template is
 const function spawnedOn(part: BasePart): CFrame
   return CFrame.new(ATTACHED) * part.CFrame.Rotation
+end
+
+-- the turn a rig gives a `stated` template's parent after it was placed
+const TURN = CFrame.fromOrientation(0, math.rad(90), 0)
+
+-- a `stated` template measured against its unturned attachment, as the
+-- plugin stores it, and the attachment turned by TURN after
+const function placedThenTurned(part: BasePart)
+  const attachment = part.Parent :: Attachment
+
+  part:SetAttribute("ParentTurn", parent_turn.measure(attachment.WorldCFrame, part.CFrame))
+  attachment.WorldCFrame = CFrame.new(ATTACHED) * TURN
 end
 
 -- the heights of one States piece of two seconds' life, spawned at ATTACHED
@@ -1882,6 +1895,106 @@ harness.suite(function()
       if not ok then
         error(err, 0)
       end
+    end)
+
+    test("a parent turned since the template was placed turns its states about the spawn", function()
+      stated({}, RISE, function(piece, part)
+        frames(60)
+
+        const offset = TURN:VectorToWorldSpace(part.CFrame.Rotation:VectorToWorldSpace(Vector3.new(0, 5, 0)))
+
+        expect(near(piece.CFrame.Position, ATTACHED + offset, LOOSE)).toBe(true)
+        expect(near(piece.CFrame.UpVector, (TURN * part.CFrame.Rotation).UpVector, EPSILON)).toBe(true)
+        expect(near(piece.CFrame.LookVector, (TURN * part.CFrame.Rotation).LookVector, EPSILON)).toBe(true)
+      end, placedThenTurned)
+    end)
+
+    test("a template with no ParentTurn keeps its own world turn under a turned parent", function()
+      stated({}, RISE, function(piece, part)
+        frames(60)
+
+        const want = state_list.pose(spawnedOn(part), vector.create(0, 5, 0), vector.zero)
+
+        expect(near(piece.CFrame.Position, want.Position, LOOSE)).toBe(true)
+        expect(near(piece.CFrame.UpVector, want.UpVector, EPSILON)).toBe(true)
+      end, function(part)
+        (part.Parent :: Attachment).WorldCFrame = CFrame.new(ATTACHED) * TURN
+      end)
+    end)
+
+    test("a missing or unmoved ParentTurn poses a piece byte-identical to today", function()
+      const function poses(dress: ((part: BasePart) -> ())?): { { number } }
+        const seen = {}
+
+        seeding(function()
+          stated({ EmitCount = 1 }, RISE, function(piece)
+            for i = 1, 5 do
+              frames(12)
+              seen[i] = { piece.CFrame:GetComponents() }
+            end
+          end, dress)
+        end)
+
+        return seen
+      end
+
+      const today = poses(nil)
+
+      -- placed against the parent as it stands, then read back a hair off, as
+      -- float32 keeps it
+      const placed = poses(function(part)
+        part:SetAttribute("ParentTurn", parent_turn.measure(CFrame.new(ATTACHED), part.CFrame))
+      end)
+      const drifted = poses(function(part)
+        const hair = CFrame.fromOrientation(2e-7, -3e-7, 1e-7)
+
+        part:SetAttribute("ParentTurn", hair * parent_turn.measure(CFrame.new(ATTACHED), part.CFrame))
+      end)
+
+      for i, components in today do
+        for k, x in components do
+          expect(placed[i][k]).toBe(x)
+          expect(drifted[i][k]).toBe(x)
+        end
+      end
+    end)
+
+    test("a locked States piece follows a parent turned mid-life, turn and all", function()
+      stated({ LockedToPart = true }, RISE, function(piece, part)
+        frames(59)
+
+        const attachment = part.Parent :: Attachment
+
+        attachment.WorldCFrame = CFrame.new(ATTACHED) * TURN
+        frames(1)
+
+        const offset = TURN:VectorToWorldSpace(part.CFrame.Rotation:VectorToWorldSpace(Vector3.new(0, 5, 0)))
+
+        expect(near(piece.CFrame.Position, ATTACHED + offset, LOOSE)).toBe(true)
+        expect(near(piece.CFrame.UpVector, (TURN * part.CFrame.Rotation).UpVector, EPSILON)).toBe(true)
+      end, function(part)
+        part:SetAttribute("ParentTurn", parent_turn.measure(CFrame.new(ATTACHED), part.CFrame))
+      end)
+    end)
+
+    test("a Particle mesh under Orientation None wears its parent's turn", function()
+      framed(function(fake)
+        const part = attached({ Speed = STILL, Orientation = "None" })
+
+        part.CFrame = CFrame.new(4, 5, 6) * CFrame.fromOrientation(0, 0, math.rad(90))
+        placedThenTurned(part)
+
+        const env = effects.emit(0, part)
+
+        frames(1)
+
+        const piece = pieces(fake)[1]
+        const want = TURN * part.CFrame.Rotation
+
+        expect(near(piece.CFrame.UpVector, want.UpVector, EPSILON)).toBe(true)
+        expect(near(piece.CFrame.LookVector, want.LookVector, EPSILON)).toBe(true)
+        env:Clear()
+      end)
     end)
 
     test("a template with no part or attachment above it spawns at its own pose", function()
