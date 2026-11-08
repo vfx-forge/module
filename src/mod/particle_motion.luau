@@ -162,6 +162,14 @@ function particle_motion.spawn(origin: CFrame, size: Vector3, config: Config, rn
   return cf
 end
 
+-- the turn a launch from `spawn` made away from the emitter's unspread frame
+-- for `normal`, with no position: the shape's facing, the spread and the flip
+function particle_motion.launchTurn(spawn: CFrame, origin: CFrame, normal: Enum.NormalId): CFrame
+  const aim = shape.box(origin, Vector3.zero, { normal = normal })
+
+  return spawn.Rotation * aim.Rotation:Inverse()
+end
+
 -- one step of a particle: the position from the old velocity, then the
 -- velocity eased toward the wind by drag
 function particle_motion.step(

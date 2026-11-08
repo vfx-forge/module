@@ -673,6 +673,66 @@ const function spawnedOn(part: BasePart): CFrame
   return CFrame.new(ATTACHED) * part.CFrame.Rotation
 end
 
+-- a parent part turned off the world's axes
+const TURNED = CFrame.new(0, 10, 0) * CFrame.fromOrientation(0, math.rad(30), math.rad(20))
+
+-- the States pieces of one emit off a part of `size` at TURNED, the template
+-- aligned with it and its one state 10 studs up its own y, each handed with
+-- the frame it spawned at
+const function launched(
+  attributes: { [string]: any },
+  size: Vector3,
+  body: (spawns: { { piece: BasePart, spawn: CFrame } }, part: BasePart, parent: BasePart) -> ()
+)
+  framed(function()
+    const _, parent = parentPart(TURNED, size)
+    const part = template(parent, { Motion = "States", Speed = STILL, Lifetime = NumberRange.new(2, 2) })
+
+    for name, v in attributes do
+      part:SetAttribute(name, v)
+    end
+
+    part.CFrame = parent.CFrame
+
+    const spawn = particle_motion.spawn
+    const drawn: { CFrame } = {}
+
+    particle_motion.spawn = function(...)
+      const cframe = spawn(...)
+
+      table.insert(drawn, cframe)
+
+      return cframe
+    end
+
+    const list = { stateOf(0, { position = vector.create(0, 10, 0) }) }
+
+    const ok, err = pcall(spawning, function(spawned)
+      stubbed(part, { States = state_list.encode(list :: any) }, function()
+        const env = effects.emit(0, part)
+
+        frames(1)
+        expect(#spawned).toBe(#drawn)
+
+        const spawns = {}
+
+        for i, piece in spawned do
+          spawns[i] = { piece = piece, spawn = drawn[i] }
+        end
+
+        body(spawns, part, parent)
+        env:Clear()
+      end)
+    end)
+
+    particle_motion.spawn = spawn
+
+    if not ok then
+      error(err, 0)
+    end
+  end)
+end
+
 -- where a path piece's parent part stands
 const PARENT = CFrame.new(0, 10, 0)
 
@@ -983,6 +1043,87 @@ harness.suite(function()
         expect(near(piece.CFrame.Position, ATTACHED, LOOSE)).toBe(true)
         expect(near(piece.CFrame.LookVector, part.CFrame.LookVector, LOOSE)).toBe(true)
         expect(near(piece.CFrame.UpVector, part.CFrame.UpVector, LOOSE)).toBe(true)
+      end)
+    end)
+
+    test("SpreadAngle 0 on a Box face leaves a States pose unchanged", function()
+      const rows = { Shape = "Box", ShapeStyle = "Surface", EmissionDirection = "Top", EmitCount = 5 }
+
+      launched(rows, Vector3.new(4, 2, 4), function(spawns, part)
+        for _, launch in spawns do
+          const want = CFrame.new(launch.spawn.Position) * part.CFrame.Rotation * CFrame.new(0, 10, 0)
+          const got = launch.piece.CFrame
+
+          expect(near(got.Position, want.Position, EPSILON)).toBe(true)
+          expect(near(got.LookVector, want.LookVector, EPSILON)).toBe(true)
+          expect(near(got.UpVector, want.UpVector, EPSILON)).toBe(true)
+        end
+      end)
+    end)
+
+    test("Face Outward on a Sphere turns a state along the spawn normal", function()
+      const rows = { Shape = "Sphere", ShapeStyle = "Surface", EmissionDirection = "Top", EmitCount = 20 }
+
+      launched(rows, Vector3.new(4, 4, 4), function(spawns, _, parent)
+        expect(#spawns).toBe(20)
+
+        for _, launch in spawns do
+          const at = launch.spawn.Position
+          const outward = (at - parent.CFrame.Position).Unit
+
+          expect((launch.piece.CFrame.Position - at).Unit:Dot(outward) > 0.999).toBe(true)
+        end
+      end)
+    end)
+
+    test("Face Inward flips it", function()
+      const rows = {
+        Shape = "Sphere",
+        ShapeStyle = "Surface",
+        ShapeFace = "Inward",
+        EmissionDirection = "Top",
+        EmitCount = 20,
+      }
+
+      launched(rows, Vector3.new(4, 4, 4), function(spawns, _, parent)
+        expect(#spawns).toBe(20)
+
+        for _, launch in spawns do
+          const at = launch.spawn.Position
+          const outward = (at - parent.CFrame.Position).Unit
+
+          expect((launch.piece.CFrame.Position - at).Unit:Dot(outward) < -0.999).toBe(true)
+        end
+      end)
+    end)
+
+    test("SpreadAngle tilts the states in a cone", function()
+      const rows = {
+        Shape = "Box",
+        ShapeStyle = "Surface",
+        EmissionDirection = "Top",
+        SpreadAngle = Vector3.new(30, 30, 0),
+        EmitCount = 50,
+      }
+
+      launched(rows, Vector3.new(4, 2, 4), function(spawns, _, parent)
+        expect(#spawns).toBe(50)
+
+        const normal = parent.CFrame.UpVector
+        local tilted = false
+
+        for _, launch in spawns do
+          const rise = (launch.piece.CFrame.Position - launch.spawn.Position).Unit
+          const angle = math.deg(math.acos(math.clamp(rise:Dot(normal), -1, 1)))
+
+          expect(angle <= 30 * math.sqrt(2) + 1e-3).toBe(true)
+
+          if angle > 1 then
+            tilted = true
+          end
+        end
+
+        expect(tilted).toBe(true)
       end)
     end)
 
@@ -3608,6 +3749,47 @@ harness.suite(function()
         end
 
         expect(hidden.Collision).toBe(false)
+      end)
+    end)
+
+    test("SpreadAngle and Face show under States", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const hidden = hiddenOf(template(parent, { Motion = "States" }))
+
+        expect(hidden.SpreadAngle).toBe(false)
+        expect(hidden.ShapeFace).toBe(false)
+      end)
+    end)
+
+    test("EmissionDirection hides only where it moves nothing", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const cases = {
+          { rows = { Shape = "Box", ShapeStyle = "Volume" }, hidden = true },
+          { rows = { Shape = "Sphere" }, hidden = false },
+          { rows = { Shape = "Box", ShapeStyle = "Surface" }, hidden = false },
+          { rows = { Shape = "Box", ShapeStyle = "Volume", SpreadAngle = Vector3.new(30, 30, 0) }, hidden = false },
+          { rows = { Shape = "Box", ShapeStyle = "Volume", ShapeFace = "Inward" }, hidden = false },
+          { rows = { Shape = "Box", ShapeStyle = "Volume", ShapeFace = "InAndOut" }, hidden = false },
+          { rows = { Shape = "Box", ShapeStyle = "Volume", Motion = "Particle" }, hidden = false },
+        }
+
+        for i, case in cases do
+          const rows = table.clone(case.rows)
+
+          rows.Motion = rows.Motion or "States"
+
+          const hidden = hiddenOf(template(parent, rows))
+
+          expect(`{i} {hidden.EmissionDirection}`).toBe(`{i} {case.hidden}`)
+        end
+
+        -- a modifier on the spread turns the states whatever it rests at
+        const part = template(parent, { Motion = "States", Shape = "Box", ShapeStyle = "Volume" })
+
+        tweened(part, "SpreadAngle", Vector3.zero, Vector3.new(30, 30, 0))
+        expect(hiddenOf(part).EmissionDirection).toBe(false)
       end)
     end)
 

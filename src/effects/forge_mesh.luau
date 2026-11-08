@@ -153,15 +153,37 @@ const function hasStates(_, attrs: any)
   return attrs.Motion == "States" and #attrs.States > 0
 end
 
--- whether the emission direction moves nothing: under States it only picks a
--- surface box's face, a cylinder's or disc's axis and a part sphere's cap
-const function aimless(_, attrs: any)
+-- whether the camera turns a States piece, in place of its launch
+const function facesCamera(_, attrs: any)
   if attrs.Motion ~= "States" then
     return false
   end
 
-  return (attrs.Shape == "Box" and attrs.ShapeStyle ~= "Surface")
+  const mode = attrs.StateOrientation
+
+  return mode == "FacingCamera" or mode == "FacingCameraWorldUp"
+end
+
+-- whether the emission direction moves nothing under States: neither the
+-- spawn, which it moves on a surface box's face, a cylinder's or disc's axis
+-- and a part sphere's cap, nor the launch's turn, which it moves unless the
+-- camera replaces it or a box launches straight out of it
+const function aimless(ctx: any, attrs: any)
+  if attrs.Motion ~= "States" then
+    return false
+  end
+
+  const spawnless = (attrs.Shape == "Box" and attrs.ShapeStyle ~= "Surface")
     or (attrs.Shape == "Sphere" and attrs.ShapePartial >= 1)
+
+  if not spawnless then
+    return false
+  end
+
+  const spread = attrs.SpreadAngle
+
+  return facesCamera(ctx, attrs)
+    or (attrs.Shape == "Box" and attrs.ShapeFace == "Outward" and spread.value == vector.zero and not spread.animated)
 end
 
 -- the force card's rows are not this module's, so a rule reads its Force off
@@ -671,6 +693,10 @@ type Flight = {
   rng: Random,
   collision: Collision?,
 
+  -- the face pieces launch out of, which a States piece's turn is measured
+  -- from
+  normal: Enum.NormalId,
+
   -- what the force centers on, the target set or else the emitter the
   -- template sat in as it emitted; where it stood on frame `read` and its up
   -- axis, shared by every piece of the emit, nil when it had no place or was
@@ -904,7 +930,7 @@ forge_mesh.attributes = {
     :hint("Speed each piece launches at along its emission direction, or leaves its path at, drawn per piece."),
   SpreadAngle = knob(vector.zero)
     :mod()
-    :hidden(stated)
+    :hidden(facesCamera)
     :label("SpreadAngle")
     :hint("Random spread of each piece's launch direction, in degrees about X and Y."),
 
@@ -914,7 +940,7 @@ forge_mesh.attributes = {
     :hint("Volume shape the pieces spawn in."),
   ShapeFace = knob("Outward")
     :options({ "InAndOut", "Inward", "Outward" })
-    :hidden(stated)
+    :hidden(facesCamera)
     :label("Face")
     :hint("Whether pieces launch out of the shape, into it or both."),
   ShapePartial = knob(1):min(0):max(1):hidden(boxed):label("Partial"):hint("Fraction of the shape pieces spawn in."),
@@ -1419,9 +1445,12 @@ const function piece(
   const posing = attrs.Motion == "States"
 
   -- a piece moving through its states stands where it spawned on the emitter,
-  -- as a particle or a path piece does, turned as the template is; where the
-  -- template itself sits plays no part, and no flight or turn row reaches it
-  const base = if posing then CFrame.new(at) * template.CFrame.Rotation else nil
+  -- as a particle or a path piece does, turned as its launch was and then as
+  -- the template is; where the template itself sits plays no part, and no
+  -- other flight or turn row reaches it
+  const base = if posing
+    then CFrame.new(at) * particle_motion.launchTurn(launch.spawn, origin, flight.normal) * template.CFrame.Rotation
+    else nil
 
   -- where its states put it as it was last drawn, nil for a particle
   local stance = if base ~= nil and sample ~= nil then base * sample.cframe else base
@@ -1971,6 +2000,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     rotation = template.CFrame.Rotation,
     rng = Random.new(),
     collision = nil,
+    normal = config.normal,
     target = launch_common.target(rows),
     anchor = parent,
     standing = toVector(origin.Position),
