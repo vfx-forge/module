@@ -2624,32 +2624,41 @@ harness.suite(function()
 
         const env = effects.emit(0, part)
         const piece = pieces(fake)[1]
-        const step = 6 * FRAME
+        const step = Vector3.new(6, 0, 0) * FRAME
         local x = 0
         local last = piece.CFrame.Position
-        local worst = 0
+        local still, riding, worst = 0, 0, 0
 
-        -- a still piece keeps still as the lock grips a moving parent, its
-        -- velocity now the parent's taken off
-        for _ = 1, 90 do
-          x += step
+        -- a still piece keeps still until the lock grips the moving parent,
+        -- then moves with it, never more than one of the parent's steps
+        for frame = 1, 90 do
+          x += step.X
           parent.CFrame = CFrame.new(x, 10, 0)
           frames(1)
 
-          const now = piece.CFrame.Position
+          const moved = piece.CFrame.Position - last
 
-          worst = math.max(worst, (now - last).Magnitude)
-          last = now
+          worst = math.max(worst, moved.Magnitude - step.Magnitude)
+
+          if frame < 55 then
+            still = math.max(still, moved.Magnitude)
+          elseif frame > 65 then
+            riding = math.max(riding, (moved - step).Magnitude)
+          end
+
+          last = piece.CFrame.Position
         end
 
+        expect(still < LOOSE).toBe(true)
+        expect(riding < LOOSE).toBe(true)
         expect(worst < LOOSE).toBe(true)
 
-        -- and moves with what the parent does past its velocity
-        x += step
+        -- and moves with whatever the parent does next
+        x += step.X
         parent.CFrame = CFrame.new(x, 20, 0)
         frames(1)
 
-        expect(near(piece.CFrame.Position - last, Vector3.new(0, 10, 0), LOOSE)).toBe(true)
+        expect(near(piece.CFrame.Position - last, Vector3.new(step.X, 10, 0), LOOSE)).toBe(true)
 
         env:Clear()
       end)

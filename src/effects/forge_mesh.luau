@@ -1928,10 +1928,11 @@ const function piece(
   local parentWas = origin
 
   -- the lock as the effect's clock stands `age` into the piece's life. the
-  -- frame the piece flies in carries it on as it was last drawn: a release
-  -- freezes the parent's carry into the lift, a lock grips the parent from
-  -- that same pose, and the velocity gains or gives up the parent's own at
-  -- the piece, so the piece never jumps
+  -- frame the piece flies in carries it on as it was last drawn, so the piece
+  -- never jumps: a lock grips the parent from that pose and keeps the
+  -- velocity as one in the parent's frame, so the piece rides with it, and a
+  -- release freezes the parent's carry into the lift and adds the parent's
+  -- velocity at the piece, so it trails off
   const function regrip(deltaTime: number)
     const now = live()
     const was = parentWas
@@ -1942,24 +1943,29 @@ const function piece(
       return
     end
 
-    const carry = if locked then was * grip:Inverse() else lift
+    locked = not locked
+
+    if locked then
+      grip = lift:Inverse() * was
+      aim()
+      return
+    end
+
+    const carry = was * grip:Inverse()
     const drawn = position + wander
     const own = if stance ~= nil then stance.Position else Vector3.new(drawn.x, drawn.y, drawn.z)
     const at = carry:PointToWorldSpace(own)
+
     -- read off the parent's move over the step, since an anchored parent a
     -- script moves reports no velocity of its own
     const moved = now:PointToWorldSpace(was:PointToObjectSpace(at)) - at
-    const parentVelocity = if deltaTime > 0 then toVector(carry:VectorToObjectSpace(moved)) / deltaTime else vector.zero
 
-    if locked then
-      lift, lifted = carry, true
-      velocity += parentVelocity
-    else
-      grip = carry:Inverse() * was
-      velocity -= parentVelocity
+    lift, lifted = carry, true
+
+    if deltaTime > 0 then
+      velocity += toVector(carry:VectorToObjectSpace(moved)) / deltaTime
     end
 
-    locked = not locked
     aim()
   end
 
