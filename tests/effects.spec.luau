@@ -2796,15 +2796,39 @@ harness.suite(function()
       expect(seen[2].id ~= seen[1].id).toBe(true)
     end)
 
-    test("a decal storing no fade holds its own Transparency attribute", function()
-      local plain = emitTwice(true, true)
-      local half = emitTwice(true, true, 0.4)
-      local clear = emitTwice(true, true, 1)
+    -- v2.4.0 faded a decal storing nothing from 0 to clear over the piece's
+    -- life, which many EasyMesh imports rely on. each emit is read at
+    -- mid-life, where the fade's eased curve stands at `eased`
+    local function easedAtMid(): number
+      return emitTwice(true, true, nil, nil, 0.2)[1].transparency :: number
+    end
 
-      expect(plain[1].transparency).toBe(0)
+    test("a decal storing no fade fades from its rest toward clear", function()
+      local eased = easedAtMid()
+      local half = emitTwice(true, true, 0.4, nil, 0.2)
+      local clear = emitTwice(true, true, 1, nil, 0.2)
+
+      expect(eased > 0 and eased < 1).toBe(true)
       -- a Decal holds its transparency as a float
-      expect(math.abs((half[1].transparency :: number) - 0.4) < 1e-6).toBe(true)
+      expect(math.abs((half[1].transparency :: number) - (0.4 + 0.6 * eased)) < 1e-3).toBe(true)
       expect(clear[1].transparency).toBe(1)
+    end)
+
+    -- the missing half of an old pair reads from the default fade, whose end
+    -- is clear
+    test("a decal storing only an old Transparency_Start fades from it toward clear", function()
+      local eased = easedAtMid()
+      local mid = emitTwice(true, true, nil, { Transparency_Start = 0.5 }, 0.2)[1].transparency :: number
+
+      expect(mid > 0.5 and mid < 1).toBe(true)
+      expect(math.abs(mid - (0.5 + 0.5 * eased)) < 1e-3).toBe(true)
+    end)
+
+    test("a decal storing only an old Transparency_End fades from 0 to it", function()
+      local eased = easedAtMid()
+      local mid = emitTwice(true, true, nil, { Transparency_End = 0.5 }, 0.2)[1].transparency :: number
+
+      expect(math.abs(mid - 0.5 * eased) < 1e-3).toBe(true)
     end)
 
     -- an older emit renamed the model's StartTransparency to

@@ -31,11 +31,11 @@ end
 
 harness.suite(function()
   harness.describe("decal_fade", function()
-    test("a model storing nothing holds its decal", function()
+    test("a model storing nothing fades its decal to clear, as v2.4.0 did", function()
       local from, finish = fade({})
 
       expect(from).toBe(nil)
-      expect(finish).toBe(nil)
+      expect(finish).toBe(1)
     end)
 
     test("an old start stored alone, under any spelling, fades to clear", function()

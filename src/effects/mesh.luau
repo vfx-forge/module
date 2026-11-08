@@ -163,8 +163,8 @@ mesh.attributes = {
   FlipbookFadeOffset = knob(0):min(0):unit("seconds"):hidden(always),
   StartTransparency = knob():hidden(always),
   EndTransparency = knob():hidden(always),
-  -- nil where the model stores no start for its decal, which the decal's end
-  -- reads to tell an old fade from a decal storing nothing
+  -- nil where the model stores no start for its decal. the end is 1 where it
+  -- stores none, so a decal fades to clear by default as it did in v2.4.0
   DecalStartTransparency = knob(function(ctx, attrs)
       return (decalFade(ctx, attrs, nil))
     end)

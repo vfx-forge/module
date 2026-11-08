@@ -165,7 +165,8 @@ function common.start(
   const legacy_flipbookFadeOffset = attrs.FlipbookFadeOffset or 0
 
   const legacy_decalST = attrs.DecalStartTransparency or 0
-  -- no authored end holds the decal where it starts rather than fading it
+  -- no end holds the decal where it starts rather than fading it; the legacy
+  -- mesh's row always names one, so only the forge mesh's decal holds
   const legacy_decalET = if attrs.DecalEndTransparency ~= nil then attrs.DecalEndTransparency else legacy_decalST
 
   const objMesh = piece:FindFirstChildOfClass("SpecialMesh")
@@ -474,8 +475,8 @@ function common.start(
         return if type(v) == "number" then v else legacy_decalST
       end)
 
-      -- a decal storing nothing holds where it rests unless its model stores
-      -- a fade for it, an end or an old start alone
+      -- a decal storing nothing holds where it rests unless its owner names
+      -- an end for it, as the legacy mesh always does
       const decalET = if attrs.DecalEndTransparency ~= nil then legacy_decalET else decalST
       -- the states set a stated piece's decals, transparency and glow
       if not stated then

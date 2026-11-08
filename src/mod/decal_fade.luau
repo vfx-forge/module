@@ -21,10 +21,9 @@ function decal_fade.onMesh(start: Instance?, flipbook: boolean?)
 end
 
 -- where a mesh model fades its decal: the start, nil where the model stores
--- none for it, and the end, nil where the decal holds. an old model storing a
--- start and no end meant a fade to clear, which every release read before a
--- decal storing nothing held
-function decal_fade.resolve(start: Instance?, stored: Stored): (number?, number?)
+-- none for it, and the end. a model storing no end fades its decal to clear,
+-- as v2.4.0 did and the EasyMesh imports rely on
+function decal_fade.resolve(start: Instance?, stored: Stored): (number?, number)
   const onMesh = decal_fade.onMesh(start, stored.flipbook)
   const from = if stored.decalStart ~= nil then stored.decalStart elseif onMesh then nil else stored.start
 
@@ -32,15 +31,11 @@ function decal_fade.resolve(start: Instance?, stored: Stored): (number?, number?
     return from, stored.decalEnd
   end
 
-  if onMesh then
-    return from, 1
-  end
-
-  if stored.finish ~= nil then
+  if not onMesh and stored.finish ~= nil then
     return from, stored.finish
   end
 
-  return from, if from ~= nil then 1 else nil
+  return from, 1
 end
 
 -- a number stored as text reads as the number it spells, as a row reads it
