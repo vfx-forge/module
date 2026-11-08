@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local reader = require("@mod/reader")
+local path_curve = require("@mod/common/path_curve")
 local state_list = require("@mod/common/state_list")
 local legacy_mods = require("@mod/legacy_mods")
 
@@ -392,6 +393,17 @@ local function checkRow(
 
     if row.isMod then
       fail(found, id, `{name} holds a state list, which no modifier can move`)
+    end
+  end
+
+  -- a path has no bounds and no blend either
+  if row.kind == "Path" then
+    if not path_curve.is(row.default) then
+      fail(found, id, `{name} holds a path but its default is none`)
+    end
+
+    if row.isMod then
+      fail(found, id, `{name} holds a path, which no modifier can move`)
     end
   end
 

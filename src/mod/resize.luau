@@ -3,6 +3,7 @@ local mods = require("@mod/mods")
 local retime = require("@mod/retime")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
+local path_curve = require("@mod/common/path_curve")
 local state_list = require("@mod/common/state_list")
 local value_curve = require("@mod/value_curve")
 
@@ -34,11 +35,11 @@ resize.PROPERTY_UNITS = {
 -- scaleShape already scales. a mesh's Size is a curve of factors on its
 -- template, scaled in place of the template as a ParticleEmitter's Size is,
 -- and its States a list whose positions are studs, which no unit reaches
--- inside a list
+-- inside a list. its Path is a curve of studs, scaled the same way
 resize.RATIOS = {
   model_spin = { Scale = true },
   beam = { LengthScale = false },
-  forge_mesh = { Size = true, States = true },
+  forge_mesh = { Size = true, States = true, Path = true },
 }
 
 -- a property the instance does not have throws on the read, which is the
@@ -122,6 +123,19 @@ const function scaleListRow(obj: Instance, name: string, row: any, f: number)
   end
 end
 
+-- a path row's stored curve with every position and handle scaled. the default
+-- is the resting value, so an unset row has nothing to scale
+const function scalePathRow(obj: Instance, name: string, row: any, f: number)
+  for _, key in { name, table.unpack(row.names) } do
+    const raw = attr.get(obj, key, nil)
+    const curve = if type(raw) == "string" then path_curve.decode(raw) else nil
+
+    if curve ~= nil then
+      attr.set(obj, key, path_curve.encode(path_curve.scaled(curve, f)))
+    end
+  end
+end
+
 -- the geometry a few effects keep outside their rows
 local function scaleShape(obj: any, module: registry.Module, factor: number)
   local id = module.id
@@ -188,6 +202,11 @@ function resize.apply(obj: Instance, factor: number)
 
       if row.kind == "StateList" then
         scaleListRow(obj, name, row, factor)
+        continue
+      end
+
+      if row.kind == "Path" then
+        scalePathRow(obj, name, row, factor)
         continue
       end
 

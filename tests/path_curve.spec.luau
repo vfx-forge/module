@@ -1,5 +1,11 @@
 const Bezier = require("@obj/Bezier")
 const harness = require("@tests/harness")
+const knob = require("@mod/knob")
+const attr = require("@mod/attributes")
+const reader = require("@mod/reader")
+const resize = require("@mod/resize")
+const registry = require("@mod/registry")
+const value_curve = require("@mod/value_curve")
 const path_curve = require("@mod/common/path_curve")
 const test, expect = harness.test, harness.expect
 const CFrame = harness.datatypes.CFrame
@@ -11,7 +17,7 @@ const EPSILON = 1e-4
 const UP = vector.create(0, 1, 0)
 const ORIGIN = vector.zero
 
-const function near(a: any, b: any, eps: number?): boolean
+const function near(a: any, b: any, eps: number?)
   const within = eps or EPSILON
 
   if type(a) == "number" then
@@ -21,11 +27,11 @@ const function near(a: any, b: any, eps: number?): boolean
   return math.abs(a.x - b.x) <= within and math.abs(a.y - b.y) <= within and math.abs(a.z - b.z) <= within
 end
 
-const function toVector(v: Vector3): vector
+const function toVector(v: Vector3)
   return vector.create(v.X, v.Y, v.Z)
 end
 
-const function anchorsNear(a: { any }, b: { any }): boolean
+const function anchorsNear(a: { any }, b: { any })
   if #a ~= #b then
     return false
   end
@@ -161,6 +167,13 @@ harness.suite(function()
       expect(points[5] == a2).toBe(true)
       expect(points[6] == a3).toBe(true)
       expect(points[7] == a3).toBe(true)
+    end)
+
+    test("fromPlain refuses a position no f32 holds", function()
+      const curve, problem = path_curve.fromPlain({ { position = { 0, 1e39, 0 } }, { position = { 0, 0, -10 } } })
+
+      expect(curve).toBe(nil)
+      expect(problem ~= nil).toBe(true)
     end)
 
     test("fromPlain refuses a missing position and a 1 anchor list; toPlain then fromPlain is identity", function()
@@ -347,6 +360,170 @@ harness.suite(function()
       expect(#forward).toBe(3)
       expect(near(forward[1], at(0))).toBe(true)
       expect(near(forward[3], at(1))).toBe(true)
+    end)
+
+    test("a NaN axis still places a finite frame", function()
+      const nan = vector.create(0 / 0, 0 / 0, 0 / 0)
+      const spawn = CFrame.new(5, 0, 0)
+
+      for _, bend in { "Outward", "Swirl" } do
+        const frame, scale =
+          path_curve.place(path_curve.drawn(path_curve.DEFAULT), "Center", spawn, ORIGIN, ORIGIN, nan, bend, 0)
+
+        for _, v in { frame.Position, frame.RightVector, frame.UpVector, frame.LookVector } do
+          expect(v.X == v.X and v.Y == v.Y and v.Z == v.Z).toBe(true)
+        end
+
+        expect(scale == scale).toBe(true)
+      end
+    end)
+
+    test("ending draws the direction first, then the distance", function()
+      const finish = vector.create(0, 0, 0)
+      const spawn = vector.create(0, 0, 10)
+      const rng, twin = Random.new(7), Random.new(7)
+      const offset = path_curve.ending(rng, finish, spawn, NumberRange.new(2, 6))
+
+      const z = 1 - 2 * twin:NextNumber()
+      const angle = 2 * math.pi * twin:NextNumber()
+      const ring = math.sqrt(1 - z * z)
+      local direction = vector.create(ring * math.cos(angle), ring * math.sin(angle), z)
+      const distance = 2 + 4 * twin:NextNumber()
+
+      if vector.dot(direction, spawn - finish) < 0 then
+        direction = -direction
+      end
+
+      expect(near(offset, direction * distance)).toBe(true)
+    end)
+  end)
+
+  -- a row's source stubbed, as lune refuses a non utf-8 attribute string
+  const function readWith(stored: any, body: (path: any) -> (), on: Instance?)
+    const module = {
+      id = "stub",
+      display = { name = "Stub" },
+      classifier = "Part",
+      attributes = { Route = knob(path_curve.DEFAULT):path() },
+      properties = {},
+    }
+    const part = on or harness.make("Part")
+
+    reader.source = function(inst: Instance)
+      const map = table.clone(reader.defaultSource(inst))
+
+      if inst == part then
+        map.Route = stored
+      end
+
+      return map
+    end
+
+    const ok, err = pcall(function()
+      body((reader.resolve(module :: any, { ref = part, obj = part } :: any)).Route)
+    end)
+
+    reader.source = reader.defaultSource
+
+    if not ok then
+      error(err, 0)
+    end
+  end
+
+  harness.describe("path rows", function()
+    test("a Path row reads its encoded string", function()
+      const stored = path_curve.encode(MIDDLE_LEFT :: any)
+
+      readWith(stored, function(read)
+        expect(path_curve.is(read)).toBe(true)
+        expect(anchorsNear(read, MIDDLE_LEFT)).toBe(true)
+      end)
+    end)
+
+    test("an undecodable Path string reads the default and warns once", function()
+      const part = harness.make("Part")
+      const warnings = harness.captureWarnings(function()
+        readWith("junk", function(first)
+          expect(first).toBe(path_curve.DEFAULT)
+        end, part)
+
+        readWith("junk", function(second)
+          expect(second).toBe(path_curve.DEFAULT)
+        end, part)
+      end)
+
+      expect(#warnings).toBe(1)
+    end)
+
+    test("a :mod() Path row is refused by the registry", function()
+      registry.clear()
+
+      expect(function()
+        registry.register({
+          id = "pathed",
+          display = { name = "Pathed", icon = "pathed", order = 10 },
+          classifier = "Beam",
+          attributes = { Route = knob(path_curve.DEFAULT):path():mod() },
+          properties = {},
+          emit = function() end,
+        })
+      end).toThrow()
+    end)
+
+    test("resize scales a mesh's path", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register({
+        id = "forge_mesh",
+        display = { name = "Mesh" },
+        classifier = "Part",
+        attributes = { Path = knob(path_curve.DEFAULT):path() },
+        properties = {},
+        emit = function() end,
+      })
+
+      const part = harness.make("Part")
+      const stored = path_curve.encode(MIDDLE_LEFT :: any)
+      const written = {}
+      const get, set = attr.get, attr.set
+
+      attr.get = function(obj: any, name: string, default: any)
+        if obj == part and name == "Path" then
+          return stored
+        end
+
+        return get(obj, name, default)
+      end
+
+      attr.set = function(obj: any, name: string, v: any)
+        if obj == part and name == "Path" then
+          written[name] = v
+          return
+        end
+
+        return set(obj, name, v)
+      end
+
+      const ok, err = pcall(resize.apply, part, 2)
+
+      attr.get, attr.set = get, set
+
+      if not ok then
+        error(err, 0)
+      end
+
+      const back = path_curve.decode(written.Path)
+
+      expect(back ~= nil).toBe(true)
+      expect(near((back :: any)[2].position, vector.create(2.2, 4.4, -6.6))).toBe(true)
+      expect(near((back :: any)[2].left, vector.create(1, 0.5, 0.2))).toBe(true)
+    end)
+
+    test("ramp samples linearly", function()
+      const sample = value_curve.sampler(value_curve.ramp(0, 1))
+
+      expect(near(sample(0.25)[1], 0.25, 1e-6)).toBe(true)
+      expect(near(sample(1)[1], 1, 1e-6)).toBe(true)
     end)
   end)
 end)

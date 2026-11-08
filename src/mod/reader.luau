@@ -4,6 +4,7 @@ local mods = require("@mod/mods")
 local knob = require("@mod/knob")
 local value = require("@mod/value")
 local logger = require("@mod/logger")
+local path_curve = require("@mod/common/path_curve")
 local state_list = require("@mod/common/state_list")
 local legacy_mods = require("@mod/legacy_mods")
 local value_curve = require("@mod/value_curve")
@@ -668,6 +669,73 @@ local function listOf(state: State, name: string, row: knob.Knob)
   return list
 end
 
+-- each stored path decoded once. decode answers a frozen curve already
+const PATHS: { [string]: path_curve.Curve } = {}
+const PATHS_MAX = 64
+
+local pathCount = 0
+
+const function pathDecodedOf(raw: string): path_curve.Curve?
+  const known = PATHS[raw]
+
+  if known ~= nil then
+    return known
+  end
+
+  const curve = path_curve.decode(raw)
+
+  if curve == nil then
+    return nil
+  end
+
+  if pathCount >= PATHS_MAX then
+    table.clear(PATHS)
+    pathCount = 0
+  end
+
+  PATHS[raw] = curve
+  pathCount += 1
+
+  return curve
+end
+
+-- a path row, the decoded string under its name or an old spelling. a missing
+-- or malformed path reads as the row's default
+local function pathOf(state: State, name: string, row: knob.Knob)
+  local map = state.map
+  local v = map[name]
+
+  if v == nil then
+    for _, alias in row.names do
+      v = map[alias]
+
+      if v ~= nil then
+        break
+      end
+    end
+  end
+
+  local curve = if type(v) == "string" then pathDecodedOf(v) else nil
+
+  if curve == nil then
+    if v ~= nil then
+      mods.warnOnce(state.ctx.ref, name, `{name} holds no path {state.module.id} can read`)
+    end
+
+    return fallbackOf(state, row, nil)
+  end
+
+  if
+    row.readonlyRule ~= nil
+    and not row.readonlyKeeps
+    and row.readonlyRule(state.ctx, state.attrs, state.props) == true
+  then
+    return fallbackOf(state, row, nil)
+  end
+
+  return curve
+end
+
 local function plainOf(state: State, source: string, name: string, row: knob.Knob)
   if source == "attribute" and row.kind == "Instance" then
     return instanceOf(state, name, row)
@@ -679,6 +747,10 @@ local function plainOf(state: State, source: string, name: string, row: knob.Kno
 
   if source == "attribute" and row.kind == "StateList" then
     return listOf(state, name, row)
+  end
+
+  if source == "attribute" and row.kind == "Path" then
+    return pathOf(state, name, row)
   end
 
   local ctx = state.ctx

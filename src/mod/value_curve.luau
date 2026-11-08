@@ -57,6 +57,25 @@ function value_curve.flat(value: number, channels: number): Curve
   }
 end
 
+-- one channel running straight from `from` at 0 to `to` at 1
+function value_curve.ramp(from: number, to: number): Curve
+  const function key(time: number, v: number)
+    return {
+      time = time,
+      value = { v },
+      envelope = 0,
+      left = { vector.zero },
+      right = { vector.zero },
+    }
+  end
+
+  return {
+    channels = 1,
+    linked = true,
+    keys = { key(0, from), key(1, to) },
+  }
+end
+
 function value_curve.encode(curve: Curve): string
   const channels = curve.channels
   const size = keySize(channels)

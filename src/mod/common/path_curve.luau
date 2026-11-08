@@ -122,7 +122,7 @@ const function vectorIn(v: any): vector?
   return vector.create(v[1], v[2], v[3])
 end
 
-const function toVector(v: Vector3): vector
+const function toVector(v: Vector3)
   return vector.create(v.X, v.Y, v.Z)
 end
 
@@ -136,7 +136,7 @@ const function perpendicular(v: vector, forward: vector): vector?
   const across = v - forward * vector.dot(v, forward)
   const size = vector.magnitude(across)
 
-  if length < TINY or size < PARALLEL * length then
+  if not (length >= TINY and size >= PARALLEL * length) then
     return nil
   end
 
@@ -144,7 +144,7 @@ const function perpendicular(v: vector, forward: vector): vector?
 end
 
 -- +Y square to a direction, else -Z, else +X
-const function upright(direction: vector): vector
+const function upright(direction: vector)
   return perpendicular(UP, direction)
     or perpendicular(FORWARD, direction)
     or vector.normalize(SIDE - direction * direction.x)

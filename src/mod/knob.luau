@@ -1,3 +1,4 @@
+local path_curve = require("@mod/common/path_curve")
 local state_list = require("@mod/common/state_list")
 local value_curve = require("@mod/value_curve")
 
@@ -38,6 +39,10 @@ function knob.kindOf(v: any)
 
   if t == "table" and state_list.is(v) then
     return "StateList"
+  end
+
+  if t == "table" and path_curve.is(v) then
+    return "Path"
   end
 
   return t
@@ -256,6 +261,18 @@ function Knob.stateList(self: Knob): Knob
   end
 
   self.kind = "StateList"
+  return self
+end
+
+-- a row that holds a mesh's path, stored as a string the path_curve codec
+-- writes. its default is a decoded curve, which an unset or malformed
+-- attribute reads as
+function Knob.path(self: Knob): Knob
+  if not path_curve.is(self.default) then
+    error("path() row has a default that is no path", 2)
+  end
+
+  self.kind = "Path"
   return self
 end
 
