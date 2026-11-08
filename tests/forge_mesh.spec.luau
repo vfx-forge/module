@@ -20,15 +20,19 @@ const frame_show = require("@mod/frame_show")
 const frame_store = require("@srv/frame_store")
 const enabled_effects = require("@srv/enabled_effects")
 const value_curve = require("@mod/value_curve")
+const particle_motion = require("@mod/particle_motion")
 const test, expect = harness.test, harness.expect
 
 const look_common = require("@mod/common/look")
 const force_rows = require("@mod/common/force_rows")
 const launch_common = require("@mod/common/launch")
 const state_list = require("@mod/common/state_list")
+const path_curve = require("@mod/common/path_curve")
 const collision_common = require("@mod/common/collision")
 
 const forge_mesh = require("@vfx/forge_mesh")
+
+const Bezier = require("@obj/Bezier")
 
 const CFrame = harness.datatypes.CFrame
 const Vector3 = harness.datatypes.Vector3
@@ -433,17 +437,19 @@ const function tagged(roots: { Instance }): { Instance }
 end
 
 -- an Instance row's live read and the probe that unwraps it, lune storing no
--- instance in an attribute: a handle is a table naming its target. a part
--- naming no Force is pulled by Gravity
-const function targeting(part: BasePart, target: Instance, body: () -> ())
+-- instance in an attribute: a handle is a table naming its target. the row
+-- is ForceTarget unless `row` names another, and a part naming no Force is
+-- then pulled by Gravity
+const function targeting(part: BasePart, target: Instance, body: () -> (), row: string?)
   const live, probe = reader.liveOf, reader.probe
+  const named = row or "ForceTarget"
 
-  if part:GetAttribute("Force") == nil then
+  if named == "ForceTarget" and part:GetAttribute("Force") == nil then
     part:SetAttribute("Force", "Gravity")
   end
 
   reader.liveOf = function(ref: Instance, name: string)
-    return if ref == part and name == "ForceTarget" then { handle = true, target = target } else live(ref, name)
+    return if ref == part and name == named then { handle = true, target = target } else live(ref, name)
   end
 
   reader.probe = table.freeze({
@@ -655,6 +661,114 @@ const function stated(
       env:Clear()
     end)
   end)
+end
+
+-- where a path piece's parent part stands
+const PARENT = CFrame.new(0, 10, 0)
+
+-- a path straight down the spawn's look vector, 20 studs long
+const DROP = {
+  { position = vector.zero },
+  { position = vector.create(0, 0, -20) },
+} :: any
+
+-- whether a piece has left the world, or its pool has let it go
+const function gone(piece: BasePart)
+  const ok, parent = pcall(function()
+    return piece.Parent
+  end)
+
+  return not ok or parent == nil
+end
+
+-- the frame a piece spawns at off a point emitter at `origin`, launching out
+-- of its `face`
+const function spawnAt(origin: CFrame, face: string): CFrame
+  return particle_motion.spawn(origin, Vector3.zero, {
+    shape = "Box",
+    surface = false,
+    partial = 1,
+    normal = (Enum.NormalId :: any)[face],
+    face = "Outward",
+    spread = vector.zero,
+  }, Random.new())
+end
+
+-- the world point `u` of the way along `curve` laid as drawn from `spawn`
+const function freeAt(curve: any, spawn: CFrame, u: number): Vector3
+  const drawn = path_curve.drawn(curve)
+  const frame, scale = path_curve.place(drawn, "Free", spawn, nil, vector.zero, vector.zero, "AsDrawn", 0)
+  const at = path_curve.at(Bezier.new(path_curve.points(curve)), drawn, frame, scale, u)
+
+  return Vector3.new(at.x, at.y, at.z)
+end
+
+-- one Path piece of two seconds' life walking `curve`, on a template under a
+-- part at PARENT of `opts.size` (a point unless given), held a second past
+-- its motion, `attributes` over it and `opts.rows` stubbed beside the path;
+-- `opts.wrap` runs the emit inside whatever it stands in
+const function pathed(
+  attributes: { [string]: any },
+  curve: any,
+  body: (piece: BasePart, part: BasePart, parent: BasePart) -> (),
+  opts: {
+    size: Vector3?,
+    rows: { [string]: any }?,
+    wrap: ((part: BasePart, parent: BasePart, run: () -> ()) -> ())?,
+  }?
+)
+  const given = opts or {}
+
+  framed(function(fake)
+    const _, parent = parentPart(PARENT, given.size or Vector3.zero)
+    const part = template(parent, {
+      Motion = "Path",
+      Speed = STILL,
+      Lifetime = NumberRange.new(2, 2),
+      DestroyDelay = 1,
+    })
+
+    for name, v in attributes do
+      part:SetAttribute(name, v)
+    end
+
+    const rows = table.clone(given.rows or {})
+
+    -- lune refuses a non utf-8 attribute string, so the path is stubbed in
+    rows.Path = path_curve.encode(curve)
+
+    const function run()
+      stubbed(part, rows, function()
+        const env = effects.emit(0, part)
+
+        body(pieces(fake)[1], part, parent)
+        env:Clear()
+      end)
+    end
+
+    if given.wrap ~= nil then
+      given.wrap(part, parent, run)
+    else
+      run()
+    end
+  end)
+end
+
+-- `run` with an EndPoint part at `position` that counts as in the game while
+-- `open` answers true, handed to `made`
+const function endingAt(position: Vector3, made: (goal: BasePart) -> (), open: (() -> boolean)?)
+  return function(part: BasePart, parent: BasePart, run: () -> ())
+    const goal = harness.make("Part", parent) :: BasePart
+
+    goal.Position = position
+    made(goal)
+
+    reachable(open or function()
+      return true
+    end, function()
+      targeting(part, goal, run, "EndPoint")
+    end)
+  end
 end
 
 -- a decal named `name` on `part`
@@ -2903,6 +3017,332 @@ harness.suite(function()
 
           env:Clear()
         end)
+      end)
+    end)
+  end)
+
+  harness.describe("a mesh's path", function()
+    const TOP = spawnAt(PARENT, "Top")
+    const BOTTOM = spawnAt(PARENT, "Bottom")
+    const BOX = Vector3.new(4, 2, 4)
+
+    test("a Free path piece follows the drawn curve from its spawn", function()
+      pathed({}, path_curve.DEFAULT, function(piece)
+        frames(60)
+
+        expect(near(piece.CFrame.Position, freeAt(path_curve.DEFAULT, TOP, 0.5), LOOSE)).toBe(true)
+      end)
+    end)
+
+    test("Progress paces the piece", function()
+      const rows = { Progress = curveOf(1, { { 0, { 0 } }, { 0.5, { 1 } }, { 1, { 1 } } }) }
+
+      pathed({}, path_curve.DEFAULT, function(piece)
+        frames(60)
+
+        expect(near(piece.CFrame.Position, freeAt(path_curve.DEFAULT, TOP, 1), LOOSE)).toBe(true)
+      end, { rows = rows })
+    end)
+
+    test("Center ends every piece on the emitter's center", function()
+      spawning(function(spawned)
+        pathed({ PathEnd = "Center", EmitCount = 4 }, path_curve.DEFAULT, function()
+          frames(125)
+
+          expect(#spawned).toBe(4)
+
+          for _, piece in spawned do
+            expect(near(piece.CFrame.Position, PARENT.Position, LOOSE)).toBe(true)
+          end
+        end, { size = BOX })
+      end)
+    end)
+
+    test("EndRadius 3..3 under Center ends 3 studs from the center", function()
+      spawning(function(spawned)
+        pathed({ PathEnd = "Center", EndRadius = NumberRange.new(3, 3), EmitCount = 4 }, path_curve.DEFAULT, function()
+          frames(125)
+
+          for _, piece in spawned do
+            expect(math.abs((piece.CFrame.Position - PARENT.Position).Magnitude - 3) < LOOSE).toBe(true)
+          end
+        end, { size = BOX })
+      end)
+    end)
+
+    test("Target follows a moving EndPoint", function()
+      local goal: BasePart = nil :: any
+
+      pathed({ PathEnd = "Target" }, path_curve.DEFAULT, function(piece)
+        frames(60)
+
+        goal.Position += Vector3.new(10, 0, 0)
+
+        frames(65)
+
+        expect(near(piece.CFrame.Position, Vector3.new(30, 10, 0), LOOSE)).toBe(true)
+      end, {
+        wrap = endingAt(Vector3.new(20, 10, 0), function(made)
+          goal = made
+        end),
+      })
+    end)
+
+    test("Target with no EndPoint plays as Free", function()
+      pathed({ PathEnd = "Target" }, path_curve.DEFAULT, function(piece)
+        frames(60)
+
+        expect(near(piece.CFrame.Position, freeAt(path_curve.DEFAULT, TOP, 0.5), LOOSE)).toBe(true)
+      end)
+    end)
+
+    test("a destroyed EndPoint holds its last pose", function()
+      local goal: BasePart = nil :: any
+      local open = true
+
+      pathed({ PathEnd = "Target" }, path_curve.DEFAULT, function(piece)
+        frames(60)
+
+        open = false
+        goal.Position += Vector3.new(10, 0, 0)
+
+        frames(65)
+
+        expect(near(piece.CFrame.Position, Vector3.new(20, 10, 0), LOOSE)).toBe(true)
+      end, {
+        wrap = endingAt(Vector3.new(20, 10, 0), function(made)
+          goal = made
+        end, function()
+          return open
+        end),
+      })
+    end)
+
+    test("Reverse starts at the end point", function()
+      pathed({ PathEnd = "Center", Reverse = true }, path_curve.DEFAULT, function(piece)
+        expect(near(piece.CFrame.Position, PARENT.Position, LOOSE)).toBe(true)
+
+        frames(60)
+
+        expect(near(piece.CFrame.Position, PARENT.Position, LOOSE)).toBe(false)
+      end, { size = BOX })
+    end)
+
+    test("Stop holds the piece at the end and the piece finishes at its path time", function()
+      recording(function(lives)
+        pathed({ AfterPath = "Stop" }, path_curve.DEFAULT, function(piece)
+          expect(lives[piece]).toBe(2)
+
+          frames(150)
+
+          expect(piece.Parent ~= nil).toBe(true)
+          expect(near(piece.CFrame.Position, freeAt(path_curve.DEFAULT, TOP, 1), LOOSE)).toBe(true)
+
+          frames(60)
+
+          expect(gone(piece)).toBe(true)
+        end)
+      end)
+    end)
+
+    test("Continue flies on at Speed for FlightTime", function()
+      const finish = freeAt(path_curve.DEFAULT, TOP, 1)
+      const tangent = (finish - freeAt(path_curve.DEFAULT, TOP, 1 - 1e-4)).Unit
+
+      recording(function(lives)
+        pathed(
+          {
+            AfterPath = "Continue",
+            FlightTime = NumberRange.new(1, 1),
+            Speed = NumberRange.new(10, 10),
+          },
+          path_curve.DEFAULT,
+          function(piece, part)
+            expect(lives[piece]).toBe(3)
+            expect(forge_mesh.duration(nil, rowsOf(part))).toBe(3)
+
+            frames(190)
+
+            const flown = piece.CFrame.Position - finish
+
+            expect(math.abs(flown.Magnitude - 10) < 0.05).toBe(true)
+            expect(flown.Unit:Dot(tangent) > 0.999).toBe(true)
+          end
+        )
+      end)
+    end)
+
+    test("a fade over life spans the flight", function()
+      const rows = { Transparency = curveOf(1, { { 0, { 0 } }, { 1, { 1 } } }) }
+
+      pathed({ AfterPath = "Continue", FlightTime = NumberRange.new(2, 2) }, path_curve.DEFAULT, function(piece)
+        frames(120)
+
+        expect(math.abs(piece.Transparency - 0.5) < 0.03).toBe(true)
+      end, { rows = rows })
+    end)
+
+    test("Collision Kill ends a path piece at the hit and fires its on-finish emits there", function()
+      const real = effects.emitOnFinish
+      local fired: Vector3? = nil
+
+      effects.emitOnFinish = function(folder, obj, ...)
+        fired = mover.cframe(obj).Position
+
+        return real(folder, obj, ...)
+      end
+
+      const ok, err = pcall(function()
+        pathed({ EmissionDirection = "Bottom", CollisionMode = "Kill", DestroyDelay = 0 }, DROP, function(piece)
+          frames(70)
+
+          expect(gone(piece)).toBe(true)
+          expect(fired ~= nil).toBe(true)
+          expect(near(fired :: Vector3, Vector3.new(0, 0, 0), 0.01)).toBe(true)
+        end, {
+          wrap = function(_, parent, run)
+            walled(parent, run)
+          end,
+        })
+      end)
+
+      effects.emitOnFinish = real
+
+      if not ok then
+        error(err, 0)
+      end
+    end)
+
+    test("Collision Bounce leaves the path and flies the rest of its life", function()
+      pathed(
+        { EmissionDirection = "Bottom", CollisionMode = "Bounce", Bounce = 0.5, Friction = 0 },
+        DROP,
+        function(piece)
+          frames(90)
+
+          const before = piece.CFrame.Position
+
+          frames(20)
+
+          const after = piece.CFrame.Position
+
+          -- the path runs on below the floor; the bounce rises at 5 studs a second
+          expect(before.Y > 0).toBe(true)
+          expect(after.Y > before.Y + 1).toBe(true)
+          expect(math.abs(after.X) < EPSILON and math.abs(after.Z) < EPSILON).toBe(true)
+        end,
+        {
+          wrap = function(_, parent, run)
+            walled(parent, run)
+          end,
+        }
+      )
+    end)
+
+    test("LockedToPart moves a path's start with the parent", function()
+      pathed({ LockedToPart = true }, path_curve.DEFAULT, function(piece, _, parent)
+        frames(60)
+
+        parent.CFrame = PARENT + Vector3.new(5, 0, 0)
+
+        frames(1)
+
+        const want = freeAt(path_curve.DEFAULT, TOP, 61 / 120) + Vector3.new(5, 0, 0)
+
+        expect(near(piece.CFrame.Position, want, LOOSE)).toBe(true)
+      end)
+    end)
+
+    test("Lifetime 0 arrives at once and FlightTime 0 flies for no time", function()
+      for _, flightTime in { 0, 1 } do
+        pathed(
+          {
+            Lifetime = NumberRange.new(0, 0),
+            AfterPath = "Continue",
+            FlightTime = NumberRange.new(flightTime, flightTime),
+            Speed = NumberRange.new(10, 10),
+            PathEnd = "Center",
+          },
+          path_curve.DEFAULT,
+          function(piece)
+            expect(finite(piece.CFrame)).toBe(true)
+
+            -- within the second DestroyDelay holds it
+            for _ = 1, 50 do
+              frames(1)
+
+              expect(finite(piece.CFrame)).toBe(true)
+            end
+          end
+        )
+      end
+    end)
+
+    test("the flight rows hide under Path unless Continue or Bounce", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const flying = {
+          "Speed",
+          "Acceleration",
+          "Turbulence",
+          "TurbulenceFrequency",
+          "Drag",
+          "WindAffectsDrag",
+          "VelocityInheritance",
+          "Force",
+        }
+        const cases = {
+          { rows = { Motion = "Path" }, hidden = true },
+          { rows = { Motion = "Path", AfterPath = "Continue" }, hidden = false },
+          { rows = { Motion = "Path", CollisionMode = "Bounce" }, hidden = false },
+          { rows = { Motion = "Particle" }, hidden = false },
+        }
+
+        for i, case in cases do
+          const rows = table.clone(case.rows)
+
+          rows.Drag = 1
+          rows.Turbulence = 1
+
+          const hidden = hiddenOf(template(parent, rows))
+
+          for _, name in flying do
+            expect(`{i} {name} {hidden[name] == true}`).toBe(`{i} {name} {case.hidden}`)
+          end
+        end
+      end)
+    end)
+
+    test("EndPoint shows only for Target, EndRadius for Center and Target, FlightTime for Continue", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const ends = { Free = { true, true }, Center = { true, false }, Target = { false, false } }
+
+        for kind, want in ends do
+          const hidden = hiddenOf(template(parent, { Motion = "Path", PathEnd = kind }))
+
+          expect(`{kind} EndPoint {hidden.EndPoint}`).toBe(`{kind} EndPoint {want[1]}`)
+          expect(`{kind} EndRadius {hidden.EndRadius}`).toBe(`{kind} EndRadius {want[2]}`)
+        end
+
+        for after, want in { Stop = true, Continue = false } do
+          const hidden = hiddenOf(template(parent, { Motion = "Path", AfterPath = after }))
+
+          expect(`{after} FlightTime {hidden.FlightTime}`).toBe(`{after} FlightTime {want}`)
+        end
+
+        const path = hiddenOf(template(parent, { Motion = "Path" }))
+        const particle = hiddenOf(template(parent, {}))
+
+        for _, name in { "PathEnd", "Reverse", "Bend", "Progress", "AfterPath" } do
+          expect(`{name} {path[name]} {particle[name]}`).toBe(`{name} false true`)
+        end
+
+        -- the group's title is the hidden Path row's name too, and the group
+        -- is walked last
+        expect(path.Path).toBe(false)
+        expect(particle.Path).toBe(true)
+        expect(path.States).toBe(true)
       end)
     end)
   end)

@@ -12,20 +12,40 @@ const function stated(ctx: any): boolean
   return ref ~= nil and attr.get(ref, "Motion", nil) == "States"
 end
 
+-- whether no force reaches the template's pieces: they move through their
+-- states, or walk a path they never fly off, past its end or by a bounce
+const function unflown(ctx: any): boolean
+  const ref = if ctx ~= nil then ctx.ref else nil
+
+  if ref == nil then
+    return false
+  end
+
+  const motion = attr.get(ref, "Motion", nil)
+
+  if motion == "States" then
+    return true
+  end
+
+  return motion == "Path"
+    and attr.get(ref, "AfterPath", nil) ~= "Continue"
+    and attr.get(ref, "CollisionMode", nil) ~= "Bounce"
+end
+
 const function forceless(ctx: any, attrs: any)
-  return stated(ctx) or attrs.Force == "None"
+  return unflown(ctx) or attrs.Force == "None"
 end
 
 const function gravityless(ctx: any, attrs: any)
-  return stated(ctx) or attrs.Force ~= "Gravity"
+  return unflown(ctx) or attrs.Force ~= "Gravity"
 end
 
 const function orbitless(ctx: any, attrs: any)
-  return stated(ctx) or attrs.Force ~= "Orbit"
+  return unflown(ctx) or attrs.Force ~= "Orbit"
 end
 
 const function unlaunched(ctx: any, attrs: any)
-  return stated(ctx) or attrs.Force ~= "Gravity" or attrs.OrbitLaunch ~= true
+  return unflown(ctx) or attrs.Force ~= "Gravity" or attrs.OrbitLaunch ~= true
 end
 
 const common = {}
@@ -37,7 +57,7 @@ common.stated = stated
 common.rows = {
   Force = knob("None")
     :options(FORCES)
-    :hidden(stated)
+    :hidden(unflown)
     :label("Force")
     :hint("What moves each piece around the emitter or a target: a pull or a ring."),
   ForceTarget = knob()

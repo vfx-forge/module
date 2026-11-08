@@ -62,9 +62,14 @@ end
 -- the force of one emit as it emits, from the rows that hold for a piece's
 -- whole life; each piece flies a copy. its place and axis are written as it
 -- flies, and its driven rows, DRIVEN's, start at 0 until they are. nil for
--- None and for a piece moving through its states
+-- None, for a piece moving through its states and for one walking a path it
+-- never flies off, past its end or by a bounce
 function common.force(attrs: any): particle_motion.Force?
   if attrs.Motion == "States" then
+    return nil
+  end
+
+  if attrs.Motion == "Path" and attrs.AfterPath ~= "Continue" and attrs.CollisionMode ~= "Bounce" then
     return nil
   end
 

@@ -12,6 +12,7 @@ const lifetime = require("@mod/lifetime")
 const value_curve = require("@mod/value_curve")
 const force_rows = require("@mod/common/force_rows")
 const state_list = require("@mod/common/state_list")
+const path_curve = require("@mod/common/path_curve")
 const look_common = require("@mod/common/look")
 const launch_common = require("@mod/common/launch")
 const material_rows = require("@mod/common/material_rows")
@@ -19,6 +20,7 @@ const orient_common = require("@mod/common/orient")
 const bezier_common = require("@mod/common/bezier")
 const collision_common = require("@mod/common/collision")
 const numeric_common = require("@mod/common/numeric")
+const path_motion = require("@mod/path_motion")
 const particle_motion = require("@mod/particle_motion")
 
 const emitters = require("@root/emitters")
@@ -29,12 +31,18 @@ const mover = require("@srv/mover")
 const frame_store = require("@srv/frame_store")
 const enabled_effects = require("@srv/enabled_effects")
 
+const Bezier = require("@obj/Bezier")
+
 -- the template's folders of frame sets, which a piece is never handed
 const SETS = { Frames = "FrameSet", Textures = "TextureSet" }
 
 -- the plugin's folder of copies a template's states are edited as, which a
 -- piece is never handed either
 const STATES_TAG = "ForgeMeshStates"
+
+-- the plugin's holder of the attachments a template's path is edited as,
+-- whatever its class
+const PATH_TAG = "ForgeMeshPath"
 
 const FLIPBOOK_MODES = { "OneShot", "Loop", "PingPong" }
 
@@ -50,7 +58,24 @@ const COLOR_STEP = 2 / 255
 const UV_STEP = 1 / 1024
 const TURN_STEP = 0.25
 
+-- how far into its path a piece looks ahead to face the way it sets off, and
+-- the shortest step whose motion reads as its velocity
+const PROBE = 1 / 60
+const SHORT_STEP = 1e-6
+
 const WORLD_UP = vector.create(0, 1, 0)
+
+-- each EmissionDirection in the emitter's own frame, spelled out since lune
+-- has no Vector3.FromNormalId
+const FACES = {
+  Top = vector.create(0, 1, 0),
+  Bottom = vector.create(0, -1, 0),
+  Right = vector.create(1, 0, 0),
+  Left = vector.create(-1, 0, 0),
+  Back = vector.create(0, 0, 1),
+  Front = vector.create(0, 0, -1),
+}
+
 const WHITE = Color3.new(1, 1, 1)
 
 const STATED_REASON = "The states set this. Edit it on a state in Edit States."
@@ -104,6 +129,27 @@ const function flown(_, attrs: any)
   return attrs.Motion ~= "States"
 end
 
+-- whether each piece walks a path
+const function pathed(_, attrs: any)
+  return attrs.Motion == "Path"
+end
+
+const function unpathed(_, attrs: any)
+  return attrs.Motion ~= "Path"
+end
+
+-- whether a piece on a path flies at all: on past its end, or off it by a
+-- bounce
+const function flies(attrs: any)
+  return attrs.AfterPath == "Continue" or attrs.CollisionMode == "Bounce"
+end
+
+-- whether no flight row reaches a piece: one moving through its states, or
+-- one walking a path it never leaves
+const function grounded(ctx: any, attrs: any)
+  return stated(ctx, attrs) or (pathed(ctx, attrs) and not flies(attrs))
+end
+
 -- whether the states set the look, which the rows they replace then show
 const function hasStates(_, attrs: any)
   return attrs.Motion == "States" and #attrs.States > 0
@@ -152,8 +198,13 @@ const function untagged(_, attrs: any)
   return attrs.CollisionMode == "Off" or attrs.CollisionFilter == "None"
 end
 
--- whether a folder of the template is one of its frame sets or its states
+-- whether a child of the template is one of its frame sets, its states or
+-- its path's editing holder
 const function setFolder(child: Instance)
+  if child:HasTag(PATH_TAG) then
+    return true
+  end
+
   if not child:IsA("Folder") then
     return false
   end
@@ -576,12 +627,17 @@ const function dresser(
 end
 
 -- what one piece draws as it spawns: its launch frame, whose look vector is
--- the way it sets off, its speed and life, its initial turn in degrees, the
--- velocity it inherits, and the curves and gradient it plays over its life
+-- the way it sets off, its speed and whole life, its initial turn in degrees,
+-- the velocity it inherits, and the curves and gradient it plays over its
+-- life. on a path, the share of the life it walks it, its roll and where it
+-- ends off the end point
 type Launch = {
   spawn: CFrame,
   speed: number,
   duration: number,
+  pathTime: number,
+  roll: number,
+  offset: vector,
   turn: vector,
   inherited: vector,
   size: value_curve.Curve,
@@ -628,6 +684,10 @@ type Flight = {
 
   -- the template decals' own values, read once for the emit's states
   decals: { [string]: state_list.DecalState },
+
+  -- the path every piece walks, read once for the emit; nil for any other
+  -- motion
+  path: path_motion.Path?,
 }
 
 const forge_mesh = {}
@@ -645,6 +705,8 @@ forge_mesh.engine = {
 -- every piece alive across all emitters and emits, and the most that may be;
 -- a spec lowers max, nothing else writes either
 forge_mesh.pieces = { live = 0, max = 500 }
+
+forge_mesh.PATH_TAG = PATH_TAG
 
 -- where a force's target stands and its up axis, nil for a class that has no
 -- place. the place is read on its own, lune keeping it apart from the frame
@@ -694,6 +756,54 @@ const function standingNow(flight: Flight, template: BasePart): (vector?, vector
   end
 
   return flight.standing, flight.up
+end
+
+-- where the path's EndPoint stands this frame, read from the engine by the
+-- first piece to ask and kept for the rest; a gone one holds its last pose
+const function endNow(flight: Flight): vector?
+  const path = flight.path :: path_motion.Path
+
+  if path.read == clock.frame then
+    return path.finish
+  end
+
+  path.read = clock.frame
+
+  const target = path.target
+
+  if target ~= nil and forge_mesh.engine.alive(target) then
+    path.finish = poseOf(target) or path.finish
+  end
+
+  return path.finish
+end
+
+-- what every piece of an emit walks: the curve built once, its ends fit to
+-- the emitter's center or the EndPoint where it stands now, an EndPoint unset
+-- or of no place walked as drawn
+const function pathOf(rows: any, origin: CFrame): path_motion.Path
+  const curve = rows.Path :: path_curve.Curve
+  const target = if rows.PathEnd == "Target" then rows.EndPoint :: Instance? else nil
+  const finish = if target ~= nil then (poseOf(target)) else nil
+  const ends = if rows.PathEnd == "Target" and finish == nil then "Free" else rows.PathEnd
+  const face = FACES[rows.EmissionDirection] or FACES.Top
+
+  return {
+    bezier = Bezier.new(path_curve.points(curve)),
+    drawn = path_curve.drawn(curve),
+    ends = ends,
+    bend = rows.Bend,
+    reverse = rows.Reverse,
+    radius = rows.EndRadius,
+    after = rows.AfterPath,
+    axis = toVector(origin:VectorToWorldSpace(Vector3.new(face.x, face.y, face.z))),
+    center = toVector(origin.Position),
+    flight = rows.FlightTime,
+    progress = (value_curve.sampler(rows.Progress)),
+    target = if finish ~= nil then target else nil,
+    finish = finish,
+    read = clock.frame,
+  }
 end
 
 forge_mesh.id = "forge_mesh"
@@ -777,10 +887,10 @@ forge_mesh.attributes = {
     :unit("studsPerSecond")
     :mod()
     :hidden(function(ctx: any, attrs: any)
-      return stated(ctx, attrs) or force_rows.speedless(ctx)
+      return grounded(ctx, attrs) or force_rows.speedless(ctx)
     end)
     :label("Speed")
-    :hint("Speed each piece launches at along its emission direction, drawn per piece."),
+    :hint("Speed each piece launches at along its emission direction, or leaves its path at, drawn per piece."),
   SpreadAngle = knob(vector.zero)
     :mod()
     :hidden(stated)
@@ -845,17 +955,58 @@ forge_mesh.attributes = {
     "Cycles of the material frames to play, 0 repeating for the piece's life, below 0 until Mode leaves Loop or PingPong."
   ),
 
-  Motion = knob("Particle")
-    :options({ "Particle", "States" })
-    :label("Motion")
-    :hint("How each piece moves after it spawns: as a particle flies, or through the states it is given."),
+  Motion = knob("Particle"):options({ "Particle", "Path", "States" }):label("Motion"):hint(
+    "How each piece moves after it spawns: as a particle flies, along a drawn path, or through the states it is given."
+  ),
   -- the list of states each piece moves through, which Edit States writes
   States = knob(state_list.EMPTY):stateList():hidden(always),
+  -- the curve each piece walks, which Edit Path writes
+  Path = knob(path_curve.DEFAULT):path():hidden(always),
+  PathEnd = knob("Free"):options({ "Free", "Center", "Target" }):hidden(unpathed):label("PathEnd"):hint(
+    "Where each path ends: as drawn from its spawn, stretched to the emitter's center, or to the EndPoint."
+  ),
+  EndPoint = knob()
+    :instance({ "Attachment", "BasePart" })
+    :hidden(function(ctx: any, attrs: any)
+      return unpathed(ctx, attrs) or attrs.PathEnd ~= "Target"
+    end)
+    :label("EndPoint")
+    :hint("The attachment or part every path ends on, followed as it moves. Unset, the paths run as drawn."),
+  EndRadius = knob(NumberRange.new(0, 0))
+    :min(0)
+    :unit("studs")
+    :hidden(function(ctx: any, attrs: any)
+      return unpathed(ctx, attrs) or attrs.PathEnd == "Free"
+    end)
+    :label("EndRadius")
+    :hint("How far from the end point each path ends, between the two distances, on the side facing its spawn."),
+  Reverse = knob(false):hidden(unpathed):label("Reverse"):hint("Run every path backward, from its end to its spawn."),
+  Bend = knob("AsDrawn"):options({ "AsDrawn", "Outward", "Swirl", "Random" }):hidden(unpathed):label("Bend"):hint(
+    "Which way each path's bulge faces: as drawn, away from the center, around the emission axis, or at random."
+  ),
+  Progress = knob(value_curve.ramp(0, 1))
+    :valueCurve(1)
+    :hidden(unpathed)
+    :label("Progress")
+    :hint("How far along its path each piece is over its path time, 0 at the start and 1 at the end."),
+  AfterPath = knob("Stop")
+    :options({ "Stop", "Continue" })
+    :hidden(unpathed)
+    :label("AfterPath")
+    :hint("What a piece does at its path's end: stop there, or fly on along it at Speed."),
+  FlightTime = knob(NumberRange.new(1, 1))
+    :min(0)
+    :unit("seconds")
+    :hidden(function(ctx: any, attrs: any)
+      return unpathed(ctx, attrs) or attrs.AfterPath ~= "Continue"
+    end)
+    :label("FlightTime")
+    :hint("Seconds each piece flies on past its path's end, drawn per piece."),
   Acceleration = knob(vector.zero)
     :unit("studsPerSecondSquared")
     :mod()
     :hidden(function(ctx: any, attrs: any)
-      return stated(ctx, attrs) or ringed(ctx)
+      return grounded(ctx, attrs) or ringed(ctx)
     end)
     :label("Acceleration")
     :hint("Constant acceleration on each piece, in the parent's frame while LockedToPart."),
@@ -863,14 +1014,14 @@ forge_mesh.attributes = {
     :min(0)
     :unit("studs")
     :mod()
-    :hidden(stated)
+    :hidden(grounded)
     :label("Turbulence")
     :hint("How far each piece wanders off its path, drawn per piece."),
   TurbulenceFrequency = knob(1)
     :min(0)
     :unit("perSecond")
     :hidden(function(ctx: any, attrs: any)
-      return stated(ctx, attrs) or calm(ctx, attrs)
+      return grounded(ctx, attrs) or calm(ctx, attrs)
     end)
     :label("TurbulenceFrequency")
     :hint("How fast each piece's wander changes."),
@@ -880,7 +1031,7 @@ forge_mesh.attributes = {
     :unit("perSecond")
     :mod()
     :hidden(function(ctx: any, attrs: any)
-      return stated(ctx, attrs) or ringed(ctx)
+      return grounded(ctx, attrs) or ringed(ctx)
     end)
     :label("Drag")
     :hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
@@ -889,13 +1040,13 @@ forge_mesh.attributes = {
   VelocityInheritance = knob(0)
     :mod()
     :hidden(function(ctx: any, attrs: any)
-      return stated(ctx, attrs) or ringed(ctx)
+      return grounded(ctx, attrs) or ringed(ctx)
     end)
     :label("VelocityInheritance")
     :hint("Share of the parent part's velocity each piece launches with."),
   WindAffectsDrag = knob(false)
     :hidden(function(ctx: any, attrs: any)
-      return stated(ctx, attrs) or dragless(ctx, attrs)
+      return grounded(ctx, attrs) or dragless(ctx, attrs)
     end)
     :label("WindAffectsDrag")
     :hint("Whether drag eases each piece toward the global wind rather than to rest."),
@@ -972,6 +1123,21 @@ forge_mesh.layout = {
     },
   },
   {
+    title = "Path",
+    entries = {
+      "PathEnd",
+      "EndPoint",
+      "EndRadius",
+      "Reverse",
+      "Bend",
+      "Progress",
+      "AfterPath",
+      "FlightTime",
+      { action = "edit_path", label = "Edit Path" },
+    },
+    hidden = unpathed,
+  },
+  {
     title = "States",
     entries = { { action = "edit_states", label = "Edit States" } },
     hidden = flown,
@@ -1038,8 +1204,11 @@ forge_mesh.cards = {
 -- read at emit, which the applier, retime and resize treat as its own
 forge_mesh.companions = { force_rows.rows, material_rows.rows }
 
+-- a path piece flying on past its end lives its flight time longer
 function forge_mesh.duration(_, attrs: any)
-  return attrs.Lifetime.value.Max
+  const flight = if attrs.Motion == "Path" and attrs.AfterPath == "Continue" then attrs.FlightTime.Max else 0
+
+  return attrs.Lifetime.value.Max + flight
 end
 
 forge_mesh.constant = true
@@ -1425,6 +1594,20 @@ const function piece(
     end
   end
 
+  -- a piece on a path walks it for its path time, its first pose facing the
+  -- way the path sets off
+  const pathTime = launch.pathTime
+  const walk, departure = path_motion.follow(flight.path, launch, function()
+    return endNow(flight)
+  end, unplaced)
+
+  if walk ~= nil then
+    const probe = math.min(pathTime, PROBE)
+
+    position = walk(0)
+    velocity = if probe > 0 then (walk(probe) - position) / probe else departure()
+  end
+
   -- the turn the velocity last gave, held once the piece stops
   local heading: CFrame? = nil
 
@@ -1466,6 +1649,30 @@ const function piece(
   local age = 0
   local moving = true
 
+  -- whether the piece still walks its path, and the age it began to fly at,
+  -- which its wander counts from
+  local onPath = walk ~= nil
+  local since = 0
+
+  -- off its path's end a piece stops, or under Continue flies on the way it
+  -- was going at its Speed; whether it flies on
+  const function depart()
+    onPath = false
+    since = pathTime
+
+    if (flight.path :: path_motion.Path).after ~= "Continue" then
+      return false
+    end
+
+    velocity = path_motion.unit(velocity, departure) * launch.speed + launch.inherited
+
+    return true
+  end
+
+  if walk ~= nil and pathTime <= 0 then
+    depart()
+  end
+
   const function place()
     const cf = pose()
 
@@ -1493,7 +1700,7 @@ const function piece(
 
       -- the ray runs along what is drawn: the flown position plus the wander
       const nextWander = if amount > 0
-        then particle_motion.wander(seed, age - dt + h * step, frequency, amount, calm)
+        then particle_motion.wander(seed, age - since - dt + h * step, frequency, amount, calm)
         else vector.zero
 
       const hit = if collision ~= nil
@@ -1524,6 +1731,43 @@ const function piece(
         pinned = true
         break
       end
+    end
+  end
+
+  -- one step along the path, cast from where the piece was to where the path
+  -- puts it now: a Kill ends it there, a Stop pins it there and a Bounce sends
+  -- it off the path to fly the rest of its life. the share of the step past
+  -- the path's end is flown
+  const function trail(dt: number)
+    const along = math.min(dt, pathTime - (age - dt))
+    const nextPosition = walk(age)
+    const nextVelocity = if along > SHORT_STEP then (nextPosition - position) / along else velocity
+    const hit = if collision ~= nil then collision_common.cast(collision.params, position, nextPosition) else nil
+
+    if hit == nil then
+      position, velocity = nextPosition, nextVelocity
+
+      if age >= pathTime and depart() and dt > along then
+        fly(dt - along)
+      end
+
+      return
+    end
+
+    const outcome, landed, rebound = collision_common.respond(
+      response :: collision_common.Config,
+      nextVelocity,
+      { position = toVector(hit.Position), normal = toVector(hit.Normal) }
+    )
+
+    position, velocity = landed, rebound
+    onPath = false
+    since = age
+
+    if outcome == "kill" then
+      moving = false
+    elseif outcome == "stop" then
+      pinned = true
     end
   end
 
@@ -1582,6 +1826,8 @@ const function piece(
     if dt > 0 and not pinned then
       if posing then
         stand()
+      elseif onPath then
+        trail(dt)
       else
         fly(dt)
 
@@ -1720,6 +1966,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     keypoints = tintRest.Keypoints,
     states = nil,
     decals = {},
+    path = if rows.Motion == "Path" then pathOf(rows, origin) else nil,
   }
 
   if stated then
@@ -1787,10 +2034,19 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
 
     config.spread = spread
 
+    const spawn = particle_motion.spawn(origin, size, config, flight.rng)
+
+    -- a path piece's Lifetime is the time it walks its path, its life that
+    -- and the time it flies on
+    const roll, offset, flightTime = path_motion.draw(flight.path, flight.rng, spawn)
+
     const launch: Launch = {
-      spawn = particle_motion.spawn(origin, size, config, flight.rng),
+      spawn = spawn,
       speed = speed,
-      duration = duration,
+      duration = duration + flightTime,
+      pathTime = duration,
+      roll = roll,
+      offset = offset,
       turn = turn,
       inherited = if inheritance ~= 0 and moved
         then toVector((parent :: BasePart).AssemblyLinearVelocity) * inheritance
