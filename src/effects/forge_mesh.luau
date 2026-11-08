@@ -212,9 +212,12 @@ const function calm(_, attrs: any)
   return not turbulent(attrs.Turbulence)
 end
 
--- a piece locked to its parent never meets the world
+-- a piece locked to its parent never meets the world, but one a modifier
+-- frees for a while does
 const function carried(_, attrs: any)
-  return attrs.LockedToPart == true
+  const lock = attrs.LockedToPart
+
+  return not lock.animated and lock.at(0) == true
 end
 
 const function noBounce(_, attrs: any)
@@ -664,6 +667,7 @@ end
 -- ends off the end point and its Progress draws
 type Launch = {
   spawn: CFrame,
+  spawned: number,
   speed: number,
   duration: number,
   pathTime: number,
@@ -1079,7 +1083,10 @@ forge_mesh.attributes = {
     end)
     :label("Drag")
     :hint("Rate each piece loses speed, halving it every 1/Drag seconds."),
-  LockedToPart = knob(false):label("LockedToPart"):hint("Whether pieces move with the parent after they spawn."),
+  LockedToPart = knob(false)
+    :mod()
+    :label("LockedToPart")
+    :hint("Whether pieces move with the parent. A modifier locks or frees pieces in flight."),
   TimeScale = knob(1):min(0):mod():label("TimeScale"):hint("Multiplier on the effect's clock, 0 freezing it."),
   VelocityInheritance = knob(0)
     :mod()
@@ -1443,7 +1450,12 @@ const function piece(
 
   dress(0, true, false)
 
-  const locked = attrs.LockedToPart
+  -- a lock a modifier drives is read each step on the effect's clock, one at
+  -- rest once
+  const lockRow = attrs.LockedToPart
+  const lockTrack = if lockRow.animated then lockRow() else nil
+  local locked = if lockTrack ~= nil then lockTrack.at(launch.spawned) == true else lockRow.at(0) == true
+
   const windy = attrs.WindAffectsDrag
   const origin = flight.origin
   const facing = flight.rotation
@@ -1488,7 +1500,7 @@ const function piece(
   -- the force the piece flies under, its place and axis written each frame
   -- and its driven rows over the life
   const pull: any = if flight.force ~= nil then table.clone(flight.force) else nil
-  const collision = if flight.collision ~= nil and not locked then flight.collision else nil
+  const collision = if flight.collision ~= nil and (lockTrack ~= nil or not locked) then flight.collision else nil
   const response = if collision ~= nil and not posing then table.clone(collision.config) else nil
 
   -- the initial turn, each step's spin added onto it
@@ -1500,11 +1512,33 @@ const function piece(
       turn.z * utility.DEG_TO_RAD
     )
 
-  -- a piece locked to its parent accelerates in the parent's frame
+  -- the parent's pose the lock holds the piece to, in the frame the piece
+  -- flies in, and where the last release left that frame in the world
+  local grip = origin
+  local lift = CFrame.identity
+  local lifted = false
+
+  -- the Acceleration row as last drawn, which a piece locked to its parent
+  -- takes in the parent's frame
+  local thrust: any = Vector3.zero
+
+  const function aim()
+    const v = Vector3.new(thrust.X, thrust.Y, thrust.Z)
+
+    if locked then
+      acceleration = toVector(grip:VectorToWorldSpace(v))
+    elseif lifted then
+      acceleration = toVector(lift:VectorToObjectSpace(v))
+    else
+      acceleration = toVector(thrust)
+    end
+  end
+
   if not posing then
     tween.drive(scope, attrs.Acceleration(nil, duration), function(v: any)
       if isVector(v) then
-        acceleration = toVector(if locked then origin:VectorToWorldSpace(Vector3.new(v.X, v.Y, v.Z)) else v)
+        thrust = v
+        aim()
       end
     end)
 
@@ -1580,28 +1614,59 @@ const function piece(
     return held
   end
 
-  -- a piece locked to its parent rides the parent from where it spawned
+  -- a piece locked to its parent rides the parent from where the lock took
+  -- hold, and a freed one flies on from where it was let go
   const function placed(cf: CFrame)
-    return if locked then live() * origin:ToObjectSpace(cf) else cf
+    if locked then
+      return live() * grip:ToObjectSpace(cf)
+    end
+
+    return if lifted then lift * cf else cf
   end
 
-  -- a world point in the frame a locked piece flies in, carried back by the
-  -- parent's move since the spawn
+  -- a world point in the frame the piece flies in, carried back by the
+  -- parent's move since the lock took hold
   const function unplaced(at: vector): vector
-    if not locked then
-      return at
+    if locked then
+      return toVector(grip:PointToWorldSpace(live():PointToObjectSpace(Vector3.new(at.x, at.y, at.z))))
     end
 
-    return toVector(origin:PointToWorldSpace(live():PointToObjectSpace(Vector3.new(at.x, at.y, at.z))))
+    return if lifted then toVector(lift:PointToObjectSpace(Vector3.new(at.x, at.y, at.z))) else at
   end
 
-  -- a world axis in the frame a locked piece flies in
+  -- a world axis in the frame the piece flies in
   const function unturned(up: vector): vector
-    if not locked then
-      return up
+    if locked then
+      return toVector(grip:VectorToWorldSpace(live():VectorToObjectSpace(Vector3.new(up.x, up.y, up.z))))
     end
 
-    return toVector(origin:VectorToWorldSpace(live():VectorToObjectSpace(Vector3.new(up.x, up.y, up.z))))
+    return if lifted then toVector(lift:VectorToObjectSpace(Vector3.new(up.x, up.y, up.z))) else up
+  end
+
+  -- a ray between two points of the frame the piece flies in, its hit read
+  -- back into that frame. a piece casts only while free, so at most a lift
+  -- lies between that frame and the world
+  const function strike(from: vector, to: vector): { position: vector, normal: vector }?
+    const params = (collision :: Collision).params
+
+    if not lifted then
+      const hit = collision_common.cast(params, from, to)
+
+      return if hit ~= nil then { position = toVector(hit.Position), normal = toVector(hit.Normal) } else nil
+    end
+
+    const a = lift:PointToWorldSpace(Vector3.new(from.x, from.y, from.z))
+    const b = lift:PointToWorldSpace(Vector3.new(to.x, to.y, to.z))
+    const hit = collision_common.cast(params, toVector(a), toVector(b))
+
+    if hit == nil then
+      return nil
+    end
+
+    return {
+      position = toVector(lift:PointToObjectSpace(hit.Position)),
+      normal = toVector(lift:VectorToObjectSpace(hit.Normal)),
+    }
   end
 
   -- the force this frame, placed where its center stands, in the frame the
@@ -1677,7 +1742,7 @@ const function piece(
     if stance ~= nil and billboard then
       const camera = workspace.CurrentCamera
       const view = if camera then camera.CFrame else nil
-      const point = if locked then placed(CFrame.new(stance.Position)).Position else stance.Position
+      const point = if locked or lifted then placed(CFrame.new(stance.Position)).Position else stance.Position
       const turned = orient_common.rotation(stateMode, facing, toVector(point), vector.zero, view, nil)
 
       return (turned * stance.Rotation + point) * look.offset()
@@ -1754,12 +1819,14 @@ const function piece(
 
   -- one step of a particle's flight, its substeps cast along what is drawn
   const function fly(dt: number)
-    const wind = if windy then toVector(workspace.GlobalWind) else vector.zero
+    const gust = if windy then toVector(workspace.GlobalWind) else vector.zero
+    const wind = if lifted and not locked then unturned(gust) else gust
+    const hits = collision ~= nil and not locked
 
     -- the force's target is read once a frame, a gone one adding none
     const force = forceNow()
 
-    const steps = if collision ~= nil or drag > 0 or force ~= nil then particle_motion.substeps(dt) else 1
+    const steps = if hits or drag > 0 or force ~= nil then particle_motion.substeps(dt) else 1
     const h = dt / steps
 
     for step = 1, steps do
@@ -1774,9 +1841,7 @@ const function piece(
         then particle_motion.wander(seed, age - since - dt + h * step, frequency, amount, calm)
         else vector.zero
 
-      const hit = if collision ~= nil
-        then collision_common.cast(collision.params, position + wander, nextPosition + nextWander)
-        else nil
+      const hit = if hits then strike(position + wander, nextPosition + nextWander) else nil
 
       wander = nextWander
 
@@ -1785,11 +1850,7 @@ const function piece(
         continue
       end
 
-      const outcome, landed, rebound = collision_common.respond(
-        response :: collision_common.Config,
-        nextVelocity,
-        { position = toVector(hit.Position), normal = toVector(hit.Normal) }
-      )
+      const outcome, landed, rebound = collision_common.respond(response :: collision_common.Config, nextVelocity, hit)
 
       position, velocity = landed - wander, rebound
 
@@ -1813,7 +1874,7 @@ const function piece(
     const along = math.min(dt, pathTime - (age - dt))
     const nextPosition = walk(age)
     const nextVelocity = if along > SHORT_STEP then (nextPosition - position) / along else velocity
-    const hit = if collision ~= nil then collision_common.cast(collision.params, position, nextPosition) else nil
+    const hit = if collision ~= nil and not locked then strike(position, nextPosition) else nil
 
     if hit == nil then
       position, velocity = nextPosition, nextVelocity
@@ -1825,11 +1886,7 @@ const function piece(
       return
     end
 
-    const outcome, landed, rebound = collision_common.respond(
-      response :: collision_common.Config,
-      nextVelocity,
-      { position = toVector(hit.Position), normal = toVector(hit.Normal) }
-    )
+    const outcome, landed, rebound = collision_common.respond(response :: collision_common.Config, nextVelocity, hit)
 
     position, velocity = landed, rebound
     onPath = false
@@ -1847,8 +1904,8 @@ const function piece(
   const function stand()
     const nextStance = stanceNow()
     const was = stance :: CFrame
-    const hit = if collision ~= nil
-      then collision_common.cast(collision.params, toVector(was.Position), toVector(nextStance.Position))
+    const hit = if collision ~= nil and not locked
+      then strike(toVector(was.Position), toVector(nextStance.Position))
       else nil
 
     if hit == nil then
@@ -1856,13 +1913,54 @@ const function piece(
       return
     end
 
-    stance = nextStance.Rotation + hit.Position
+    const at = hit.position
+
+    stance = nextStance.Rotation + Vector3.new(at.x, at.y, at.z)
 
     if (collision :: Collision).config.mode == "Kill" then
       moving = false
     else
       pinned = true
     end
+  end
+
+  -- the parent's pose as the last step found it
+  local parentWas = origin
+
+  -- the lock as the effect's clock stands `age` into the piece's life. the
+  -- frame the piece flies in carries it on as it was last drawn: a release
+  -- freezes the parent's carry into the lift, a lock grips the parent from
+  -- that same pose, and the velocity gains or gives up the parent's own at
+  -- the piece, so the piece never jumps
+  const function regrip(deltaTime: number)
+    const now = live()
+    const was = parentWas
+
+    parentWas = now
+
+    if ((lockTrack :: any).at(launch.spawned + age) == true) == locked then
+      return
+    end
+
+    const carry = if locked then was * grip:Inverse() else lift
+    const drawn = position + wander
+    const own = if stance ~= nil then stance.Position else Vector3.new(drawn.x, drawn.y, drawn.z)
+    const at = carry:PointToWorldSpace(own)
+    -- read off the parent's move over the step, since an anchored parent a
+    -- script moves reports no velocity of its own
+    const moved = now:PointToWorldSpace(was:PointToObjectSpace(at)) - at
+    const parentVelocity = if deltaTime > 0 then toVector(carry:VectorToObjectSpace(moved)) / deltaTime else vector.zero
+
+    if locked then
+      lift, lifted = carry, true
+      velocity += parentVelocity
+    else
+      grip = carry:Inverse() * was
+      velocity -= parentVelocity
+    end
+
+    locked = not locked
+    aim()
   end
 
   const function advance(deltaTime: number)
@@ -1886,6 +1984,10 @@ const function piece(
     const dt = math.min(deltaTime, duration - age)
 
     age += dt
+
+    if lockTrack ~= nil then
+      regrip(deltaTime)
+    end
 
     const t = if duration > 0 then age / duration else 1
 
@@ -2117,6 +2219,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
 
     const launch: Launch = {
       spawn = spawn,
+      spawned = spawned,
       speed = speed,
       duration = duration + flightTime,
       pathTime = duration,

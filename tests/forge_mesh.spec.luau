@@ -2534,6 +2534,126 @@ harness.suite(function()
         env:Clear()
       end)
     end)
+
+    test("a plain LockedToPart rides the parent as a free piece flies, in the parent's frame", function()
+      staged(function(fake)
+        const start = CFrame.new(0, 10, 0) * CFrame.Angles(0, 0.5, 0)
+        const thrust = Vector3.new(3, 0, 1)
+        const _, parent = parentPart(start, Vector3.zero)
+        const _, still = parentPart(start, Vector3.zero)
+        const locked = template(parent, {
+          Speed = NumberRange.new(2, 2),
+          Lifetime = NumberRange.new(2, 2),
+          Acceleration = thrust,
+          LockedToPart = true,
+        })
+        const free = template(still, {
+          Speed = NumberRange.new(2, 2),
+          Lifetime = NumberRange.new(2, 2),
+          Acceleration = start:VectorToWorldSpace(thrust),
+        })
+
+        -- a parent of no size launches both pieces from its center alike
+        const lockedEnv = effects.emit(0, locked)
+        const ridden = pieces(fake)[1]
+        const freeEnv = effects.emit(0, free)
+        const flown = if pieces(fake)[1] == ridden then pieces(fake)[2] else pieces(fake)[1]
+        local worst = 0
+
+        for i = 1, 90 do
+          parent.CFrame = start * CFrame.new(i * 0.1, i * 0.05, 0) * CFrame.Angles(0, i * 0.01, 0)
+          frames(1)
+
+          const expected = parent.CFrame * start:ToObjectSpace(flown.CFrame)
+
+          worst = math.max(worst, (ridden.CFrame.Position - expected.Position).Magnitude)
+        end
+
+        expect(worst < EPSILON).toBe(true)
+
+        lockedEnv:Clear()
+        freeEnv:Clear()
+      end)
+    end)
+
+    test("a tween that frees a locked piece hands it the parent's velocity without a jump", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(2, 2) })
+
+        -- over the effect's 2 s, the lock lets go at 1 s
+        tweened(part, "LockedToPart", true, false)
+
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+        const step = Vector3.new(6, 0, 0) * FRAME
+        local x = 0
+        local last = piece.CFrame.Position
+        local worst = 0
+
+        for _ = 1, 90 do
+          x += step.X
+          parent.CFrame = CFrame.new(x, 10, 0)
+          frames(1)
+
+          const now = piece.CFrame.Position
+
+          worst = math.max(worst, (now - last - step).Magnitude)
+          last = now
+        end
+
+        expect(worst < LOOSE).toBe(true)
+
+        -- let go, it flies on at the parent's velocity and no longer follows
+        parent.CFrame = CFrame.new(x, 20, 0)
+        frames(1)
+
+        expect(near(piece.CFrame.Position - last, step, LOOSE)).toBe(true)
+
+        env:Clear()
+      end)
+    end)
+
+    test("a tween that locks a free piece grips the parent where it stands, then rides it", function()
+      staged(function(fake)
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Speed = STILL, Lifetime = NumberRange.new(2, 2) })
+
+        -- over the effect's 2 s, the lock takes hold at 1 s
+        tweened(part, "LockedToPart", false, true)
+
+        const env = effects.emit(0, part)
+        const piece = pieces(fake)[1]
+        const step = 6 * FRAME
+        local x = 0
+        local last = piece.CFrame.Position
+        local worst = 0
+
+        -- a still piece keeps still as the lock grips a moving parent, its
+        -- velocity now the parent's taken off
+        for _ = 1, 90 do
+          x += step
+          parent.CFrame = CFrame.new(x, 10, 0)
+          frames(1)
+
+          const now = piece.CFrame.Position
+
+          worst = math.max(worst, (now - last).Magnitude)
+          last = now
+        end
+
+        expect(worst < LOOSE).toBe(true)
+
+        -- and moves with what the parent does past its velocity
+        x += step
+        parent.CFrame = CFrame.new(x, 20, 0)
+        frames(1)
+
+        expect(near(piece.CFrame.Position - last, Vector3.new(0, 10, 0), LOOSE)).toBe(true)
+
+        env:Clear()
+      end)
+    end)
   end)
 
   harness.describe("a mesh's motion", function()
@@ -3413,6 +3533,47 @@ harness.suite(function()
 
         env:Clear()
       end)
+    end)
+
+    test("a piece casts nothing while locked and meets the floor once a tween frees it", function()
+      for _, lock in { "plain", "tweened" } do
+        framed(function(fake)
+          const part = attached({
+            CollisionMode = "Stop",
+            Acceleration = Vector3.new(0, -4, 0),
+            Lifetime = NumberRange.new(4, 4),
+            Speed = STILL,
+            LockedToPart = true,
+          })
+
+          -- over the effect's 4 s the lock lets go at 2 s, 4 studs up, and
+          -- the floor is 0.45 s on
+          if lock == "tweened" then
+            tweened(part, "LockedToPart", true, false)
+          end
+
+          walled(part.Parent :: Instance, function(casts)
+            const env = effects.emit(0, part)
+            const piece = pieces(fake)[1]
+
+            frames(110)
+
+            expect(#casts).toBe(0)
+
+            frames(70)
+
+            if lock == "plain" then
+              expect(#casts).toBe(0)
+              expect(piece.CFrame.Position.Y < -1).toBe(true)
+            else
+              expect(#casts > 0).toBe(true)
+              expect(math.abs(piece.CFrame.Position.Y) < 0.01).toBe(true)
+            end
+
+            env:Clear()
+          end)
+        end)
+      end
     end)
 
     test("VelocityParallel holds the last flight heading once Stop pins a piece", function()
@@ -4477,6 +4638,18 @@ harness.suite(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
 
         expect(hiddenOf(template(parent, { LockedToPart = true })).Collision).toBe(true)
+      end)
+    end)
+
+    test("a modifier on LockedToPart keeps the Collision group shown", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { LockedToPart = true })
+
+        tweened(part, "LockedToPart", true, false)
+
+        expect(hiddenOf(part).Collision).toBe(false)
+        expect(hiddenOf(template(parent, { LockedToPart = false })).Collision).toBe(false)
       end)
     end)
 
