@@ -433,6 +433,16 @@ legacy_mods.MOVING_ONLY = {
   },
 }
 
+-- every name some class lists above, so a read of any other row asks nothing
+-- of the instance
+const STILL_NAMES: { [string]: boolean } = {}
+
+for _, rows in legacy_mods.MOVING_ONLY do
+  for name in rows do
+    STILL_NAMES[name] = true
+  end
+end
+
 local function heldStill(ref: Instance, name: string, startV: any, finishV: any): boolean
   const rows = legacy_mods.MOVING_ONLY[ref.ClassName]
 
@@ -450,6 +460,44 @@ function legacy_mods.isHeldStill(ref: Instance, name: string, map: { [string]: a
     legacy_mods.alias(ref, keys.start, nil, map),
     legacy_mods.alias(ref, keys.finish, nil, map)
   )
+end
+
+-- whether a framed map is one the plugin converted out of such a still quad
+-- before the quad read as none: a lone seedable tween on the start lane, its
+-- ends one literal. it reads as no map, so the row keeps the instance's own
+-- value as v2 did. only the convert marks a lane seedable, never one the
+-- modifier window adds
+function legacy_mods.isHeldStillLane(ref: Instance, name: string, lanes: { [string]: { any } }): boolean
+  if not STILL_NAMES[name] then
+    return false
+  end
+
+  const rows = legacy_mods.MOVING_ONLY[ref.ClassName]
+
+  if rows == nil or not rows[name] then
+    return false
+  end
+
+  for lane in lanes do
+    if lane ~= "start" then
+      return false
+    end
+  end
+
+  const queue = lanes.start
+
+  if queue == nil or #queue ~= 1 then
+    return false
+  end
+
+  const m = queue[1]
+  const from, to = m.start, m.finish
+
+  if m.kind ~= "tween" or m.seedable ~= true or m.chain == true or m.partial ~= nil then
+    return false
+  end
+
+  return from ~= nil and to ~= nil and value.isLit(from) and value.isLit(to) and from.v == to.v
 end
 
 function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?

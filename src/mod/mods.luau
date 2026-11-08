@@ -147,7 +147,7 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
   local known = DECODED[raw :: string]
 
   if known ~= nil then
-    return known
+    return if legacy_mods.isHeldStillLane(ref, name, known) then nil else known
   end
 
   local body = frame.unframe(raw)
@@ -172,7 +172,7 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
     DECODED[raw :: string] = lanes
     decodedCount += 1
 
-    return lanes
+    return if legacy_mods.isHeldStillLane(ref, name, lanes) then nil else lanes
   end
 
   logger.warn(`failed to decode the modifier queue on {name}`)

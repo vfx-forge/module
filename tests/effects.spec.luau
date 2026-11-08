@@ -2431,6 +2431,48 @@ harness.suite(function()
       built.restore()
     end)
 
+    -- a lane the plugin converted out of a still quad before the quad read as
+    -- none, its lone tween marked seedable
+    local function laned(name: string, from: number, to: number, seedable: boolean)
+      local entry = {
+        kind = "tween",
+        chain = false,
+        start = value.lit(from),
+        finish = value.lit(to),
+        seedable = if seedable then true else nil,
+      }
+
+      return {
+        [mods.attrName("property", name)] = frame.frame(codec.encode({ lanes = { start = { entry } } })),
+      }
+    end
+
+    test("a converted still lane on a curve size reads as none and keeps the beam's property", function()
+      local rows, built = beamRows({ CurveSize0 = 15 }, laned("CurveSize0", -22.5, -22.5, true))
+
+      expect(rows.CurveSize0.animated).toBe(false)
+      expect(rows.CurveSize0.at(0.5)).toBe(15)
+
+      built.restore()
+    end)
+
+    test("a still lane the plugin did not convert keeps applying", function()
+      local rows, built = beamRows({ CurveSize0 = 15 }, laned("CurveSize0", -22.5, -22.5, false))
+
+      expect(rows.CurveSize0.at(0.5)).toBe(-22.5)
+
+      built.restore()
+    end)
+
+    test("a converted moving lane on a curve size keeps tweening", function()
+      local rows, built = beamRows({ CurveSize0 = 15 }, laned("CurveSize0", -22.5, 0, true))
+
+      expect(rows.CurveSize0.animated).toBe(true)
+      expect(rows.CurveSize0.at(0)).toBe(-22.5)
+
+      built.restore()
+    end)
+
     test("a still old width quad is still applied, as v2 applied it", function()
       local rows, built = beamRows({ Width0 = 1 }, { Width0_Start = 3, Width0_End = 3 })
 
