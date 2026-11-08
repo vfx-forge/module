@@ -1485,10 +1485,8 @@ const function piece(
     return if billboard then own.Rotation + frame.Position else frame
   end
 
-  -- where its states put it as it was last drawn, nil for a particle, and
-  -- the surfaces they bounced off
+  -- where its states put it as it was last drawn, nil for a particle
   local stance = if posing then stanceNow() else nil
-  const mirror = if stance ~= nil then collision_common.mirror(toVector(stance.Position)) else nil
 
   local position = toVector(at)
   local velocity = toVector(launch.spawn.LookVector) * launch.speed + launch.inherited
@@ -1507,6 +1505,14 @@ const function piece(
   const collision = if flight.collision ~= nil and (lockTrack ~= nil or not locked) then flight.collision else nil
   const responds = collision ~= nil and (not posing or collision.config.mode == "Bounce")
   const response = if responds then table.clone((collision :: Collision).config) else nil
+
+  -- the surfaces a States piece's states bounced off, for one that can meet
+  -- any, and under Bounce its Bounce and Friction rows, read where they stand
+  -- at a hit `span * share` into the step that began at `from`
+  const mirror = if stance ~= nil and collision ~= nil then collision_common.mirror(toVector(stance.Position)) else nil
+  const shifts: any = if posing and response ~= nil
+    then { bounce = attrs.Bounce(nil, duration), friction = attrs.Friction(nil, duration), from = 0, span = 0 }
+    else nil
 
   -- the initial turn, each step's spin added onto it
   local rotation = if posing
@@ -1585,7 +1591,7 @@ const function piece(
     end)
   end
 
-  if response ~= nil then
+  if response ~= nil and shifts == nil then
     tween.drive(scope, attrs.Bounce(nil, duration), function(v: any)
       response.bounce = numberOr(v, 0)
     end)
@@ -1904,8 +1910,18 @@ const function piece(
     end
   end
 
-  const function responded(): collision_common.Config
-    return response or (collision :: Collision).config
+  const function responded(share: number): collision_common.Config
+    if shifts == nil then
+      return (collision :: Collision).config
+    end
+
+    const config = response :: collision_common.Config
+    const elapsed = shifts.from + shifts.span * share
+
+    config.bounce = numberOr(shifts.bounce.at(elapsed), 0)
+    config.friction = numberOr(shifts.friction.at(elapsed), 0)
+
+    return config
   end
 
   -- one step through the states, cast from where the piece was drawn to
@@ -1914,11 +1930,20 @@ const function piece(
   -- states' own turn is kept whatever the mirror does
   const function stand(dt: number)
     const nextStance = stanceNow()
-    const cast = if collision ~= nil and not locked then strike else unhit
-    const outcome, at =
-      collision_common.step(mirror :: collision_common.Mirror, responded, toVector(nextStance.Position), dt, cast)
 
-    if outcome == "move" and (mirror :: collision_common.Mirror).bounces == 0 then
+    if mirror == nil then
+      stance = nextStance
+      return
+    end
+
+    if shifts ~= nil then
+      shifts.from, shifts.span = age - dt, dt
+    end
+
+    const cast = if locked then unhit else strike
+    const outcome, at = collision_common.step(mirror, responded, toVector(nextStance.Position), dt, cast)
+
+    if outcome == "move" and mirror.bounces == 0 then
       stance = nextStance
       return
     end

@@ -731,11 +731,13 @@ end
 -- the heights of one States piece of two seconds' life, spawned at ATTACHED
 -- on an unturned template and moving through `list` under `rows`, once a
 -- frame over its life, between walls across the world's y that each turn back
--- a ray crossing them against their `normal`: -1 a ceiling, 1 a floor
+-- a ray crossing them against their `normal`: -1 a ceiling, 1 a floor, and
+-- `dress` giving the template what rows cannot
 const function walledStates(
   rows: { [string]: any },
   list: { any },
-  walls: { { y: number, normal: number } }
+  walls: { { y: number, normal: number } },
+  dress: ((part: BasePart) -> ())?
 ): { Vector3 }
   const real = collision_common.engine
   const seen = {}
@@ -778,6 +780,10 @@ const function walledStates(
     part:SetAttribute("Motion", "States")
     part:SetAttribute("Lifetime", NumberRange.new(2, 2))
     part:SetAttribute("Speed", STILL)
+
+    if dress ~= nil then
+      dress(part)
+    end
 
     stubbed(part, { States = state_list.encode(list :: any) }, function()
       const env = effects.emit(0, part)
@@ -1781,6 +1787,54 @@ harness.suite(function()
 
       -- up into the ceiling, down to the floor and back up, at least
       expect(turns >= 2).toBe(true)
+    end)
+
+    test("a bounced States piece keeps its mirror through a lock and bounces again once let go", function()
+      const list = { stateOf(0), stateOf(1, { position = vector.create(0, 20, 0) }) }
+
+      -- a ceiling met at 0.3 s while free, a floor crossed at 0.9 s while
+      -- locked and a floor met at 1.3 s once let go
+      const walls = { { y = 15, normal = -1 }, { y = 9, normal = 1 }, { y = 5, normal = 1 } }
+
+      -- the lock takes hold at 0.6 s and lets go at 1 s
+      const function locking(part: BasePart)
+        stepped(part, "LockedToPart", { false, false, true, false }, 0.4)
+      end
+
+      const rows = { CollisionMode = "Bounce", Bounce = 1, Friction = 0 }
+      const seen = walledStates(rows, list, walls, locking)
+
+      -- never a jump past one frame's move and the surface offset, at the
+      -- bounces, the lock or the release
+      for k = 2, 119 do
+        expect((seen[k] - seen[k - 1]).Magnitude <= 10 * FRAME + 0.01 + LOOSE).toBe(true)
+      end
+
+      -- still mirrored down through the floor it crossed while locked
+      expect(seen[60].Y < 9).toBe(true)
+      expect(seen[60].Y < seen[54].Y).toBe(true)
+
+      -- and turned back up by the floor it met once free
+      for k = 2, 119 do
+        expect(seen[k].Y >= 5 - LOOSE).toBe(true)
+      end
+
+      expect(seen[119].Y > seen[90].Y + 1).toBe(true)
+    end)
+
+    test("a States piece reads Bounce where its row stands at the hit", function()
+      -- Bounce falls from 1 to 0 over the life, so it is 0.5 at the hit
+      const function falling(part: BasePart)
+        tweened(part, "Bounce", 1, 0)
+      end
+
+      const seen = walledStates({ CollisionMode = "Bounce", Friction = 0 }, climb(0), CEILING, falling)
+
+      for k = 1, 58 do
+        const want = 17 - 0.01 - (17 - seen[60 - k].Y) * 0.5
+
+        expect(math.abs(seen[60 + k].Y - want) < LOOSE).toBe(true)
+      end
     end)
 
     test("a States piece locked to its parent never bounces", function()
