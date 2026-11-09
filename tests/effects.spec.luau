@@ -2151,8 +2151,13 @@ harness.suite(function()
     -- window dispatches as it opens and over two frames, each true when it is
     -- a tick of that instance's own module. a tick is counted rather than run,
     -- since a piece of these modules needs Studio, and a tick of anything else
-    -- is dropped; a plain emit runs as it is
-    local function untagged(effect: any, build: () -> Instance): (Instance, { boolean })
+    -- is dropped; a plain emit runs as it is. `prepare` runs once the module
+    -- is registered, for a state only the runtime's own calls reach
+    local function untagged(
+      effect: any,
+      build: () -> Instance,
+      prepare: ((inst: Instance) -> ())?
+    ): (Instance, { boolean })
       local built = fresh()
       local inst = build()
       local seen = {}
@@ -2164,6 +2169,10 @@ harness.suite(function()
 
       registry.register(effect)
       inst:SetAttribute("EmitDuration", 1)
+
+      if prepare then
+        prepare(inst)
+      end
 
       emitters.dispatch = function(obj: any, fx: any, shared: any, ticked: any, constant: boolean?)
         if not constant then
@@ -2193,38 +2202,38 @@ harness.suite(function()
       return inst, seen
     end
 
-    -- a mesh model with its Start and End, tagged when `tag` is given and
-    -- switched off, so only the window could tick it
-    local function meshModel(tag: string?)
-      return function()
-        local model = harness.make("Model", harness.make("Folder"))
-        local start = harness.make("Part", model)
-        local goal = harness.make("Part", model)
+    -- a mesh model with its Start and End, switched on as the panel leaves
+    -- it: Enabled and the tag together
+    local function meshModel()
+      local model = harness.make("Model", harness.make("Folder"))
+      local start = harness.make("Part", model)
+      local goal = harness.make("Part", model)
 
-        start.Name = "Start"
-        goal.Name = "End"
-        model:SetAttribute("Enabled", false)
+      start.Name = "Start"
+      goal.Name = "End"
+      model:SetAttribute("Enabled", true)
+      model:AddTag(utility.ENABLED_VFX_TAG)
 
-        if tag then
-          model:AddTag(tag)
-        end
-
-        return model
-      end
+      return model
     end
 
-    test("an untagged mesh opens no window, as v2 ignored its EmitDuration", function()
-      local model, seen = untagged(mesh, meshModel())
+    -- switched off in edit mode, a model loses its tag, so the state is
+    -- reached through the switch: a tagged and disabled model is one edit
+    -- mode never holds
+    test("a mesh switched off in edit mode still runs its EmitDuration window", function()
+      local model, seen = untagged(mesh, meshModel, function(inst: Instance)
+        enabled_effects.switch(inst, false)
+      end)
 
-      expect(seen).toEqual({})
       expect(model:HasTag(utility.ENABLED_VFX_TAG)).toBe(false)
+      expect(seen).toEqual({ true, true, true })
     end)
 
-    test("a tagged mesh window ticks", function()
-      local model, seen = untagged(mesh, meshModel(utility.ENABLED_VFX_TAG))
+    test("a switched on mesh's plain emit switches it off and runs its window", function()
+      local model, seen = untagged(mesh, meshModel)
 
+      expect(model:GetAttribute("Enabled")).toBe(false)
       expect(seen).toEqual({ true, true, true })
-      expect(model:HasTag(utility.ENABLED_VFX_TAG)).toBe(true)
     end)
 
     -- a bolt as its emit needs it to reach the window: under a part, with its
