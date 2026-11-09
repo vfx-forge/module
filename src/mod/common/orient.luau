@@ -3,9 +3,14 @@
 const common = {}
 
 export type Mode = "None" | "FacingCamera" | "FacingCameraWorldUp" | "VelocityParallel" | "VelocityPerpendicular"
+export type Side = "None" | "Top" | "Front" | "Back"
 
 const STILL_SPEED = 1e-6
 const NEAR_VERTICAL = 0.999
+
+-- the sine below which a side and a normal run as one line, which a float32
+-- cross product cannot find a plane for
+const PARALLEL = 1e-4
 
 const UP = vector.create(0, 1, 0)
 const SIDE = vector.create(1, 0, 0)
@@ -18,6 +23,8 @@ common.MODES = {
   "VelocityParallel",
   "VelocityPerpendicular",
 } :: { Mode }
+
+common.SIDES = { "None", "Top", "Front", "Back" } :: { Side }
 
 -- upper case, the spelling an authored Vector3 answers to under every host
 const function toVector(v: Vector3): vector
@@ -106,6 +113,50 @@ function common.rotation(
   const level = direction(vector.create(toward.x, 0, toward.z))
 
   return level and looking(level, UP) or keep
+end
+
+-- the turn that sets `side` of a piece turned `turn` facing out of a surface
+-- of unit `normal`: its up along the normal, its front along it or its front
+-- into it, the axes VelocityParallel and VelocityPerpendicular turn. the
+-- shortest arc does it, about an axis square to the normal, so the piece
+-- never twists about the normal
+function common.landing(turn: CFrame, side: Side, normal: vector): CFrame
+  const keep = turn.Rotation
+
+  if side == "None" then
+    return keep
+  end
+
+  const axis = if side == "Top"
+    then toVector(keep.UpVector)
+    elseif side == "Front" then toVector(keep.LookVector)
+    else -toVector(keep.LookVector)
+  const cos = math.clamp(vector.dot(axis, normal), -1, 1)
+  const across = vector.cross(axis, normal)
+  const planar = vector.magnitude(across) > PARALLEL
+
+  if not planar and cos > 0 then
+    return keep
+  end
+
+  -- facing straight away the arc has no plane, so the half turn is about an
+  -- axis of the piece's own square to the side
+  const pivot = if planar
+    then vector.normalize(across)
+    elseif side == "Top" then toVector(keep.RightVector)
+    else toVector(keep.UpVector)
+
+  return CFrame.fromAxisAngle(toVector3(pivot), math.acos(cos)) * keep
+end
+
+-- the turn `elapsed` seconds into a landing from `from` to `to` that takes
+-- `duration`, eased by `ease`; one of no duration snaps
+function common.settling(from: CFrame, to: CFrame, elapsed: number, duration: number, ease: (t: number) -> number)
+  if duration <= 0 or elapsed >= duration then
+    return to
+  end
+
+  return from:Lerp(to, ease(math.max(elapsed, 0) / duration))
 end
 
 -- as a ParticleEmitter squashes, measured: height by 1 + s, or by 1 / (1 - s)

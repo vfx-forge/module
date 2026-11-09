@@ -93,6 +93,91 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("orient_common.landing", function()
+    const NORMAL = vector.normalize(vector.create(0.3, 1, -0.4))
+    const UP = Vector3.new(NORMAL.x, NORMAL.y, NORMAL.z)
+
+    test("lists the sides in the SurfaceAlign row's order", function()
+      expect(table.concat(orient_common.SIDES, ",")).toBe("None,Top,Front,Back")
+    end)
+
+    test("None keeps the turn", function()
+      const cf = orient_common.landing(BASE, "None", NORMAL)
+
+      expect(near(cf.LookVector, BASE.LookVector) and near(cf.UpVector, BASE.UpVector)).toBe(true)
+    end)
+
+    test("each side lands its axis on its way out of the surface", function()
+      expect(near(orient_common.landing(BASE, "Top", NORMAL).UpVector, UP)).toBe(true)
+      expect(near(orient_common.landing(BASE, "Front", NORMAL).LookVector, UP)).toBe(true)
+      expect(near(orient_common.landing(BASE, "Back", NORMAL).LookVector, -UP)).toBe(true)
+    end)
+
+    test("turns about an axis square to the normal, so its heading about it holds", function()
+      for _, side in { "Top", "Front", "Back" } do
+        const cf = orient_common.landing(BASE, side :: any, NORMAL)
+        const delta = cf * BASE:Inverse()
+        const axis, angle = delta:ToAxisAngle()
+
+        expect(angle < 1e-4 or math.abs(axis.Unit:Dot(UP)) < EPSILON).toBe(true)
+      end
+    end)
+
+    test("a piece already flat keeps its yaw", function()
+      const flat = CFrame.fromOrientation(0, 1.2, 0)
+      const cf = orient_common.landing(flat, "Top", vector.create(0, 1, 0))
+
+      expect(near(cf.LookVector, flat.LookVector) and near(cf.UpVector, flat.UpVector)).toBe(true)
+    end)
+
+    test("a side facing straight into the surface turns over finitely", function()
+      const cases = {
+        { side = "Top", turn = CFrame.fromOrientation(math.pi, 0.5, 0), want = "UpVector", sign = 1 },
+        { side = "Front", turn = CFrame.fromOrientation(-math.pi / 2, 0, 0), want = "LookVector", sign = 1 },
+        { side = "Back", turn = CFrame.fromOrientation(math.pi / 2, 0, 0), want = "LookVector", sign = -1 },
+      }
+
+      for _, case in cases do
+        const cf = orient_common.landing(case.turn, case.side :: any, vector.create(0, 1, 0))
+        const got = (cf :: any)[case.want] :: Vector3
+
+        expect(got.X == got.X and got.Y == got.Y and got.Z == got.Z).toBe(true)
+        expect(near(got, Vector3.new(0, case.sign, 0))).toBe(true)
+        expect(math.abs(cf.RightVector:Dot(cf.UpVector)) < EPSILON).toBe(true)
+      end
+    end)
+  end)
+
+  harness.describe("orient_common.settling", function()
+    const FROM = CFrame.fromOrientation(0.2, 0.4, 0)
+    const TO = CFrame.fromOrientation(1.3, -0.2, 0.6)
+
+    const function ease(t: number)
+      return t * t
+    end
+
+    test("no duration snaps to the landed turn", function()
+      const cf = orient_common.settling(FROM, TO, 0, 0, ease)
+
+      expect(near(cf.LookVector, TO.LookVector) and near(cf.UpVector, TO.UpVector)).toBe(true)
+    end)
+
+    test("starts at the hit turn and ends on the landed one", function()
+      const first = orient_common.settling(FROM, TO, 0, 0.5, ease)
+      const last = orient_common.settling(FROM, TO, 0.7, 0.5, ease)
+
+      expect(near(first.LookVector, FROM.LookVector) and near(first.UpVector, FROM.UpVector)).toBe(true)
+      expect(near(last.LookVector, TO.LookVector) and near(last.UpVector, TO.UpVector)).toBe(true)
+    end)
+
+    test("eases between them on the curve", function()
+      const cf = orient_common.settling(FROM, TO, 0.25, 0.5, ease)
+      const want = FROM:Lerp(TO, 0.25)
+
+      expect(near(cf.LookVector, want.LookVector) and near(cf.UpVector, want.UpVector)).toBe(true)
+    end)
+  end)
+
   harness.describe("orient_common.squash", function()
     test("keeps the area of the side it stretches", function()
       for _, s in { -2, -0.5, 0, 0.25, 1.5 } do
