@@ -91,6 +91,10 @@ const function linear()
   return utility.linear_bezier
 end
 
+const function eased()
+  return utility.default_bezier
+end
+
 const function disabled(_, attrs: any)
   return not attrs.Enabled
 end
@@ -227,6 +231,20 @@ end
 
 const function noCollision(_, attrs: any)
   return attrs.CollisionMode == "Off"
+end
+
+-- whether a hit leaves a piece where it landed, a killed one lingering there
+-- through its destroy delay
+const function lands(attrs: any)
+  return attrs.CollisionMode == "Stop" or attrs.CollisionMode == "Kill"
+end
+
+const function unlanded(ctx: any, attrs: any)
+  return carried(ctx, attrs) or not lands(attrs)
+end
+
+const function unaligned(_, attrs: any)
+  return attrs.SurfaceAlign == "None"
 end
 
 const function untagged(_, attrs: any)
@@ -713,6 +731,16 @@ type Collision = {
   config: collision_common.Config,
 }
 
+-- the turn a landed piece makes, in the frame it flies in, from how it was
+-- drawn at the hit to its SurfaceAlign side facing out of the surface
+type Landing = {
+  from: CFrame,
+  to: CFrame,
+  elapsed: number,
+  duration: number,
+  ease: (t: number) -> number,
+}
+
 -- what every piece of one emit shares, read once as it emits
 type Flight = {
   origin: CFrame,
@@ -1156,6 +1184,21 @@ forge_mesh.attributes = {
     :label("RespectCanCollide")
     :hint("Whether parts with CanCollide off are passed through."),
 
+  SurfaceAlign = knob("None"):options(orient_common.SIDES):label("SurfaceAlign"):hint(
+    "Which side of each piece faces out of the surface it lands on: its top lies flat, its front faces out, its back points in."
+  ),
+  SurfaceAlignCurve = knob(eased):hidden(unaligned):label("Curve"):hint("Easing of the turn onto the surface."),
+  SurfaceAlignDuration = knob(0.1)
+    :min(0)
+    :unit("seconds")
+    :hidden(unaligned)
+    :label("Duration")
+    :hint("Seconds the turn onto the surface takes, 0 snapping at once."),
+  SurfaceOffset = knob(0)
+    :unit("studs")
+    :label("Offset")
+    :hint("How far each landed piece rests off the surface, along the surface's normal."),
+
   -- the keys of the Frames and Textures folders the template plays, which the
   -- plugin writes
   FrameSet = knob(""):hidden(always),
@@ -1226,6 +1269,15 @@ forge_mesh.layout = {
       "CollisionRespectCanCollide",
     },
     hidden = carried,
+  },
+  {
+    title = "Landing",
+    entries = {
+      "SurfaceAlign",
+      { curve = "SurfaceAlignCurve", duration = "SurfaceAlignDuration" },
+      "SurfaceOffset",
+    },
+    hidden = unlanded,
   },
   {
     title = "Behavior",
@@ -1480,6 +1532,7 @@ const function piece(
   const at = launch.spawn.Position
   const posing = attrs.Motion == "States"
   const billboard = facesCamera(nil, attrs)
+  const settles = lands(attrs)
   const stateMode = attrs.StateOrientation :: orient_common.Mode
 
   -- a piece moving through its states stands where it spawned on the emitter,
@@ -1765,7 +1818,19 @@ const function piece(
   -- the turn the velocity last gave, held once the piece stops
   local heading: CFrame? = nil
 
+  -- the turn a landed piece makes; nil until it lands under a side
+  local landed: Landing? = nil
+
   const function pose()
+    -- a landed piece rests on its own turn, no Orientation turning it
+    if landed ~= nil then
+      const turn = orient_common.settling(landed.from, landed.to, landed.elapsed, landed.duration, landed.ease)
+      const drawn = position + wander
+      const point = if stance ~= nil then stance.Position else Vector3.new(drawn.x, drawn.y, drawn.z)
+
+      return placed(turn + point) * look.offset()
+    end
+
     -- the camera turn is taken where the piece is drawn, after a locked
     -- piece's parent carried it, so the parent's own turn never reaches it
     if stance ~= nil and billboard then
@@ -1838,6 +1903,40 @@ const function piece(
     depart()
   end
 
+  -- a Stop or Kill hit off a surface of `normal`, in the frame the piece
+  -- flies in: the piece rests off it by the offset and, under a side, turns
+  -- from how it was drawn to face out of it. a piece casts only while free,
+  -- so at most a lift lies between that frame and the world
+  const function land(normal: vector)
+    const length = vector.magnitude(normal)
+
+    if not settles or length < SHORT_STEP then
+      return
+    end
+
+    const unit = normal / length
+    const raise = unit * attrs.SurfaceOffset
+
+    if attrs.SurfaceAlign ~= "None" then
+      const drawn = pose().Rotation
+      const from = if lifted then lift.Rotation:Inverse() * drawn else drawn
+
+      landed = {
+        from = from,
+        to = orient_common.landing(from, attrs.SurfaceAlign, unit),
+        elapsed = 0,
+        duration = attrs.SurfaceAlignDuration,
+        ease = curve.sampler(attrs.SurfaceAlignCurve),
+      }
+    end
+
+    if stance ~= nil then
+      stance += Vector3.new(raise.x, raise.y, raise.z)
+    else
+      position += raise
+    end
+  end
+
   const function place()
     const cf = pose()
 
@@ -1879,9 +1978,13 @@ const function piece(
         continue
       end
 
-      const outcome, landed, rebound = collision_common.respond(response :: collision_common.Config, nextVelocity, hit)
+      const outcome, at, rebound = collision_common.respond(response :: collision_common.Config, nextVelocity, hit)
 
-      position, velocity = landed - wander, rebound
+      position, velocity = at - wander, rebound
+
+      if outcome ~= "bounce" then
+        land(hit.normal)
+      end
 
       if outcome == "kill" then
         moving = false
@@ -1920,17 +2023,31 @@ const function piece(
     -- tangent past a hit that grazes a low point can already run off the
     -- surface, and would rebound at no speed
     const chord = if stepped then (nextPosition - position) / along else velocity
-    const outcome, landed, rebound = collision_common.respond(response :: collision_common.Config, chord, hit)
+    const outcome, at, rebound = collision_common.respond(response :: collision_common.Config, chord, hit)
 
-    position, velocity = landed, rebound
+    position, velocity = at, rebound
     onPath = false
     since = age
+
+    if outcome ~= "bounce" then
+      land(hit.normal)
+    end
 
     if outcome == "kill" then
       moving = false
     elseif outcome == "stop" then
       pinned = true
     end
+  end
+
+  -- the hit a step through the states last found, which a landing faces out
+  -- of
+  local struck: collision_common.Hit? = nil
+
+  const function striking(from: vector, to: vector)
+    struck = strike(from, to)
+
+    return struck
   end
 
   const function responded(share: number): collision_common.Config
@@ -1963,7 +2080,7 @@ const function piece(
       shifts.from, shifts.span = age - dt, dt
     end
 
-    const cast = if locked then unhit else strike
+    const cast = if locked then unhit else striking
     const outcome, at = collision_common.step(mirror, responded, toVector(nextStance.Position), dt, cast)
 
     if outcome == "move" and mirror.bounces == 0 then
@@ -1972,6 +2089,10 @@ const function piece(
     end
 
     stance = nextStance.Rotation + Vector3.new(at.x, at.y, at.z)
+
+    if outcome ~= "move" and struck ~= nil then
+      land(struck.normal)
+    end
 
     if outcome == "kill" then
       moving = false
@@ -2029,9 +2150,17 @@ const function piece(
   end
 
   const function advance(deltaTime: number)
-    -- a piece at rest moves only with its parent or its frames
+    -- a landed piece turns onto the surface on the effect's clock, through
+    -- its destroy delay too
+    const turning = landed ~= nil and landed.elapsed < landed.duration
+
+    if landed ~= nil then
+      landed.elapsed += deltaTime
+    end
+
+    -- a piece at rest moves only with its parent, its frames or its landing
     if not moving then
-      if locked or sets.frames then
+      if locked or sets.frames or turning then
         place()
       end
 

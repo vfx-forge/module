@@ -4076,6 +4076,60 @@ harness.suite(function()
       end)
     end)
 
+    test("SurfaceAlign Top lays a stopped piece flat over its duration, off the floor by the offset", function()
+      const rows = {
+        CollisionMode = "Stop",
+        Orientation = "VelocityPerpendicular",
+        SurfaceAlign = "Top",
+        SurfaceAlignDuration = 0.5,
+        SurfaceOffset = 0.25,
+      }
+
+      falling(rows, function(piece)
+        for _ = 1, 120 do
+          frames(1)
+
+          if math.abs(piece.CFrame.Position.Y - 0.25) < EPSILON then
+            break
+          end
+        end
+
+        -- it lands as it fell, looking down, and turns from there
+        expect(math.abs(piece.CFrame.UpVector.Y) < LOOSE).toBe(true)
+
+        frames(15)
+
+        const halfway = piece.CFrame.UpVector.Y
+
+        expect(halfway > 0.1 and halfway < 0.99).toBe(true)
+
+        frames(30)
+
+        expect(near(piece.CFrame.UpVector, Vector3.new(0, 1, 0), LOOSE)).toBe(true)
+        expect(math.abs(piece.CFrame.Position.Y - 0.25) < EPSILON).toBe(true)
+      end)
+    end)
+
+    test("a killed piece keeps turning onto the floor through its destroy delay", function()
+      const rows = {
+        CollisionMode = "Kill",
+        DestroyDelay = 1,
+        Orientation = "VelocityPerpendicular",
+        SurfaceAlign = "Front",
+        SurfaceAlignDuration = 0.3,
+      }
+
+      falling(rows, function(piece)
+        frames(120)
+
+        -- it fell looking straight into the floor, so its front turned over
+        expect(piece.Parent ~= nil).toBe(true)
+        expect(finite(piece.CFrame)).toBe(true)
+        expect(near(piece.CFrame.LookVector, Vector3.new(0, 1, 0), LOOSE)).toBe(true)
+        expect(math.abs(piece.CFrame.Position.Y) < 0.01).toBe(true)
+      end)
+    end)
+
     test("Bounce lifts it back up and a slow bounce stops", function()
       falling({ CollisionMode = "Bounce", Bounce = 0.5, Friction = 0 }, function(piece)
         local landed = false
