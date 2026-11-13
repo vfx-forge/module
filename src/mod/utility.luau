@@ -153,6 +153,23 @@ function utility.getImpulseForce(start: Vector3, goal: Vector3, duration: number
   return (goal - start) / duration + Vector3.new(0, workspace.Gravity * duration * 0.5, 0)
 end
 
+-- the color a ray's hit shows: Terrain's own Color is not its materials', and water keeps its color apart
+function utility.surfaceColor(result: RaycastResult): Color3
+  local hit = result.Instance
+
+  if not hit:IsA("Terrain") then
+    return (hit :: BasePart).Color
+  end
+
+  local terrain = hit :: Terrain
+
+  if result.Material == Enum.Material.Water then
+    return terrain.WaterColor
+  end
+
+  return terrain:GetMaterialColor(result.Material)
+end
+
 function utility.getTarget(obj: Instance): Instance?
   local objectValue = obj:FindFirstChildOfClass("ObjectValue")
 

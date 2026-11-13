@@ -16,6 +16,7 @@ local scheduler = require("@mod/scheduler")
 local Shockwave = require("@vfx/shockwave")
 
 local pool = require("@srv/pool")
+local containers = require("@srv/containers")
 
 local rng = Random.new()
 
@@ -232,7 +233,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
     params.FilterDescendantsInstances = CollectionService:GetTagged(rayFilterTag)
 
     if rayFilterType == "Exclude" then
-      params:AddToFilter({ workspace.Terrain })
+      params:AddToFilter({ containers.root() })
     end
   end
 

@@ -15,6 +15,7 @@ local Shockwave = require("@vfx/shockwave")
 
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
+local containers = require("@srv/containers")
 
 local rng = Random.new()
 
@@ -177,8 +178,9 @@ local function paramsOf(origin: any): (RaycastParams, Vector3)
   params.FilterType = Enum.RaycastFilterType[origin.FilterType]
   params.FilterDescendantsInstances = CollectionService:GetTagged(origin.FilterTag)
 
+  -- the runtime's own pieces, debris among them, sit under its container, so Terrain itself stays hittable
   if origin.FilterType == "Exclude" then
-    params:AddToFilter({ workspace.Terrain })
+    params:AddToFilter({ containers.root() })
   end
 
   return params, origin.RayDirection
@@ -246,7 +248,7 @@ function ring.emit(ctx: reader.Ctx, attrs: any)
 
     local emitOnFinish = scope.effects.prepareEmitOnFinish(part, scope)
 
-    part.Color = result.Instance.Color
+    part.Color = utility.surfaceColor(result)
     part.Material = result.Material
     part.Transparency = result.Instance.Transparency
 
