@@ -476,12 +476,12 @@ harness.suite(function()
       expect(obj:GetAttribute("PartOffset") == Vector3.new(2, 2, 2)).toBe(true)
     end)
 
-    test("a debris piece's impulse scales where its spin does not", function()
-      expect(debris.attributes.LinearMagnitude.units).toBe("studsPerSecond")
+    test("a debris piece's throw distance scales where its spin does not", function()
+      expect(debris.attributes.LinearMagnitude.units).toBe("studs")
       expect(debris.attributes.AngularMagnitude.units).toBe(nil)
 
       effectStub("shockwave_debris", "Part", {
-        LinearMagnitude = knob(NumberRange.new(15, 25)):unit("studsPerSecond"),
+        LinearMagnitude = knob(NumberRange.new(15, 25)):unit("studs"),
         AngularMagnitude = knob(NumberRange.new(5, 15)),
       })
 
