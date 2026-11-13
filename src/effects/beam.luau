@@ -204,6 +204,39 @@ local function prepare(ctx: reader.Ctx, attrs: any): Beam?
   return clone
 end
 
+-- where a finished beam's EmitOnFinish plays: a stand-in for the beam's own parent, which it played in before the
+-- runtime kept its copies in the container, so an attachment there keeps its offset and an emitter its volume.
+-- the parent is the author's, so nothing is parented into it
+local function finishHost(scope: lifetime.effect, ref: Beam, obj: Beam): BasePart
+  const host = lifetime.hold(scope, Instance.new("Part"))
+  const parent = ref.Parent
+  const a0, a1 = obj.Attachment0, obj.Attachment1
+
+  host.Name = "EmitOnFinish"
+  host.Archivable = false
+  host.Anchored = true
+  host.CanCollide = false
+  host.CanQuery = false
+  host.CanTouch = false
+  host.CastShadow = false
+  host.Transparency = 1
+
+  if parent ~= nil and parent:IsA("BasePart") then
+    host.Size = parent.Size
+    host.CFrame = parent.CFrame
+  elseif parent ~= nil and parent:IsA("Attachment") then
+    host.Size = Vector3.zero
+    host.CFrame = parent.WorldCFrame
+  elseif a0 ~= nil and a1 ~= nil then
+    host.Size = Vector3.zero
+    host.CFrame = CFrame.new(a0.WorldPosition:Lerp(a1.WorldPosition, 0.5))
+  end
+
+  host.Parent = containers.of("beam")
+
+  return host
+end
+
 function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   local obj = prepare(ctx, attrs)
 
@@ -372,7 +405,7 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   tween.wait(scope, curve.new(math.max(duration, flipbookDuration), "linear"))
 
   if emitOnFinish then
-    scope.effects.emitOnFinish(emitOnFinish, containers.of("beam"), scope.depth + 1, scope, children)
+    scope.effects.emitOnFinish(emitOnFinish, finishHost(scope, ref, obj), scope.depth + 1, scope, children)
   end
 
   lifetime.awaitJoin(children)
