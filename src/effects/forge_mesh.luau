@@ -95,8 +95,11 @@ const function eased()
   return utility.default_bezier
 end
 
-const function disabled(_, attrs: any)
-  return not attrs.Enabled
+-- Rate paces the loop and an EmitDuration window alike
+const function unpaced(_, attrs: any)
+  const duration = attrs.EmitDuration
+
+  return not attrs.Enabled and not (type(duration) == "number" and duration > 0)
 end
 
 const function boxed(_, attrs: any)
@@ -970,7 +973,12 @@ forge_mesh.attributes = {
     :mod()
     :label("Lifetime")
     :hint("Seconds each piece flies, drawn per piece."),
-  Rate = knob(20):min(0):unit("perSecond"):hidden(disabled):label("Rate"):hint("Emits per second while Enabled."),
+  Rate = knob(20)
+    :min(0)
+    :unit("perSecond")
+    :hidden(unpaced)
+    :label("Rate")
+    :hint("Emits per second while Enabled, and through the emit Duration."),
   Rotation = knob(vector.zero)
     :mod()
     :hidden(stated)
