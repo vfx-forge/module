@@ -678,6 +678,26 @@ const function strippedOf(source: Instance, skip: { Instance })
   return utility.clone(found.copy)
 end
 
+-- a joint in a copy still naming a part outside it moves that part with the
+-- copy, so a piece dragged its authored End around for good: a Start welded
+-- to its End played copies welded to the real End. the joint goes, since
+-- nothing in the copy needs it
+const function outside(copy: Instance, part: Instance?): boolean
+  return part ~= nil and part ~= copy and not part:IsDescendantOf(copy)
+end
+
+const function unpin(copy: Instance)
+  for _, joint in copy:GetDescendants() do
+    if not joint:IsA("JointInstance") and not joint:IsA("WeldConstraint") then
+      continue
+    end
+
+    if outside(copy, (joint :: any).Part0) or outside(copy, (joint :: any).Part1) then
+      joint:Destroy()
+    end
+  end
+end
+
 -- a whole clone, held by the holder and destroyed when it lets go. a bare one
 -- loses its root's tags and attributes before anything can see it parented,
 -- and is cloned without the children its source keeps out of emits
@@ -686,6 +706,7 @@ local function fresh(holder: any, source: Instance, bare: boolean?)
   const copy = if #skip > 0 then strippedOf(source, skip) else utility.clone(source)
 
   counts.fresh += 1
+  unpin(copy)
 
   if bare then
     strip(copy)

@@ -465,6 +465,48 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a whole copy lets go of a part outside it that its joints name", function()
+      const fake = start()
+      const model = harness.make("Model")
+      const part = harness.make("Part", model)
+      const other = harness.make("Part", model)
+      const child = harness.make("Part", part)
+      const constraint = harness.make("WeldConstraint", part) :: WeldConstraint
+      const weld = harness.make("Weld", part) :: Weld
+      const inner = harness.make("Weld", part) :: Weld
+
+      part.Name = "Start"
+      other.Name = "End"
+      child.Name = "Child"
+      constraint.Part0 = part :: BasePart
+      constraint.Part1 = other :: BasePart
+      weld.Part0 = other :: BasePart
+      weld.Part1 = part :: BasePart
+      inner.Part0 = part :: BasePart
+      inner.Part1 = child :: BasePart
+
+      const holder = {}
+      const taken = pool.take(holder, part)
+      const own = taken:FindFirstChild("Child")
+      const welds = {}
+
+      for _, joint in taken:GetChildren() do
+        if joint:IsA("Weld") then
+          table.insert(welds, joint :: Weld)
+        end
+      end
+
+      expect(taken:FindFirstChildOfClass("WeldConstraint")).toBe(nil)
+      expect(#welds).toBe(1)
+      expect(welds[1].Part0 == taken).toBe(true)
+      expect(welds[1].Part1 == own).toBe(true)
+      expect(constraint.Part1 == other).toBe(true)
+      expect(weld.Part0 == other).toBe(true)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
     test("a take before init is a fresh clone", function()
       local holder = {}
       local part = source("Part")

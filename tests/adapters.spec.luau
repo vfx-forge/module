@@ -486,9 +486,14 @@ harness.suite(function()
         return clone
       end
 
-      -- the pool asks what it copied whether it is a part
+      -- the pool asks what it copied whether it is a part, and walks it for
+      -- joints that name a part outside it
       clone.IsA = function()
         return false
+      end
+
+      clone.GetDescendants = function()
+        return {}
       end
 
       local window = play(template, 1, 1)
