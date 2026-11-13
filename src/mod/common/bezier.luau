@@ -202,9 +202,9 @@ function common.rows(own: { [string]: any })
       :options({ "Include", "Exclude" })
       :label("Type")
       :hint("Whether the tag filter includes or excludes tagged parts."),
-    HitboxIgnoreCanCollide = knob(false)
-      :label("IgnoreCanCollide")
-      :hint("Whether the hitbox ignores non-collidable parts."),
+    HitboxIgnoreCanCollide = knob(false):label("IgnoreCanCollide"):hint(
+      "Whether the hitbox also hits parts with CanCollide off. Off, it passes through them."
+    ),
     Speed = knob(1):mod():label("Speed"):hint("Multiplier on the effect's clock."),
   }
 
