@@ -1,4 +1,5 @@
 local fs = require("@lune/fs")
+local knob = require("@mod/knob")
 local mods = require("@mod/mods")
 local pool = require("@srv/pool")
 local mover = require("@srv/mover")
@@ -1622,6 +1623,30 @@ harness.suite(function()
 
       tick(0)
       expect(ticks.count).toBe(1)
+
+      lifetime.clear(token)
+      scheduler.frame(0)
+    end)
+
+    test("an unwritten Rate ticks at the row's own default, the one the plugin shows", function()
+      fresh()
+
+      local ticks = { count = 0 }
+      local stand = module("paced", "Model", function()
+        ticks.count += 1
+      end)
+
+      stand.constant = true
+      stand.attributes.Rate = knob(20)
+      registry.register(stand)
+
+      local token = enabled_effects.token()
+      local tick = enabled_effects.ticker(harness.make("Model"), stand :: any, token, effects)
+
+      -- the first at once, the next a tenth of a second on: due at 20 a second, not yet at 5
+      tick(0)
+      tick(0.1)
+      expect(ticks.count).toBe(2)
 
       lifetime.clear(token)
       scheduler.frame(0)

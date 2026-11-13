@@ -59,11 +59,15 @@ function enabled_effects.ticker(
   effectsService: any,
   windowed: boolean?
 )
+  -- an unwritten Rate is the row's own default, the one the plugin shows; 5 for a module with no such row
+  const row = module.attributes and module.attributes.Rate
+  const fallback = if row ~= nil and type(row.default) == "number" then row.default else 5
+
   local waited = math.huge
   local age = 0
 
   return function(deltaTime: number)
-    local rate = attr.get(obj, "Rate", 5)
+    local rate = attr.get(obj, "Rate", fallback)
     local factor = clock.factorOf(token.clock)
 
     if factor <= 0 then
