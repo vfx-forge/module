@@ -135,6 +135,10 @@ local emitterTemplate: Part?
 local function keepShut(widget: DockWidgetPluginGui)
   widget.Enabled = false
 
+  if shut then
+    shut:Disconnect()
+  end
+
   shut = widget:GetPropertyChangedSignal("Enabled"):Connect(function()
     if widget.Enabled then
       widget.Enabled = false

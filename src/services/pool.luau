@@ -686,14 +686,17 @@ const function outside(copy: Instance, part: Instance?): boolean
   return part ~= nil and part ~= copy and not part:IsDescendantOf(copy)
 end
 
+-- a constraint pulls the same way through an attachment outside the copy
 const function unpin(copy: Instance)
   for _, joint in copy:GetDescendants() do
-    if not joint:IsA("JointInstance") and not joint:IsA("WeldConstraint") then
-      continue
-    end
-
-    if outside(copy, (joint :: any).Part0) or outside(copy, (joint :: any).Part1) then
-      joint:Destroy()
+    if joint:IsA("JointInstance") or joint:IsA("WeldConstraint") then
+      if outside(copy, (joint :: any).Part0) or outside(copy, (joint :: any).Part1) then
+        joint:Destroy()
+      end
+    elseif joint:IsA("Constraint") then
+      if outside(copy, (joint :: any).Attachment0) or outside(copy, (joint :: any).Attachment1) then
+        joint:Destroy()
+      end
     end
   end
 end

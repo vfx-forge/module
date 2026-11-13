@@ -507,6 +507,35 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a whole copy lets go of an attachment outside it that its constraints name", function()
+      const fake = start()
+      const model = harness.make("Model")
+      const part = harness.make("Part", model)
+      const other = harness.make("Part", model)
+      const near = harness.make("Attachment", part) :: Attachment
+      const far = harness.make("Attachment", other) :: Attachment
+      const own = harness.make("Attachment", part) :: Attachment
+      const rigid = harness.make("RigidConstraint", part) :: RigidConstraint
+      const rope = harness.make("RopeConstraint", part) :: RopeConstraint
+
+      part.Name = "Start"
+      own.Name = "Own"
+      rigid.Attachment0 = near
+      rigid.Attachment1 = far
+      rope.Attachment0 = near
+      rope.Attachment1 = own
+
+      const holder = {}
+      const taken = pool.take(holder, part)
+
+      expect(taken:FindFirstChildOfClass("RigidConstraint")).toBe(nil)
+      expect(taken:FindFirstChildOfClass("RopeConstraint") ~= nil).toBe(true)
+      expect(rigid.Attachment1 == far).toBe(true)
+
+      lifetime.releasePlain(holder)
+      stop(fake)
+    end)
+
     test("a take before init is a fresh clone", function()
       local holder = {}
       local part = source("Part")
