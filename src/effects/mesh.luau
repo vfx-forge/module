@@ -135,14 +135,15 @@ mesh.attributes = {
   RotAroundOrigin = knob(false)
     :label("AroundOrigin")
     :hint("Rotate around the emitter origin instead of the part's own center."),
-  MinInitRot = knob(vector.zero):label("Min"):hint("Lower per-axis bound for each part's initial rotation."),
-  MaxInitRot = knob(vector.zero):label("Max"):hint("Upper per-axis bound for each part's initial rotation."),
-  PartRotSpeed = knob(0)
-    :aliases("Part_RotSpeed")
-    :unit("perSecond")
-    :mod()
-    :label("Speed")
-    :hint("Rotation speed drawn for each piece, in degrees per second."),
+  MinInitRot = knob(vector.zero)
+    :label("Min")
+    :hint("Lower per-axis bound for each part's initial rotation, in degrees."),
+  MaxInitRot = knob(vector.zero)
+    :label("Max")
+    :hint("Upper per-axis bound for each part's initial rotation, in degrees."),
+  PartRotSpeed = knob(0):aliases("Part_RotSpeed"):unit("perSecond"):mod():label("Speed"):hint(
+    "Rotation speed drawn for each piece, in radians per second, on the axes its initial rotation turns."
+  ),
   PartCFrameCurve = knob(eased)
     :aliases("Part_CFrame_Curve")
     :label("CFrame")

@@ -28,19 +28,21 @@ bezier.constant = true
 bezier.attributes = bezier_common.rows({
   FacePath = knob(false):label("FacePath"):hint("Whether the part orients along its direction of travel."),
   ArcSpace = knob(false):label("ArcSpace"):hint("Whether progress is measured by arc length."),
-  MinInitRot = knob(vector.zero):label("Min"):hint("Lower per-axis bound for each path's initial rotation."),
-  MaxInitRot = knob(vector.zero):label("Max"):hint("Upper per-axis bound for each path's initial rotation."),
+  MinInitRot = knob(vector.zero)
+    :label("Min")
+    :hint("Lower per-axis bound for each path's initial rotation, in radians."),
+  MaxInitRot = knob(vector.zero)
+    :label("Max")
+    :hint("Upper per-axis bound for each path's initial rotation, in radians."),
   EasingCurve = knob(function()
       return utility.linear_bezier
     end)
     :aliases("Easing_Curve")
     :label("Easing")
     :hint("Easing of travel along the path."),
-  RotSpeed = knob(0)
-    :unit("perSecond")
-    :mod()
-    :label("Speed")
-    :hint("Rotation speed drawn for each piece, in degrees per second."),
+  RotSpeed = knob(0):unit("perSecond"):mod():label("Speed"):hint(
+    "Rotation speed drawn for each piece, in degrees per second, on the axes its initial rotation turns."
+  ),
 })
 
 bezier.properties = {}
