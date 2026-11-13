@@ -127,7 +127,20 @@ end
 local WIDGET_ID = "VFXForgeSoundPlayer"
 
 local soundWidget: DockWidgetPluginGui?
+local shut: RBXScriptConnection?
 local emitterTemplate: Part?
+
+-- the widget only holds sounds and is never shown, but another plugin
+-- switched every plugin gui on once and it opened as an empty window
+local function keepShut(widget: DockWidgetPluginGui)
+  widget.Enabled = false
+
+  shut = widget:GetPropertyChangedSignal("Enabled"):Connect(function()
+    if widget.Enabled then
+      widget.Enabled = false
+    end
+  end)
+end
 
 local function clearClones(widget: DockWidgetPluginGui)
   for _, child in widget:GetChildren() do
@@ -393,6 +406,7 @@ function sound.init()
     soundWidget = existing
 
     clearClones(existing)
+    keepShut(existing)
 
     return
   end
@@ -404,6 +418,7 @@ function sound.init()
 
   if soundWidget then
     soundWidget.Name = WIDGET_ID
+    keepShut(soundWidget)
   end
 end
 
@@ -411,6 +426,11 @@ function sound.deinit()
   -- clones only, never the widget: the incoming generation has already adopted
   -- it by the time this runs, and destroying it would leave that generation
   -- with a dead parent and no audible sound
+  if shut then
+    shut:Disconnect()
+    shut = nil
+  end
+
   if soundWidget then
     clearClones(soundWidget)
 
