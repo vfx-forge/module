@@ -90,7 +90,7 @@ line.attributes = {
     :hint("Local direction the sweep travels away from the origin."),
   Rotation = knob(NumberRange.new(-180, 180))
     :label("Rotation")
-    :hint("Random per-piece rotation range around the hit normal, in degrees."),
+    :hint("Random per-piece rotation range around the hit normal, in radians."),
   -- a fixed amount spreads the casts over the whole sweep itself, and the rate
   -- is then read by nothing
   Rate = knob(30)
@@ -364,7 +364,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
 
       part.Size = Vector3.zero
 
-      local angle = math.rad(rng:NextNumber(rot.Min, rot.Max))
+      local angle = rng:NextNumber(rot.Min, rot.Max)
 
       local rx = -math.cos(angle)
       local rz = -math.sin(angle)
