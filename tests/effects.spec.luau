@@ -2686,7 +2686,13 @@ harness.suite(function()
       }
       workspace.Raycast = function()
         return {
-          Instance = { Color = harness.datatypes.Color3.new(1, 1, 1), Transparency = 0 },
+          Instance = {
+            Color = harness.datatypes.Color3.new(1, 1, 1),
+            Transparency = 0,
+            IsA = function()
+              return false
+            end,
+          },
           Material = Enum.Material.Plastic,
           Position = hit or Vector3.zero,
           Normal = Vector3.yAxis,
@@ -2701,6 +2707,13 @@ harness.suite(function()
       local extents = utility.getTransformedOriginExtents
       utility.getTransformedOriginExtents = function()
         return harness.datatypes.CFrame.identity
+      end
+
+      -- the container the Exclude filter leaves out, which lune cannot make
+      const root = containers.root
+      const stand = harness.make("Part")
+      containers.root = function()
+        return stand :: any
       end
 
       local origin = harness.make("Attachment", harness.make("Folder"))
@@ -2744,6 +2757,7 @@ harness.suite(function()
       fake_pool.stop(fake)
       workspace.Raycast = raycast
       utility.getTransformedOriginExtents = extents
+      containers.root = root
       RaycastParams = params
       built.restore()
 
