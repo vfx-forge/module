@@ -195,7 +195,7 @@ function texture_loader.init(scope: { any })
           ref.DescendantRemoving:Connect(run),
         }
       end)
-    elseif ref:IsA("Beam") then
+    elseif ref:IsA("Beam") or ref:IsA("Trail") then
       createLoader(ref, function(add)
         add(ref.Texture)
 

@@ -6,21 +6,12 @@ local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
-local flipbook_loop = require("@mod/flipbook_loop")
-local flipbook_common = require("@mod/common/flipbook")
+const flipbook_rows = require("@mod/common/flipbook_rows")
 
 local pool = require("@srv/pool")
 local containers = require("@srv/containers")
 
 local rng = Random.new()
-
-local function linear()
-  return utility.linear_bezier
-end
-
-const function noLoop(_, attrs: any)
-  return not attrs.FlipbookLoop
-end
 
 local beam = {}
 
@@ -52,27 +43,11 @@ beam.attributes = {
     :mod()
     :label("TransparencyScale")
     :hint("Multiplier on the beam's transparency keypoints."),
-  -- a cycle nothing authors runs over the effect's own duration, which the
-  -- reader has decided by the time a row resolves
-  FlipbookChangeDuration = knob(function(ctx)
-      return ctx.duration
-    end)
-    :aliases("Flipbook_Change_Duration")
-    :unit("seconds")
-    :label("Duration")
-    :hint("Seconds for one full flipbook cycle."),
-  FlipbookChangeCurve = knob(linear)
-    :aliases("Flipbook_Change_Curve")
-    :label("Curve")
-    :hint("Easing of one flipbook cycle."),
-  SyncDuration = knob(false):label("SyncDuration"):hint("Play the flipbook's cycles over the effect duration."),
-  FlipbookLoop = knob(false):label("Loop"):hint("Repeat the flipbook cycle."),
-  FlipbookLoopCount = knob(0)
-    :min(0)
-    :hidden(noLoop)
-    :label("LoopCount")
-    :hint("Cycles to play, 0 repeating until the effect ends."),
 }
+
+for name, row in flipbook_rows.rows() do
+  beam.attributes[name] = row
+end
 
 -- the beam's own properties are its state; an old attribute of the same name
 -- shadows one, and an old quad on it folds into its queue
@@ -136,17 +111,7 @@ beam.layout = {
 
 -- the flipbook's card, which the plugin shows once the beam has frames
 beam.cards = {
-  Flipbook = {
-    {
-      title = "Cycle",
-      entries = {
-        { curve = "FlipbookChangeCurve", duration = "FlipbookChangeDuration" },
-        "SyncDuration",
-        "FlipbookLoop",
-        "FlipbookLoopCount",
-      },
-    },
-  },
+  Flipbook = flipbook_rows.card(),
 }
 
 -- one length per emit, drawn from the range the row holds
@@ -366,40 +331,9 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
     obj.CurveSize1 = v
   end)
 
-  -- flipbook support
-  local flipbookDuration = 0
-  local flipbook = flipbook_common.getFlipbookData(ref)
-
-  if flipbook then
-    local config = {
-      ref = ref,
-      frames = flipbook,
-      effectDuration = duration,
-      syncDuration = attrs.SyncDuration,
-
-      curve = attrs.FlipbookChangeCurve,
-      duration = attrs.FlipbookChangeDuration,
-
-      setTexture = function(texture)
-        obj.Texture = texture
-      end,
-    }
-
-    const write = flipbook_common.createUpdateCallback(config)
-
-    if attrs.FlipbookLoop then
-      const cycle, cycles, length =
-        flipbook_common.cycles(config.duration, duration, config.syncDuration, true, attrs.FlipbookLoopCount)
-
-      -- an endless loop plays as long as the beam does, never longer
-      flipbookDuration = length
-      flipbook_loop.play(scope, config.curve, cycle, cycles, if cycles == 0 then duration else length, write)
-    else
-      flipbookDuration = flipbook_common.getChangeDuration(config)
-
-      tween.play(scope, curve.new(flipbookDuration, config.curve), write)
-    end
-  end
+  const flipbookDuration = flipbook_rows.play(scope, ref, attrs, duration, function(texture: string)
+    obj.Texture = texture
+  end)
 
   -- a Speed resting at 0 for good ends the beam rather than holding it
   tween.wait(scope, curve.new(math.max(duration, flipbookDuration), "linear"))
