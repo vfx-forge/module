@@ -936,7 +936,9 @@ forge_mesh.attributes = {
     :options(orient_common.MODES)
     :hidden(stated)
     :label("Orientation")
-    :hint("How each piece turns as it flies: its own pose, toward the camera or along its velocity."),
+    :hint(
+      "How each piece turns as it flies: its own pose, toward the camera or along its velocity. Trails and beams inside a piece that faces the camera sweep whenever the view moves."
+    ),
   StateOrientation = knob("None")
     :options({ "None", "FacingCamera", "FacingCameraWorldUp" })
     :hidden(flown)
