@@ -16,6 +16,9 @@ local Bezier = require("@obj/Bezier")
 
 local bezier = {}
 
+-- studs a frame's look-ahead must span before FacePath turns the part along it
+local FACE_GAP = 1e-3
+
 bezier.id = "bezier"
 bezier.display = { name = "Bezier (legacy)", icon = "bezier", order = 110 }
 bezier.classifier = "Attachment.BezierParticle"
@@ -225,17 +228,24 @@ function bezier.emit(ctx: reader.Ctx, attrs: any)
         currentRotSpeed = v
       end)
 
+      local path = curve.new(duration, attrs.EasingCurve)
+
       tween.play(
         scope,
-        curve.new(duration, attrs.EasingCurve),
+        path,
         function(alpha: number, deltaTime: number, elapsed: number)
           local pos1 = getPos(alpha)
           local newCF = CFrame.new(pos1)
 
           if attrs.FacePath then
-            local pos2 = getPos(math.clamp((elapsed + (1 / 60)) / duration, 0, 1))
+            -- the point a frame ahead on the same eased clock the part moves
+            -- on. It once read the linear clock, which under an ease-out sits
+            -- BEHIND the part, and near the end both crowd onto the end point:
+            -- a look along a gap of float noise, the part spinning as it lands.
+            -- Too short a gap keeps the last good facing
+            local pos2 = getPos(path:at(math.clamp((elapsed + (1 / 60)) / path.duration, 0, 1)))
 
-            if pos1 ~= pos2 then
+            if (pos2 - pos1).Magnitude > FACE_GAP then
               newCF = CFrame.lookAt(pos1, pos2)
             else
               newCF *= prevCF.Rotation
