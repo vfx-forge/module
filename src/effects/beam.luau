@@ -37,12 +37,17 @@ beam.attributes = {
     :mod()
     :label("LengthScale")
     :hint("Multiplier on the distance between the beam's attachments."),
+  -- off the card (owner 2026-11-15): a modifier on Transparency does the
+  -- same fade. still read, so a beam saved with one plays as it did
   TransparencyScale = knob(1)
     :min(0)
     :aliases("Transparency_Scale")
     :mod()
     :label("TransparencyScale")
-    :hint("Multiplier on the beam's transparency keypoints."),
+    :hint("Multiplier on the beam's transparency keypoints.")
+    :hidden(function()
+      return true
+    end),
 }
 
 for name, row in flipbook_rows.rows() do
@@ -63,6 +68,10 @@ beam.properties = {
     :label("Texture")
     :hint("Texture speed over the effect."),
   TextureLength = knob():aliases("Length_Texture"):mod():label("Texture"):hint("Texture length over the effect."),
+  -- a row of its own so it has the effect end's lane too: a Tween there to 1
+  -- is how a beam fades out at the end of each emit, now that the card no
+  -- longer shows TransparencyScale (owner 2026-11-15)
+  Transparency = knob():mod():label("Transparency"):hint("Beam Transparency over the effect."),
 }
 
 -- the plugin's card. a property row, or a `property` entry, is the beam's own
@@ -78,8 +87,7 @@ beam.layout = {
       { property = "Color" },
       { property = "LightEmission" },
       { property = "LightInfluence" },
-      { property = "Transparency" },
-      "TransparencyScale",
+      "Transparency",
       { property = "ZOffset" },
     },
   },
@@ -302,6 +310,15 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   -- every tween below counts the beam's own clock, which the speed row scales
   tween.drive(scope, tScale, setTScale)
+
+  -- the Transparency row's own modifiers. a beam saved with a modifier on
+  -- TransparencyScale plays that one instead, as it always did: the two would
+  -- write the same property
+  if props.Transparency.animated and not tScale.animated then
+    tween.drive(scope, props.Transparency, function(v: NumberSequence)
+      obj.Transparency = v
+    end)
+  end
 
   tween.drive(scope, texLength, function(v: number)
     obj.TextureLength = v
