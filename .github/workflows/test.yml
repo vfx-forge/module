@@ -26,6 +26,12 @@ jobs:
       - name: stylua
         run: stylua --check src tests scripts
 
+      # bundles every engine shard and prints its size without calling the
+      # api, so a shard nearing the script limit shows on every push, forks
+      # included, before the roblox job is refused for it
+      - name: engine shard sizes
+        run: python3 scripts/roblox_cloud_test.py --dry-run
+
   # the same specs the lune job cannot reach: EncodingService, Color3 rounding,
   # anything where lune only emulates the engine.
   #
@@ -49,8 +55,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      # the runner bundles with darklua and posts the result as the task body,
-      # so concurrent runs share nothing but the place they execute against
+      # the runner bundles each spec under tests/roblox with darklua and posts
+      # each bundle as a task of its own, a few at a time, so concurrent runs
+      # share nothing but the place they execute against and its limit of ten
+      # incomplete tasks
       - name: engine tests
         env:
           ROBLOX_API_KEY: ${{ secrets.ROBLOX_API_KEY }}

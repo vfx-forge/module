@@ -1,6 +1,15 @@
 {
+  "generator": "dense",
   "bundle": {
     "require_mode": "path"
   },
-  "rules": []
+  "rules": [
+    "remove_comments",
+    "remove_spaces",
+    "remove_types",
+    {
+      "rule": "rename_variables",
+      "globals": ["$default", "$roblox"]
+    }
+  ]
 }

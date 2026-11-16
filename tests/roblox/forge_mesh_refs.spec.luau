@@ -252,8 +252,6 @@ const function checkPiece(problems: Problems, piece: any, outside: BasePart, lab
   const links = {
     { "Weld.Part0", piece.Weld.Part0, piece },
     { "Weld.Part1", piece.Weld.Part1, child },
-    { "Tie.Part0", piece.Tie.Part0, piece },
-    { "Tie.Part1", piece.Tie.Part1, outside },
     { "Ray.Attachment0", piece.Ray.Attachment0, piece.A0 },
     { "Ray.Attachment1", piece.Ray.Attachment1, piece.A1 },
     { "Stretch.Attachment0", piece.Stretch.Attachment0, piece.A0 },
@@ -268,6 +266,14 @@ const function checkPiece(problems: Problems, piece: any, outside: BasePart, lab
 
     note(problems, found == wanted, `{label}: {name} is {nameOf(found)}, not {nameOf(wanted)}`)
   end
+
+  -- a joint naming a part outside the copy would move that part with the
+  -- piece, so the pool drops it (services/pool.luau `unpin`); the template
+  -- keeps its own
+  const tie = piece:FindFirstChild("Tie") :: WeldConstraint?
+
+  note(problems, tie == nil, `{label}: kept its Tie to {nameOf(tie and tie.Part1)}`)
+  note(problems, #outside:GetJoints() == 1, `{label}: the outside part holds {#outside:GetJoints()} joints`)
 
   note(problems, #piece:GetTags() == 0, `{label}: carries the tags {table.concat(piece:GetTags(), ", ")}`)
   note(problems, piece.Streak.Enabled, `{label}: its trail is not playing`)
