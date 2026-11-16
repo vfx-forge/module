@@ -23,7 +23,7 @@ trail.attributes = {
     :min(-1)
     :unit("seconds")
     :label("Duration")
-    :hint("Seconds the trail stays on. 0 leaves it on, below 0 never turns it on."),
+    :hint("Seconds the trail stays on. 0 leaves it on, below 0 turns it off."),
 }
 
 for name, row in flipbook_rows.rows() do
@@ -73,9 +73,10 @@ function trail.emit(ctx: reader.Ctx, attrs: any)
   const span = ctx.duration :: number
   const window = attrs.EmitDuration
 
-  -- a trail with a window draws only inside one, so one left on is switched
-  -- off; one another emit's window holds is that window's to switch off
-  if window > 0 and ref.Enabled and lifetime.writing(ref, "property", "Enabled") == 0 then
+  -- a trail with a window draws only inside one, and one below 0 never
+  -- draws, so either switches one left on off; one another emit's window
+  -- holds is that window's to switch off
+  if window ~= 0 and ref.Enabled and lifetime.writing(ref, "property", "Enabled") == 0 then
     ref.Enabled = false
   end
 

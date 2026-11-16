@@ -75,6 +75,42 @@ harness.suite(function()
       end
     )
 
+    -- below 0 means the trail never draws on an emit, so one the place has
+    -- switched on is switched off, as a window above 0 does
+    test("a duration below 0 switches a trail left on off", function()
+      staged(function()
+        const t = trailOf({ EmitDuration = -1 })
+        t.Enabled = true
+
+        const env = effects.emit(0, t)
+
+        expect(t.Enabled).toBe(false)
+        expect(env.Finished:getStatus()).toBe("Resolved")
+
+        scheduler.frame(5)
+        expect(t.Enabled).toBe(false)
+      end)
+    end)
+
+    -- the window is what holds the trail on, so an emit below 0 meanwhile
+    -- leaves it to the window to switch off
+    test("a duration below 0 leaves a trail another emit's window holds on", function()
+      staged(function()
+        const t = trailOf({ EmitDuration = 0.5 })
+
+        effects.emit(0, t)
+        scheduler.frame(0.1)
+        expect(t.Enabled).toBe(true)
+
+        t:SetAttribute("EmitDuration", -1)
+        effects.emit(0, t)
+        expect(t.Enabled).toBe(true)
+
+        scheduler.frame(0.5)
+        expect(t.Enabled).toBe(false)
+      end)
+    end)
+
     test("a delay holds the trail off until it passes", function()
       staged(function()
         const t = trailOf({ EmitDelay = 0.5 })
