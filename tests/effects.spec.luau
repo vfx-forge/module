@@ -2533,6 +2533,36 @@ harness.suite(function()
       built.restore()
     end)
 
+    test("an emitted beam's copy starts its texture at the TextureOffset row", function()
+      local built = fresh()
+
+      registry.register(require("@vfx/beam"))
+
+      local fake = fake_pool.start({ Beam = { "Enabled" } })
+      local part = harness.make("Part")
+      local beam = harness.make("Beam", part) :: any
+
+      beam.Attachment0 = harness.make("Attachment", part)
+      beam.Attachment1 = harness.make("Attachment", part)
+      beam:SetAttribute("TextureOffset", 0.25)
+
+      table.clear(harness.textureOffsets)
+
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0.25)
+
+      local calls = harness.textureOffsets
+
+      expect(#calls).toBe(1)
+      expect(calls[1].offset).toBe(0.25)
+      expect(calls[1].id ~= beam:GetDebugId()).toBe(true)
+
+      env:Clear()
+      fake_pool.stop(fake)
+      built.restore()
+    end)
+
     test("a beam whose Speed rests at 0 ends rather than holding", function()
       local beam, built = beamOf({ Speed = 0 })
       local env = effects.emit(0, beam)
@@ -2628,6 +2658,56 @@ harness.suite(function()
       scheduler.frame(0.25)
 
       expect(seen.child).toBe(0.25)
+
+      env:Clear()
+      fake_pool.stop(fake)
+      built.restore()
+    end)
+
+    -- the Transparency row's modifiers wrote over the scaled keypoints, so a
+    -- beam saved with a TransparencyScale lost it on the row's first write
+    test("a still TransparencyScale scales what the Transparency row writes", function()
+      local built = fresh()
+      local NumberSequence = harness.datatypes.NumberSequence
+      registry.register(require("@vfx/beam"))
+
+      local fake = fake_pool.start({ Beam = { "Enabled", "Transparency" } })
+      local fromExisting = fake.engine.fromExisting
+      local copies = {}
+
+      fake.engine.fromExisting = function(source: Instance)
+        local copy = fromExisting(source)
+
+        table.insert(copies, copy)
+
+        return copy
+      end
+
+      local part = harness.make("Part")
+      local beam = harness.make("Beam", part) :: any
+      local entry = {
+        kind = "tween",
+        chain = false,
+        start = value.lit(NumberSequence.new(0.4)),
+        finish = value.lit(NumberSequence.new(0.8)),
+      }
+
+      beam.Attachment0 = harness.make("Attachment", part)
+      beam.Attachment1 = harness.make("Attachment", part)
+      beam:SetAttribute("TransparencyScale", 0.5)
+      beam:SetAttribute(
+        mods.attrName("property", "Transparency"),
+        frame.frame(codec.encode({ lanes = { start = { entry } } }))
+      )
+
+      local env = effects.emit(0, beam)
+
+      scheduler.frame(0)
+
+      local copy = copies[1] :: any
+      local first = copy.Transparency.Keypoints[1].Value
+
+      expect(math.abs(first - 0.2) < 1e-3).toBe(true)
 
       env:Clear()
       fake_pool.stop(fake)

@@ -13,6 +13,25 @@ local containers = require("@srv/containers")
 
 local rng = Random.new()
 
+-- a transparency under a TransparencyScale: below 1 toward opaque, above it
+-- toward clear, by how far the scale is from 1
+const function scaleTransparency(value: number, tscale: number): number
+  const offset = if tscale > 1 then tscale - 1 else 1 - tscale
+  const base = if tscale > 1 then 1 - value else -value
+
+  return value + base * offset
+end
+
+const function scaledSequence(seq: NumberSequence, tscale: number): NumberSequence
+  const keypoints = table.create(#seq.Keypoints)
+
+  for i, kp in seq.Keypoints do
+    keypoints[i] = NumberSequenceKeypoint.new(kp.Time, scaleTransparency(kp.Value, tscale), kp.Envelope)
+  end
+
+  return NumberSequence.new(keypoints)
+end
+
 local beam = {}
 
 beam.id = "beam"
@@ -37,6 +56,12 @@ beam.attributes = {
     :mod()
     :label("LengthScale")
     :hint("Multiplier on the distance between the beam's attachments."),
+  -- written to every copy as it is emitted, so beams laid end to end in a
+  -- ring line their textures up into one band, and a pooled copy never
+  -- carries on from where its last emit left the scroll
+  TextureOffset = knob(0)
+    :label("TextureOffset")
+    :hint("Where the texture's scroll starts on each emit, in cycles: 0.5 starts it halfway along."),
   -- off the card (owner 2026-11-15): a modifier on Transparency does the
   -- same fade. still read, so a beam saved with one plays as it did
   TransparencyScale = knob(1)
@@ -96,6 +121,7 @@ beam.layout = {
     entries = {
       { property = "Attachment0" },
       { property = "Attachment1" },
+      { action = "curve_shape", label = "Curve" },
       "CurveSize0",
       "CurveSize1",
       { property = "FaceCamera" },
@@ -111,6 +137,7 @@ beam.layout = {
       { property = "Texture" },
       "TextureLength",
       { property = "TextureMode" },
+      "TextureOffset",
       "TextureSpeed",
       { action = "toggle_textures", label = "Load Textures" },
     },
@@ -274,13 +301,8 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
 
     lastTScale = tscale
 
-    local offset = tscale > 1 and tscale - 1 or 1 - tscale
-
     for i, kd in keypointData do
-      local value = kd.value
-      local base = tscale > 1 and (1 - value) or -value
-
-      scaledKeypoints[i] = NumberSequenceKeypoint.new(kd.time, value + base * offset, kd.envelope)
+      scaledKeypoints[i] = NumberSequenceKeypoint.new(kd.time, scaleTransparency(kd.value, tscale), kd.envelope)
     end
 
     obj.Transparency = NumberSequence.new(scaledKeypoints)
@@ -313,10 +335,13 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   -- the Transparency row's own modifiers. a beam saved with a modifier on
   -- TransparencyScale plays that one instead, as it always did: the two would
-  -- write the same property
+  -- write the same property. a still scale applies over the row as it does
+  -- over the beam's own keypoints, or the row's first write dropped it
   if props.Transparency.animated and not tScale.animated then
+    const still = tScale.at(0)
+
     tween.drive(scope, props.Transparency, function(v: NumberSequence)
-      obj.Transparency = v
+      obj.Transparency = if still == 1 then v else scaledSequence(v, still)
     end)
   end
 
@@ -351,6 +376,10 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   const flipbookDuration = flipbook_rows.play(scope, ref, attrs, duration, function(texture: string)
     obj.Texture = texture
   end)
+
+  -- after the flipbook's first frame: on a beam with no texture yet the call
+  -- does nothing
+  obj:SetTextureOffset(attrs.TextureOffset)
 
   -- a Speed resting at 0 for good ends the beam rather than holding it
   tween.wait(scope, curve.new(math.max(duration, flipbookDuration), "linear"))

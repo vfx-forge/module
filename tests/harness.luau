@@ -367,6 +367,14 @@ local harness = {}
 -- effect. nothing advances a frame under lune, so a spec advances its own
 harness.render = renderFrame
 
+-- lune has no Beam:SetTextureOffset. the stand in keeps every call, in order,
+-- so a spec can say what a beam was handed
+harness.textureOffsets = {} :: { { id: string, offset: number } }
+
+roblox.implementMethod("Beam", "SetTextureOffset", function(beam: Instance, offset: number?)
+  table.insert(harness.textureOffsets, { id = beam:GetDebugId(), offset = offset or 0 })
+end)
+
 -- roblox datatype constructors (Vector2, Vector3, CFrame, NumberSequence, ...)
 -- for specs to destructure explicitly, e.g.
 -- `local NumberSequence = harness.datatypes.NumberSequence`
