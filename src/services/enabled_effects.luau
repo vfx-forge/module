@@ -51,7 +51,10 @@ end
 
 -- what an enabled instance runs every frame: a tick each `1 / Rate` seconds of
 -- the token's clock, the first at once, and none while that clock stands still.
--- a window's ticks are told how far into it each fired
+-- the seconds count from the frame after a tick, the one its pieces start to
+-- age on, so a piece that lives 1/Rate ends on the frame the next tick spawns
+-- the one that takes over from it. a window's ticks are told how far into it
+-- each fired
 function enabled_effects.ticker(
   obj: Instance,
   module: registry.Module,
@@ -77,6 +80,9 @@ function enabled_effects.ticker(
     waited += deltaTime * factor
     age += deltaTime * factor
 
+    -- past the interval, not on it: a Lifetime is kept in single precision,
+    -- so one of 1/20 outlives an interval of 1/20 by a hair, and a tick on
+    -- frames that add up to the interval exactly drew two pieces at once
     if waited <= 1 / rate then
       return
     end
@@ -127,20 +133,25 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
   local spawning = true
 
   -- on real time, since the ticker counts the window's clock itself, and at
-  -- depth 0, ahead of the compute steps its ticks add and after the Speed
-  -- ramp. the halt watch outlives the spawning, since the ramp keeps stepping
-  -- while the last ticks play out. a wait of a tick sees the halt on the next
-  -- frame, a timer in this one
-  handle = scheduler.add("compute", function(deltaTime: number)
-    if not window.clock.halted then
-      if spawning then
-        tick(deltaTime)
-      end
+  -- the end of the frame as a passive loop's ticks are: run in the compute
+  -- half, a tick's pieces aged a frame its interval never counted, and each
+  -- ended a frame before the tick that took over from it
+  local ticks = scheduler.add("emit", function(deltaTime: number)
+    if spawning then
+      tick(deltaTime)
+    end
+  end, 0, scope, false, clock.REAL)
 
+  -- at depth 0 after the Speed ramp. the halt watch outlives the spawning,
+  -- since the ramp keeps stepping while the last ticks play out. a wait of a
+  -- tick sees the halt on the next frame, a timer in this one
+  handle = scheduler.add("compute", function()
+    if not window.clock.halted then
       return
     end
 
     handle:Disconnect()
+    ticks:Disconnect()
 
     -- the Speed came to rest at 0: what is still playing ends the way a
     -- halted effect's timers end, its nested emits still running out
@@ -150,6 +161,7 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
   end, 0, scope, false, clock.REAL)
 
   lifetime.hold(scope, handle)
+  lifetime.hold(scope, ticks)
 
   -- the first tick as the window opens, so one shorter than a frame still
   -- spawns it
@@ -162,6 +174,7 @@ function enabled_effects.window(ctx: reader.Ctx, module: registry.Module, durati
   lifetime.seal(window)
   lifetime.await(window)
   handle:Disconnect()
+  ticks:Disconnect()
 end
 
 -- whether the instance sits where its passive loop may run, and the signals that
@@ -255,9 +268,17 @@ function enabled_effects.add(obj: Instance)
 
     local tick = enabled_effects.ticker(obj, module, token, service)
 
+    -- in the scheduler's frame, after every step of the pieces already up:
+    -- a plain RenderStepped connection ran before or after that frame in an
+    -- order the engine never promises, and run before it the pieces a tick
+    -- spawned took a frame of life their interval never counted, so each
+    -- ended a frame ahead of the tick that took over from it. kept running
+    -- through a throw, as the connection was
+    local ticks = scheduler.add("emit", tick, 0, nil, true)
+
     Ticking[token] = true
-    table.insert(tempScope, RunService.RenderStepped:Connect(tick))
     table.insert(tempScope, function()
+      ticks:Disconnect()
       Ticking[token] = nil
     end)
   end
