@@ -10,9 +10,9 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zilibobi/forge-vfx.git"
+    "url": "git+https://github.com/vfx-forge/module.git"
   },
-  "homepage": "https://docs.zilibobi.dev/vfx-forge/module/installation/",
+  "homepage": "https://docs.zili.dev/forge/authoring/emit-module",
   "author": "zilibobi",
   "license": "VFX-DL-1.1",
   "scripts": {

@@ -9,7 +9,7 @@ license = "VFX-DL-1.1"
 authors = ["zilibobi"]
 
 registry = "https://github.com/UpliftGames/wally-index"
-repository = "https://github.com/zilibobi/forge-vfx"
+repository = "https://github.com/vfx-forge/module"
 
 realm = "shared"
 

@@ -1,8 +1,8 @@
 ![Banner](/forge-banner.png)
 
 <div align="center">
-  <a href="https://docs.zilibobi.dev/vfx-forge"><img alt="View Documentation" src="https://img.shields.io/badge/Documentation-View?style=for-the-badge&label=View&color=c4a7e7"></a>
-  <a href="https://discord.gg/Qme9KPN3pF"><img alt="Join Discord" src="https://img.shields.io/discord/1401872327162986626?logo=discord&style=for-the-badge&color=c4a7e7&logoColor=ffffff&label=Join%20Discord"></a>
+  <a href="https://docs.zili.dev/forge/authoring/emit-module"><img alt="View Documentation" src="https://img.shields.io/badge/Documentation-View?style=for-the-badge&label=View&color=c4a7e7"></a>
+  <a href="https://zili.dev/discord"><img alt="Join Discord" src="https://img.shields.io/discord/1401872327162986626?logo=discord&style=for-the-badge&color=c4a7e7&logoColor=ffffff&label=Join%20Discord"></a>
 </div>
 
 # Emit Module
@@ -28,7 +28,7 @@ npm i @zilibobi/forge-vfx
 
 #### Manual
 
-Check the [releases page](https://github.com/zilibobi/forge-vfx/releases/latest) for prebuilt .rbxm files.
+Check the [releases page](https://github.com/vfx-forge/module/releases/latest) for prebuilt .rbxm files.
 
 The model is named `forge-vfx`, matching the package name so package managers resolve it. A hyphen cannot be indexed with a dot, so either rename it after inserting or write `ReplicatedStorage["forge-vfx"]`. The Wally and npm paths are unaffected: both expose it under the name you import it as.
 

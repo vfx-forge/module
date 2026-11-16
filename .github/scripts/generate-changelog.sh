@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-REPO="zilibobi/forge-vfx"
+REPO="vfx-forge/module"
 
 if [[ $# -gt 1 ]]; then
     TO_TAG="$2"

@@ -174,7 +174,7 @@ def main():
     parser.add_argument("--webhook-url", help="Discord webhook URL")
     parser.add_argument("--rbxm-file", type=Path, help="Path to .rbxm file")
     parser.add_argument(
-        "--repo", default="zilibobi/forge-vfx", help="GitHub repository (owner/name)"
+        "--repo", default="vfx-forge/module", help="GitHub repository (owner/name)"
     )
     parser.add_argument(
         "--wally-package", default="zilibobi/forge-vfx", help="Wally package name"
