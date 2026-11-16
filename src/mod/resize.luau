@@ -42,6 +42,13 @@ resize.RATIOS = {
   forge_mesh = { Size = true, States = true, Path = true },
 }
 
+-- lengths resize leaves as they are, whatever their unit. a mesh's ZOffset
+-- only moves where a piece is drawn along the line to the camera, to order it
+-- among the effects around it, so a resized effect keeps the layering it had
+resize.KEPT = {
+  forge_mesh = { ZOffset = true },
+}
+
 -- a property the instance does not have throws on the read, which is the
 -- answer "nothing to scale"
 local function scaleProperty(obj: any, name: string, f: number)
@@ -150,12 +157,96 @@ const function scalePathRow(obj: Instance, name: string, row: any, f: number)
   end
 end
 
+-- one resize over many instances. the attachment pairs its beams and trails
+-- name are gathered as they are reached and moved once, at the end: scaled
+-- per beam, a pair two beams share moved twice and a ring of two beams came
+-- out an oval, ten beams on one pair ten times over
+export type Pass = { pairs: { { Attachment } } }
+
+function resize.pass(): Pass
+  return { pairs = {} }
+end
+
+function resize.pair(pass: Pass, a0: Attachment?, a1: Attachment?)
+  if a0 ~= nil and a1 ~= nil then
+    table.insert(pass.pairs, { a0, a1 })
+  end
+end
+
+-- every key the pairs name, once, with where it goes: the keys a chain of
+-- pairs joins scale together about their own center, so a lone pair spreads
+-- about its midpoint as it always has and a ring keeps its shape
+function resize.moves<K>(pairs: { { K } }, where: (K) -> vector, factor: number): { [K]: vector }
+  const root: { [K]: K } = {}
+
+  const function find(key: K): K
+    local at = key
+
+    while root[at] ~= at do
+      at = root[at]
+    end
+
+    root[key] = at
+
+    return at
+  end
+
+  for _, pair in pairs do
+    for _, key in pair do
+      if root[key] == nil then
+        root[key] = key
+      end
+    end
+
+    root[find(pair[1])] = find(pair[2])
+  end
+
+  const sums: { [K]: vector } = {}
+  const counts: { [K]: number } = {}
+
+  for key in root do
+    const group = find(key)
+
+    sums[group] = (sums[group] or vector.zero) + where(key)
+    counts[group] = (counts[group] or 0) + 1
+  end
+
+  const out: { [K]: vector } = {}
+
+  for key in root do
+    const group = find(key)
+    const center = sums[group] / counts[group]
+
+    out[key] = center + (where(key) - center) * factor
+  end
+
+  return out
+end
+
+-- in world space, so a pair whose ends sit under two parts spreads about the
+-- point between them rather than each end about its own part
+function resize.finish(pass: Pass, factor: number)
+  const moves = resize.moves(pass.pairs, function(a: Attachment): vector
+    return a.WorldPosition :: any
+  end, factor)
+
+  for a, to in moves do
+    a.WorldPosition = to :: any
+  end
+
+  table.clear(pass.pairs)
+end
+
 -- the geometry a few effects keep outside their rows
-local function scaleShape(obj: any, module: registry.Module, factor: number)
+local function scaleShape(obj: any, module: registry.Module, factor: number, pass: Pass?)
   local id = module.id
 
   if id == "beam" or id == "trail" then
-    utility.scaleAttachmentDistance(obj.Attachment0, obj.Attachment1, factor)
+    if pass ~= nil then
+      resize.pair(pass, obj.Attachment0, obj.Attachment1)
+    else
+      utility.scaleAttachmentDistance(obj.Attachment0, obj.Attachment1, factor)
+    end
   elseif id == "mesh" then
     local start = obj:FindFirstChild("Start")
     local goal = obj:FindFirstChild("End")
@@ -177,13 +268,20 @@ local function scaleShape(obj: any, module: registry.Module, factor: number)
   end
 end
 
-function resize.apply(obj: Instance, factor: number)
+-- `pass` gathers the attachments a beam or trail spreads, for resize.finish to
+-- move once; without one they move at once, which is right for one instance
+function resize.apply(obj: Instance, factor: number, pass: Pass?)
   local module = registry.of(obj)
 
   if module ~= nil then
     local ratios = resize.RATIOS[module.id] or {}
+    local kept = resize.KEPT[module.id] or {}
 
-    retime.walk(obj, module, factor, factorOf, nil, function(source, name, key, f)
+    const function unitFactor(unit: string, f: number, name: string): number?
+      return if kept[name] then nil else factorOf(unit, f)
+    end
+
+    retime.walk(obj, module, factor, unitFactor, nil, function(source, name, key, f)
       -- a row RATIOS names takes its factor from there, never from a unit as
       -- well, so nothing it holds is ever scaled twice
       if ratios[name] ~= nil then
@@ -235,7 +333,7 @@ function resize.apply(obj: Instance, factor: number)
       end
     end
 
-    scaleShape(obj, module, factor)
+    scaleShape(obj, module, factor, pass)
   end
 
   -- a custom effect's instance is its own: only its rows say what scales
@@ -257,13 +355,17 @@ function resize.apply(obj: Instance, factor: number)
 end
 
 function resize.batch(factor: number, ...: Instance)
+  const pass = resize.pass()
+
   for _, instance in { ... } do
-    resize.apply(instance, factor)
+    resize.apply(instance, factor, pass)
 
     for _, desc in instance:GetDescendants() do
-      resize.apply(desc, factor)
+      resize.apply(desc, factor, pass)
     end
   end
+
+  resize.finish(pass, factor)
 end
 
 return resize

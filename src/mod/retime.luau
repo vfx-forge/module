@@ -138,12 +138,13 @@ end
 -- the old span keys of a mod row by the inverse when `spans` is given. `visit`
 -- is called with the key and the factor for every key the walk decides on. a
 -- row resting at its default stores nothing, so the default is written first
--- for the edit to scale
+-- for the edit to scale. `unitFactor` is handed the row's name too, and a row
+-- it answers nil for is not touched by its unit at all
 function retime.walk(
   obj: Instance,
   module: registry.Module,
   factor: number,
-  unitFactor: (unit: string, factor: number) -> number?,
+  unitFactor: (unit: string, factor: number, name: string) -> number?,
   spans: number?,
   visit: (source: string, name: string, key: string, f: number) -> ()
 )
@@ -159,7 +160,7 @@ function retime.walk(
     local source, rows = set[1], set[2]
 
     for name, row in rows do
-      local f = if row.units ~= nil then unitFactor(row.units, factor) else nil
+      local f = if row.units ~= nil then unitFactor(row.units, factor, name) else nil
       local keys = { name }
 
       for _, alias in row.names do
