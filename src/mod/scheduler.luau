@@ -4,7 +4,7 @@ local clock = require("@mod/clock")
 local logger = require("@mod/logger")
 
 local COMPUTE = { "undo", "wait", "compute" }
-local LATE = { "shake", "screen", "follow" }
+local LATE = { "shake", "screen", "follow", "emit" }
 
 -- one suffix per load, so two copies of the module in one place never bind
 -- under the same name
@@ -13,7 +13,7 @@ local SUFFIX = string.format("%x", math.random(0, 0x7fffffff))
 local COMPUTE_NAME = `forge_compute_{SUFFIX}`
 local LATE_NAME = `forge_late_{SUFFIX}`
 
-export type Phase = "undo" | "wait" | "compute" | "shake" | "screen" | "follow"
+export type Phase = "undo" | "wait" | "compute" | "shake" | "screen" | "follow" | "emit"
 
 export type Handle = {
   Connected: boolean,
@@ -336,6 +336,8 @@ end
 -- what the last one left on shared targets, the waits that are due, then
 -- every step that computes a value
 function scheduler.compute(deltaTime: number)
+  clock.late = false
+
   if not passing then
     scheduler.now += deltaTime
     clock.tick()
@@ -347,8 +349,11 @@ function scheduler.compute(deltaTime: number)
 end
 
 -- the second half: the camera shake, then the screens, then whatever follows
--- a parent, shallowest first
+-- a parent, shallowest first, and last the ticks of the constant loops, so
+-- what a tick spawns is drawn as it starts and steps from the next frame on,
+-- as every piece before it did
 function scheduler.late(deltaTime: number)
+  clock.late = true
   runPhases(LATE, deltaTime)
 
   runAfter()

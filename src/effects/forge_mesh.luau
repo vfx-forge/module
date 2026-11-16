@@ -66,6 +66,10 @@ const SHORT_STEP = 1e-6
 
 const WORLD_UP = vector.create(0, 1, 0)
 
+-- a server running a game draws for no camera of its own, so a ZOffset there
+-- moves nothing
+const SERVED = utility.SERVER_CONTEXT and not utility.PLUGIN_CONTEXT
+
 -- each EmissionDirection in the emitter's own frame, spelled out since lune
 -- has no Vector3.FromNormalId
 const FACES = {
@@ -389,9 +393,18 @@ const function restOf(template: BasePart): state_list.Rest
 
     const decal = child :: Decal
 
+    -- a decal rests at its own Transparency row under every motion, never at
+    -- the template's property, which a Decal Mesh keeps at 1 so the template
+    -- never shows in the place. A decal storing no row rests where the mesh
+    -- look starts one off States, at the template's old start value
+    const legacy = template:GetAttribute("DecalStartTransparency")
+    const unset = if type(legacy) == "number" then legacy else 0
+
     decals[decal.Name] = {
       color = decal.Color3,
-      transparency = decal.Transparency,
+      transparency = attr.get(decal, "Transparency", unset, true, function(v)
+        return if type(v) == "number" then v else unset
+      end),
       uvOffset = decal.UVOffset,
       uvScale = decal.UVScale,
       rotation = decal.Rotation,
@@ -547,6 +560,12 @@ const function dresser(
     const animated = emitters.animated(decal)
     const rested = rests[decal.Name]
 
+    -- a piece's decal is a copy of the template's property until a state
+    -- names it, so it starts where the decal rests
+    if rested ~= nil and rested.transparency ~= nil then
+      decal.Transparency = rested.transparency
+    end
+
     table.insert(named, {
       decal = decal,
       name = decal.Name,
@@ -632,12 +651,7 @@ const function dresser(
       const f = size.written :: vector
       const scaled = Vector3.new(rest.X * f.x, rest.Y * f.y, rest.Z * f.z)
 
-      if mesh ~= nil then
-        mesh.Scale = scaled
-        look.refit()
-      else
-        look.size(scaled)
-      end
+      look.scale(scaled, mesh)
     end
 
     if due(tone, "Color3", sample.color, COLOR_STEP, first, exact) then
@@ -796,11 +810,26 @@ forge_mesh.engine = {
   pivot = function(model: Model): CFrame
     return model:GetPivot()
   end,
+  -- where the camera a ZOffset draws pieces toward stands, nil on a server
+  -- or before a client's camera is set
+  eye = function(): Vector3?
+    if SERVED then
+      return nil
+    end
+
+    const camera = workspace.CurrentCamera
+
+    return if camera ~= nil then camera.CFrame.Position else nil
+  end,
 }
 
 -- every piece alive across all emitters and emits, and the most that may be;
 -- a spec lowers max, nothing else writes either
 forge_mesh.pieces = { live = 0, max = 500 }
+
+-- where the camera stood on frame `read`, asked of the engine by the first
+-- piece a ZOffset draws that frame and kept for the rest
+const View = { read = -1, eye = nil :: Vector3? }
 
 forge_mesh.PATH_TAG = PATH_TAG
 
@@ -852,6 +881,21 @@ const function standingNow(flight: Flight, template: BasePart): (vector?, vector
   end
 
   return flight.standing, flight.up
+end
+
+-- where the camera stands this frame, nil where there is none to draw toward.
+-- Read once per half: a piece spawning in the first half (after an
+-- EmitDelay) reads the camera before the camera scripts and the shake moved
+-- it, and every piece placed in the second half must not draw toward that
+const function eyeNow(): Vector3?
+  const stamp = clock.frame * 2 + (if clock.late then 1 else 0)
+
+  if View.read ~= stamp then
+    View.read = stamp
+    View.eye = forge_mesh.engine.eye()
+  end
+
+  return View.eye
 end
 
 -- where the path's EndPoint stands this frame, read from the engine by the
@@ -932,13 +976,9 @@ forge_mesh.attributes = {
     :alpha("Transparency")
     :label("Color")
     :hint("Color of each piece over its life."),
-  Orientation = knob("FacingCamera")
-    :options(orient_common.MODES)
-    :hidden(stated)
-    :label("Orientation")
-    :hint(
-      "How each piece turns as it flies: its own pose, toward the camera or along its velocity. Trails and beams inside a piece that faces the camera sweep whenever the view moves."
-    ),
+  Orientation = knob("FacingCamera"):options(orient_common.MODES):hidden(stated):label("Orientation"):hint(
+    "How each piece turns as it flies: its own pose, toward the camera or along its velocity. Trails and beams inside a piece that faces the camera sweep whenever the view moves."
+  ),
   StateOrientation = knob("None")
     :options({ "None", "FacingCamera", "FacingCameraWorldUp" })
     :hidden(flown)
@@ -962,6 +1002,9 @@ forge_mesh.attributes = {
     :hidden(hasStates)
     :label("Transparency")
     :hint("Transparency of each piece over its life."),
+  ZOffset = knob(0):unit("studs"):label("ZOffset"):hint(
+    "Studs each piece is drawn nearer the camera, below 0 farther, to layer it over or under other effects. The piece looks the same, only its order changes. Trails, beams and particles inside a piece sweep whenever the view moves."
+  ),
 
   EmissionDirection = knob("Top")
     :options({ "Back", "Bottom", "Front", "Left", "Right", "Top" })
@@ -1219,7 +1262,10 @@ forge_mesh.properties = {}
 
 forge_mesh.layout = {
   { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration", "DestroyDelay" } },
-  { title = "Appearance", entries = { "Color", "Orientation", "StateOrientation", "Size", "Squash", "Transparency" } },
+  {
+    title = "Appearance",
+    entries = { "Color", "Orientation", "StateOrientation", "Size", "Squash", "Transparency", "ZOffset" },
+  },
   {
     title = "Emission",
     entries = {
@@ -1379,6 +1425,11 @@ const function piece(
 
   const obj = pool.take(scope, template, false, true) :: BasePart
 
+  -- a piece is a look and never a body, whatever its template was left as: it
+  -- neither collides nor weighs on what it is welded to
+  obj.CanCollide = false
+  obj.Massless = true
+
   -- a frame set is lent from the store, never worn as a copy of its folder
   for _, child in obj:GetChildren() do
     if setFolder(child) then
@@ -1468,12 +1519,7 @@ const function piece(
         writtenSize = stretched
         sizeShare = if first then sizeShare else 1
 
-        if meshed then
-          (objMesh :: SpecialMesh).Scale = stretched
-          look.refit()
-        else
-          look.size(stretched)
-        end
+        look.scale(stretched, if meshed then objMesh else nil)
       end
     end
 
@@ -1849,11 +1895,11 @@ const function piece(
       const point = if locked or lifted then placed(CFrame.new(stance.Position)).Position else stance.Position
       const turned = orient_common.rotation(stateMode, facing, toVector(point), vector.zero, view, nil)
 
-      return (turned * stance.Rotation + point) * look.offset()
+      return turned * stance.Rotation + point
     end
 
     if stance ~= nil then
-      return placed(stance) * look.offset()
+      return placed(stance)
     end
 
     const camera = if watching then workspace.CurrentCamera else nil
@@ -1865,12 +1911,42 @@ const function piece(
     const drawn = position + wander
     const cf = CFrame.new(drawn.x, drawn.y, drawn.z) * turned * rotation
 
-    return placed(cf) * look.offset()
+    return placed(cf)
+  end
+
+  -- a ZOffset draws the piece toward the camera from its pose each frame,
+  -- never from where it was last drawn, so nothing builds up and nothing the
+  -- piece does in the effect's own space moves. It shrinks by the share it
+  -- moves, so it looks the same and only sorts nearer or farther among
+  -- transparent parts, which Roblox orders by where each draws.
+  --
+  -- A FRAME'S OFFSET GOES ON AFTER THE SHIFT. The offset is sized with the
+  -- piece, so at a share k it is already k times the frame's own; on before
+  -- the shift, the shift scaled it again, and by last frame's share
+  const zOffset = numberOr(attrs.ZOffset, 0)
+
+  const function shifted(cf: CFrame): CFrame
+    if zOffset ~= 0 then
+      const eye = eyeNow()
+
+      if eye ~= nil then
+        const drawn, k = orient_common.toward(cf, eye, zOffset)
+
+        look.depth(k)
+
+        return drawn * look.offset()
+      end
+
+      -- no camera to move toward: drawn where it is, at its own size
+      look.depth(1)
+    end
+
+    return cf * look.offset()
   end
 
   -- the first pose is written at once, so a reused piece never shows a frame
   -- where its last holder let it go
-  const first = pose()
+  const first = shifted(pose())
 
   if finite(first) then
     obj.CFrame = first
@@ -1948,7 +2024,7 @@ const function piece(
   end
 
   const function place()
-    const cf = pose()
+    const cf = shifted(pose())
 
     if finite(cf) then
       mover.move(scope, obj, cf)
@@ -2168,9 +2244,10 @@ const function piece(
       landed.elapsed += deltaTime
     end
 
-    -- a piece at rest moves only with its parent, its frames or its landing
+    -- a piece at rest moves only with its parent, its frames, its landing or
+    -- the camera its ZOffset draws it toward
     if not moving then
-      if locked or sets.frames or turning then
+      if locked or sets.frames or turning or zOffset ~= 0 then
         place()
       end
 

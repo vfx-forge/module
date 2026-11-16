@@ -202,4 +202,58 @@ harness.suite(function()
       expect(math.abs(orient_common.squash(Vector3.one, -2).X - 3) < 1e-6).toBe(true)
     end)
   end)
+
+  harness.describe("orient_common.toward", function()
+    const EYE = Vector3.new(0, 0, 10)
+
+    test("draws a pose that many studs toward the camera, keeping its turn", function()
+      const cf = CFrame.new(0, 0, -2) * CFrame.fromOrientation(0.4, 1.1, -0.3)
+      const drawn, k = orient_common.toward(cf, EYE, 1.5)
+
+      expect(near(drawn.Position, Vector3.new(0, 0, -0.5))).toBe(true)
+      expect(near(drawn.LookVector, cf.LookVector) and near(drawn.UpVector, cf.UpVector)).toBe(true)
+      expect(math.abs(k - 10.5 / 12) < EPSILON).toBe(true)
+    end)
+
+    test("below 0 draws it away from the camera, and larger", function()
+      const drawn, k = orient_common.toward(CFrame.new(3, 4, 10), EYE, -5)
+
+      expect(near(drawn.Position, Vector3.new(6, 8, 10))).toBe(true)
+      expect(math.abs(k - 2) < EPSILON).toBe(true)
+    end)
+
+    test("moves along the line to the camera wherever the camera stands", function()
+      const cf = CFrame.new(1, 2, 3)
+      const eye = Vector3.new(4, -2, 15)
+      const drawn = orient_common.toward(cf, eye, 2)
+
+      expect(math.abs((drawn.Position - cf.Position).Magnitude - 2) < EPSILON).toBe(true)
+      expect(near((drawn.Position - cf.Position).Unit, (eye - cf.Position).Unit)).toBe(true)
+    end)
+
+    test("every point of a piece scaled by the share lands on the same line of sight", function()
+      const cf = CFrame.new(2, 1, -4) * CFrame.fromOrientation(0.3, -0.8, 0.2)
+      const drawn, k = orient_common.toward(cf, EYE, 6)
+      const corner = Vector3.new(1.5, -0.7, 0.4)
+      const before = cf:PointToWorldSpace(corner)
+      const after = drawn:PointToWorldSpace(corner * k)
+
+      expect(near((after - EYE).Unit, (before - EYE).Unit)).toBe(true)
+    end)
+
+    test("stops short of the camera however far it is asked to draw", function()
+      const drawn, k = orient_common.toward(CFrame.new(0, 0, 0), EYE, 50)
+
+      expect(k > 0).toBe(true)
+      expect(drawn.Position.Z < 10).toBe(true)
+    end)
+
+    test("leaves a pose at the camera where it is", function()
+      const cf = CFrame.new(0, 0, 10)
+      const drawn, k = orient_common.toward(cf, EYE, 3)
+
+      expect(drawn).toBe(cf)
+      expect(k).toBe(1)
+    end)
+  end)
 end)

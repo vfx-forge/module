@@ -1579,10 +1579,13 @@ harness.suite(function()
       end, meshed)
     end)
 
-    test("a state sets a decal by its name, the others keeping the template's own", function()
+    test("a state sets a decal by its name, the others resting at their own Transparency row", function()
       const function decaled(part: BasePart)
-        decalOn(part, "Base").Transparency = 0.3
-        decalOn(part, "Glow").Transparency = 0
+        const base = decalOn(part, "Base")
+
+        base.Transparency = 1
+        base:SetAttribute("Transparency", 0.3)
+        decalOn(part, "Glow").Transparency = 1
       end
 
       stated({}, { stateOf(0, { decals = { Glow = { transparency = 0.5 } } }) }, function(piece)
@@ -1590,6 +1593,20 @@ harness.suite(function()
 
         expect(near1((piece:FindFirstChild("Glow") :: Decal).Transparency, 0.5)).toBe(true)
         expect(near1((piece:FindFirstChild("Base") :: Decal).Transparency, 0.3)).toBe(true)
+      end, decaled)
+    end)
+
+    test("a template decal kept unseen at 1 shows on a piece no state names it on", function()
+      const function decaled(part: BasePart)
+        decalOn(part, "Base").Transparency = 1
+      end
+
+      stated({}, { stateOf(0), stateOf(1) }, function(piece)
+        expect(near1((piece:FindFirstChild("Base") :: Decal).Transparency, 0)).toBe(true)
+
+        frames(30)
+
+        expect(near1((piece:FindFirstChild("Base") :: Decal).Transparency, 0)).toBe(true)
       end, decaled)
     end)
 
@@ -2023,6 +2040,47 @@ harness.suite(function()
         expect(near(piece.CFrame.LookVector, want.LookVector, EPSILON)).toBe(true)
         env:Clear()
       end)
+    end)
+
+    test("a template under an attachment spawns at the attachment wherever it sits", function()
+      -- what lets the plugin pin a template to its parent's point: its own
+      -- position is never read, only its turn
+      const function spawnedAt(at: CFrame): CFrame
+        local got = CFrame.identity
+
+        framed(function(fake)
+          const part = attached({ Speed = STILL, Orientation = "None" })
+
+          part.CFrame = at * CFrame.fromOrientation(0, 0, math.rad(90))
+
+          const env = effects.emit(0, part)
+
+          frames(1)
+          got = pieces(fake)[1].CFrame
+          env:Clear()
+        end)
+
+        return got
+      end
+
+      const away = spawnedAt(CFrame.new(40, -12, 9))
+      const pinned = spawnedAt(CFrame.new(ATTACHED))
+
+      expect(near(away.Position, ATTACHED, EPSILON)).toBe(true)
+      expect(near(pinned.Position, away.Position, EPSILON)).toBe(true)
+      expect(near(pinned.UpVector, away.UpVector, EPSILON)).toBe(true)
+    end)
+
+    test("pinning keeps the turn and only moves the template onto the point", function()
+      const frame = CFrame.new(3, 4, 5) * CFrame.fromOrientation(0, math.rad(30), 0)
+      const template = CFrame.new(40, -12, 9) * CFrame.fromOrientation(math.rad(-90), 0, 0)
+      const pinned = parent_turn.pinned(frame, template)
+
+      expect(near(pinned.Position, frame.Position, EPSILON)).toBe(true)
+      expect(parent_turn.near(pinned.Rotation, template.Rotation)).toBe(true)
+      expect(parent_turn.offPoint(frame, template)).toBe(true)
+      expect(parent_turn.offPoint(frame, pinned)).toBe(false)
+      expect(parent_turn.near(parent_turn.measure(frame, pinned), parent_turn.measure(frame, template))).toBe(true)
     end)
 
     test("a template with no part or attachment above it spawns at its own pose", function()
@@ -2565,6 +2623,236 @@ harness.suite(function()
         scheduler.frame(0.1)
         scheduler.frame(1 / 60)
         expect(#pieces(fake)).toBe(0)
+      end)
+    end)
+  end)
+
+  harness.describe("a mesh's ZOffset", function()
+    -- the engine's camera stood in by `eye.at` for as long as `body` runs, and
+    -- how many times it was asked; a frame goes first, so no camera an
+    -- earlier spec read on this frame is kept
+    const function viewed(eye: { at: Vector3? }, body: () -> ()): number
+      const engine = forge_mesh.engine
+      const was = engine.eye
+      local asked = 0
+
+      engine.eye = function()
+        asked += 1
+
+        return eye.at
+      end
+
+      frames(1)
+
+      const ok, err = pcall(body)
+
+      engine.eye = was
+
+      if not ok then
+        error(err, 0)
+      end
+
+      return asked
+    end
+
+    -- one still piece of a second's life standing at ATTACHED, its template
+    -- holding `attributes`
+    const function emitted(attributes: { [string]: any }, body: (piece: BasePart) -> ())
+      staged(function(fake)
+        const part = attached({ Speed = STILL, Lifetime = NumberRange.new(1, 1) })
+
+        for name, v in attributes do
+          part:SetAttribute(name, v)
+        end
+
+        const env = effects.emit(0, part)
+
+        body(pieces(fake)[1])
+        env:Clear()
+      end)
+    end
+
+    test("draws a piece that many studs toward the camera, every frame from where it is", function()
+      const eye = { at = Vector3.new(0, 10, 40) :: Vector3? }
+
+      viewed(eye, function()
+        emitted({ ZOffset = 2 }, function(piece)
+          const want = ATTACHED + ((eye.at :: Vector3) - ATTACHED).Unit * 2
+
+          expect(near(piece.CFrame.Position, want, LOOSE)).toBe(true)
+
+          frames(10)
+
+          expect(near(piece.CFrame.Position, want, LOOSE)).toBe(true)
+
+          eye.at = Vector3.new(30, 10, 0)
+          frames(1)
+
+          expect(near(piece.CFrame.Position, ATTACHED + ((eye.at :: Vector3) - ATTACHED).Unit * 2, LOOSE)).toBe(true)
+        end)
+      end)
+    end)
+
+    test("shrinks a piece drawn nearer by the share it moves, so it looks the same", function()
+      const eye = { at = Vector3.new(0, 10, 40) :: Vector3? }
+
+      viewed(eye, function()
+        emitted({ ZOffset = 6 }, function(piece)
+          -- the template's size, a part's default
+          const rest = (harness.make("Part") :: BasePart).Size
+          frames(2)
+
+          const function share(): number
+            const d = ((eye.at :: Vector3) - ATTACHED).Magnitude
+
+            return (d - 6) / d
+          end
+
+          -- a corner of the piece stays on the line of sight it had at rest
+          const corner = rest / 2
+          const atRest = CFrame.new(ATTACHED) * piece.CFrame.Rotation
+          const before = atRest:PointToWorldSpace(corner)
+          const after = piece.CFrame:PointToWorldSpace(piece.Size / 2)
+          const sight = function(p: Vector3)
+            return (p - (eye.at :: Vector3)).Unit
+          end
+
+          expect(near(piece.Size, rest * share(), LOOSE)).toBe(true)
+          expect(near(sight(after), sight(before), LOOSE)).toBe(true)
+
+          -- the camera comes closer: the same six studs are a larger share
+          eye.at = Vector3.new(0, 10, 12)
+          frames(1)
+
+          expect(near(piece.Size, rest * share(), LOOSE)).toBe(true)
+        end)
+      end)
+    end)
+
+    -- a frame drawn off the union's center is sized with the piece, so its
+    -- offset is already at the share: the shift must not scale it again
+    test("a frame off the union's center moves toward the camera with the rest of the piece", function()
+      const eye = { at = Vector3.new(0, 10, 40) :: Vector3? }
+      local still: Vector3? = nil
+      local moved: Vector3? = nil
+
+      const function drawn(attributes: { [string]: any }, read: (piece: BasePart) -> ())
+        framed(function(fake)
+          const part = attached({ Speed = STILL, Lifetime = NumberRange.new(1, 1) })
+
+          for name, v in attributes do
+            part:SetAttribute(name, v)
+          end
+
+          frameSet(part, "off", 2)
+
+          -- every frame's own center a stud off the union's
+          for _, frame in (part:FindFirstChild("Frames") :: Instance):GetChildren() do
+            frame:SetAttribute("FrameCenter", Vector3.new(1, 0, 0))
+          end
+
+          const env = effects.emit(0, part)
+
+          frames(2)
+          read(pieces(fake)[1])
+          env:Clear()
+        end)
+      end
+
+      viewed(eye, function()
+        drawn({}, function(piece)
+          still = piece.CFrame.Position
+        end)
+
+        drawn({ ZOffset = 6 }, function(piece)
+          moved = piece.CFrame.Position
+        end)
+      end)
+
+      const at = eye.at :: Vector3
+      const d = (at - ATTACHED).Magnitude
+      const k = (d - 6) / d
+
+      -- the frame really is drawn off the piece's own pose
+      expect(((still :: Vector3) - ATTACHED).Magnitude > 0.1).toBe(true)
+      expect(near(moved :: Vector3, at + ((still :: Vector3) - at) * k, LOOSE)).toBe(true)
+    end)
+
+    test("below 0 draws it away from the camera", function()
+      const eye = { at = Vector3.new(0, 10, 40) :: Vector3? }
+
+      viewed(eye, function()
+        emitted({ ZOffset = -3 }, function(piece)
+          frames(2)
+
+          expect(near(piece.CFrame.Position, ATTACHED - ((eye.at :: Vector3) - ATTACHED).Unit * 3, LOOSE)).toBe(true)
+        end)
+      end)
+    end)
+
+    test("a piece at rest through its destroy delay still follows the camera", function()
+      const eye = { at = Vector3.new(0, 10, 40) :: Vector3? }
+
+      viewed(eye, function()
+        emitted({ ZOffset = 1, DestroyDelay = 1 }, function(piece)
+          -- the second's life and a few frames past it
+          frames(66)
+
+          eye.at = Vector3.new(-25, 10, 0)
+          frames(1)
+
+          expect(near(piece.CFrame.Position, ATTACHED + ((eye.at :: Vector3) - ATTACHED).Unit, LOOSE)).toBe(true)
+        end)
+      end)
+    end)
+
+    test("with no camera to draw toward, a piece stays where it is", function()
+      viewed({ at = nil }, function()
+        emitted({ ZOffset = 2 }, function(piece)
+          frames(5)
+
+          expect(near(piece.CFrame.Position, ATTACHED, LOOSE)).toBe(true)
+        end)
+      end)
+    end)
+
+    test("at 0 the camera is never asked for", function()
+      const asked = viewed({ at = Vector3.new(0, 10, 40) }, function()
+        emitted({}, function()
+          frames(5)
+        end)
+      end)
+
+      expect(asked).toBe(0)
+    end)
+
+    test("the camera is asked once a frame, however many pieces it draws", function()
+      const asked = viewed({ at = Vector3.new(0, 10, 40) }, function()
+        emitted({ ZOffset = 1, EmitCount = 6 }, function()
+          frames(4)
+        end)
+      end)
+
+      -- the frame the pieces spawn on and the four after it
+      expect(asked).toBe(5)
+    end)
+
+    test("resize and retime leave it as it is, still a length in studs", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { ZOffset = 1.5, OrbitRadius = 4 })
+
+        attr.cache(part)
+        resize.apply(part, 2)
+
+        expect(attr.get(part, "ZOffset", nil)).toBe(1.5)
+        -- the same resize still reached the template's other lengths
+        expect(attr.get(part, "OrbitRadius", nil)).toBe(8)
+        expect(forge_mesh.attributes.ZOffset.units).toBe("studs")
+
+        retime.apply(part, 2, 0.5)
+
+        expect(attr.get(part, "ZOffset", nil)).toBe(1.5)
       end)
     end)
   end)
@@ -5459,6 +5747,182 @@ harness.suite(function()
         told()
 
         expect(shown(tick)).toBe("rbxassetid://3")
+      end)
+    end)
+  end)
+
+  harness.describe("a constant mesh's handoff", function()
+    -- a constant loop on `part` played over `deltas`, one frame each, and
+    -- every frame that ended with other than one piece standing. the engine
+    -- runs a frame's callbacks in an order of its own, so the scheduler's frame
+    -- runs `first` or after the plain connections
+    const function played(part: BasePart, deltas: { number }, first: boolean): string
+      const runService = game:GetService("RunService") :: any
+      const tags = game:GetService("CollectionService") :: any
+      const rendered, getTagged = runService.RenderStepped, tags.GetTagged
+      const placed, moved = enabled_effects.placed, enabled_effects.moved
+      const connected: { (deltaTime: number) -> () } = {}
+      const scope = {}
+      const seen = {}
+
+      runService.RenderStepped = {
+        Connect = function(_, step: (deltaTime: number) -> ())
+          table.insert(connected, step)
+
+          return {
+            Connected = true,
+            Disconnect = function()
+              const at = table.find(connected, step)
+
+              if at ~= nil then
+                table.remove(connected, at)
+              end
+            end,
+          }
+        end,
+      }
+
+      tags.GetTagged = function()
+        return {}
+      end
+
+      enabled_effects.placed = function()
+        return true
+      end
+
+      enabled_effects.moved = function()
+        return {} :: any
+      end
+
+      const ok, err = pcall(function()
+        enabled_effects.init(scope, effects)
+        enabled_effects.add(part)
+
+        for _, deltaTime in deltas do
+          const function plain()
+            for _, step in table.clone(connected) do
+              if step ~= scheduler.frame then
+                step(deltaTime)
+              end
+            end
+          end
+
+          if first then
+            scheduler.frame(deltaTime)
+            plain()
+          else
+            plain()
+            scheduler.frame(deltaTime)
+          end
+
+          table.insert(seen, forge_mesh.pieces.live)
+        end
+      end)
+
+      enabled_effects.remove(part)
+      enabled_effects.clear()
+      utility.cleanupScope(scope)
+
+      runService.RenderStepped, tags.GetTagged = rendered, getTagged
+      enabled_effects.placed, enabled_effects.moved = placed, moved
+
+      if not ok then
+        error(err, 0)
+      end
+
+      -- every frame that drew other than one piece, as frame=count
+      const off = {}
+
+      for i, count in seen do
+        if count ~= 1 then
+          table.insert(off, `{i}={count}`)
+        end
+      end
+
+      return table.concat(off, " ")
+    end
+
+    -- `count` frames of `deltas` in turn
+    const function cycled(deltas: { number }, count: number): { number }
+      const out = {}
+
+      for i = 1, count do
+        out[i] = deltas[(i - 1) % #deltas + 1]
+      end
+
+      return out
+    end
+
+    -- each a Rate, the Lifetime of 1/Rate, and the frames it plays over
+    const CASES = {
+      { name = "a second at 60 fps", rate = 1, deltas = cycled({ FRAME }, 240) },
+      { name = "a twentieth at 60 fps", rate = 20, deltas = cycled({ FRAME }, 60) },
+      {
+        name = "a second over uneven frames",
+        rate = 1,
+        deltas = cycled({ 0.0159, 0.0172, 0.0166, 0.0168, 0.0161 }, 300),
+      },
+    }
+
+    test("a piece of a Lifetime of 1/Rate hands off to the next with no empty and no doubled frame", function()
+      const got, want = {}, {}
+
+      for _, case in CASES do
+        for _, first in { true, false } do
+          capped(50, function()
+            staged(function()
+              const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+              const lifetime = 1 / case.rate
+              const part = template(parent, {
+                Enabled = true,
+                Rate = case.rate,
+                Lifetime = NumberRange.new(lifetime, lifetime),
+                Speed = STILL,
+              })
+
+              -- lune has no attribute signal for the loop to hear Enabled on
+              attr.cache(part)
+
+              const order = if first then "scheduler first" else "scheduler last"
+
+              table.insert(got, `{case.name}, {order}: {played(part, case.deltas, first)}`)
+              table.insert(want, `{case.name}, {order}: `)
+            end)
+          end)
+        end
+      end
+
+      expect(table.concat(got, "\n")).toBe(table.concat(want, "\n"))
+    end)
+
+    test("an EmitDuration window's pieces hand off the same way", function()
+      capped(50, function()
+        staged(function()
+          const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+          const part = template(parent, {
+            EmitDuration = 4,
+            Rate = 1,
+            Lifetime = NumberRange.new(1, 1),
+            Speed = STILL,
+          })
+
+          const env = effects.emit(0, part)
+          const off = {}
+
+          -- the window's first piece starts as it opens, between frames
+          for i = 1, 3 * 60 do
+            frames(1)
+
+            const live = forge_mesh.pieces.live
+
+            if live ~= 1 then
+              table.insert(off, `{i}={live}`)
+            end
+          end
+
+          expect(table.concat(off, " ")).toBe("")
+          env:Clear()
+        end)
       end)
     end)
   end)

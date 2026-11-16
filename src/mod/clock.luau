@@ -43,6 +43,11 @@ local clock = {}
 -- first time the frame reads it and kept for the rest of the frame
 clock.frame = 0
 
+-- whether the frame is in its second half (scheduler.late), after the camera
+-- scripts and the camera shake moved the camera: a read of the camera taken
+-- in the first half is not the one the frame draws with
+clock.late = false
+
 -- no clock was off 1 of its own when the frame began, so the frame's steps
 -- take its delta as it is
 clock.uniform = true

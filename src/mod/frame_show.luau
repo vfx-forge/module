@@ -4,7 +4,9 @@ local material_dress = require("@mod/material_dress")
 local frame_store = require("@srv/frame_store")
 
 export type Show = {
-  show: (index: number, size: Vector3) -> Vector3,
+  -- `depth` is the share a ZOffset draws the piece at (look.depth), which a
+  -- special mesh's own Offset is drawn at too; 1 when none
+  show: (index: number, size: Vector3, depth: number?) -> Vector3,
   glow: (strength: number, tint: Color3, color: Color3) -> (),
   fade: (transparency: number) -> (),
   release: () -> (),
@@ -99,7 +101,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, 
     dress(index)
   end
 
-  const function show(index: number, size: Vector3): Vector3
+  const function show(index: number, size: Vector3, depth: number?): Vector3
     local frame = set.frames[index]
 
     if frame == nil then
@@ -136,7 +138,7 @@ function frame_show.new(set: frame_store.Set, piece: BasePart, start: BasePart, 
 
     if special then
       if bounds and set.union then
-        special.Offset = home + (bounds.center - set.union.center) * special.Scale
+        special.Offset = home * (depth or 1) + (bounds.center - set.union.center) * special.Scale
       end
 
       offset = Vector3.zero

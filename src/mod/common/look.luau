@@ -49,6 +49,8 @@ export type Options = {
 
 export type Look = {
   size: (size: Vector3) -> (),
+  scale: (size: Vector3, mesh: SpecialMesh?) -> (),
+  depth: (k: number) -> (),
   refit: () -> (),
   offset: () -> CFrame,
   glow: (strength: number, tint: Color3, color: Color3) -> (),
@@ -184,6 +186,10 @@ function common.start(
   local offset = Vector3.zero
   local frameIndex = 1
   local currentSize = template.Size
+
+  -- the share a ZOffset draws the piece at toward the camera (look.depth),
+  -- up here because a frame's fit reads it
+  local depth = 1
   local longestFlipbookDuration = 0
 
   -- a loop counting 0 plays for the piece's whole life, known only once every
@@ -280,7 +286,7 @@ function common.start(
     end
 
     if shown then
-      offset = shown.show(frameIndex, size)
+      offset = shown.show(frameIndex, size, depth)
     end
   end
 
@@ -288,7 +294,58 @@ function common.start(
   -- has moved under it
   function look.refit()
     if shown then
-      offset = shown.show(frameIndex, currentSize)
+      offset = shown.show(frameIndex, currentSize, depth)
+    end
+  end
+
+  -- the piece's size and the share a ZOffset draws it at toward the camera
+  -- (orient_common.toward): what is written is the size times the share, so
+  -- the piece looks the same nearer the camera. `mesh` is the special mesh
+  -- that carries the size, nil when the part's own size does
+  local asked: Vector3? = nil
+  local carrier: SpecialMesh? = nil
+  local carrierOffset = Vector3.zero
+
+  const function written()
+    const size = (asked :: Vector3) * depth
+
+    if carrier ~= nil then
+      carrier.Scale = size
+
+      -- a mesh drawn off its part moves toward the camera with the rest of it
+      if carrierOffset ~= Vector3.zero then
+        carrier.Offset = carrierOffset * depth
+      end
+
+      look.refit()
+    else
+      look.size(size)
+    end
+  end
+
+  function look.scale(size: Vector3, mesh: SpecialMesh?)
+    if mesh ~= nil and mesh ~= carrier then
+      carrierOffset = mesh.Offset
+    end
+
+    asked, carrier = size, mesh
+    written()
+  end
+
+  -- a share within a hair of the last is not written again: the camera
+  -- drifting a little moves nothing anyone sees, and a walking camera would
+  -- otherwise rewrite every ZOffset piece's size every frame. 0.2% is a
+  -- fifth of a pixel on a piece 100 pixels across. Back to 1 is always
+  -- written, so a piece with no camera any more is its own size again
+  function look.depth(k: number)
+    if k == depth or (k ~= 1 and math.abs(k - depth) <= 2e-3 * depth) then
+      return
+    end
+
+    depth = k
+
+    if asked ~= nil then
+      written()
     end
   end
 
@@ -318,7 +375,7 @@ function common.start(
       end
 
       frameIndex = if reverse then frameCount + 1 - index else index
-      offset = shown.show(frameIndex, currentSize)
+      offset = shown.show(frameIndex, currentSize, depth)
     end
 
     const own = if opts

@@ -175,4 +175,28 @@ function common.unsquash(size: Vector3, s: number): Vector3
   return Vector3.new(size.X * up, size.Y / up, size.Z * up)
 end
 
+-- a pose drawn nearer than this share of its distance to the camera would
+-- reach the camera itself, so a ZOffset past it stops there
+const NEAREST = 0.05
+
+-- `cf` drawn `by` studs along the line to a camera standing at `eye`, below 0
+-- away from it, as a ParticleEmitter's ZOffset draws a particle, and the
+-- scale that keeps it the same on screen: every point of the piece moves
+-- toward the eye by one share, so its outline never changes and only the
+-- distance Roblox sorts transparent parts by does (measured 2026-11-16: the
+-- engine sorts by where a part draws, a pivot or a mesh's Offset changes
+-- nothing). Its turn is kept. One at the camera has no line to move along
+function common.toward(cf: CFrame, eye: Vector3, by: number): (CFrame, number)
+  const line = eye - cf.Position
+  const length = line.Magnitude
+
+  if length < STILL_SPEED or length ~= length then
+    return cf, 1
+  end
+
+  const k = math.max((length - by) / length, NEAREST)
+
+  return cf + line * (1 - k), k
+end
+
 return common

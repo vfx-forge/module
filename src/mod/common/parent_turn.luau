@@ -27,6 +27,21 @@ function common.measure(frame: CFrame, template: CFrame): CFrame
   return frame.Rotation:Inverse() * template.Rotation
 end
 
+-- where a template under an attachment or a part is kept: on the point its
+-- pieces spawn from, in its own turn. The runtime never reads the position of
+-- such a template (forge_mesh.originOf spawns from the parent), so one left
+-- behind when its parent moved only put the effect's gizmo away from what
+-- plays; the turn is kept, since it is what the pieces play at
+function common.pinned(frame: CFrame, template: CFrame): CFrame
+  return CFrame.new(frame.Position) * template.Rotation
+end
+
+-- whether a template sits off the point it is kept on, past a thousandth of a
+-- stud (a CFrame keeps float32)
+function common.offPoint(frame: CFrame, template: CFrame): boolean
+  return (template.Position - frame.Position).Magnitude > 1e-3
+end
+
 -- the turn a template's pieces play at: the stored turn carried by the frame
 -- as it stands now, or the template's own while the two agree (the frame has
 -- not turned since the template was placed, or the template turned with it),

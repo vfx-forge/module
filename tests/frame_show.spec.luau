@@ -400,6 +400,11 @@ harness.suite(function()
         expect(piece.Size).toBe(Vector3.new(3, 3, 3))
         expect(#applied).toBe(0)
 
+        -- a ZOffset's share draws the mesh's own Offset nearer with the rest
+        -- of it; the frame's part comes from the Scale, written by the caller
+        shown.show(2, Vector3.new(4, 4, 4), 0.5)
+        expect(special.Offset).toBe(Vector3.new(4, 2.5, 0))
+
         shown.show(1, Vector3.new(4, 4, 4))
         expect(special.MeshId).toBe("rbxassetid://1")
 
