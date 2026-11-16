@@ -447,6 +447,35 @@ harness.suite(function()
       expect(table.find(roots, place)).toBe(nil)
     end)
 
+    -- a list asks for any one of its selectors, so a missing first child
+    -- rules nothing out and the query is asked
+    test("a :has list is left to the query when its first child is missing", function()
+      registry.clear()
+
+      local asked: { string } = {}
+
+      -- the harness's query reads no selector list, so this one only notes
+      -- that it was asked
+      registry.configure({
+        query = function(_root: Instance, selector: string)
+          table.insert(asked, selector)
+          return {}
+        end,
+      })
+      registry.register(stub("mesh", { classifier = "Model:has(> BasePart#Start, > BasePart#End)" }))
+      harness.reset()
+
+      local place = harness.make("DataModel")
+      local workspace = harness.make("Workspace", place)
+      local rig = harness.make("Model", workspace)
+
+      harness.make("Part", rig).Name = "End"
+
+      registry.of(rig)
+
+      expect(#asked > 0).toBe(true)
+    end)
+
     test("a scan of a service never climbs to the place", function()
       registry.clear()
 

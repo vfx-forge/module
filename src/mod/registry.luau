@@ -974,11 +974,38 @@ local function literal(text: string): any
   return string.match(text, '^"(.*)"$') or string.match(text, "^'(.*)'$") or text
 end
 
+-- whether a `(...)` group holds a selector list: a comma outside any nested
+-- brackets or quotes
+local function hasList(group: string): boolean
+  local depth = 0
+  local quote: string? = nil
+
+  for i = 2, #group - 1 do
+    local c = string.sub(group, i, i)
+
+    if quote ~= nil then
+      if c == quote then
+        quote = nil
+      end
+    elseif c == '"' or c == "'" then
+      quote = c
+    elseif c == "(" or c == "[" then
+      depth += 1
+    elseif c == ")" or c == "]" then
+      depth -= 1
+    elseif c == "," and depth == 0 then
+      return true
+    end
+  end
+
+  return false
+end
+
 -- whether an instance could be a compound's subject, from what the compound
--- asks of the instance itself: its class, tags, name and attributes, read up
--- to the first filter that asks more (a property, :has, :not). false only on
--- a filter the instance fails for sure; an attribute the engine might read
--- another way than this does passes
+-- asks of the instance itself: its class, tags, name, attributes and the names
+-- of the direct children a :has asks for, read up to the first filter that
+-- asks more (a property, :not). false only on a filter the instance fails for
+-- sure; an attribute the engine might read another way than this does passes
 local function couldBe(inst: Instance, compound: string): boolean
   local class, rest = string.match(compound, "^([%a_][%w_]*)(.*)$")
 
@@ -989,6 +1016,26 @@ local function couldBe(inst: Instance, compound: string): boolean
   rest = rest or compound
 
   while rest ~= "" do
+    -- a direct child the compound names: with no child of that name at all it
+    -- cannot match, which spares every model and folder without a Start the
+    -- query over its parent's whole subtree. any other :has is left to the
+    -- query, as is one whose child is there
+    local within, afterHas = string.match(rest, "^:has(%b())(.*)$")
+
+    if within ~= nil then
+      -- a list (`:has(> A#X, > B#Y)`) asks for any one of its selectors, so
+      -- the first child missing rules nothing out: only a single selector is
+      -- read here
+      local child = if hasList(within) then nil else string.match(within, "^%(%s*>%s*[%a_]*[%w_]*#([%w_]+)")
+
+      if child ~= nil and inst:FindFirstChild(child) == nil then
+        return false
+      end
+
+      rest = afterHas
+      continue
+    end
+
     local kind, word, after = string.match(rest, "^([%.#])([%w_]+)(.*)$")
 
     if kind == "." then
