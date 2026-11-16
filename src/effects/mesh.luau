@@ -318,6 +318,11 @@ local function piece(
   local ref = ctx.ref :: Model
   local scope = ctx.scope
 
+  -- a piece is a look and never a body, whatever its Start was left as: it
+  -- neither collides nor weighs on what it is welded to
+  obj.CanCollide = false
+  obj.Massless = true
+
   local sync = attrs.SyncPosition
 
   local rotSpeed = attrs.PartRotSpeed(nil, duration)
