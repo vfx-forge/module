@@ -6,5 +6,6 @@
     "pkg": {
       "$path": "pkg"
     }
-  }
+  },
+  "globIgnorePaths": ["pkg/tiniest", "pkg/tiniest/**", "src/pkg/tiniest", "src/pkg/tiniest/**"]
 }

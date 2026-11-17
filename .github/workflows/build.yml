@@ -17,6 +17,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # pkg/Z is a submodule the module requires at runtime (the modifier
+          # codec). v3.0.0 shipped without this line: Z went out as an empty
+          # Folder, its require stayed an unresolved alias, and every effect
+          # with modifiers played without them
+          submodules: recursive
 
       # this workflow triggers on the tag, not on a branch, so nothing else
       # stops a v* tag cut from dev from publishing to the release page, wally
