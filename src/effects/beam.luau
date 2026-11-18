@@ -58,21 +58,15 @@ beam.attributes = {
     :hint("Multiplier on the distance between the beam's attachments."),
   -- written to every copy as it is emitted, so beams laid end to end in a
   -- ring line their textures up into one band, and a pooled copy never
-  -- carries on from where its last emit left the scroll
-  TextureOffset = knob(0)
-    :label("TextureOffset")
-    :hint("Where the texture's scroll starts on each emit, in cycles: 0.5 starts it halfway along."),
-  -- off the card (owner 2026-11-15): a modifier on Transparency does the
-  -- same fade. still read, so a beam saved with one plays as it did
-  TransparencyScale = knob(1)
-    :min(0)
-    :aliases("Transparency_Scale")
-    :mod()
-    :label("TransparencyScale")
-    :hint("Multiplier on the beam's transparency keypoints.")
-    :hidden(function()
-      return true
-    end),
+  -- carries on from where its last emit left the scroll. a modifier sets it
+  -- every frame from the emit on, which holds the scroll where it says
+  TextureOffset = knob(0):mod():label("TextureOffset"):hint(
+    "Where the texture's scroll starts on each emit, in cycles: 0.5 starts it halfway along. A modifier holds the scroll where it says each frame, so TextureSpeed does not move it."
+  ),
+  -- back on the card (owner 2026-11-18) after three days off it
+  TransparencyScale = knob(1):min(0):aliases("Transparency_Scale"):mod():label("TransparencyScale"):hint(
+    "Fades the beam's transparency keypoints: 0 opaque, 1 as set, 2 clear. A modifier here plays instead of the Transparency row's."
+  ),
 }
 
 for name, row in flipbook_rows.rows() do
@@ -94,8 +88,7 @@ beam.properties = {
     :hint("Texture speed over the effect."),
   TextureLength = knob():aliases("Length_Texture"):mod():label("Texture"):hint("Texture length over the effect."),
   -- a row of its own so it has the effect end's lane too: a Tween there to 1
-  -- is how a beam fades out at the end of each emit, now that the card no
-  -- longer shows TransparencyScale (owner 2026-11-15)
+  -- is how a beam fades out at the end of each emit
   Transparency = knob():mod():label("Transparency"):hint("Beam Transparency over the effect."),
 }
 
@@ -113,6 +106,7 @@ beam.layout = {
       { property = "LightEmission" },
       { property = "LightInfluence" },
       "Transparency",
+      "TransparencyScale",
       { property = "ZOffset" },
     },
   },
@@ -333,10 +327,11 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   -- every tween below counts the beam's own clock, which the speed row scales
   tween.drive(scope, tScale, setTScale)
 
-  -- the Transparency row's own modifiers. a beam saved with a modifier on
+  -- the Transparency row's own modifiers. a beam with a modifier on
   -- TransparencyScale plays that one instead, as it always did: the two would
-  -- write the same property. a still scale applies over the row as it does
-  -- over the beam's own keypoints, or the row's first write dropped it
+  -- write the same property, and the scale's hint says so. a still scale
+  -- applies over the row as it does over the beam's own keypoints, or the
+  -- row's first write dropped it
   if props.Transparency.animated and not tScale.animated then
     const still = tScale.at(0)
 
@@ -378,8 +373,11 @@ function beam.emit(ctx: reader.Ctx, attrs: any, props: any)
   end)
 
   -- after the flipbook's first frame: on a beam with no texture yet the call
-  -- does nothing
-  obj:SetTextureOffset(attrs.TextureOffset)
+  -- does nothing. a still row is written once, here; a modifier writes it
+  -- every frame from here on
+  tween.drive(scope, attrs.TextureOffset, function(v: number)
+    obj:SetTextureOffset(v)
+  end)
 
   -- a Speed resting at 0 for good ends the beam rather than holding it
   tween.wait(scope, curve.new(math.max(duration, flipbookDuration), "linear"))

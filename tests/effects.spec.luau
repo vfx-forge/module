@@ -2563,6 +2563,110 @@ harness.suite(function()
       built.restore()
     end)
 
+    -- a tween from 0 to 1 over the effect on the TextureOffset row
+    local function offsetTween(): { [string]: any }
+      local entry = { kind = "tween", chain = false, start = value.lit(0), finish = value.lit(1) }
+
+      return {
+        [mods.attrName("attribute", "TextureOffset")] = frame.frame(codec.encode({ lanes = { start = { entry } } })),
+      }
+    end
+
+    -- a beam's copy emitted from a pool, with the TextureOffset calls made
+    -- from the emit on
+    local function offsetsOf(module: any, attributes: { [string]: any }, frames: number): { number }
+      local built = fresh()
+
+      registry.register(module)
+
+      local fake = fake_pool.start({ Beam = { "Enabled" } })
+      local part = harness.make("Part")
+      local beam = harness.make("Beam", part) :: any
+
+      beam.Attachment0 = harness.make("Attachment", part)
+      beam.Attachment1 = harness.make("Attachment", part)
+
+      for name, v in attributes do
+        beam:SetAttribute(name, v)
+      end
+
+      table.clear(harness.textureOffsets)
+
+      local env = effects.emit(0, beam)
+
+      for _ = 1, frames do
+        scheduler.frame(0.25)
+      end
+
+      local out = {}
+
+      for _, call in harness.textureOffsets do
+        table.insert(out, call.offset)
+      end
+
+      expect(beam:GetAttribute("TextureOffset")).toBe(attributes.TextureOffset)
+
+      env:Clear()
+      fake_pool.stop(fake)
+      built.restore()
+
+      return out
+    end
+
+    test("a modifier on TextureOffset moves the copy's scroll every frame of the effect", function()
+      local attributes = offsetTween()
+
+      attributes.TextureOffset = 0
+
+      local calls = offsetsOf(require("@vfx/beam"), attributes, 3)
+
+      expect(#calls > 1).toBe(true)
+      expect(calls[1]).toBe(0)
+
+      for i = 2, #calls do
+        expect(calls[i] > calls[i - 1]).toBe(true)
+      end
+    end)
+
+    -- an older module (3.0.1) read TextureOffset as a plain row and wrote it
+    -- once: a queue the plugin writes on it now must leave that write alone.
+    -- the stand in is today's beam with that row, its emit handed the plain
+    -- value as the still track today's emit takes
+    test("a queue on a TextureOffset row that takes no modifiers changes nothing it writes", function()
+      local beam = require("@vfx/beam")
+      local plain = table.clone(beam)
+
+      plain.attributes = table.clone(beam.attributes)
+      plain.attributes.TextureOffset = knob(0):label("TextureOffset")
+      plain.emit = function(ctx: any, attrs: any, props: any)
+        local offset = attrs.TextureOffset
+
+        expect(offset).toBe(0.25)
+
+        local still = {
+          animated = false,
+          duration = 0,
+          at = function()
+            return offset
+          end,
+        }
+
+        return beam.emit(ctx, setmetatable({ TextureOffset = still }, { __index = attrs }), props)
+      end
+
+      local attributes = offsetTween()
+
+      attributes.TextureOffset = 0.25
+
+      local warnings = harness.captureWarnings(function()
+        local calls = offsetsOf(plain, attributes, 3)
+
+        expect(calls).toEqual({ 0.25 })
+      end)
+
+      expect(warnings).toEqual({})
+    end)
+
     test("a beam whose Speed rests at 0 ends rather than holding", function()
       local beam, built = beamOf({ Speed = 0 })
       local env = effects.emit(0, beam)
