@@ -7,7 +7,7 @@
 
 # Emit Module
 
-The is the official repository for the emit module provided by the <a href="https://devforum.roblox.com/t/3867553">VFX Forge</a> Roblox plugin.
+This is the official repository for the emit module provided by the <a href="https://devforum.roblox.com/t/3867553">VFX Forge</a> Roblox plugin.
 
 ## License
 The emit module is licensed under a custom source-available copyleft license which **<mark>only allows usage within Roblox games</mark>**. That said, feel free to contribute and report bugs.
@@ -16,8 +16,10 @@ The emit module is licensed under a custom source-available copyleft license whi
 
 #### Wally (Luau)
 
-```sh
-ForgeVFX = "zilibobi/forge-vfx@2.4.0"
+Add it under `[dependencies]` in your `wally.toml`:
+
+```toml
+ForgeVFX = "zilibobi/forge-vfx@3.0.2"
 ```
 
 #### npm (TypeScript)
