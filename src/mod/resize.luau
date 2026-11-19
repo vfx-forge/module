@@ -23,9 +23,12 @@ local function factorOf(unit: string, factor: number): number?
   return nil
 end
 
--- engine properties no effect reads, which size still scales
+-- engine properties no effect reads, which size still scales. a 2D emitter's
+-- are offset pixels, scaled as studs are; its emission offset and spread are
+-- fractions of its parent, which a resize leaves as a 3D emitter's part is
 resize.PROPERTY_UNITS = {
   ParticleEmitter = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
+  ParticleEmitter2D = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
   Sound = { RollOffMaxDistance = "studs" },
 }
 
@@ -60,7 +63,7 @@ local function scaleProperty(obj: any, name: string, f: number)
     return
   end
 
-  if typeof(v) == "number" or typeof(v) == "Vector3" then
+  if typeof(v) == "number" or typeof(v) == "Vector3" or typeof(v) == "Vector2" then
     obj[name] = v * f
   elseif typeof(v) == "NumberRange" then
     obj[name] = NumberRange.new(v.Min * f, v.Max * f)

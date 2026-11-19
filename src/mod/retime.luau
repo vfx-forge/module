@@ -27,16 +27,20 @@ function retime.factorOf(unit: string, factor: number): number?
   return nil
 end
 
+-- an emitter's time rows, the 2D one's too, whose lengths are offset pixels
+const EMITTER = {
+  Speed = "studsPerSecond",
+  RotSpeed = "perSecond",
+  Lifetime = "seconds",
+  Acceleration = "studsPerSecondSquared",
+  Drag = "perSecond",
+  Rate = "perSecond",
+}
+
 -- engine properties no effect reads, which time still scales
 retime.PROPERTY_UNITS = {
-  ParticleEmitter = {
-    Speed = "studsPerSecond",
-    RotSpeed = "perSecond",
-    Lifetime = "seconds",
-    Acceleration = "studsPerSecondSquared",
-    Drag = "perSecond",
-    Rate = "perSecond",
-  },
+  ParticleEmitter = EMITTER,
+  ParticleEmitter2D = EMITTER,
   Trail = { Lifetime = "seconds" },
 }
 
@@ -51,7 +55,7 @@ local function scaleProperty(obj: any, name: string, f: number)
     return
   end
 
-  if typeof(v) == "number" or typeof(v) == "Vector3" then
+  if typeof(v) == "number" or typeof(v) == "Vector3" or typeof(v) == "Vector2" then
     obj[name] = v * f
   elseif typeof(v) == "NumberRange" then
     obj[name] = NumberRange.new(v.Min * f, v.Max * f)

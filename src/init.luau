@@ -106,6 +106,7 @@ local Trail = require("@vfx/trail")
 local Bezier = require("@vfx/bezier")
 local Screen = require("@vfx/screen")
 local Particle = require("@vfx/particle")
+local Particle2D = require("@vfx/particle_2d")
 local Animator = require("@vfx/animator")
 local ForgeMesh = require("@vfx/forge_mesh")
 local Controller = require("@vfx/controller")
@@ -146,6 +147,7 @@ local warnedScale = false
 registry.register(Beam)
 registry.register(Trail)
 registry.register(Particle)
+registry.register(Particle2D)
 registry.register(Spin)
 registry.register(Screen)
 registry.register(CameraShake)
@@ -374,7 +376,7 @@ end
 local function setEnabled(obj: Instance, enabled: boolean)
   local module = registry.of(obj)
 
-  if module == Particle or module == Beam then
+  if module == Particle or module == Particle2D or module == Beam then
     (obj :: any).Enabled = enabled
     return
   end

@@ -219,6 +219,8 @@ function texture_loader.init(scope: { any })
         local function check(obj: Instance)
           if obj:IsA("ParticleEmitter") then
             add(obj.Texture)
+          elseif obj:IsA("ParticleEmitter2D") then
+            add((obj :: any).TextureContent.Uri or "")
           end
         end
 

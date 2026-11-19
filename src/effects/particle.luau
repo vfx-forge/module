@@ -10,6 +10,30 @@ local numeric_common = require("@mod/common/numeric")
 
 local pool = require("@srv/pool")
 
+-- the rows every emitter declares, the 2D one too, made anew for each module
+-- that registers them, since registering freezes a row
+local function rows()
+  local attributes = {
+    -- a count only the plugin defaults: anywhere else a particle emits once
+    -- an author has written one
+    EmitCount = knob(function()
+        return if utility.PLUGIN_CONTEXT then 1 else nil
+      end)
+      :label("Count")
+      :hint("The amount of effects to emit."),
+    EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+    EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
+  }
+
+  -- the emitter's own property: a stored attribute of the same name shadows
+  -- it and an old quad on it folds into its queue
+  local properties = {
+    TimeScale = knob():mod():label("TimeScale"):hint("Time scale written to the emitter for the length of the effect."),
+  }
+
+  return attributes, properties
+end
+
 local particle = {}
 
 particle.id = "particle"
@@ -21,23 +45,8 @@ function particle.copies(ref: Instance)
   return not ref:IsDescendantOf(workspace)
 end
 
-particle.attributes = {
-  -- a count only the plugin defaults: anywhere else a particle emits once an
-  -- author has written one
-  EmitCount = knob(function()
-      return if utility.PLUGIN_CONTEXT then 1 else nil
-    end)
-    :label("Count")
-    :hint("The amount of effects to emit."),
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
-  EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
-}
-
--- the emitter's own property: a stored attribute of the same name shadows it
--- and an old quad on it folds into its queue
-particle.properties = {
-  TimeScale = knob():mod():label("TimeScale"):hint("Time scale written to the emitter for the length of the effect."),
-}
+particle.attributes, particle.properties = rows()
+particle.rows = rows
 
 particle.layout = {
   { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration" } },
@@ -134,8 +143,10 @@ local function prepare(ctx: reader.Ctx): ParticleEmitter?
   return clone
 end
 
-function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
-  local ref = ctx.ref :: ParticleEmitter
+-- an emit of an emitter, 3D or 2D, on the instance `place` answers it plays
+-- on, nil for none
+function particle.play(ctx: reader.Ctx, attrs: any, props: any, place: (ctx: reader.Ctx) -> any?)
+  local ref = ctx.ref :: any
   local scope = ctx.scope
 
   local count = attrs.EmitCount
@@ -152,7 +163,7 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
     return
   end
 
-  local obj = prepare(ctx)
+  local obj = place(ctx)
 
   if obj == nil then
     return
@@ -263,6 +274,10 @@ function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
   end)
 
   lifetime.awaitJoin(aged)
+end
+
+function particle.emit(ctx: reader.Ctx, attrs: any, props: any)
+  particle.play(ctx, attrs, props, prepare)
 end
 
 return particle

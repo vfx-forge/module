@@ -26,6 +26,7 @@ local colorProps = {
       "Beam",
       "Trail",
       "ParticleEmitter",
+      "ParticleEmitter2D",
     },
   },
 }
