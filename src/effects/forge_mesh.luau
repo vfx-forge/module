@@ -1037,6 +1037,9 @@ forge_mesh.attributes = {
     :hidden(stated)
     :label("Rotation")
     :hint("Initial rotation of each piece per axis, in degrees, drawn per piece."),
+  RotationRandom = knob(vector.zero):mod():hidden(stated):label("RotationRandom"):hint(
+    "Random extra rotation per axis, in degrees: each piece adds a value between minus and plus this to Rotation."
+  ),
   RotSpeed = knob(vector.zero)
     :unit("perSecond")
     :mod()
@@ -1288,6 +1291,7 @@ forge_mesh.layout = {
       "Lifetime",
       "Rate",
       "Rotation",
+      "RotationRandom",
       "RotSpeed",
       "Speed",
       "SpreadAngle",
@@ -2502,7 +2506,7 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
       break
     end
 
-    const speed, duration, spread, turn, inheritance = launch_common.draw(rows, spawned)
+    const speed, duration, spread, rotation, inheritance = launch_common.draw(rows, spawned)
     const tint = if colored then gradientOr(rows.Color().at(spawned), tintRest) else tintRest
 
     config.spread = spread
@@ -2512,6 +2516,11 @@ function forge_mesh.emit(ctx: reader.Ctx, attrs: any)
     -- a path piece's Lifetime is the time it walks its path, its life that
     -- and the time it flies on
     const roll, offset, flightTime, pace = path_motion.draw(flight.path, flight.rng, spawn)
+
+    -- a States piece plays no Rotation, so it draws no RotationRandom either
+    const turn = if rows.Motion ~= "States"
+      then rotation + launch_common.jitter(rows, spawned, flight.rng)
+      else rotation
 
     const launch: Launch = {
       spawn = spawn,

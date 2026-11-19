@@ -2933,6 +2933,103 @@ harness.suite(function()
   end)
 
   harness.describe("a mesh's flight", function()
+    -- the turns about z of `count` still pieces on an unturned attachment
+    -- under Orientation None, in degrees, `rows` over them
+    const function turnsAboutZ(rows: { [string]: any }, count: number): { number }
+      const seen = {}
+
+      seeding(function()
+        framed(function()
+          const part = attached({ EmitCount = count, Speed = STILL, Orientation = "None" })
+
+          for name, v in rows do
+            part:SetAttribute(name, v)
+          end
+
+          spawning(function(spawned)
+            const env = effects.emit(0, part)
+
+            frames(1)
+
+            for i, piece in spawned do
+              const right = piece.CFrame.RightVector
+
+              expect(math.abs(right.Z) < EPSILON).toBe(true)
+              seen[i] = math.deg(math.atan2(right.Y, right.X))
+            end
+
+            env:Clear()
+          end)
+        end)
+      end)
+
+      return seen
+    end
+
+    test("RotationRandom adds a draw between minus and plus itself to each piece's Rotation", function()
+      const loose = turnsAboutZ({ RotationRandom = Vector3.new(0, 0, 30) }, 12)
+      const offset = turnsAboutZ({ Rotation = Vector3.new(0, 0, 90), RotationRandom = Vector3.new(0, 0, -10) }, 12)
+
+      expect(#loose).toBe(12)
+      expect(#offset).toBe(12)
+
+      local low, high = math.huge, -math.huge
+
+      for _, angle in loose do
+        expect(math.abs(angle) <= 30 + LOOSE).toBe(true)
+        low, high = math.min(low, angle), math.max(high, angle)
+      end
+
+      -- twelve draws over sixty degrees spread out
+      expect(high - low > 10).toBe(true)
+
+      for _, angle in offset do
+        expect(angle >= 80 - LOOSE and angle <= 100 + LOOSE).toBe(true)
+      end
+    end)
+
+    test("RotationRandom at 0 draws nothing, an axis at 0 draws nothing, and a States piece never draws it", function()
+      const function drawsOf(rows: { [string]: any }): number
+        return counted(function()
+          framed(function()
+            const part = attached({ EmitCount = 3, Speed = STILL })
+
+            for name, v in rows do
+              part:SetAttribute(name, v)
+            end
+
+            if rows.Motion == "States" then
+              part:SetAttribute("Lifetime", NumberRange.new(2, 2))
+            end
+
+            const env = effects.emit(0, part)
+
+            frames(1)
+            env:Clear()
+          end)
+        end)
+      end
+
+      const today = drawsOf({})
+
+      expect(drawsOf({ RotationRandom = Vector3.zero })).toBe(today)
+      expect(drawsOf({ RotationRandom = Vector3.new(10, 0, 20) })).toBe(today + 3 * 2)
+
+      const stated = drawsOf({ Motion = "States" })
+
+      expect(drawsOf({ Motion = "States", RotationRandom = Vector3.new(10, 10, 10) })).toBe(stated)
+    end)
+
+    test("RotationRandom hides under States as Rotation does", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+
+        expect(hiddenOf(template(parent, {})).RotationRandom).toBe(false)
+        expect(hiddenOf(template(parent, { Motion = "States" })).RotationRandom).toBe(true)
+        expect(rowsOf(template(parent, {})).RotationRandom.value).toEqual(vector.zero)
+      end)
+    end)
+
     test("a piece flies the particle formula", function()
       staged(function(fake)
         const part = attached({

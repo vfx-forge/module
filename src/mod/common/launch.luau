@@ -49,6 +49,26 @@ function common.draw(attrs: any, spawned: number): (number, number, vector, vect
     inheritance
 end
 
+-- one piece's draw of its RotationRandom row, between minus and plus the row
+-- on each axis, from the emit's rng; an axis at 0 draws nothing, so a row at
+-- rest leaves every other draw where it was
+function common.jitter(attrs: any, spawned: number, rng: Random): vector
+  const row = attrs.RotationRandom
+  const reach = if row ~= nil then row().at(spawned) else nil
+
+  if not isVector(reach) then
+    return vector.zero
+  end
+
+  const function pick(r: number): number
+    const span = math.abs(numberOr(r, 0))
+
+    return if span > 0 then rng:NextNumber(-span, span) else 0
+  end
+
+  return vector.create(pick(reach.X), pick(reach.Y), pick(reach.Z))
+end
+
 -- the target set for the chosen force, nil for None or none set, when a
 -- force centers on the emitter
 function common.target(attrs: any): Instance?
