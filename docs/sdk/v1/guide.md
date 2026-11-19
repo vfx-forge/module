@@ -208,7 +208,7 @@ A shipped effect follows these.
 - **Errors.** When the effect cannot play, call `error(text)`. When it recovers, call `sdk.warn(ctx, text)`. Put no `pcall` around an sdk call.
 - **Context.** Return at once from a render only effect when `sdk.context()` is `"server"`. Read no `Players.LocalPlayer` in an effect that must work in the editor.
 - **State.** Keep no module level state but constants and one `Random.new()`; anything else is wrong after a live reload.
-- **Performance.** Return early when nothing changed, cull by distance, and make one raycast or spatial query per emit rather than per frame. Pool what is spawned in bursts. Mind the budgets: 31 Highlights at once, EditableMesh memory, and the Load Assets permission for meshes by id.
+- **Performance.** Return early when nothing changed, cull by distance, and make one raycast or spatial query per emit rather than per frame. Clone or make each piece new rather than keeping a pool of your own: a Part costs about 15 microseconds to clone, parent and destroy, and a pool has to put every property of a reused piece back, which costs more. Mind the budgets: 31 Highlights at once, EditableMesh memory, and the Load Assets permission for meshes by id.
 - **Measure, date, record.** An effect that rests on an engine quirk says in a comment what was measured and when, or it does not ship.
 - **Module shape.** Write no header comment and no section dividers. Write comments as lowercase fragments at the line they explain.
 
