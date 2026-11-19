@@ -1029,7 +1029,8 @@ local function completed(
   seeded: boolean,
   lead: any,
   fillStart: value.Value?,
-  fillFinish: value.Value?
+  fillFinish: value.Value?,
+  rest: any
 ): { any }?
   -- an old row whose start was only ever a seed for a target carrying nothing
   -- of its own says where the value ENDS, and the effect says where it comes
@@ -1050,7 +1051,17 @@ local function completed(
     local m = table.clone(queue[1])
 
     m.partial = if queue[1].partial == "finish" then "both" else "start"
+
+    -- the old format's reader chains a tween naming no start, which gives way
+    -- to the start the effect fills. a stored chain is the author's choice
+    if not framed then
+      m.chain = false
+    end
+
     queue = { m }
+  elseif not seeded then
+    -- an old tween naming no start runs from where the row rests
+    queue = legacy_mods.fromRest(queue, rest)
   end
 
   if #queue == 1 and queue[1].partial then
@@ -1220,7 +1231,7 @@ local function buildNow(
         continue
       end
 
-      local entries = if authored then completed(queue, framed, seeded, lead, fillStart, fillFinish) else queue
+      local entries = if authored then completed(queue, framed, seeded, lead, fillStart, fillFinish, footing) else queue
       local event = lane ~= "start" and lane ~= "end"
 
       -- a lane the format could complete and that does not open on a blank

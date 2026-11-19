@@ -249,22 +249,23 @@ function legacy_mods.complete(queue: { any }, fillStart: value.Value?, fillFinis
     m.finish = fillFinish
   end
 
-  -- a start the caller fills is where the entry begins, rather than wherever
-  -- the row stands
-  if m.partial == "start" or m.partial == "both" then
-    m.chain = false
-  end
-
   m.partial = nil
 
   return { m }
 end
 
--- a tween an earlier plugin converted out of a child naming no _START_VALUE,
--- stored with no start and no chain, which plays nothing until halfway and
--- then jumps. only the readers of the old format set `reset`
+-- a tween the old format left to start from its target's own value: read off
+-- a child naming no _START_VALUE, or stored from one. only the readers of the
+-- old format set `reset`
+function legacy_mods.fromTarget(m: any): boolean
+  return m.kind == "tween" and m.reset ~= nil and m.start == nil and m.partial == nil
+end
+
+-- such a tween an earlier plugin stored with no chain, which plays nothing
+-- until halfway and then jumps. a lone one marked seedable is left to the
+-- read, which chains it only where the row's start is not the effect's
 local function startless(m: any): boolean
-  return m.kind == "tween" and m.reset ~= nil and m.start == nil and m.chain ~= true and m.partial == nil
+  return legacy_mods.fromTarget(m) and m.chain ~= true and m.seedable ~= true
 end
 
 -- a stored lane map with each such tween chained, or the map itself when none
@@ -293,6 +294,37 @@ function legacy_mods.repaired(lanes: { [string]: { any } }): { [string]: { any }
   end
 
   return out or lanes
+end
+
+-- the queue with each tween left to start from its target chained from
+-- `rest`, save where `rest` is not of its end's type: v2 played nothing
+-- there, and a lerp between the two would throw. the queue itself when no
+-- entry changes
+function legacy_mods.fromRest(queue: { any }, rest: any): { any }
+  local out = nil
+
+  for i, m in queue do
+    if not legacy_mods.fromTarget(m) then
+      continue
+    end
+
+    local finish = m.finish
+    local chains = rest ~= nil and finish ~= nil and value.isLit(finish) and typeof(finish.v) == typeof(rest)
+
+    if (m.chain == true) == chains then
+      continue
+    end
+
+    if out == nil then
+      out = table.clone(queue)
+    end
+
+    local fixed = table.clone(m)
+    fixed.chain = chains
+    out[i] = fixed
+  end
+
+  return out or queue
 end
 
 -- the speed ramp a legacy tween child carried beside its tween: a multiplier on

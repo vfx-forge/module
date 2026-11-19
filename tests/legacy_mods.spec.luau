@@ -195,6 +195,29 @@ harness.suite(function()
     local current = { start = { kept, authored, drawn } }
 
     expect(legacy_mods.repaired(current)).toBe(current)
+
+    -- a lone one marked seedable is the read's to chain, only where the row's
+    -- start is not the effect's
+    local seedable = table.clone(lost)
+    seedable.seedable = true
+
+    local lone = { start = { seedable } }
+
+    expect(legacy_mods.repaired(lone)).toBe(lone)
+  end)
+
+  test("fromRest chains a tween naming no start only from a rest of its end's type", function()
+    local lost = { kind = "tween", chain = false, duration = 1, finish = value.lit(1), reset = true }
+    local queue = { lost }
+
+    expect(legacy_mods.fromRest(queue, 0.5)[1].chain).toBe(true)
+    expect(legacy_mods.fromRest(queue, Vector3.new(1, 1, 1))).toBe(queue)
+    expect(legacy_mods.fromRest(queue, nil)).toBe(queue)
+
+    local chained = table.clone(lost)
+    chained.chain = true
+
+    expect(legacy_mods.fromRest({ chained }, Vector3.new(1, 1, 1))[1].chain).toBe(false)
   end)
 
   test("a Property Animator is no tween child, though named for its property", function()

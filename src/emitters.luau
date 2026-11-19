@@ -64,8 +64,8 @@ local function endOf(queue: { any }): (string?, any)
   local rule: string? = nil
   local start = nil
 
-  -- legacy entries never chain, so the last of them is the one that actually
-  -- drove the target and its own flag is the one that decides
+  -- every legacy entry ran from the emit on its own clock, so the last of them
+  -- is the one that actually drove the target and its own flag decides
   for _, m in queue do
     if m.reset == nil then
       continue
@@ -193,6 +193,8 @@ local function drive(
       return track.at(elapsed)
     end
   else
+    -- an old tween naming no start runs from what the target holds now
+    queue = legacy_mods.fromRest(queue, currentOf(target, source, name))
     rolls = mods.roll(queue)
     span, linked = mods.span(queue, duration, rolls)
     sample = mods.sampler(target, source, name, span, queue, rolls, linked)

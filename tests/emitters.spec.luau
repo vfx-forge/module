@@ -1,4 +1,5 @@
 local harness = require("@tests/harness")
+local mod = require("@mod/mod")
 local knob = require("@mod/knob")
 local mods = require("@mod/mods")
 local codec = require("@mod/modifier_codec")
@@ -7,6 +8,7 @@ local value = require("@mod/value")
 local curve = require("@mod/curve")
 local tween = require("@mod/tween")
 local curves = require("@mod/curves")
+local reader = require("@mod/reader")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
 local animator = require("@vfx/animator")
@@ -183,6 +185,32 @@ harness.suite(function()
       expect(near(part.Transparency, 0.6)).toBe(true)
     end)
 
+    test("one naming no start whose end is not of its target's type does not throw", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local part = harness.make("Part", root)
+
+      part.Transparency = 0.2
+
+      local child = harness.make("RayValue", part)
+      child.Name = "Transparency"
+      child:SetAttribute("_END_VALUE", harness.datatypes.Vector3.new(1, 2, 3))
+      child:SetAttribute("Duration", 1)
+
+      local warnings = harness.captureWarnings(function()
+        emit(root)
+        harness.render(0.25)
+      end)
+
+      -- v2 played nothing for it, and a lerp between the two would throw
+      expect(#warnings).toBe(0)
+
+      expect(near(part.Transparency, 0.2)).toBe(true)
+    end)
+
     test("one under an instance whose module declares no row for it drives it", function()
       registry.clear()
       registry.configure({ query = harness.query })
@@ -344,6 +372,95 @@ harness.suite(function()
       harness.render(0.5)
 
       expect(part.Transparency).toBe(0)
+    end)
+  end)
+
+  -- a lone stored tween an earlier plugin converted is marked seedable: a piece
+  -- that owns its start takes the effect's, and a row read with none of its
+  -- own starts where the row rests, as the v2 child did
+  harness.describe("an old tween naming no start on an effect's row", function()
+    local function rowModule()
+      return module("piece", "Part", {
+        attributes = { Ramp = knob(1):mod(mod.from(0):duration(1)) },
+      })
+    end
+
+    local function stored(chain: boolean): Instance
+      harness.reset()
+
+      local part = harness.make("Part")
+
+      framed(part, "attribute", "Ramp", {
+        {
+          kind = "tween",
+          chain = chain,
+          parallel = true,
+          duration = 1,
+          finish = value.lit(5),
+          reset = true,
+          seedable = true,
+        },
+      })
+
+      return part
+    end
+
+    local function ramp(m: any, part: Instance): any
+      local attrs = reader.resolve(m, { ref = part, obj = part, effect = m } :: any)
+
+      return attrs.Ramp
+    end
+
+    test("a stored one runs from the row's rest, and from the effect's start on a seeded piece", function()
+      local m = rowModule()
+      local track = ramp(m, stored(false))
+
+      expect(near(track.at(0.5), 3)).toBe(true)
+      expect(near(track(2).at(0.5), 2.5)).toBe(true)
+    end)
+
+    test("one its author chained keeps the chain on a seeded piece", function()
+      local m = rowModule()
+      local track = ramp(m, stored(true))
+
+      expect(near(track(2).at(0.5), 3.5)).toBe(true)
+    end)
+
+    test("an unconverted child runs from the row's rest, and from the effect's start on a seeded piece", function()
+      harness.reset()
+
+      local m = rowModule()
+      local part = harness.make("Part")
+      local child = harness.make("RayValue", part)
+      child.Name = "Ramp"
+      child:AddTag("AttributeTweener")
+      child:SetAttribute("_END_VALUE", 5)
+      child:SetAttribute("Duration", 1)
+
+      local track = ramp(m, part)
+
+      expect(near(track.at(0.5), 3)).toBe(true)
+      expect(near(track(2).at(0.5), 2.5)).toBe(true)
+    end)
+
+    test("a child whose end is not of the row's type is skipped, as before", function()
+      harness.reset()
+
+      local m = rowModule()
+      local plain = harness.make("Part")
+      local part = harness.make("Part")
+      local child = harness.make("RayValue", part)
+      child.Name = "Ramp"
+      child:AddTag("AttributeTweener")
+      child:SetAttribute("_END_VALUE", harness.datatypes.Vector3.new(1, 2, 3))
+      child:SetAttribute("Duration", 1)
+
+      local expected = ramp(m, plain)
+      local track = ramp(m, part)
+
+      for _, t in { 0, 0.25, 0.5, 1 } do
+        expect(track.at(t)).toBe(expected.at(t))
+      end
     end)
   end)
 
