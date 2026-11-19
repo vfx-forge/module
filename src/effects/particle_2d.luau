@@ -22,7 +22,13 @@ particle_2d.layout = {
   { title = "Emit", entries = { "EmitCount", "EmitDelay", "EmitDuration" } },
   { title = "Motion", entries = { "TimeScale" } },
   { title = "Appearance", entries = { { property = "Color" }, { action = "texture_content", label = "Texture" } } },
-  { title = "Behavior", entries = { { action = "toggle_textures", label = "Load Textures" } } },
+  {
+    title = "Behavior",
+    entries = {
+      { action = "toggle_paths", label = "Show Paths" },
+      { action = "toggle_textures", label = "Load Textures" },
+    },
+  },
 }
 
 particle_2d.duration = Particle.duration
