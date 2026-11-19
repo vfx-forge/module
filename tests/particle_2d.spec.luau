@@ -3,7 +3,6 @@ local retime = require("@mod/retime")
 local harness = require("@tests/harness")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
-local scheduler = require("@mod/scheduler")
 local particle_2d = require("@vfx/particle_2d")
 local test, expect = harness.test, harness.expect
 
@@ -83,19 +82,27 @@ local function still(at: number)
 end
 
 -- an emit of the emitter's module, its rows as the reader answers them
-local function play(obj: any, attrs: any, timeScale: any?): lifetime.emit
+local function play(obj: any, attrs: any, copied: { Instance }): lifetime.emit
   local emit = lifetime.emit(nil)
   local fx = lifetime.effect(emit, 0, nil)
 
   lifetime.run(fx, function(scope: lifetime.effect)
-    local ctx = { ref = obj, obj = obj, scope = scope, shared = { unc = {}, ref = {}, held = {} } }
+    local ctx = {
+      ref = obj,
+      obj = obj,
+      scope = scope,
+      shared = { unc = {}, ref = {}, held = {} },
+      copied = function(copy: Instance)
+        table.insert(copied, copy)
+      end,
+    }
     local rows = table.clone(attrs)
 
     rows.EmitCount = rows.EmitCount or 1
     rows.EmitDelay = rows.EmitDelay or 0
     rows.EmitDuration = rows.EmitDuration or 0
 
-    particle_2d.emit(ctx :: any, rows, { TimeScale = timeScale or still(obj.TimeScale) })
+    particle_2d.emit(ctx :: any, rows, { TimeScale = still(obj.TimeScale) })
   end)
 
   lifetime.seal(emit)
@@ -103,79 +110,33 @@ local function play(obj: any, attrs: any, timeScale: any?): lifetime.emit
   return emit
 end
 
-local function run(seconds: number)
-  for _ = 1, math.round(seconds / 0.05) do
-    scheduler.frame(0.05)
-  end
-end
-
-local function near(a: number, b: number)
-  return math.abs(a - b) < 1e-6
-end
-
 harness.suite(function()
   harness.describe("the 2D particle emitter", function()
-    test("bursts its count after the delay and ends once its longest particle has lived", function()
+    -- the burst, the window and the TimeScale are the 3D emitter's own code,
+    -- covered by its specs; what is the 2D one's is where it plays
+    test("under a GuiObject in the editor it emits and hands its rows to the dispatcher", function()
       local obj = emitter(frame("GuiObject"))
-      local emit = play(obj, { EmitCount = 12, EmitDelay = 0.5 })
-
-      run(0.45)
-
-      expect(obj.emitted).toEqual({})
-
-      run(0.1)
+      local copied = {}
+      local emit = play(obj, { EmitCount = 12 }, copied)
 
       expect(obj.emitted).toEqual({ 12 })
-      expect(particle_2d.duration({ ref = obj } :: any, { EmitDuration = 0 })).toBe(2)
+      expect(copied).toEqual({ obj })
 
-      run(1.9)
+      lifetime.clear(emit)
+    end)
 
-      expect(emit.done).toBe(false)
+    test("under no GuiObject it emits nothing and drives none of its rows", function()
+      local obj = emitter(frame("Folder"))
+      local copied = {}
+      local emit = play(obj, { EmitCount = 4, EmitDuration = 1 }, copied)
 
-      run(0.1)
-
+      expect(obj.emitted).toEqual({})
+      expect(obj.Enabled).toBe(false)
+      expect(copied).toEqual({})
       expect(emit.done).toBe(true)
     end)
 
-    test("a window holds it on for its duration and lets it go after", function()
-      local obj = emitter(frame("GuiObject"))
-      local emit = play(obj, { EmitCount = 0, EmitDuration = 1 })
-
-      expect(obj.Enabled).toBe(true)
-
-      run(0.9)
-
-      expect(obj.Enabled).toBe(true)
-
-      run(0.2)
-
-      expect(obj.Enabled).toBe(false)
-      expect(particle_2d.duration({ ref = obj } :: any, { EmitDuration = 1 })).toBe(3)
-
-      lifetime.clear(emit)
-    end)
-
-    test("an emitter left on is switched off as it emits", function()
-      local obj = emitter(frame("GuiObject"))
-
-      obj.Enabled = true
-
-      local emit = play(obj, { EmitCount = 4 })
-
-      expect(obj.Enabled).toBe(false)
-      expect(obj.emitted).toEqual({ 4 })
-
-      lifetime.clear(emit)
-    end)
-
-    test("emits nothing where it cannot draw: under no GuiObject, or on a server", function()
-      local loose = emitter(frame("Folder"))
-      local first = play(loose, { EmitCount = 4, EmitDuration = 1 })
-
-      expect(loose.emitted).toEqual({})
-      expect(loose.Enabled).toBe(false)
-      expect(first.done).toBe(true)
-
+    test("on a server it emits nothing and drives none of its rows, a count of 0 included", function()
       local runService = game:GetService("RunService") :: any
       local wasRunning, wasClient = runService.IsRunning, runService.IsClient
 
@@ -187,44 +148,21 @@ harness.suite(function()
         return false
       end
 
-      local served = emitter(frame("GuiObject"))
-      local second = play(served, { EmitCount = 4 })
+      local obj = emitter(frame("GuiObject"))
+      local copied = {}
+      local ok, err = pcall(function()
+        play(obj, { EmitCount = 4 }, copied)
+        play(obj, { EmitCount = 0 }, copied)
+      end)
 
       runService.IsRunning, runService.IsClient = wasRunning, wasClient
 
-      expect(served.emitted).toEqual({})
-      expect(second.done).toBe(true)
-    end)
+      if not ok then
+        error(err, 0)
+      end
 
-    test("a modifier on its TimeScale is written to the emitter, and the authored one put back", function()
-      local obj = emitter(frame("GuiObject"))
-
-      obj.TimeScale = 0.8
-
-      local ramp = {
-        animated = true,
-        duration = 1,
-        value = 1,
-        at = function(t: number)
-          return 1 - t * 0.5
-        end,
-      }
-
-      local emit = play(obj, { EmitCount = 1 }, ramp)
-
-      expect(obj.TimeScale).toBe(1)
-
-      run(0.5)
-
-      expect(near(obj.TimeScale, 0.75)).toBe(true)
-
-      run(0.5)
-
-      expect(near(obj.TimeScale, 0.5)).toBe(true)
-
-      lifetime.clear(emit)
-
-      expect(obj.TimeScale).toBe(0.8)
+      expect(obj.emitted).toEqual({})
+      expect(copied).toEqual({})
     end)
   end)
 

@@ -10,6 +10,11 @@ particle_2d.id = "particle_2d"
 particle_2d.display = { name = "Particle 2D", icon = "particle_2d", order = 21 }
 particle_2d.classifier = "ParticleEmitter2D"
 
+-- handed to the dispatcher as a copy is, so its rows' modifiers are driven
+-- only once it plays: on a server they would write every frame for nothing
+-- and replicate over a client's own emit
+particle_2d.copies = true
+
 particle_2d.attributes, particle_2d.properties = Particle.rows()
 
 -- the texture is a Content, which the plugin edits as a row of its own
@@ -23,23 +28,26 @@ particle_2d.layout = {
 particle_2d.duration = Particle.duration
 
 -- a 2D emitter draws only under a GuiObject and only in the editor or on a
--- client, so it plays where it is or not at all
-local function place(ctx: reader.Ctx): Instance?
-  local ref = ctx.ref
+-- client, and plays where it is
+local function draws(ref: Instance): boolean
+  if RunService:IsRunning() and not RunService:IsClient() then
+    return false
+  end
+
   local parent = ref.Parent
 
-  if RunService:IsRunning() and not RunService:IsClient() then
-    return nil
-  end
+  return parent ~= nil and parent:IsA("GuiObject")
+end
 
-  if parent == nil or not parent:IsA("GuiObject") then
-    return nil
-  end
-
-  return ref
+local function place(ctx: reader.Ctx): Instance?
+  return ctx.ref
 end
 
 function particle_2d.emit(ctx: reader.Ctx, attrs: any, props: any)
+  if not draws(ctx.ref) then
+    return
+  end
+
   Particle.play(ctx, attrs, props, place)
 end
 
