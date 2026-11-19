@@ -1072,7 +1072,22 @@ local function completed(
       return nil
     end
 
-    return legacy_mods.complete(queue, fillStart, fillFinish)
+    local filled = legacy_mods.complete(queue, fillStart, fillFinish)
+    local m = filled[1]
+
+    -- a filled half of another type than the half authored cannot be lerped
+    -- to, so the lane says nothing and the default runs
+    if
+      m.start ~= nil
+      and m.finish ~= nil
+      and value.isLit(m.start)
+      and value.isLit(m.finish)
+      and typeof(m.start.v) ~= typeof(m.finish.v)
+    then
+      return nil
+    end
+
+    return filled
   end
 
   return queue

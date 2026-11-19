@@ -443,7 +443,7 @@ harness.suite(function()
       expect(near(track(2).at(0.5), 2.5)).toBe(true)
     end)
 
-    test("a child whose end is not of the row's type is skipped, as before", function()
+    test("a child whose end is not of the row's type is skipped, a seeded piece too", function()
       harness.reset()
 
       local m = rowModule()
@@ -460,6 +460,7 @@ harness.suite(function()
 
       for _, t in { 0, 0.25, 0.5, 1 } do
         expect(track.at(t)).toBe(expected.at(t))
+        expect(track(2).at(t)).toBe(expected(2).at(t))
       end
     end)
   end)
