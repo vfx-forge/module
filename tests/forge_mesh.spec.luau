@@ -2083,6 +2083,81 @@ harness.suite(function()
       expect(parent_turn.near(parent_turn.measure(frame, pinned), parent_turn.measure(frame, template))).toBe(true)
     end)
 
+    test("FollowParent off still spawns from the parent and turns as stored, wherever the template sits", function()
+      -- the row only tells the plugin to leave the template where it is put,
+      -- so a template sunk under the ground plays as one on the point
+      const function spawnedOn(follow: boolean?, at: CFrame, size: Vector3): { CFrame }
+        const seen = {}
+
+        framed(function()
+          const _, parent = parentPart(CFrame.new(0, 10, 0), size)
+          const part = template(parent, { EmitCount = 3, Speed = STILL, Orientation = "None" })
+
+          if follow ~= nil then
+            part:SetAttribute("FollowParent", follow)
+          end
+
+          part.CFrame = at * CFrame.fromOrientation(0, 0, math.rad(90))
+          part:SetAttribute("ParentTurn", parent_turn.measure(parent.CFrame, part.CFrame))
+
+          spawning(function(spawned)
+            const env = effects.emit(0, part)
+
+            frames(1)
+
+            for i, piece in spawned do
+              seen[i] = piece.CFrame
+              expect(near(piece.CFrame.UpVector, part.CFrame.UpVector, EPSILON)).toBe(true)
+            end
+
+            env:Clear()
+          end)
+        end)
+
+        return seen
+      end
+
+      const box = Vector3.new(4, 2, 4)
+
+      for _, cframe in spawnedOn(false, CFrame.new(0, -40, 0), box) do
+        const inside = CFrame.new(0, 10, 0):PointToObjectSpace(cframe.Position)
+
+        expect(math.abs(inside.X) <= 2 + EPSILON).toBe(true)
+        expect(math.abs(inside.Y) <= 1 + EPSILON).toBe(true)
+        expect(math.abs(inside.Z) <= 2 + EPSILON).toBe(true)
+      end
+
+      -- a parent of no size spawns every piece on its point, so the three
+      -- read alike to the last bit
+      const today = spawnedOn(nil, CFrame.new(0, 10, 0), Vector3.zero)
+      const sunk = spawnedOn(false, CFrame.new(0, -40, 0), Vector3.zero)
+      const kept = spawnedOn(true, CFrame.new(0, 10, 0), Vector3.zero)
+
+      expect(#today).toBe(3)
+
+      for i, cframe in today do
+        expect(cframe.Position).toEqual(Vector3.new(0, 10, 0))
+
+        const components, sunkOnes, keptOnes =
+          { cframe:GetComponents() }, { sunk[i]:GetComponents() }, { kept[i]:GetComponents() }
+
+        for k, x in components do
+          expect(sunkOnes[k]).toBe(x)
+          expect(keptOnes[k]).toBe(x)
+        end
+      end
+    end)
+
+    test("FollowParent reads on unless the row is off", function()
+      const part = harness.make("Part") :: BasePart
+
+      expect(parent_turn.follows(part)).toBe(true)
+      part:SetAttribute("FollowParent", true)
+      expect(parent_turn.follows(part)).toBe(true)
+      part:SetAttribute("FollowParent", false)
+      expect(parent_turn.follows(part)).toBe(false)
+    end)
+
     test("a template with no part or attachment above it spawns at its own pose", function()
       staged(function(fake)
         const root = harness.make("Folder")
@@ -5272,6 +5347,25 @@ harness.suite(function()
         end
 
         expect(hidden.Collision).toBe(false)
+      end)
+    end)
+
+    test("FollowParent shows under a part or an attachment, defaults on, and hides under anything else", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const onPart = template(parent, {})
+        const onPoint = attached({})
+        const loose = template(harness.make("Folder"), {})
+        const inModel = template(harness.make("Model"), {})
+
+        expect(rowsOf(onPart).FollowParent).toBe(true)
+        expect(hiddenOf(onPart).FollowParent).toBe(false)
+        expect(hiddenOf(onPoint).FollowParent).toBe(false)
+        expect(hiddenOf(loose).FollowParent).toBe(true)
+        expect(hiddenOf(inModel).FollowParent).toBe(true)
+
+        -- a rule read with no template shows the row
+        expect(forge_mesh.attributes.FollowParent.hiddenRule(nil, {}, {})).toBe(false)
       end)
     end)
 

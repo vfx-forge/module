@@ -2,6 +2,25 @@ local common = {}
 
 common.ATTRIBUTE = "ParentTurn"
 
+-- the Mesh row that keeps a template on its parent's point while it is
+-- edited; off, the plugin never moves the template, and its pieces still
+-- spawn from the parent and play at the turn measured from its rotation
+common.FOLLOW = "FollowParent"
+
+-- whether the plugin keeps the template on its parent's point: unless the
+-- row is off, so a template from before the row follows as it always did
+function common.follows(template: Instance): boolean
+  return template:GetAttribute(common.FOLLOW) ~= false
+end
+
+-- whether the template's parent gives it a point to be kept on: a part's or
+-- an attachment's
+function common.framed(template: Instance): boolean
+  const parent = template.Parent
+
+  return parent ~= nil and (parent:IsA("BasePart") or parent:IsA("Attachment"))
+end
+
 -- an attribute keeps a CFrame in float32 (an ulp of 1.2e-7 at 1), and a turn
 -- read back and carried through the parent's frame lands a few dozen ulps from
 -- the template's own; this clears that and stays under a thousandth of a degree

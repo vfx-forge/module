@@ -258,6 +258,14 @@ const function untagged(_, attrs: any)
   return attrs.CollisionMode == "Off" or attrs.CollisionFilter == "None"
 end
 
+-- whether the template's parent gives it no point to be kept on, which a
+-- rule read with no template never says
+const function pointless(ctx: any)
+  const ref = if ctx ~= nil then ctx.ref else nil
+
+  return typeof(ref) == "Instance" and not parent_turn.framed(ref)
+end
+
 -- whether a child of the template is one of its frame sets, its states or
 -- its path's editing holder
 const function setFolder(child: Instance)
@@ -1252,6 +1260,12 @@ forge_mesh.attributes = {
     :label("Offset")
     :hint("How far each landed piece rests off the surface, along the surface's normal."),
 
+  -- read by the plugin alone (parent_turn): pieces spawn from the parent
+  -- either way
+  FollowParent = knob(true):hidden(pointless):label("FollowParent"):hint(
+    "Keep the mesh on its parent's point while you edit. Off lets you move it anywhere, such as under the ground, while pieces still spawn from the parent and turn as the mesh does."
+  ),
+
   -- the keys of the Frames and Textures folders the template plays, which the
   -- plugin writes
   FrameSet = knob(""):hidden(always),
@@ -1338,6 +1352,7 @@ forge_mesh.layout = {
   {
     title = "Behavior",
     entries = {
+      "FollowParent",
       { action = "toggle_paths", label = "Show Paths" },
       { action = "toggle_textures", label = "Load Textures" },
     },
