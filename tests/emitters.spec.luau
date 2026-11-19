@@ -9,6 +9,7 @@ local tween = require("@mod/tween")
 local curves = require("@mod/curves")
 local utility = require("@mod/utility")
 local emitters = require("@root/emitters")
+local animator = require("@vfx/animator")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
 local test, expect = harness.test, harness.expect
@@ -100,6 +101,86 @@ harness.suite(function()
       harness.render(0.5)
 
       expect(near(part.Transparency, 0.5)).toBe(true)
+    end)
+
+    -- v2 read the target's own value as the tween began when the child named
+    -- no _START_VALUE, and went back to that value at the end
+    test("one naming no start runs from what its target holds", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local part = harness.make("Part", root)
+
+      part.Transparency = 0.2
+
+      local child = harness.make("RayValue", part)
+      child.Name = "Transparency"
+      child:SetAttribute("_END_VALUE", 1)
+      child:SetAttribute("Duration", 1)
+
+      emit(root)
+
+      harness.render(0.5)
+
+      expect(near(part.Transparency, 0.6)).toBe(true)
+
+      harness.render(0.5)
+
+      expect(near(part.Transparency, 1)).toBe(true)
+
+      harness.render(0.1)
+
+      expect(near(part.Transparency, 0.2)).toBe(true)
+    end)
+
+    -- an earlier plugin made such a child a Property Animator holding a tween
+    -- with no start and no chain, which held the target until halfway and then
+    -- jumped to the end
+    test("an animator stored with no start by an earlier plugin runs from what its target holds", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(animator :: any)
+      harness.reset()
+
+      local root = harness.make("Folder")
+      local part = harness.make("Part", root)
+
+      part.Transparency = 0.2
+
+      local held = harness.make("RayValue", part)
+      held.Name = "Transparency"
+      held:AddTag(utility.PROPERTY_ANIMATOR_TAG)
+      held:SetAttribute("Property", "Transparency")
+
+      held:SetAttribute(
+        mods.attrName("property", "Transparency"),
+        frame.frame(codec.encode({
+          lanes = {
+            start = {
+              {
+                kind = "tween",
+                chain = false,
+                parallel = true,
+                duration = 1,
+                finish = value.lit(1),
+                reset = true,
+              },
+            },
+          },
+        }))
+      )
+
+      emit(root)
+
+      harness.render(0.25)
+
+      expect(near(part.Transparency, 0.4)).toBe(true)
+
+      harness.render(0.25)
+
+      expect(near(part.Transparency, 0.6)).toBe(true)
     end)
 
     test("one under an instance whose module declares no row for it drives it", function()

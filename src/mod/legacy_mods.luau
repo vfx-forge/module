@@ -249,9 +249,50 @@ function legacy_mods.complete(queue: { any }, fillStart: value.Value?, fillFinis
     m.finish = fillFinish
   end
 
+  -- a start the caller fills is where the entry begins, rather than wherever
+  -- the row stands
+  if m.partial == "start" or m.partial == "both" then
+    m.chain = false
+  end
+
   m.partial = nil
 
   return { m }
+end
+
+-- a tween an earlier plugin converted out of a child naming no _START_VALUE,
+-- stored with no start and no chain, which plays nothing until halfway and
+-- then jumps. only the readers of the old format set `reset`
+local function startless(m: any): boolean
+  return m.kind == "tween" and m.reset ~= nil and m.start == nil and m.chain ~= true and m.partial == nil
+end
+
+-- a stored lane map with each such tween chained, or the map itself when none
+-- is in it
+function legacy_mods.repaired(lanes: { [string]: { any } }): { [string]: { any } }
+  local out = nil
+
+  for lane, queue in lanes do
+    for i, m in queue do
+      if not startless(m) then
+        continue
+      end
+
+      if out == nil then
+        out = table.clone(lanes)
+      end
+
+      if out[lane] == queue then
+        out[lane] = table.clone(queue)
+      end
+
+      local fixed = table.clone(m)
+      fixed.chain = true
+      out[lane][i] = fixed
+    end
+  end
+
+  return out or lanes
 end
 
 -- the speed ramp a legacy tween child carried beside its tween: a multiplier on
@@ -316,12 +357,16 @@ local function entriesOf(child: Instance): { any }
     table.insert(out, { kind = "delay", chain = false, parallel = true, wait = value.lit(emitDelay) })
   end
 
+  local start = litOrNil(attr.get(child, "_START_VALUE", nil, true))
+
+  -- a tween naming no _START_VALUE ran from whatever its target held as it
+  -- began, which an entry says by chaining
   table.insert(out, {
     kind = "tween",
-    chain = false,
+    chain = start == nil,
     parallel = true,
     duration = durationOf(attr.get(child, "Duration", nil, true)),
-    start = litOrNil(attr.get(child, "_START_VALUE", nil, true)),
+    start = start,
     finish = litOrNil(attr.get(child, "_END_VALUE", nil, true)),
     curve = curveOf(attr.get(child, "Easing_Curve", nil, true)) or curves.linear(),
     speed = speedOf(child),

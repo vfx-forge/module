@@ -160,7 +160,9 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
   local ok, decoded = pcall(codec.decode, body)
 
   if ok and decoded then
-    local lanes = decoded.lanes
+    -- a tween an earlier plugin converted with its start lost plays from its
+    -- target's own value, as the child it came from did
+    local lanes = legacy_mods.repaired(decoded.lanes)
 
     deepFreeze(lanes)
 

@@ -159,6 +159,44 @@ harness.suite(function()
     expect(queue[2].duration).toBe(2)
   end)
 
+  test("a tween child naming no start chains, and one naming a start does not", function()
+    local obj = Instance.new("Part")
+    local named = tweenChild("Transparency")
+    named.Parent = obj
+
+    local bare = Instance.new("RayValue")
+    bare.Name = "Transparency"
+    bare:SetAttribute("_END_VALUE", 10)
+    bare.Parent = obj
+
+    local queue = legacy_mods.readChildren(obj, "property", "Transparency")
+
+    expect(queue[1].chain).toBe(false)
+    expect(queue[1].start.v).toBe(0)
+    expect(queue[2].chain).toBe(true)
+    expect(queue[2].start).toBe(nil)
+  end)
+
+  test("repaired chains a stored tween an old child lost its start in, and nothing else", function()
+    local lost = { kind = "tween", chain = false, parallel = true, duration = 1, finish = value.lit(1), reset = true }
+    local kept =
+      { kind = "tween", chain = false, duration = 1, start = value.lit(0), finish = value.lit(1), reset = true }
+    local authored = { kind = "tween", chain = false, duration = 1, finish = value.lit(1) }
+    local drawn = { kind = "randomizer", chain = false, finish = value.lit(1), reset = true }
+
+    local lanes = { start = { kept, lost }, despawn = { authored, drawn } }
+    local out = legacy_mods.repaired(lanes)
+
+    expect(out.start[2].chain).toBe(true)
+    expect(out.start[1]).toBe(kept)
+    expect(out.despawn).toBe(lanes.despawn)
+    expect(lost.chain).toBe(false)
+
+    local current = { start = { kept, authored, drawn } }
+
+    expect(legacy_mods.repaired(current)).toBe(current)
+  end)
+
   test("a Property Animator is no tween child, though named for its property", function()
     local obj = Instance.new("Part")
     local child = tweenChild("Transparency")
