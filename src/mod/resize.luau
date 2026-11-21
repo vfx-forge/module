@@ -72,12 +72,6 @@ local function scaleProperty(obj: any, name: string, f: number)
   end
 end
 
-local function scaleQueue(obj: Instance, source: string, key: string, f: number)
-  utility.rescaleQueue(obj, source, key, function(lanes)
-    mods.scaleValues(lanes, f)
-  end)
-end
-
 -- a lane endpoint of a value curve row, stored encoded; anything else the
 -- reader would refuse is left as it is
 const function scaleCurve(v: any, f: number): any
@@ -292,10 +286,10 @@ function resize.apply(obj: Instance, factor: number, pass: Pass?)
       end
 
       utility.scaleAttribute(obj, f, key)
-      scaleQueue(obj, source, key, f)
+      retime.scaleLanes(obj, source, key, f)
 
       if source == "property" then
-        scaleQueue(obj, "attribute", key, f)
+        retime.scaleLanes(obj, "attribute", key, f)
 
         if key == name then
           scaleProperty(obj, name, f)
@@ -332,11 +326,15 @@ function resize.apply(obj: Instance, factor: number, pass: Pass?)
 
         utility.scaleAttribute(obj, factor, key .. "_Start")
         utility.scaleAttribute(obj, factor, key .. "_End")
-        scaleQueue(obj, "attribute", key, factor)
+        retime.scaleLanes(obj, "attribute", key, factor)
       end
     end
 
     scaleShape(obj, module, factor, pass)
+
+    if module.id == "animator" then
+      retime.scaleAnimator(obj, factor, resize.PROPERTY_UNITS, factorOf)
+    end
   end
 
   -- a custom effect's instance is its own: only its rows say what scales
@@ -352,6 +350,7 @@ function resize.apply(obj: Instance, factor: number, pass: Pass?)
 
       if f ~= nil then
         scaleProperty(obj, name, f)
+        retime.scaleLanes(obj, "property", name, f)
       end
     end
   end

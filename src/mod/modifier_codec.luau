@@ -168,6 +168,20 @@ local function packed(v: any): any
     return { ColorSequence = buf }
   end
 
+  -- Z writes an enum item as its place in its enum's items sorted by value,
+  -- which every item the engine adds below the last moves. the item's own
+  -- value is what a place file stores and never changes, so that is written,
+  -- with the enum's name after it
+  if kind == "EnumItem" then
+    local name = string.match(tostring(v.EnumType), "([^%.]+)$") :: string
+    local buf = buffer.create(4 + #name)
+
+    buffer.writeu32(buf, 0, v.Value)
+    buffer.writestring(buf, 4, name)
+
+    return { EnumItem = buf }
+  end
+
   if kind ~= "table" then
     return v
   end
@@ -181,8 +195,35 @@ local function packed(v: any): any
   return out
 end
 
+local function enumItemOf(buf: buffer): EnumItem
+  local size = buffer.len(buf)
+
+  if size <= 4 then
+    logger.error(`malformed modifier queue payload: an enum item of {size} bytes`)
+  end
+
+  local id = buffer.readu32(buf, 0)
+  local name = buffer.readstring(buf, 4, size - 4)
+  local ok, enum = pcall(function()
+    return (Enum :: any)[name]
+  end)
+
+  if ok then
+    for _, item in enum:GetEnumItems() do
+      if item.Value == id then
+        return item
+      end
+    end
+  end
+
+  logger.error(`a modifier endpoint names {name} item {id}, which this engine does not have`)
+
+  return nil :: any
+end
+
 -- no endpoint holds a plain table of its own, and no other table is a single
--- key naming a color type over a buffer, so that shape is only ever a wrap
+-- key naming a color or enum type over a buffer, so that shape is only ever a
+-- wrap
 local function unpacked(v: any): any
   if type(v) ~= "table" then
     return v
@@ -215,6 +256,10 @@ local function unpacked(v: any): any
       end
 
       return ColorSequence.new(points)
+    end
+
+    if kind == "EnumItem" then
+      return enumItemOf(buf)
     end
   end
 
