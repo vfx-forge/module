@@ -195,14 +195,17 @@ local function outlasts(m: any): boolean
 end
 
 -- each map with every outlasting entry taken out, and a lane left empty by
--- that dropped, since an empty lane silences its default. the map itself when
--- it holds none
-const WITHOUT: { [any]: { [string]: { any } } } = setmetatable({}, { __mode = "k" }) :: any
+-- that dropped, since an empty lane silences its default; true for a map that
+-- holds none. never the map itself: a weak key its own value names is never
+-- collected
+const WITHOUT: { [any]: { [string]: { any } } | true } = setmetatable({}, { __mode = "k" }) :: any
 
 function mods.applied(lanes: { [string]: { any } }): { [string]: { any } }
   const known = WITHOUT[lanes]
 
-  if known ~= nil then
+  if known == true then
+    return lanes
+  elseif known ~= nil then
     return known
   end
 
@@ -238,7 +241,7 @@ function mods.applied(lanes: { [string]: { any } }): { [string]: { any } }
     table.freeze(out)
   end
 
-  WITHOUT[lanes] = out
+  WITHOUT[lanes] = if found then out else true
 
   return out
 end
