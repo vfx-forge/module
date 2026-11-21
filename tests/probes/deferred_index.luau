@@ -51,6 +51,25 @@ local needs = vfx.init({ discover = false })
 local after = lazy.pending()
 local startedAtInit = table.clone(started)
 
+-- a unit whose start throws, needed once the loader is live
+local startFail = nil
+
+if process.args[1] == "startfail" then
+  local starts = 0
+  local get = lazy.unit("probe_start_fails", function()
+    return {}
+  end, function()
+    starts += 1
+
+    error("the pool would not start")
+  end)
+
+  local first = pcall(get)
+  local second = pcall(get)
+
+  startFail = { first = first, second = second, starts = starts, failed = lazy.failed("probe_start_fails") ~= nil }
+end
+
 local prepared = {}
 
 for _, name in needs or {} do
@@ -68,6 +87,7 @@ while lazy.prepare() ~= nil do
 end
 
 print(serde.encode("json", {
+  startFail = startFail,
   required = required,
   before = before,
   needs = needs,

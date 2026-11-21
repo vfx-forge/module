@@ -65,6 +65,16 @@ harness.suite(function()
       expect(result.startedAtInit).toEqual(SERVICES)
     end)
 
+    test("a load that throws raises its own error where the unit is declared, as the require it replaced", function()
+      local ok, err = pcall(lazy.unit, "spec_unit_default_throws", function()
+        error("the module did not compile", 0)
+      end)
+
+      expect(ok).toBe(false)
+      expect(err).toBe("the module did not compile")
+      expect(lazy.failed("spec_unit_default_throws") ~= nil).toBe(true)
+    end)
+
     test("every unit the index declares is loaded once it is required", function()
       -- the index registers every built-in as it loads, which a registry
       -- another spec filled refuses
@@ -161,24 +171,43 @@ harness.suite(function()
       expect(inner).toBe(false)
     end)
 
-    test("a load that throws leaves the unit to load at its next need", function()
+    -- Roblox answers a ModuleScript whose require threw with the same error
+    -- for the session, so a load tried again cannot succeed there
+    test("a load that throws makes the unit unavailable: said once, and every later need refused with why", function()
       local tries = 0
 
       local name, get = deferred(function()
         tries += 1
 
-        if tries == 1 then
-          error("first")
-        end
-
-        return { value = 3 }
+        error("the module did not compile")
       end)
 
-      expect(function()
-        get()
-      end).toThrow()
+      for _ = 1, 3 do
+        local ok, err = pcall(get)
+
+        expect(ok).toBe(false)
+        expect(string.find(tostring(err), "unavailable", 1, true) ~= nil).toBe(true)
+        expect(string.find(tostring(err), "the module did not compile", 1, true) ~= nil).toBe(true)
+      end
+
+      expect(tries).toBe(1)
       expect(lazy.loaded(name)).toBe(false)
-      expect(get().value).toBe(3)
+      expect(lazy.failed(name) ~= nil).toBe(true)
+      expect(table.find(
+        lazy.needs({ harness.make("Part") }, 0, function()
+          return name
+        end),
+        name
+      )).toBe(nil)
+    end)
+
+    test("a start that throws makes the unit unavailable too, never run again on half made services", function()
+      local result = probe("startfail")
+
+      expect(result.startFail.first).toBe(false)
+      expect(result.startFail.second).toBe(false)
+      expect(result.startFail.starts).toBe(1)
+      expect(result.startFail.failed).toBe(true)
     end)
 
     test("a name nothing declared is refused, never answered with nil", function()

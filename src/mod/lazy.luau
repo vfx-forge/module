@@ -7,7 +7,14 @@ export type Unit = {
   -- runs once the unit is loaded while the module is live
   start: ((module: any) -> ())?,
   module: any,
-  state: "pending" | "loading" | "loaded",
+  state: "pending" | "loading" | "loaded" | "failed",
+
+  -- why it failed, which every later need is refused with
+  reason: string?,
+
+  -- declared while deferred: loaded at a need, where a failure is the unit's
+  -- own, rather than where it is declared, as the require it replaced
+  deferred: boolean,
   thread: thread?,
   started: boolean,
 }
@@ -32,6 +39,25 @@ local deferred = false
 -- then starts at once
 local live = false
 
+-- A UNIT THAT FAILS IS UNAVAILABLE FOR THE SESSION. Roblox keeps a
+-- ModuleScript whose require threw as failed and answers every later
+-- require of it with the same error, so a load tried again cannot succeed
+-- there, and a start that threw has left its services half made. So a
+-- failure, of the load or of the start, is said once with the effect's
+-- name, and every need after it is refused with that reason, never tried
+-- again in a loop on every emit
+local function fail(unit: Unit, err: any)
+  unit.state = "failed"
+  unit.thread = nil
+  unit.reason = tostring(err)
+
+  logger.warn(`{unit.name} is unavailable for this session: {unit.reason}`)
+end
+
+local function refuse(unit: Unit)
+  logger.error(`{unit.name} is unavailable for this session: {unit.reason}`)
+end
+
 local function start(unit: Unit)
   if unit.started or not live then
     return
@@ -40,13 +66,22 @@ local function start(unit: Unit)
   unit.started = true
 
   if unit.start then
-    unit.start(unit.module)
+    local ok, err = pcall(unit.start, unit.module)
+
+    if not ok then
+      fail(unit, err)
+      refuse(unit)
+    end
   end
 end
 
 local function load(unit: Unit): any
   if unit.state == "loaded" then
     return unit.module
+  end
+
+  if unit.state == "failed" then
+    refuse(unit)
   end
 
   if unit.state == "loading" then
@@ -64,17 +99,32 @@ local function load(unit: Unit): any
   unit.state = "loading"
   unit.thread = coroutine.running()
 
-  local ok, result = pcall(function()
-    return if host then host(unit.name, unit.load) else unit.load()
-  end)
+  local result
 
-  unit.thread = nil
+  if unit.deferred then
+    local ok, loaded = pcall(function()
+      return if host then host(unit.name, unit.load) else unit.load()
+    end)
 
-  if not ok then
-    unit.state = "pending"
-    logger.error(`{unit.name} did not load: {result}`)
+    if not ok then
+      fail(unit, loaded)
+      refuse(unit)
+    end
+
+    result = loaded
+  else
+    -- the default path loads where the unit is declared, as the require it
+    -- replaced did, and an error there is that require's, traceback and all,
+    -- unwrapped. Marked failed for its length, so a need of it after a throw
+    -- is refused rather than left waiting on a load that will never end
+    unit.state = "failed"
+    unit.reason = "its module threw as it loaded"
+    result = if host then host(unit.name, unit.load) else unit.load()
+    unit.state = "loading"
+    unit.reason = nil
   end
 
+  unit.thread = nil
   unit.module = result
   unit.state = "loaded"
 
@@ -94,6 +144,7 @@ function lazy.unit(name: string, loader: () -> any, starter: ((module: any) -> (
     state = "pending",
     thread = nil,
     started = false,
+    deferred = deferred,
   }
 
   -- a second copy of the module that declares it (lune loads one under each
@@ -159,6 +210,13 @@ function lazy.loaded(name: string): boolean
   return unit ~= nil and unit.state == "loaded"
 end
 
+-- the reason a unit is unavailable, nil while it is not
+function lazy.failed(name: string): string?
+  local unit = Named[name]
+
+  return if unit ~= nil and unit.state == "failed" then unit.reason else nil
+end
+
 -- loads one unit, `name` or else the first not yet loaded, and answers its
 -- name; nil once every unit is
 function lazy.prepare(name: string?): string?
@@ -169,7 +227,7 @@ function lazy.prepare(name: string?): string?
   end
 
   for _, unit in Units do
-    if unit.state ~= "loaded" then
+    if unit.state == "pending" or unit.state == "loading" then
       load(unit)
 
       return unit.name
@@ -214,7 +272,7 @@ function lazy.needs(enabled: { Instance }, preloads: number, kindOf: (obj: Insta
     local name = kindOf(obj)
     local unit = if name ~= nil then Named[name] else nil
 
-    if unit == nil or seen[unit] or unit.state == "loaded" then
+    if unit == nil or seen[unit] or unit.state == "loaded" or unit.state == "failed" then
       return
     end
 
