@@ -413,7 +413,7 @@ function debris.emit(ctx: reader.Ctx, attrs: any)
 
     launch(part, impulse, spin)
 
-    scope.effects.emitNested(part, scope.depth + 1, scope, outstanding)
+    scope.effects.emitNested(part, scope.depth + 1, scope, outstanding, ref)
 
     -- a piece's own dwell, drawn from the row's range, sampled on the piece's
     -- clock so a modifier moving the row moves a dwell already running

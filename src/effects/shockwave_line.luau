@@ -438,7 +438,7 @@ function line.emit(ctx: reader.Ctx, attrs: any)
         end)
       end
 
-      scope.effects.emitNested(part, scope.depth + 1, scope, outstanding)
+      scope.effects.emitNested(part, scope.depth + 1, scope, outstanding, ref)
 
       -- per PIECE, over the dwell's own ceiling rather than the line's run: a
       -- Lifetime track is sampled on the piece's dwell clock, which never

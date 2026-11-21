@@ -1974,7 +1974,7 @@ const function piece(
   const children = lifetime.join(scope)
   const emitOnFinish = scope.effects.prepareEmitOnFinish(obj, scope)
 
-  scope.effects.emitNested(obj, scope.depth + 1, scope, children)
+  scope.effects.emitNested(obj, scope.depth + 1, scope, children, template)
 
   look.play()
 

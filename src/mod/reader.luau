@@ -350,7 +350,7 @@ local function queueOf(
   end
 
   if lanes ~= nil then
-    return homedOf(lanes, row), true, under
+    return homedOf(mods.played(lanes), row), true, under
   end
 
   local children = childrenOf(state)

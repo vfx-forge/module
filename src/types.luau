@@ -27,7 +27,7 @@ export type EffectsService = {
   deinit: () -> (),
 
   emit: (depth: number, ...any) -> EmitEnv,
-  emitNested: (part: Instance, depth: number, parentScope: scope?, join: lifetime.join?) -> (),
+  emitNested: (part: Instance, depth: number, parentScope: scope?, join: lifetime.join?, source: Instance?) -> (),
   emitInstance: (inst: Instance, depth: number, parentScope: scope?, join: lifetime.join?) -> (),
   emitFromFolder: (
     folder: Folder?,

@@ -651,4 +651,39 @@ harness.suite(function()
       expect(lead).toBe(0.5)
     end)
   end)
+
+  -- entries the plugin's convert stored for an old tween child on a piece: the
+  -- piece's own driver plays them, one per child, and the row's own track
+  -- plays them only when the map holds nothing else, as the old read played a
+  -- row's children only when no quad or map stood before them
+  harness.describe("outlasting entries", function()
+    const function tween(to: number, outlast: number?): any
+      return { kind = "tween", chain = true, parallel = true, finish = value.lit(to), duration = 0.4, outlast = outlast }
+    end
+
+    test("a map of nothing else is the row's, and the driver's one child at a time", function()
+      const lanes = { start = { tween(1, 1), tween(2, 2), tween(3, 1) } }
+
+      expect(mods.played(lanes)).toBe(lanes)
+      expect(next(mods.applied(lanes))).toBe(nil)
+
+      const groups = mods.outlasting(lanes) :: any
+
+      expect(#groups).toBe(2)
+      expect(#groups[1]).toBe(2)
+      expect(groups[1][2].finish.v).toBe(3)
+      expect(groups[2][1].finish.v).toBe(2)
+    end)
+
+    test("beside an entry of its own the row plays that alone, and a lane left empty goes", function()
+      const lanes = { start = { tween(1, 1) }, ["end"] = { tween(5) } }
+      const own = mods.played(lanes)
+
+      expect(own.start).toBe(nil)
+      expect(#own["end"]).toBe(1)
+      expect(mods.applied(lanes)).toBe(own)
+      expect(#(mods.outlasting(lanes) :: any)).toBe(1)
+      expect(mods.outlasting({ start = { tween(5) } })).toBe(nil)
+    end)
+  end)
 end)

@@ -475,8 +475,10 @@ function emitters.applyMods(
 
     local lanes = mods.read(stored, source :: string, name :: string)
     -- the applier has no clock to fire an event from and no drawn lifetime to
-    -- place an end against, so it drives the one lane that starts at the emit
-    local queue = if lanes ~= nil then lanes.start else nil
+    -- place an end against, so it drives the one lane that starts at the emit.
+    -- an outlasting entry is the piece's own driver's, started with its
+    -- children
+    local queue = if lanes ~= nil then mods.applied(lanes).start else nil
 
     if queue == nil or #queue == 0 or mods.inert(queue) then
       continue
@@ -487,6 +489,44 @@ function emitters.applyMods(
 end
 
 emitters.drive = drive
+
+-- every outlasting queue stored on `from`, as the target each drives
+function emitters.outlasting(from: Instance): { { source: string, name: string, queue: { any } } }?
+  local out = nil
+
+  for key in attr.map(from) do
+    for source, prefix in mods.PREFIX do
+      if string.sub(key, 1, #prefix) ~= prefix then
+        continue
+      end
+
+      const name = string.sub(key, #prefix + 1)
+      const lanes = mods.framed(from, source, name)
+      const groups = if lanes ~= nil then mods.outlasting(lanes) else nil
+
+      for _, queue in groups or {} do
+        out = out or {}
+        table.insert(out, { source = source, name = name, queue = queue })
+      end
+    end
+  end
+
+  return out
+end
+
+-- the outlasting queues stored on the instance a piece was copied from,
+-- driven on the piece as the old child each came from drove: a driver of its
+-- own on the emit of the piece's children, holding the piece up until it ends
+-- and putting back what its reset says as it does
+function emitters.outlast(
+  piece: Instance,
+  queues: { { source: string, name: string, queue: { any } } },
+  scope: types.scope
+)
+  for _, held in queues do
+    drive(piece, held.source, held.name, held.queue, scope, 1)
+  end
+end
 
 -- the span of the effect an animator's end lane is placed against: the one
 -- whose nested children it plays among, else the last dispatch of `host`

@@ -88,7 +88,7 @@ function screen.emit(ctx: reader.Ctx, attrs: any)
   -- the part stays placed until the last effect under it finishes
   local children = lifetime.join(scope)
 
-  scope.effects.emitNested(ref, scope.depth + 1, scope, children)
+  scope.effects.emitNested(ref, scope.depth + 1, scope, children, ref)
   lifetime.awaitJoin(children)
 end
 

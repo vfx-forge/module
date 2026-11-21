@@ -185,6 +185,114 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
   return if lanes ~= nil and not legacy_mods.isHeldStillLane(ref, name, lanes) then lanes else nil
 end
 
+-- an entry the plugin's convert wrote for an old tween child on an effect whose
+-- pieces played that child nested: each piece plays it as the child played,
+-- on a driver of its own from the moment the effect emits the piece's
+-- children, and the piece stays up until it ends. its number tells the
+-- children of one name apart, each of which drove on its own
+local function outlasts(m: any): boolean
+  return typeof(m.outlast) == "number"
+end
+
+-- each map with every outlasting entry taken out, and a lane left empty by
+-- that dropped, since an empty lane silences its default. the map itself when
+-- it holds none
+const WITHOUT: { [any]: { [string]: { any } } } = setmetatable({}, { __mode = "k" }) :: any
+
+function mods.applied(lanes: { [string]: { any } }): { [string]: { any } }
+  const known = WITHOUT[lanes]
+
+  if known ~= nil then
+    return known
+  end
+
+  local found = false
+
+  for _, queue in lanes do
+    for _, m in queue do
+      if outlasts(m) then
+        found = true
+      end
+    end
+  end
+
+  local out = lanes
+
+  if found then
+    out = {}
+
+    for lane, queue in lanes do
+      const kept = {}
+
+      for _, m in queue do
+        if not outlasts(m) then
+          table.insert(kept, m)
+        end
+      end
+
+      if #kept > 0 then
+        out[lane] = table.freeze(kept)
+      end
+    end
+
+    table.freeze(out)
+  end
+
+  WITHOUT[lanes] = out
+
+  return out
+end
+
+-- what a row's own track plays of a map: its outlasting entries only when it
+-- holds nothing else, as the old read played a row's tween children only when
+-- no quad or map stood before them, and the rest of it otherwise
+function mods.played(lanes: { [string]: { any } }): { [string]: { any } }
+  const out = mods.applied(lanes)
+
+  return if next(out) == nil then lanes else out
+end
+
+-- a map's outlasting entries, one queue per child they came from, in the
+-- order of their numbers. they sit on whichever lane the row is played from,
+-- and every child ran from the emit of the piece's children whatever lane its
+-- row was read onto. nil when there is none
+function mods.outlasting(lanes: { [string]: { any } }): { { any } }?
+  local groups: { [number]: { any } }? = nil
+
+  for _, queue in lanes do
+    for _, m in queue do
+      if outlasts(m) then
+        groups = groups or {}
+
+        const group = (groups :: any)[m.outlast] or {}
+
+        table.insert(group, m);
+        (groups :: any)[m.outlast] = group
+      end
+    end
+  end
+
+  if groups == nil then
+    return nil
+  end
+
+  const order = {}
+
+  for n in groups do
+    table.insert(order, n)
+  end
+
+  table.sort(order)
+
+  const out = {}
+
+  for _, n in order do
+    table.insert(out, (groups :: any)[n])
+  end
+
+  return out
+end
+
 -- the second return says whether the lanes came out of the framed attribute, so
 -- a caller that has to tell an authored row from an old one does not pay the
 -- decode a second time to ask

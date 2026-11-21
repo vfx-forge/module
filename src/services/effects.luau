@@ -686,13 +686,17 @@ local function emitChildren(
   parentScope: types.scope?,
   join: lifetime.join?,
   from: string,
-  hosted: boolean?
+  hosted: boolean?,
+  piece: Instance?,
+  source: Instance?
 )
   if not api_ref or not api_ref.setup then
     return
   end
 
-  if #children == 0 then
+  const lasting = if piece ~= nil and source ~= nil then emitters.outlasting(source) else nil
+
+  if #children == 0 and lasting == nil then
     return
   end
 
@@ -702,7 +706,20 @@ local function emitChildren(
   -- ends, or a piece it emits later, starts after its clock has moved on
   emit.host = if hosted then parentScope else nil
 
-  emitInto(emit, depth, parentScope, from, nil, table.unpack(children))
+  -- the old children the convert turned into outlasting entries start where
+  -- they did, among the piece's children
+  if lasting ~= nil then
+    const fx = lifetime.effect(emit, depth, effects)
+
+    lifetime.run(fx, function(scope)
+      emitters.outlast(piece :: Instance, lasting, scope)
+    end)
+  end
+
+  if #children > 0 then
+    emitInto(emit, depth, parentScope, from, nil, table.unpack(children))
+  end
+
   lifetime.seal(emit)
 
   if join then
@@ -710,8 +727,16 @@ local function emitChildren(
   end
 end
 
-function effects.emitNested(part: Instance, depth: number, parentScope: types.scope?, join: lifetime.join?)
-  emitChildren(part:GetChildren(), depth, parentScope, join, "", true)
+-- `source` is the instance `part` was copied from, or `part` itself, whose
+-- outlasting entries play on it beside its children
+function effects.emitNested(
+  part: Instance,
+  depth: number,
+  parentScope: types.scope?,
+  join: lifetime.join?,
+  source: Instance?
+)
+  emitChildren(part:GetChildren(), depth, parentScope, join, "", true, part, source)
 end
 
 -- one instance emitted under an effect, on its clock, counted into the join
