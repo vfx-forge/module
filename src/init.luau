@@ -122,7 +122,6 @@ local ShockwaveDebris = require("@vfx/shockwave_debris")
 local runtime = require("@srv/runtime")
 local containers = require("@srv/containers")
 
-local load = require("@root/sdk/load")
 local watch = require("@root/sdk/watch")
 
 local PluginContext = utility.PLUGIN_CONTEXT
@@ -166,16 +165,9 @@ registry.register(ForgeMesh)
 registry.register(Controller)
 registry.register(Animator)
 
--- written against the sdk, so it is assembled as a custom effect's module is
-do
-  local module, found = load.assemble(ForgeLightning, "forge_lightning")
-
-  if module ~= nil then
-    registry.register(module, true, true)
-  else
-    logger.error(`the bundled lightning did not load:\n{table.concat(found, "\n")}`)
-  end
-end
+-- registered last and flagged as a custom effect the runtime ships, so it is classified ahead of the built-ins, its
+-- instance plays through its rows alone, and a host lists and adds it as it does a custom effect
+registry.register(ForgeLightning, true, true)
 
 local function stopWaiting()
   for _, connection in waiting do

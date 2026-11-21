@@ -3,7 +3,6 @@ local effects = require("@srv/effects")
 local registry = require("@mod/registry")
 local test = harness.test
 
-local load = require("@root/sdk/load")
 local facade = require("@root/sdk/v1/facade")
 local forge_lightning = require("@vfx/forge_lightning")
 
@@ -13,7 +12,7 @@ local CHANGED = 2000
 -- a call per bolt per frame, against the lightning's own forty rows: the clean
 -- call a continuous bolt makes every frame, and the read after a change
 local function measured(): (number, number)
-  local lightning = load.assemble(forge_lightning, "forge_lightning")
+  local lightning = forge_lightning
   local touch: (() -> ())? = nil
   local clean, changed = math.huge, math.huge
   local real = facade.seams.watch

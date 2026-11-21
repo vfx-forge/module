@@ -100,7 +100,7 @@ harness.suite(function()
     end)
 
     test("lightning's counted rows are whole and its measured ones are not", function()
-      const attrs = rows.params({ knob = knob }).attributes
+      const attrs = rows.attributes
 
       for _, name in { "Count", "Detail", "Forks", "Restrikes" } do
         expect(attrs[name].isWhole).toBe(true)

@@ -1,4 +1,13 @@
-const SDK = require("@root/sdk/v1/types")
+const RunService = game:GetService("RunService")
+
+const attr = require("@mod/attributes")
+const curve = require("@mod/curve")
+const curves = require("@mod/curves")
+const logger = require("@mod/logger")
+const reader = require("@mod/reader")
+const lifetime = require("@mod/lifetime")
+
+const enabled_effects = require("@srv/enabled_effects")
 
 const rng = require("@mod/lightning/rng")
 const mesh = require("@mod/lightning/mesh")
@@ -12,6 +21,7 @@ const nested = require("@mod/lightning/nested")
 const riders = require("@mod/lightning/riders")
 const strike = require("@mod/lightning/strike")
 const impacts = require("@mod/lightning/impacts")
+const failures = require("@mod/lightning/failures")
 const gradient = require("@mod/lightning/gradient")
 const geometry = require("@mod/lightning/geometry")
 const timeline = require("@mod/lightning/timeline")
@@ -26,6 +36,16 @@ const PARTS_WARNING = "EditableMesh is not available here, so the lightning is d
 const BOLT_WARNING = "This can't ride inside Bolt. Put it in EmitAlong to play it on the bolt."
 const HIGHLIGHT_WARNING = "Only the first Highlight in Bolt is used."
 const LOCKED_WARNING = "Turn on Archivable for anything inside Bolt or EmitAlong so it can play."
+
+-- a window's clock runs at the Speed row a built-in has, and the lightning has none
+const UNSCALED = table.freeze({
+  value = 1,
+  animated = false,
+  duration = 0,
+  at = function(_: number)
+    return 1
+  end,
+})
 
 const random = Random.new()
 
@@ -100,16 +120,87 @@ const function rebuilt(old: any, new: any): boolean
   return rows.glowing(old.Style, old.Glow) ~= rows.glowing(new.Style, new.Glow)
 end
 
+-- a row called with nothing of its own is a track of its own, drawn again when anything in it draws
 const function apart(attrs: any): { [string]: any }
   const mine = {}
 
   for _, name in APART do
     const track = attrs[name]
 
-    mine[name] = if track.animated then track:redraw() else track
+    mine[name] = if track.animated then track() else track
   end
 
   return mine
+end
+
+const function warnOnce(ctx: any, text: string)
+  failures.once(ctx.ref, text)
+end
+
+-- a preset's name or a curve row's value; a row's value is binary and starts with four zero bytes, so any other text
+-- is meant as a preset
+const function curveOf(given: any)
+  if typeof(given) == "buffer" then
+    return curve.frozen(1, buffer.tostring(given))
+  end
+
+  if type(given) == "string" and curves.PRESETS[given] == nil and string.sub(given, 1, 4) ~= "\0\0\0\0" then
+    logger.error(`{given} is no curve preset, use linear, easeIn, easeOut or easeInOut`)
+  end
+
+  return curve.frozen(1, given)
+end
+
+-- the rows as the instance holds them now: the same table while nothing has changed, and one read the first call
+-- after any change (any attribute of the ref, or a write into a cached instance's table, which fires no signal). the
+-- first call always reads
+const function follower(ctx: any, handed: any): () -> any
+  const scope = ctx.scope
+  local current: any = nil
+  local dirty = true
+  local generation = attr.generation
+  local watching = false
+
+  return function()
+    if not watching then
+      watching = true
+
+      lifetime.hold(
+        scope,
+        ctx.ref.AttributeChanged:Connect(function()
+          dirty = true
+        end)
+      )
+    end
+
+    if not dirty and generation == attr.generation then
+      return current
+    end
+
+    dirty = false
+    generation = attr.generation
+
+    -- read into a ctx of its own, since a read writes the duration and the piece it decided onto the ctx it is given
+    const scratch = {
+      ref = ctx.ref,
+      obj = ctx.obj,
+      scope = scope,
+      effect = ctx.effect,
+      shared = ctx.shared,
+      constant = ctx.constant,
+    }
+    const ok, attrs = pcall(reader.resolve, ctx.effect, scratch)
+
+    if not ok then
+      warnOnce(ctx, "the rows could not be read again, so the last values are kept")
+
+      return if current ~= nil then current else handed
+    end
+
+    current = attrs
+
+    return attrs
+  end
 end
 
 -- a light is made for a bolt that may cast one
@@ -133,20 +224,20 @@ end
 
 -- what Bolt and EmitAlong hold, warning once for anything the lightning cannot drive, for a second Highlight and
 -- for anything left out for not being Archivable
-const function sortSlots(sdk: SDK.V1, ctx: SDK.Ctx, slots: { [string]: Folder }): (kinds.Sorted, kinds.Along)
+const function sortSlots(ctx: any, slots: { [string]: Folder }): (kinds.Sorted, kinds.Along)
   const riding = kinds.sort(childrenOf(slots.Bolt))
   const along = kinds.sortAlong(childrenOf(slots.EmitAlong))
 
   if riding.refused then
-    sdk.warn(ctx, BOLT_WARNING)
+    warnOnce(ctx, BOLT_WARNING)
   end
 
   if riding.extra then
-    sdk.warn(ctx, HIGHLIGHT_WARNING)
+    warnOnce(ctx, HIGHLIGHT_WARNING)
   end
 
   if riding.locked or along.locked then
-    sdk.warn(ctx, LOCKED_WARNING)
+    warnOnce(ctx, LOCKED_WARNING)
   end
 
   return riding, along
@@ -162,8 +253,8 @@ const function keysOf(sequence: ColorSequence): { gradient.key }
   return keys
 end
 
-const function lightAt(sdk: SDK.V1, ctx: SDK.Ctx): (Attachment, PointLight)
-  const holder = sdk.hold(ctx, Instance.new("Attachment"))
+const function lightAt(scope: lifetime.effect): (Attachment, PointLight)
+  const holder = lifetime.hold(scope, Instance.new("Attachment"))
 
   holder.Name = "LightningLight"
   holder.Archivable = false
@@ -173,18 +264,19 @@ const function lightAt(sdk: SDK.V1, ctx: SDK.Ctx): (Attachment, PointLight)
   light.Shadows = false
   light.Brightness = 0
   light.Parent = holder
-  holder.Parent = sdk.container(ctx)
+  holder.Parent = cores.container()
 
   return holder, light
 end
 
 local play = {}
 
-function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
-  if sdk.context() == "server" then
+function play.emit(ctx: any, attrs: any)
+  if RunService:IsRunning() and not RunService:IsClient() then
     return
   end
 
+  const scope = ctx.scope
   const ref = ctx.ref :: Attachment
   const continuous = attrs.Continuous == true
   -- a loop's tick stays until Enabled goes off, a Duration's emit for the Duration, a plain emit not at all
@@ -210,16 +302,17 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
 
     mark = {}
     Staying[ref] = mark
-    sdk.hold(ctx, letGo)
+    lifetime.hold(scope, letGo)
   end
 
   -- a continuous bolt reads its rows as the instance holds them now, so it follows an edit. an edit that changes how a
   -- bolt is built is never taken on by one standing: a looping bolt lets go for its loop to strike anew, and a
   -- Duration's keeps its build to the end. a looping one also lets go once its loop stops, Enabled or not
   local following = true
+  const refresh = follower(ctx, attrs)
 
   const function reread()
-    if looping and holding and not sdk.looping(ctx) then
+    if looping and holding and not enabled_effects.ticking(scope.emit) then
       letGo()
     end
 
@@ -227,7 +320,7 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       return
     end
 
-    const fresh = sdk.refresh(ctx)
+    const fresh = refresh()
 
     if fresh == attrs then
       return
@@ -251,11 +344,11 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
   end
 
   if attrs.EmitDelay > 0 then
-    sdk.wait(ctx, attrs.EmitDelay)
+    lifetime.wait(scope, attrs.EmitDelay)
   end
 
   if attrs.EmitDuration > 0 and not ctx.constant and not continuous then
-    sdk.window(ctx, attrs.EmitDuration)
+    enabled_effects.window(ctx, ctx.effect, attrs.EmitDuration, UNSCALED :: any)
 
     return
   end
@@ -277,23 +370,25 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
   const finishAt = if attrs.Target == "End" then endOf(ref, attrs.EndPoint) else nil
 
   if attrs.Target == "End" and not finishAt then
-    sdk.warn(ctx, END_WARNING)
+    warnOnce(ctx, END_WARNING)
 
     return
   end
 
   const slots = nested.slots(ref)
-  const join = sdk.join(ctx)
+  const bolts = lifetime.join(scope)
+  -- the nested emits the bolts start, which the effect waits for once its bolts are done
+  const children = lifetime.join(scope)
   const count = math.max(1, math.floor(sample(attrs.Count, 0)))
-  const riding, along = sortSlots(sdk, ctx, slots)
-  const cover = if riding.highlight then highlight.make(sdk, ctx, riding.highlight, count) else nil
+  const riding, along = sortSlots(ctx, slots)
+  const cover = if riding.highlight then highlight.make(scope, riding.highlight, count) else nil
   const sprays = along.emitter
   const struck = along.strike
   local away = false
 
   -- an ancestor taken out of the place (a streamed out part, a model parented to nil) leaves the ref a parent
-  sdk.hold(
-    ctx,
+  lifetime.hold(
+    scope,
     ref.AncestryChanged:Connect(function()
       away = not ref:IsDescendantOf(game)
     end)
@@ -430,8 +525,8 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     if staying then
       timeline.stay(plan)
     end
-    const appearCurve = sdk.curve(1, attrs.AppearCurve)
-    local disappearCurve = sdk.curve(1, attrs.DisappearCurve)
+    const appearCurve = curveOf(attrs.AppearCurve)
+    local disappearCurve = curveOf(attrs.DisappearCurve)
 
     const function appearAt(t: number)
       return appearCurve:at(t)
@@ -456,7 +551,7 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
 
     local heat = sample(mine.Heat, 0)
     local sequence = sample(mine.Gradient, 0)
-    const holder = if cover then cover.model else cores.model(sdk, ctx)
+    const holder = if cover then cover.model else cores.model(scope)
     const looks = {
       glow = rows.glowing(attrs.Style, attrs.Glow),
       heat = heat,
@@ -470,24 +565,24 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     local blocks: parts.PartsDrawn? = nil
 
     if attrs.Style ~= "Segments" then
-      drawn = mesh.build(sdk, ctx, shown, perChain, looks)
+      drawn = mesh.build(scope, shown, perChain, looks)
 
       if not drawn then
-        sdk.warn(ctx, PARTS_WARNING)
+        warnOnce(ctx, PARTS_WARNING)
       end
     end
 
     if not drawn then
-      blocks = parts.build(sdk, ctx, b.joints, perChain, looks)
+      blocks = parts.build(scope, b.joints, perChain, looks)
     end
 
-    const r = riders.build(sdk, ctx, riding, perChain)
+    const r = riders.build(scope, riding, perChain)
     const seen = if cover then highlight.join(cover) else nil
     local lamp: Attachment? = nil
     local light: PointLight? = nil
 
     if lights(mine.Light) then
-      lamp, light = lightAt(sdk, ctx)
+      lamp, light = lightAt(scope)
     end
 
     -- fired by chain, since a bolt aimed again during its first strike lists its impacts anew
@@ -536,20 +631,20 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       if timeline.staying(plan) then
         plan.disappear = attrs.Disappear
         plan.disappearTime = math.max(0, sample(mine.DisappearTime, 0))
-        disappearCurve = sdk.curve(1, attrs.DisappearCurve)
+        disappearCurve = curveOf(attrs.DisappearCurve)
       end
 
       if lights(mine.Light) and not lamp then
-        lamp, light = lightAt(sdk, ctx)
+        lamp, light = lightAt(scope)
       end
     end
 
     if slots.EmitOnStart then
-      nested.host(sdk, ctx, slots.EmitOnStart:GetChildren(), "EmitOnStart", start)
+      nested.host(scope, children, slots.EmitOnStart:GetChildren(), "EmitOnStart", start)
     end
 
     if slots.EmitAtTip then
-      tip = nested.host(sdk, ctx, slots.EmitAtTip:GetChildren(), "EmitAtTip", start)
+      tip = nested.host(scope, children, slots.EmitAtTip:GetChildren(), "EmitAtTip", start)
     end
 
     -- glow is the Glow row, apart from state.glow, the timeline's own share of it
@@ -608,7 +703,7 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
         const right, up = impacts.axes(normal, space:VectorToWorldSpace(at.travel), attrs.ImpactFacing)
         const frame = CFrame.fromMatrix(impacts.lifted(point, normal), right, up)
 
-        nested.host(sdk, ctx, slots.EmitOnImpact:GetChildren(), "EmitOnImpact", frame)
+        nested.host(scope, children, slots.EmitOnImpact:GetChildren(), "EmitOnImpact", frame)
       end
     end
 
@@ -661,9 +756,9 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       slot.joint = pick
 
       if slot.host then
-        nested.again(sdk, ctx, slot.host, point)
+        nested.again(scope, children, slot.host, point)
       else
-        slot.host = nested.host(sdk, ctx, slot.children, "EmitAlong", point)
+        slot.host = nested.host(scope, children, slot.children, "EmitAlong", point)
       end
     end
 
@@ -908,7 +1003,16 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
 
     frame(0, 0)
 
-    const stop = sdk.step(ctx, frame, "late")
+    local elapsed = 0
+
+    const step = lifetime.step(
+      scope,
+      failures.step(ref, scope, function(deltaTime: number)
+        elapsed += deltaTime
+        frame(deltaTime, elapsed)
+      end),
+      "screen"
+    )
 
     -- the total is read on every wait, since a continuous bolt's is set only once it is let go
     local passed = 0
@@ -916,10 +1020,10 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
     while passed < plan.total and not gone() do
       const span = math.min(GONE_CHECK, plan.total - passed)
 
-      passed += math.max(sdk.wait(ctx, span), span)
+      passed += math.max(lifetime.wait(scope, span), span)
     end
 
-    stop()
+    step:Disconnect()
 
     if timeline.staying(plan) then
       timeline.release(plan, passed)
@@ -944,24 +1048,25 @@ function play.emit(sdk: SDK.V1, ctx: SDK.Ctx, attrs: any)
       lamp:Destroy()
     end
 
-    const lifetime = if r then riders.free(r) else 0
+    const outlasting = if r then riders.free(r) else 0
 
     if slots.EmitOnFinish and not gone() then
-      nested.host(sdk, ctx, slots.EmitOnFinish:GetChildren(), "EmitOnFinish", ref.WorldCFrame)
+      nested.host(scope, children, slots.EmitOnFinish:GetChildren(), "EmitOnFinish", ref.WorldCFrame)
     end
 
     -- points still showing particles stay where the bolt left them until the last of those has died
     if r then
-      sdk.wait(ctx, lifetime)
+      lifetime.wait(scope, outlasting)
       riders.last(r)
     end
   end
 
   for i, seed in timings do
-    sdk.spawn(join, bolt, seed, mines[i])
+    lifetime.spawn(bolts, failures.body, ref, bolt, seed, mines[i])
   end
 
-  sdk.await(join)
+  lifetime.awaitJoin(bolts)
+  lifetime.awaitJoin(children)
 end
 
 function play.bind(readers: any)
