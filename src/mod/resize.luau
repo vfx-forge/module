@@ -1,8 +1,11 @@
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
+local reader = require("@mod/reader")
 local retime = require("@mod/retime")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
+local legacy_mods = require("@mod/legacy_mods")
+local instance_value = require("@mod/instance_value")
 local path_curve = require("@mod/common/path_curve")
 local state_list = require("@mod/common/state_list")
 local value_curve = require("@mod/value_curve")
@@ -30,7 +33,17 @@ resize.PROPERTY_UNITS = {
   ParticleEmitter = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
   ParticleEmitter2D = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
   Sound = { RollOffMaxDistance = "studs" },
+  Light = { Range = "studs" },
 }
+
+-- the most the engine takes for a length above, which a resize holds to
+-- rather than store what the engine would cut: a light reaches 60 studs
+const CEILINGS = { Light = { Range = 60 } }
+
+-- the classes above no effect owns, whose lengths are scaled where a Property
+-- Animator or an old tween child plays them too. an animator on an emitter
+-- or a sound is left as a resize has always left it
+const DRIVEN = { "Light" }
 
 -- ratios resize scales as if they were lengths. the flag says whether the
 -- resting value scales with them: a model's scale is its absolute size. a
@@ -52,6 +65,16 @@ resize.KEPT = {
   forge_mesh = { ZOffset = true },
 }
 
+const function ceilingOf(obj: Instance, name: string): number?
+  for class, names in CEILINGS do
+    if names[name] ~= nil and obj:IsA(class) then
+      return names[name]
+    end
+  end
+
+  return nil
+end
+
 -- a property the instance does not have throws on the read, which is the
 -- answer "nothing to scale"
 local function scaleProperty(obj: any, name: string, f: number)
@@ -63,7 +86,11 @@ local function scaleProperty(obj: any, name: string, f: number)
     return
   end
 
-  if typeof(v) == "number" or typeof(v) == "Vector3" or typeof(v) == "Vector2" then
+  const ceiling = ceilingOf(obj, name)
+
+  if typeof(v) == "number" and ceiling ~= nil then
+    obj[name] = math.min(v * f, ceiling)
+  elseif typeof(v) == "number" or typeof(v) == "Vector3" or typeof(v) == "Vector2" then
     obj[name] = v * f
   elseif typeof(v) == "NumberRange" then
     obj[name] = NumberRange.new(v.Min * f, v.Max * f)
@@ -157,6 +184,63 @@ const function scalePathRow(obj: Instance, name: string, row: any, f: number)
 
   if not stored and path_curve.is(row.default) then
     attr.set(obj, name, path_curve.encode(path_curve.scaled(row.default, f)))
+  end
+end
+
+-- the instance and the property a Property Animator or an old property tween
+-- child plays, whichever `obj` is
+const function drivenOf(obj: Instance, module: registry.Module?): (Instance?, string?)
+  if module ~= nil and module.id == "animator" then
+    const target = instance_value.accept(reader.liveOf(obj, "Target"), nil, reader.probe)
+
+    return target or utility.getTarget(obj), attr.get(obj, "Property", nil, true)
+  end
+
+  if module == nil and obj:IsA("RayValue") and legacy_mods.childSource(obj) == "property" then
+    return utility.getTarget(obj), obj.Name
+  end
+
+  return nil, nil
+end
+
+-- what an animator's lanes or a tween child's values play on a length of a
+-- class DRIVEN names, scaled as the property is and held to its ceiling
+const function scaleDriven(obj: Instance, module: registry.Module?, factor: number)
+  const target, name = drivenOf(obj, module)
+
+  if target == nil or type(name) ~= "string" then
+    return
+  end
+
+  for _, class in DRIVEN do
+    const unit = resize.PROPERTY_UNITS[class][name]
+    const f = if unit ~= nil and target:IsA(class) then factorOf(unit, factor) else nil
+
+    if f == nil then
+      continue
+    end
+
+    const ceiling = ceilingOf(target, name) or math.huge
+
+    const function scaled(v: any): any
+      return if type(v) == "number" then math.min(v * f, ceiling) else v
+    end
+
+    if module ~= nil then
+      utility.rescaleQueue(obj, "property", name, function(lanes)
+        mods.scaleValues(lanes, f, scaled)
+      end)
+    else
+      for _, key in { "_START_VALUE", "_END_VALUE" } do
+        const v = attr.get(obj, key, nil)
+
+        if type(v) == "number" then
+          attr.set(obj, key, scaled(v))
+        end
+      end
+    end
+
+    return
   end
 end
 
@@ -338,6 +422,8 @@ function resize.apply(obj: Instance, factor: number, pass: Pass?)
 
     scaleShape(obj, module, factor, pass)
   end
+
+  scaleDriven(obj, module, factor)
 
   -- a custom effect's instance is its own: only its rows say what scales
   local engine = module == nil or not registry.isCustom(module)

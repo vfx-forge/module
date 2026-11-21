@@ -476,6 +476,89 @@ harness.suite(function()
       expect(obj:GetAttribute("PartOffset") == Vector3.new(2, 2, 2)).toBe(true)
     end)
 
+    test("a light's range scales and holds at the engine's 60, its brightness left", function()
+      registry.clear()
+
+      local point = Instance.new("PointLight") :: any
+      local spot = Instance.new("SpotLight") :: any
+      local surface = Instance.new("SurfaceLight") :: any
+
+      point.Range = 8
+      point.Brightness = 2
+      spot.Range = 40
+      surface.Range = 10
+
+      for _, light in { point, spot, surface } do
+        resize.apply(light, 2)
+      end
+
+      expect(point.Range).toBe(16)
+      expect(point.Brightness).toBe(2)
+      expect(spot.Range).toBe(60)
+      expect(surface.Range).toBe(20)
+    end)
+
+    test("a Property Animator on a light's range scales its lanes, held at 60", function()
+      local animator = require("@vfx/animator")
+
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(animator)
+
+      local light = harness.make("PointLight")
+      local ranged = harness.make("RayValue", light)
+      local bright = harness.make("RayValue", light)
+
+      for _, obj in { ranged, bright } do
+        obj:AddTag("PropertyAnimator")
+      end
+
+      ranged:SetAttribute("Property", "Range")
+      bright:SetAttribute("Property", "Brightness")
+
+      for _, pair in { { ranged, "Range" }, { bright, "Brightness" } } do
+        framed(pair[1], "property", pair[2], {
+          { kind = "tween", chain = false, duration = 1, start = value.lit(10), finish = value.lit(40) },
+        })
+      end
+
+      resize.apply(ranged, 2)
+      resize.apply(bright, 2)
+
+      local range = queueOf(ranged, "property", "Range") :: any
+      local brightness = queueOf(bright, "property", "Brightness") :: any
+
+      expect(range[1].start.v).toBe(20)
+      expect(range[1].finish.v).toBe(60)
+      expect(range[1].duration).toBe(1)
+      expect(brightness[1].start.v).toBe(10)
+      expect(brightness[1].finish.v).toBe(40)
+    end)
+
+    test("an old tween child on a light's range scales its values, held at 60", function()
+      registry.clear()
+
+      local light = harness.make("PointLight")
+      local ranged = harness.make("RayValue", light)
+      local bright = harness.make("RayValue", light)
+      local elsewhere = harness.make("RayValue", harness.make("Part"))
+
+      ranged.Name = "Range"
+      bright.Name = "Brightness"
+      elsewhere.Name = "Range"
+
+      for _, obj in { ranged, bright, elsewhere } do
+        obj:SetAttribute("_START_VALUE", 5)
+        obj:SetAttribute("_END_VALUE", 40)
+        resize.apply(obj, 2)
+      end
+
+      expect(ranged:GetAttribute("_START_VALUE")).toBe(10)
+      expect(ranged:GetAttribute("_END_VALUE")).toBe(60)
+      expect(bright:GetAttribute("_START_VALUE")).toBe(5)
+      expect(elsewhere:GetAttribute("_END_VALUE")).toBe(40)
+    end)
+
     test("a debris piece's throw distance scales where its spin does not", function()
       expect(debris.attributes.LinearMagnitude.units).toBe("studs")
       expect(debris.attributes.AngularMagnitude.units).toBe(nil)
