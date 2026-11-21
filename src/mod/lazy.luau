@@ -179,6 +179,17 @@ function lazy.prepare(name: string?): string?
   return nil
 end
 
+-- every unit's name, in the order they were declared
+function lazy.names(): { string }
+  local names = {}
+
+  for _, unit in Units do
+    table.insert(names, unit.name)
+  end
+
+  return names
+end
+
 function lazy.pending(): { string }
   local names = {}
 
