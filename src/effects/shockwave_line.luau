@@ -193,8 +193,18 @@ function line.emit(ctx: any, attrs: any)
   return play().emit(ctx, attrs)
 end
 
+-- in the declarations, so selecting one never loads what it plays
 function line.selected(ctx: any)
-  return play().selected(ctx)
+  local piece = ctx.ref :: BasePart
+  local folder = piece.Parent
+  local origin = if folder ~= nil then folder.Parent else nil
+
+  if origin == nil or not origin:IsA("Attachment") then
+    return
+  end
+
+  piece.Anchored = true
+  piece.CFrame = origin.WorldCFrame
 end
 
 return line

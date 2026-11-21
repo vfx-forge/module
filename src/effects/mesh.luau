@@ -299,8 +299,22 @@ function mesh.emit(ctx: any, attrs: any)
   return play().emit(ctx, attrs)
 end
 
+-- in the declarations, so selecting one never loads what it plays
 function mesh.selected(ctx: any)
-  return play().selected(ctx)
+  local model = ctx.ref :: Model
+  local parent = model.Parent
+
+  if parent == nil or not parent:IsA("Attachment") then
+    return
+  end
+
+  local primary = model.PrimaryPart
+
+  if primary == nil then
+    model.WorldPivot = parent.WorldCFrame
+  else
+    primary.PivotOffset = primary.CFrame:ToObjectSpace(parent.WorldCFrame)
+  end
 end
 
 return mesh

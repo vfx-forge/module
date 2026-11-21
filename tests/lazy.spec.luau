@@ -309,6 +309,21 @@ harness.suite(function()
   end)
 
   harness.describe("what reaches a play module", function()
+    test("selecting an effect's instance never loads what it plays", function()
+      local found = {}
+
+      for _, entry in fs.readDir("src/effects") do
+        local source = fs.readFile(`src/effects/{entry}`)
+        local body = string.match(source, "\nfunction [%w_]+%.selected%(.-\nend\n")
+
+        if body ~= nil and string.find(body, "play()", 1, true) then
+          table.insert(found, entry)
+        end
+      end
+
+      expect(found).toEqual({})
+    end)
+
     test("only the unit its effect declares requires it", function()
       local found = {}
 

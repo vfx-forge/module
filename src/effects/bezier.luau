@@ -67,8 +67,17 @@ function bezier.emit(ctx: any, attrs: any)
   return play().emit(ctx, attrs)
 end
 
+-- in the declarations, so selecting one never loads what it plays
 function bezier.selected(ctx: any)
-  return play().selected(ctx)
+  local ref = ctx.ref :: Attachment
+  local points = ref:FindFirstChild("Points")
+  local template = ref:FindFirstChildOfClass("Part")
+
+  if template == nil or points == nil or not points:IsA("Attachment") then
+    return
+  end
+
+  template.CFrame = ref.WorldCFrame
 end
 
 return bezier

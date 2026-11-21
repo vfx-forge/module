@@ -1050,20 +1050,6 @@ function play.emit(ctx: reader.Ctx, attrs: any)
   lifetime.awaitJoin(outstanding)
 end
 
--- the template part is authored on the bolt, so a preview of a piece starts
--- where the bolt is
-function play.selected(ctx: reader.Ctx)
-  local ref = ctx.ref :: Attachment
-  local points = ref:FindFirstChild("Points")
-  local template = ref:FindFirstChildOfClass("Part")
-
-  if template == nil or points == nil or not points:IsA("Attachment") then
-    return
-  end
-
-  template.CFrame = ref.WorldCFrame
-end
-
 function play.bind(module: any)
   lightning = module
 
