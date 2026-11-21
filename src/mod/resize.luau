@@ -33,12 +33,10 @@ resize.PROPERTY_UNITS = {
   ParticleEmitter = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
   ParticleEmitter2D = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
   Sound = { RollOffMaxDistance = "studs" },
+  -- a light's reach, which the engine holds at 60 studs as it is written, so
+  -- a stored value past it is kept for a resize back to come down from
   Light = { Range = "studs" },
 }
-
--- the most the engine takes for a length above, which a resize holds to
--- rather than store what the engine would cut: a light reaches 60 studs
-const CEILINGS = { Light = { Range = 60 } }
 
 -- the classes above no effect owns, whose lengths are scaled where a Property
 -- Animator or an old tween child plays them too. an animator on an emitter
@@ -65,16 +63,6 @@ resize.KEPT = {
   forge_mesh = { ZOffset = true },
 }
 
-const function ceilingOf(obj: Instance, name: string): number?
-  for class, names in CEILINGS do
-    if names[name] ~= nil and obj:IsA(class) then
-      return names[name]
-    end
-  end
-
-  return nil
-end
-
 -- a property the instance does not have throws on the read, which is the
 -- answer "nothing to scale"
 local function scaleProperty(obj: any, name: string, f: number)
@@ -86,11 +74,7 @@ local function scaleProperty(obj: any, name: string, f: number)
     return
   end
 
-  const ceiling = ceilingOf(obj, name)
-
-  if typeof(v) == "number" and ceiling ~= nil then
-    obj[name] = math.min(v * f, ceiling)
-  elseif typeof(v) == "number" or typeof(v) == "Vector3" or typeof(v) == "Vector2" then
+  if typeof(v) == "number" or typeof(v) == "Vector3" or typeof(v) == "Vector2" then
     obj[name] = v * f
   elseif typeof(v) == "NumberRange" then
     obj[name] = NumberRange.new(v.Min * f, v.Max * f)
@@ -204,7 +188,7 @@ const function drivenOf(obj: Instance, module: registry.Module?): (Instance?, st
 end
 
 -- what an animator's lanes or a tween child's values play on a length of a
--- class DRIVEN names, scaled as the property is and held to its ceiling
+-- class DRIVEN names, scaled as the property is
 const function scaleDriven(obj: Instance, module: registry.Module?, factor: number)
   const target, name = drivenOf(obj, module)
 
@@ -220,24 +204,11 @@ const function scaleDriven(obj: Instance, module: registry.Module?, factor: numb
       continue
     end
 
-    const ceiling = ceilingOf(target, name) or math.huge
-
-    const function scaled(v: any): any
-      return if type(v) == "number" then math.min(v * f, ceiling) else v
-    end
-
     if module ~= nil then
-      utility.rescaleQueue(obj, "property", name, function(lanes)
-        mods.scaleValues(lanes, f, scaled)
-      end)
+      scaleQueue(obj, "property", name, f)
     else
-      for _, key in { "_START_VALUE", "_END_VALUE" } do
-        const v = attr.get(obj, key, nil)
-
-        if type(v) == "number" then
-          attr.set(obj, key, scaled(v))
-        end
-      end
+      utility.scaleAttribute(obj, f, "_START_VALUE")
+      utility.scaleAttribute(obj, f, "_END_VALUE")
     end
 
     return

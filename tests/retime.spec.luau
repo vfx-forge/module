@@ -476,7 +476,7 @@ harness.suite(function()
       expect(obj:GetAttribute("PartOffset") == Vector3.new(2, 2, 2)).toBe(true)
     end)
 
-    test("a light's range scales and holds at the engine's 60, its brightness left", function()
+    test("a light's range scales and its brightness is left", function()
       registry.clear()
 
       local point = Instance.new("PointLight") :: any
@@ -494,11 +494,11 @@ harness.suite(function()
 
       expect(point.Range).toBe(16)
       expect(point.Brightness).toBe(2)
-      expect(spot.Range).toBe(60)
+      expect(spot.Range).toBe(80)
       expect(surface.Range).toBe(20)
     end)
 
-    test("a Property Animator on a light's range scales its lanes, held at 60", function()
+    test("a Property Animator on a light's range scales its lanes, past the engine's 60 too", function()
       local animator = require("@vfx/animator")
 
       registry.clear()
@@ -518,24 +518,24 @@ harness.suite(function()
 
       for _, pair in { { ranged, "Range" }, { bright, "Brightness" } } do
         framed(pair[1], "property", pair[2], {
-          { kind = "tween", chain = false, duration = 1, start = value.lit(10), finish = value.lit(40) },
+          { kind = "tween", chain = false, duration = 1, start = value.lit(10), finish = value.lit(100) },
         })
       end
 
-      resize.apply(ranged, 2)
-      resize.apply(bright, 2)
+      resize.apply(ranged, 1.5)
+      resize.apply(bright, 1.5)
 
       local range = queueOf(ranged, "property", "Range") :: any
       local brightness = queueOf(bright, "property", "Brightness") :: any
 
-      expect(range[1].start.v).toBe(20)
-      expect(range[1].finish.v).toBe(60)
+      expect(range[1].start.v).toBe(15)
+      expect(range[1].finish.v).toBe(150)
       expect(range[1].duration).toBe(1)
       expect(brightness[1].start.v).toBe(10)
-      expect(brightness[1].finish.v).toBe(40)
+      expect(brightness[1].finish.v).toBe(100)
     end)
 
-    test("an old tween child on a light's range scales its values, held at 60", function()
+    test("an old tween child on a light's range scales its values, past the engine's 60 too", function()
       registry.clear()
 
       local light = harness.make("PointLight")
@@ -554,7 +554,7 @@ harness.suite(function()
       end
 
       expect(ranged:GetAttribute("_START_VALUE")).toBe(10)
-      expect(ranged:GetAttribute("_END_VALUE")).toBe(60)
+      expect(ranged:GetAttribute("_END_VALUE")).toBe(80)
       expect(bright:GetAttribute("_START_VALUE")).toBe(5)
       expect(elsewhere:GetAttribute("_END_VALUE")).toBe(40)
     end)
