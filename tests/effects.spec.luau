@@ -2543,27 +2543,55 @@ harness.suite(function()
     end)
 
     -- a lane an earlier plugin converted the same quad into, its ends draws of
-    -- one value, under the old spelling the convert kept
-    test("a converted still LengthScale lane under the old spelling is gated alike", function()
-      for texture, want in { [1] = 1, [3] = 2 } do
-        const entry = {
+    -- one value, under the old spelling the convert kept, with the texture
+    -- lane that convert made of a moving Length_Texture quad beside it or
+    -- none. the texture lane's start is the Length_Texture_Start v2.4.0
+    -- asked; with none, a still texture quad that convert took off may have
+    -- held anything, so the lane applies as it has played since
+    test("a converted still LengthScale lane is gated on the converted texture lane's start", function()
+      const scale = {
+        kind = "tween",
+        chain = false,
+        start = value.draw(2, 2),
+        finish = value.draw(2, 2),
+        seedable = true,
+      }
+
+      const function textured(from: number)
+        return {
           kind = "tween",
           chain = false,
-          start = value.draw(2, 2),
-          finish = value.draw(2, 2),
+          start = value.lit(from),
+          finish = value.lit(5),
           seedable = true,
         }
+      end
 
-        local beam, built = beamOf({
-          [mods.attrName("attribute", "Length_Scale")] = frame.frame(codec.encode({ lanes = { start = { entry } } })),
-        })
+      for _, case in
+        {
+          { texture = 1, lane = nil, want = 2 },
+          { texture = 3, lane = nil, want = 2 },
+          { texture = 1, lane = textured(3), want = 2 },
+          { texture = 3, lane = textured(1), want = 1 },
+        }
+      do
+        const attributes = {
+          [mods.attrName("attribute", "Length_Scale")] = frame.frame(codec.encode({ lanes = { start = { scale } } })),
+        }
 
-        beam.TextureLength = texture
+        if case.lane ~= nil then
+          attributes[mods.attrName("property", "Length_Texture")] =
+            frame.frame(codec.encode({ lanes = { start = { case.lane } } }))
+        end
+
+        local beam, built = beamOf(attributes)
+
+        beam.TextureLength = case.texture
 
         const module = require("@vfx/beam")
         const attrs = reader.resolve(module :: any, { ref = beam, obj = beam, effect = module } :: any)
 
-        expect(attrs.LengthScale.at(0)).toBe(want)
+        expect(attrs.LengthScale.at(0)).toBe(case.want)
 
         built.restore()
       end

@@ -1,5 +1,7 @@
 local attr = require("@mod/attributes")
 local value = require("@mod/value")
+local codec = require("@mod/modifier_codec")
+local frame = require("@mod/modifier_frame")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local numeric_common = require("@mod/common/numeric")
@@ -529,12 +531,74 @@ const GATED = "Length_Scale"
 
 STILL_NAMES[GATED] = true
 
+-- the maps an earlier plugin's convert made of the two quads, under the old
+-- spellings it kept (mods.PREFIX, which this module cannot require)
+const SCALE_LANE = "ForgeAttrMods_Length_Scale"
+const TEXTURE_LANE = "ForgePropMods_Length_Texture"
+
+-- each framed map decoded once, false for one that does not decode
+const LANES: { [string]: { [string]: { any } } | false } = {}
+const LANES_CAP = 1024
+local laneCount = 0
+
+const function lanesOf(raw: any): { [string]: { any } }?
+  if not frame.isFramed(raw) then
+    return nil
+  end
+
+  const known = LANES[raw]
+
+  if known ~= nil then
+    return if known == false then nil else known
+  end
+
+  const body = frame.unframe(raw)
+  local ok, decoded = false, nil
+
+  if body ~= nil then
+    ok, decoded = pcall(codec.decode, body)
+  end
+
+  const lanes = if ok and decoded ~= nil then decoded.lanes else nil
+
+  if laneCount >= LANES_CAP then
+    table.clear(LANES)
+    laneCount = 0
+  end
+
+  LANES[raw] = lanes or false
+  laneCount += 1
+
+  return lanes
+end
+
+-- the start the texture lane an earlier convert made names, which is the
+-- Length_Texture_Start it was made from; nil where there is none
+const function laneStart(ref: Instance, map: { [string]: any }?): number?
+  const lanes = lanesOf(stored(ref, TEXTURE_LANE, map))
+  const first = if lanes ~= nil and lanes.start ~= nil then lanes.start[1] else nil
+
+  if first == nil or first.kind ~= "tween" or first.start == nil or not value.isLit(first.start) then
+    return nil
+  end
+
+  return if type(first.start.v) == "number" then first.start.v else nil
+end
+
 -- whether the beam's texture length started at 1 as v2.4.0 read it, so its
--- still length scale did nothing
-const function gateShut(ref: Instance, map: { [string]: any }?): boolean
+-- still length scale did nothing: Length_Texture_Start, or the lane an
+-- earlier convert made of it, or else the beam's TextureLength. a lane that
+-- convert made of the length scale cannot say what a still texture quad it
+-- took off held, so with no texture lane left it applies, as it has played
+-- since that convert
+const function gateShut(ref: Instance, map: { [string]: any }?, converted: boolean): boolean
   local start = stored(ref, "Length_Texture_Start", map)
 
   if start == nil then
+    start = laneStart(ref, map)
+  end
+
+  if start == nil and not converted then
     start = (ref :: any).TextureLength
   end
 
@@ -564,7 +628,7 @@ end
 
 local function heldStill(ref: Instance, name: string, startV: any, finishV: any, map: { [string]: any }?): boolean
   if name == GATED then
-    return gatedAt(ref, name, startV, finishV) ~= nil and gateShut(ref, map)
+    return gatedAt(ref, name, startV, finishV) ~= nil and gateShut(ref, map, false)
   end
 
   const rows = legacy_mods.MOVING_ONLY[ref.ClassName]
@@ -594,7 +658,7 @@ function legacy_mods.gatedValue(ref: Instance, name: string, map: { [string]: an
   const at =
     gatedAt(ref, name, legacy_mods.alias(ref, keys.start, nil, map), legacy_mods.alias(ref, keys.finish, nil, map))
 
-  return if at ~= nil and not gateShut(ref, map) then at else nil
+  return if at ~= nil and not gateShut(ref, map, false) then at else nil
 end
 
 -- whether the map stores any key of the old quad under `name`, which only the
@@ -648,20 +712,40 @@ const function stillLaneAt(lanes: { [string]: { any } }, drawn: boolean): any
   return if at ~= nil and at == endOf(m.finish) then at else nil
 end
 
+-- the lane an earlier plugin's convert made of a gated still quad, for the
+-- convert to settle once: the attribute it sits under, the old spelling, the
+-- value it holds and whether its gate is shut. nil where the beam holds none
+function legacy_mods.gatedLane(
+  ref: Instance,
+  map: { [string]: any }?
+): { key: string, spelling: string, at: any, shut: boolean }?
+  if ref.ClassName ~= "Beam" then
+    return nil
+  end
+
+  const lanes = lanesOf(stored(ref, SCALE_LANE, map))
+  const at = if lanes ~= nil then stillLaneAt(lanes, true) else nil
+
+  if at == nil then
+    return nil
+  end
+
+  return { key = SCALE_LANE, spelling = GATED, at = at, shut = gateShut(ref, map, true) }
+end
+
 -- whether a framed map is one the plugin converted out of such a still quad
 -- before the quad read as none: a lone seedable tween on the start lane, its
 -- ends one literal. it reads as no map, so the row keeps the instance's own
 -- value as v2 did. only the convert marks a lane seedable, never one the
 -- modifier window adds. a length scale an earlier plugin converted is gated
--- on the texture length as its quad is, though the texture quad that
--- convert took off is no longer there to ask
+-- as gateShut says
 function legacy_mods.isHeldStillLane(ref: Instance, name: string, lanes: { [string]: { any } }): boolean
   if not STILL_NAMES[name] then
     return false
   end
 
   if name == GATED then
-    return ref.ClassName == "Beam" and stillLaneAt(lanes, true) ~= nil and gateShut(ref, nil)
+    return ref.ClassName == "Beam" and stillLaneAt(lanes, true) ~= nil and gateShut(ref, nil, true)
   end
 
   const rows = legacy_mods.MOVING_ONLY[ref.ClassName]

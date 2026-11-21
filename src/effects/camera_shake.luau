@@ -54,7 +54,10 @@ const function madeInV2(map: { [string]: any }): boolean
 
   const falloff = map.Falloff
 
-  if type(falloff) == "number" and falloff < 0 then
+  -- read as the reader reads it, a number stored as text included
+  const distance = if type(falloff) == "string" then tonumber(falloff) else falloff
+
+  if type(distance) == "number" and distance < 0 then
     return false
   end
 
@@ -85,8 +88,8 @@ camera_shake.attributes = {
     :label("Sustain")
     :hint("Seconds the shake holds at full strength."),
   FadeOutTime = knob(2):min(0):unit("seconds"):label("Fade out"):hint("Seconds the shake takes to die away."),
-  FalloffEnabled = knob(false)
-    :legacy(function(ctx: reader.Ctx)
+  FalloffEnabled = knob
+    .legacy(knob(false), function(ctx: reader.Ctx)
       return madeInV2(reader.source(ctx.ref))
     end)
     :label("Enabled")

@@ -371,6 +371,7 @@ harness.suite(function()
           { attrs = { Speed_Start = 0.5, Speed_End = 1 }, on = true, distance = 30 },
           { attrs = { Speed_Duration = 0.4 }, on = true, distance = 30 },
           { attrs = { Falloff = -5 }, on = false, distance = 0 },
+          { attrs = { Falloff = "-5" }, on = false, distance = 0 },
           { attrs = { Falloff = 30, FalloffEnabled = false }, on = false, distance = 30 },
           { attrs = { FalloffDistance = 20 }, on = false, distance = 20 },
           { attrs = { FalloffEnabled = true, FalloffDistance = 20 }, on = true, distance = 20 },

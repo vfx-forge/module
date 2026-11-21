@@ -182,10 +182,11 @@ end
 -- decided by the rule, for old content that rested somewhere else. the
 -- default stays what a new instance rests at, what the plugin shows and the
 -- kind a stored value is checked against, so the rule answers the default
--- for anything it does not know as old
-function Knob.legacy(self: Knob, rule: Rule): Knob
-  self.rule = rule
-  return self
+-- for anything it does not know as old. a function of the module rather than
+-- a method, so the frozen sdk 1, which hands authors knobs, never reaches it
+function knob.legacy(row: Knob, rule: Rule): Knob
+  row.rule = rule
+  return row
 end
 
 -- a row the rule makes read only, `reason` the plugin's tooltip on it then

@@ -157,6 +157,12 @@ harness.suite(function()
       expect(mod.is(sdk.mod.to(1))).toBe(true)
     end)
 
+    -- a knob's legacy rule is the runtime's, for old content of its own
+    -- modules. sdk 1 hands authors knobs and is frozen, so none reaches it
+    test("a knob the sdk hands out offers no legacy rule", function()
+      expect(sdk.knob(false).legacy).toBe(nil)
+    end)
+
     test("the classes behind a knob, a mod spec and a curve are frozen, as every effect's share them", function()
       expect(table.isfrozen(getmetatable(sdk.knob(1)))).toBe(true)
       expect(table.isfrozen(getmetatable(sdk.mod.to(1)))).toBe(true)
