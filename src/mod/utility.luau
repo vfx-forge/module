@@ -5,6 +5,7 @@ local PhysicsService = game:GetService("PhysicsService")
 
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
+local legacy_mods = require("@mod/legacy_mods")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local lifetime = require("@mod/lifetime")
@@ -192,6 +193,20 @@ function utility.getTarget(obj: Instance): Instance?
   end
 
   return parent
+end
+
+-- what a legacy tween or randomizer RayValue drives, as the dispatcher plays
+-- it: the instance it targets and the reading of it (`source`, `name`,
+-- `random`). nil for a RayValue that drives nothing. an effect asking what
+-- drives one of its rows answers through this, so the two never disagree
+function utility.driverOf(child: Instance): (Instance?, any?)
+  local read = legacy_mods.readChild(child)
+
+  if read == nil then
+    return nil, nil
+  end
+
+  return utility.getTarget(child), read
 end
 
 -- a window's tick runs on the window's clock, which already carries the

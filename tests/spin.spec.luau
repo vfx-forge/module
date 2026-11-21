@@ -423,6 +423,64 @@ harness.suite(function()
       check(play(m, 3, nil), "the folded turn")
     end)
 
+    test(
+      "a randomizer in a folder under the model, or one an ObjectValue aims at it, drives the rate as a child does",
+      function()
+        -- the pre-change spin's yaw every 0.25 s on two emits: the folder's draw
+        -- lands after the first emit read its rate, the aimed one's before
+        const STORED = { 2.3853, 4.8853, 7.3853, 9.8853, 10 }
+        const RANDOMIZED = { 17.0717, 34.9647, 52.8576, 70.7506, 71.5719 }
+
+        for _, form in
+          {
+            { name = "folder", yaw = { STORED, RANDOMIZED } },
+            { name = "ObjectValue", yaw = { RANDOMIZED, RANDOMIZED } },
+          }
+        do
+          const m = model({ SpinRotation = Vector3.new(0, 10, 0), SpinDuration = 1 })
+          const root = m.Parent :: Instance
+          const child = harness.make("RayValue", if form.name == "folder" then harness.make("Folder", m) else root)
+
+          if form.name == "ObjectValue" then
+            const aim = harness.make("ObjectValue", child) :: ObjectValue
+            aim.Value = m
+          end
+
+          child.Name = "SpinRotation"
+          child:AddTag("AttributeRandomizer")
+          child:SetAttribute("_START_VALUE", Vector3.new())
+          child:SetAttribute("_END_VALUE", Vector3.new(0, 170, 0))
+
+          expect(spin.upgrade(m)).toBe(nil)
+
+          for emit = 1, 2 do
+            PIVOT[m] = nil
+            effects.emit(0, if form.name == "folder" then m else root)
+
+            for i = 1, math.round(3 / FRAME) do
+              scheduler.frame(FRAME)
+
+              if i % EVERY == 0 then
+                const turned = form.yaw[emit]
+                const yaw = turned[i // EVERY] or turned[#turned]
+
+                samePose(
+                  PIVOT[m],
+                  CFrame.fromOrientation(0, math.rad(yaw), 0),
+                  `{form.name}, emit {emit} at {i * FRAME} s`
+                )
+              end
+            end
+
+            -- the draw left on the rate is still a driven rate, never folded
+            expect(spin.upgrade(m)).toBe(nil)
+          end
+
+          effects.deinit()
+        end
+      end
+    )
+
     test("a rate something drives stays a rate: converting leaves it, and every emit turns as it did before", function()
       -- the pre-change spin's yaw every 0.25 s, the same on both emits
       const RANDOMIZED = { 17.0717, 34.9647, 52.8576, 70.7506, 71.5719 }

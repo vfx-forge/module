@@ -1,3 +1,5 @@
+local CollectionService = game:GetService("CollectionService")
+
 local mod = require("@mod/mod")
 local mods = require("@mod/mods")
 local clock = require("@mod/clock")
@@ -36,20 +38,54 @@ const function onRate(ref: Instance): boolean
 end
 
 -- the rows a turn is worked out of, the rate and its duration
-const RATE_ROWS = { "SpinRotation", "SpinDuration" }
+const RATE_ROWS = { SpinRotation = true, SpinDuration = true }
+
+-- the tags an attribute's tween or randomizer RayValue carries, which find one
+-- an ObjectValue aims at the model from anywhere
+const DRIVER_TAGS = { "AttributeTweener", "AttributeRandomizer" }
+
+-- whether a RayValue drives the model's rate or duration, by the dispatcher's
+-- own reading of it
+const function drives(child: Instance, ref: Instance): boolean
+  if not child:IsA("RayValue") then
+    return false
+  end
+
+  const target, read = utility.driverOf(child)
+
+  return target == ref and read.source == "attribute" and RATE_ROWS[read.name] == true
+end
 
 -- a model whose rate or duration something drives: a lane the applier plays
--- onto the attribute, or a v2 tween or randomizer child. the rate it plays is
--- whatever that driver has left on the attribute when the spin reads it, which
--- no stored turn reproduces, so such a model stays on its rate
+-- onto the attribute, or a v2 tween or randomizer RayValue the dispatcher
+-- aims at the model, under it through folders or anywhere through an
+-- ObjectValue. the rate it plays is whatever that driver has left on the
+-- attribute when the spin reads it, which no stored turn reproduces, so such
+-- a model stays on its rate
 const function driven(ref: Instance): boolean
-  for _, name in RATE_ROWS do
+  for name in RATE_ROWS do
     if ref:GetAttribute(mods.attrName("attribute", name)) ~= nil then
       return true
     end
+  end
 
-    for _, child in ref:GetChildren() do
-      if child.Name == name and child:IsA("RayValue") then
+  -- getTarget climbs out of folders to the first instance that is not one,
+  -- so what it lands on the model from is below the model through folders
+  const below = { ref }
+
+  while #below > 0 do
+    for _, child in (table.remove(below) :: Instance):GetChildren() do
+      if child:IsA("Folder") then
+        table.insert(below, child)
+      elseif drives(child, ref) then
+        return true
+      end
+    end
+  end
+
+  for _, tag in DRIVER_TAGS do
+    for _, child in CollectionService:GetTagged(tag) do
+      if drives(child, ref) then
         return true
       end
     end
