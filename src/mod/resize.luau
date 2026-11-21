@@ -1,11 +1,9 @@
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
-local reader = require("@mod/reader")
 local retime = require("@mod/retime")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
 local legacy_mods = require("@mod/legacy_mods")
-local instance_value = require("@mod/instance_value")
 local path_curve = require("@mod/common/path_curve")
 local state_list = require("@mod/common/state_list")
 local value_curve = require("@mod/value_curve")
@@ -37,9 +35,9 @@ resize.PROPERTY_UNITS = {
   Light = { Range = "studs" },
 }
 
--- the classes above no effect owns, whose lengths are scaled where a Property
--- Animator or an old tween child plays them too. an animator on an emitter
--- or a sound is left as a resize has always left it
+-- the classes above no effect owns, whose lengths are scaled where an old
+-- tween child plays them too. a Property Animator's lanes on any class above
+-- scale with the animator (retime.scaleAnimator), by the same units
 const DRIVEN = { "Light" }
 
 -- ratios resize scales as if they were lengths. the flag says whether the
@@ -164,28 +162,17 @@ const function scalePathRow(obj: Instance, name: string, row: any, f: number)
   end
 end
 
--- the instance and the property a Property Animator or an old property tween
--- child plays, whichever `obj` is
-const function drivenOf(obj: Instance, module: registry.Module?): (Instance?, string?)
-  if module ~= nil and module.id == "animator" then
-    const target = instance_value.accept(reader.liveOf(obj, "Target"), nil, reader.probe)
-
-    return target or utility.getTarget(obj), attr.get(obj, "Property", nil, true)
-  end
-
-  if module == nil and obj:IsA("RayValue") and legacy_mods.childSource(obj) == "property" then
-    return utility.getTarget(obj), obj.Name
-  end
-
-  return nil, nil
-end
-
--- what an animator's lanes or a tween child's values play on a length of a
--- class DRIVEN names, scaled as the property is
+-- what an old property tween child's values play on a length of a class
+-- DRIVEN names, scaled as the property is. an animator's lanes are left to
+-- retime.scaleAnimator, which scales them once already
 const function scaleDriven(obj: Instance, module: registry.Module?, factor: number)
-  const target, name = drivenOf(obj, module)
+  if module ~= nil or not obj:IsA("RayValue") or legacy_mods.childSource(obj) ~= "property" then
+    return
+  end
 
-  if target == nil or type(name) ~= "string" then
+  const target, name = utility.getTarget(obj), obj.Name
+
+  if target == nil then
     return
   end
 
@@ -197,12 +184,8 @@ const function scaleDriven(obj: Instance, module: registry.Module?, factor: numb
       continue
     end
 
-    if module ~= nil then
-      scaleQueue(obj, "property", name, f)
-    else
-      utility.scaleAttribute(obj, f, "_START_VALUE")
-      utility.scaleAttribute(obj, f, "_END_VALUE")
-    end
+    utility.scaleAttribute(obj, f, "_START_VALUE")
+    utility.scaleAttribute(obj, f, "_END_VALUE")
 
     return
   end
