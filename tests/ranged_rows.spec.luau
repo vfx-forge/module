@@ -205,7 +205,7 @@ harness.suite(function()
       local kinds = 0
 
       for _ = 1, 16 do
-        const ctx = { ref = obj, obj = obj, effect = lightning }
+        const ctx = { ref = obj, obj = obj, effect = lightning, scope = {} }
         const attrs = reader.resolve(lightning, ctx)
         const delay = attrs.EmitDelay
 
