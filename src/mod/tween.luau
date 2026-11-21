@@ -1,3 +1,4 @@
+local clock = require("@mod/clock")
 local curve = require("@mod/curve")
 local reader = require("@mod/reader")
 local lifetime = require("@mod/lifetime")
@@ -15,34 +16,39 @@ local function finish(handle: scheduler.Handle, done: (() -> ())?)
   end
 end
 
--- a curve played on the effect's clock and held by the effect. `fn` sees its
--- first value at once, then one a frame, each after the frame is counted, the
--- last at the curve's end. it ends there, when `fn` answers false or when the
--- clock halts for good, and calls `done` then; a clear stops it with no `done`
+-- a curve played on the effect's clock, or on `timeline`, a clock the effect
+-- holds below its own, and held by the effect. `fn` sees its first value at
+-- once, then one a frame, each after the frame is counted, the last at the
+-- curve's end. it ends there, when `fn` answers false or when its clock halts
+-- for good, and calls `done` then; a clear stops it with no `done`
 function tween.play(
   scope: lifetime.effect,
   eased: curve.Curve,
   fn: (alpha: number, deltaTime: number, elapsed: number) -> boolean?,
   follow: number?,
-  done: (() -> ())?
+  done: (() -> ())?,
+  timeline: clock.Clock?
 ): scheduler.Handle
   local duration = eased.duration
   local elapsed = 0
   local handle: scheduler.Handle
+  local on = timeline or scope.clock
 
   local function step(deltaTime: number)
     elapsed = math.min(elapsed + deltaTime, duration)
 
     local more = fn(eased:at(elapsed / duration), deltaTime, elapsed)
 
-    if more == false or elapsed >= duration or scope.clock.halted then
+    if more == false or elapsed >= duration or on.halted then
       finish(handle, done)
     end
   end
 
   handle = lifetime.hold(
     scope,
-    if follow ~= nil then scheduler.add("follow", step, follow, scope) else scheduler.add("compute", step, 0, scope)
+    if follow ~= nil
+      then scheduler.add("follow", step, follow, scope, false, timeline)
+      else scheduler.add("compute", step, 0, scope, false, timeline)
   )
 
   -- an effect already released let it go at once, and it never plays
@@ -52,7 +58,7 @@ function tween.play(
 
   local more = fn(eased:at(if duration > 0 then 0 else 1), 0, 0)
 
-  if more == false or duration <= 0 or scope.clock.halted then
+  if more == false or duration <= 0 or on.halted then
     finish(handle, done)
   end
 

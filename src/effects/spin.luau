@@ -1,4 +1,5 @@
 local mod = require("@mod/mod")
+local clock = require("@mod/clock")
 local knob = require("@mod/knob")
 local curve = require("@mod/curve")
 local tween = require("@mod/tween")
@@ -94,19 +95,38 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
 
   lifetime.wait(scope, attrs.EmitDelay)
 
-  -- the spin's speed is its clock, so the scale runs on it too
-  lifetime.speed(scope, attrs.SpinSpeed)
+  -- the spin's Speed is the rotation's clock alone, as it was in v2: the scale
+  -- and every other lane run SpinDuration on the effect's own clock, which a
+  -- handle's speed, a controller and the global speed reach as they reach
+  -- the rotation
+  const turning = clock.new(scope.clock)
+
+  lifetime.hold(scope, function()
+    clock.drop(turning)
+  end)
+
+  lifetime.speed(scope, attrs.SpinSpeed, turning)
 
   local originalPivot = ref:GetPivot()
   local originalScale = ref:GetScale()
 
+  -- the spin ends once both the scale and the rotation have, since a fast
+  -- rotation would otherwise release the scale partway
+  const ended = lifetime.join(scope)
+  const scaled = lifetime.add(ended)
+
   -- a queue that stops resolving partway would throw every frame, and a
   -- stepper that throws ends the spin
-  tween.drive(scope, attrs.Scale, function(v: any)
+  const scaling = tween.drive(scope, attrs.Scale, function(v: any)
     if typeof(v) == "number" then
       ref:ScaleTo(math.max(v, MIN_SCALE))
     end
-  end)
+  end, nil, scaled)
+
+  -- a scale that never moves calls nothing back
+  if scaling == nil then
+    scaled()
+  end
 
   local parent = ref:FindFirstAncestorOfClass("Attachment") or ref:FindFirstAncestorWhichIsA("BasePart")
 
@@ -119,15 +139,17 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
 
   rotation *= duration
 
-  tween.wait(scope, curve.new(duration + resetDelay, "linear"), function(_, _, elapsed: number)
+  tween.play(scope, curve.new(duration + resetDelay, "linear"), function(_, _, elapsed: number)
     local alpha = timing_common.progress(elapsed, duration)
 
     local r = rotation * alpha
     local cf = (if parent and sync then utility.getTransformedOriginExtents(parent) else originalPivot)
-      * CFrame.fromOrientation(r.x, r.y, r.z)
+      * CFrame.fromOrientation(r.X, r.Y, r.Z)
 
     ref:PivotTo(cf)
-  end, scope.depth)
+  end, scope.depth, lifetime.add(ended), turning)
+
+  lifetime.awaitJoin(ended)
 end
 
 return spin
