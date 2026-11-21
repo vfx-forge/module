@@ -164,9 +164,8 @@ local function litOrNil(v: any): value.Value?
   return value.lit(v)
 end
 
--- a NumberRange duration collapses to its Min. real authored data stores a
--- range, while the new format carries a single number, the same collapse the
--- plugin's own reader of this format makes
+-- a NumberRange duration is its Min, the shortest it draws: a child's entry
+-- names the Max beside it when the two differ
 local function durationOf(v: any): number?
   if typeof(v) == "NumberRange" then
     return v.Min
@@ -392,14 +391,17 @@ local function entriesOf(child: Instance): { any }
   end
 
   local start = litOrNil(attr.get(child, "_START_VALUE", nil, true))
+  local length = attr.get(child, "Duration", nil, true)
 
   -- a tween naming no _START_VALUE ran from whatever its target held as it
-  -- began, which an entry says by chaining
+  -- began, which an entry says by chaining. a Duration range drew one length
+  -- per emit between its ends
   table.insert(out, {
     kind = "tween",
     chain = start == nil,
     parallel = true,
-    duration = durationOf(attr.get(child, "Duration", nil, true)),
+    duration = durationOf(length),
+    durationMax = if typeof(length) == "NumberRange" and length.Max > length.Min then length.Max else nil,
     start = start,
     finish = litOrNil(attr.get(child, "_END_VALUE", nil, true)),
     curve = curveOf(attr.get(child, "Easing_Curve", nil, true)) or curves.linear(),

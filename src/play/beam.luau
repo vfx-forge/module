@@ -144,7 +144,7 @@ function play.emit(ctx: reader.Ctx, attrs: any, props: any)
 
   lifetime.speed(scope, speed)
 
-  scope.effects.emitNested(obj, scope.depth + 1, scope, children)
+  scope.effects.emitNested(obj, scope.depth + 1, scope, children, ref)
 
   local setTexSpeed = adapters.beam(scope, obj, texSpeed.at(0), texSpeed.animated)
 

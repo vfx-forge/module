@@ -6,8 +6,8 @@ local modifiers = {}
 
 -- the [0,1] draw behind each drawn endpoint of one modifier, made once per
 -- emitted instance beside ctx.draws. a delay's wait is drawn the same way, and
--- so is a rate drawn between two
-export type Picks = { start: number?, finish: number?, wait: number?, fps: number? }
+-- so is a rate drawn between two, and a duration drawn between two lengths
+export type Picks = { start: number?, finish: number?, wait: number?, fps: number?, duration: number? }
 
 -- a randomizer's draw is one alpha, except over a Vector3, where it is one
 -- alpha PER COMPONENT: a legacy Min/Max pair over a size means three
@@ -176,12 +176,36 @@ local function envelopeAt(buf: buffer, progress: number, shape: any): number
   return a + (b - a) * (pos - i)
 end
 
+-- whether a modifier draws its duration once per emitted instance: `duration`
+-- is the shortest it runs and `durationMax` the longest, as an old tween child's
+-- Duration range was. the field rides the codec's `extra`, so a runtime that
+-- predates it plays the shortest every emit, which is what every v3 runtime
+-- before it played of such a child
+function modifiers.drawsLength(m: any): boolean
+  local a, b = m.duration, m.durationMax
+
+  return typeof(a) == "number" and typeof(b) == "number" and a ~= b and a == a and b == b and b ~= math.huge
+end
+
+-- the duration a modifier names, its draw landed on `pick` when it draws one.
+-- with no pick it runs its shortest, which is what a caller with no rolls, such
+-- as the plugin's bake, reads
+function modifiers.lengthOf(m: any, pick: Picks?): any
+  local d = m.duration
+
+  if pick == nil or pick.duration == nil or not modifiers.drawsLength(m) then
+    return d
+  end
+
+  return d + (m.durationMax - d) * pick.duration
+end
+
 -- how long a modifier runs once it starts. a nil duration is the run
 -- schedule worked out for it, which is what is left of the effect after the
 -- modifiers before it; a caller that scheduled nothing falls back to
 -- ctx.linked, then to the effect's whole duration
 local function durationOf(m: any, i: number, ctx: Ctx, lengths: { [number]: number }?): number?
-  local d = m.duration
+  local d = modifiers.lengthOf(m, if ctx.picks then ctx.picks[i] else nil)
 
   if typeof(d) ~= "number" then
     d = if lengths and lengths[i] then lengths[i] elseif typeof(ctx.linked) == "number" then ctx.linked else ctx.duration
@@ -476,8 +500,10 @@ function modifiers.schedule(
     -- an infinite duration is excluded rather than allowed to win: it would
     -- make every modifier that names no duration read a progress of zero and
     -- sit on its start value for the whole run
-    if m.kind ~= "delay" and typeof(m.duration) == "number" and m.duration ~= math.huge and m.duration > linked then
-      linked = m.duration
+    local named = modifiers.lengthOf(m, if picks then picks[i] else nil)
+
+    if m.kind ~= "delay" and typeof(named) == "number" and named ~= math.huge and named > linked then
+      linked = named
     end
   end
 
@@ -553,7 +579,7 @@ function modifiers.schedule(
     offsets = offsets or {}
     offsets[i] = at
 
-    local d = m.duration
+    local d = modifiers.lengthOf(m, if picks then picks[i] else nil)
     local share = m.share
 
     if typeof(d) ~= "number" then

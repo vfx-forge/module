@@ -46,7 +46,7 @@ const function madeInV2(map: { [string]: any }): boolean
 end
 
 camera_shake.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the effect starts emitting."),
   EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint(
     "Seconds the shake runs before it fades out. At 0 it runs its own fade in, sustain and fade out."
   ),

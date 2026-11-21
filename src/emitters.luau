@@ -476,8 +476,10 @@ function emitters.applyMods(
 
     local lanes = mods.read(stored, source :: string, name :: string)
     -- the applier has no clock to fire an event from and no drawn lifetime to
-    -- place an end against, so it drives the one lane that starts at the emit
-    local queue = if lanes ~= nil then lanes.start else nil
+    -- place an end against, so it drives the one lane that starts at the emit.
+    -- an outlasting entry is the piece's own driver's, started with its
+    -- children
+    local queue = if lanes ~= nil then mods.applied(lanes).start else nil
 
     if queue == nil or #queue == 0 or mods.inert(queue) then
       continue
@@ -488,6 +490,71 @@ function emitters.applyMods(
 end
 
 emitters.drive = drive
+
+type Lasting = { { source: string, name: string, queue: { any } } }
+
+-- the attributes each instance's last dispatch read, which every piece it
+-- copies asks its outlasting entries of, and what those are, worked out once
+-- per such read: false when there is none. both weak, the second by the map,
+-- which nothing in its answer names
+const READ: { [Instance]: { [string]: any } } = setmetatable({}, { __mode = "k" }) :: any
+const LASTING: { [any]: Lasting | false } = setmetatable({}, { __mode = "k" }) :: any
+
+-- every outlasting queue stored on `from`, as the target each drives
+function emitters.outlasting(from: Instance): Lasting?
+  const map = READ[from] or attr.map(from)
+  const known = LASTING[map]
+
+  if known ~= nil then
+    return if known == false then nil else known
+  end
+
+  local out: Lasting? = nil
+
+  for key, raw in map do
+    if type(raw) ~= "string" then
+      continue
+    end
+
+    for source, prefix in mods.PREFIX do
+      if string.sub(key, 1, #prefix) ~= prefix then
+        continue
+      end
+
+      const name = string.sub(key, #prefix + 1)
+      const lanes = mods.framed(from, source, name, map)
+      const groups = if lanes ~= nil then mods.outlasting(lanes) else nil
+
+      for _, queue in groups or {} do
+        out = out or {}
+        table.insert(out :: Lasting, { source = source, name = name, queue = queue })
+      end
+    end
+  end
+
+  LASTING[map] = out or false
+
+  return out
+end
+
+-- the outlasting queues stored on the instance a piece was copied from,
+-- driven on the piece as the old child each came from drove: a driver of its
+-- own on the emit of the piece's children, holding the piece up until it ends
+-- and putting back what its reset says as it does. an entry naming no
+-- duration runs over `span`, the effect's, as it would on the row's own track,
+-- and a share is a share of it
+function emitters.outlast(
+  piece: Instance,
+  queues: { { source: string, name: string, queue: { any } } },
+  scope: types.scope,
+  span: number?
+)
+  const over = if typeof(span) == "number" and span > 0 and span ~= math.huge then span else 1
+
+  for _, held in queues do
+    drive(piece, held.source, held.name, held.queue, scope, over)
+  end
+end
 
 -- the span of the effect an animator's end lane is placed against: the one
 -- whose nested children it plays among, else the last dispatch of `host`
@@ -671,6 +738,7 @@ function emitters.dispatch(
     end
 
     SPANS[obj] = ctx.duration
+    READ[obj] = map
     scope.span = ctx.duration
 
     local claimed = emitters.claims(obj)

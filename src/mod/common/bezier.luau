@@ -143,11 +143,17 @@ end
 function common.rows(own: { [string]: any })
   local rows = {
     EmitCount = knob(1):min(0):label("Count"):hint("The amount of effects to emit."),
-    EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+    EmitDelay = knob(0)
+      :min(0)
+      :unit("seconds")
+      :ranged()
+      :label("Delay")
+      :hint("Seconds before the effect starts emitting."),
     EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
     DestroyDelay = knob(0)
       :min(0)
       :unit("seconds")
+      :ranged()
       :label("DestroyDelay")
       :hint("Extra seconds to keep the effect alive after emission finishes."),
     Duration = knob(NumberRange.new(1, 1))

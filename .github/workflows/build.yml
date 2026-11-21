@@ -47,6 +47,20 @@ jobs:
       - name: Generate changelog
         run: .github/scripts/generate-changelog.sh > CHANGELOG.md
 
+      # the module carries its version as an attribute (default.project.json),
+      # which the plugin reads to tell what a place's module plays; one value
+      # for the tag, wally.toml, package.json and that stamp, or no release
+      - name: Refuse a tag the version files disagree with
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          WALLY="$(sed -n 's/^version = "\(.*\)"$/\1/p' wally.toml)"
+          NPM="$(jq -r .version package.json)"
+          STAMP="$(jq -r '.tree["$attributes"].Version' default.project.json)"
+          if [ "$WALLY" != "$VERSION" ] || [ "$NPM" != "$VERSION" ] || [ "$STAMP" != "$VERSION" ]; then
+            echo "::error::tag $VERSION, wally.toml $WALLY, package.json $NPM, default.project.json $STAMP"
+            exit 1
+          fi
+
       - name: Convert aliases to directory
         run: rojo-build-noalias --convert-to ./.build
 

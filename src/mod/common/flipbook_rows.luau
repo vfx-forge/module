@@ -27,6 +27,7 @@ function common.rows()
       end)
       :aliases("Flipbook_Change_Duration")
       :unit("seconds")
+      :ranged()
       :label("Duration")
       :hint("Seconds for one full flipbook cycle."),
     FlipbookChangeCurve = knob(linear)

@@ -32,7 +32,7 @@ sound.attributes = {
     :min(0)
     :label("Count")
     :hint("How many sounds to play, each drawn from the sound pool when the sound has one."),
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the effect starts emitting."),
   EmitDuration = knob(0)
     :min(0)
     :unit("seconds")

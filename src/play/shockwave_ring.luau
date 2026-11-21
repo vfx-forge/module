@@ -181,7 +181,7 @@ function play.emit(ctx: reader.Ctx, attrs: any)
       end)
     end
 
-    scope.effects.emitNested(part, scope.depth + 1, scope, outstanding)
+    scope.effects.emitNested(part, scope.depth + 1, scope, outstanding, ref)
 
     -- per SEGMENT, over the dwell's own ceiling rather than the ring's run: a
     -- Lifetime track is sampled on the piece's dwell clock, which never

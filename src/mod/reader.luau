@@ -13,6 +13,8 @@ local numeric_common = require("@mod/common/numeric")
 
 local reader = {}
 
+const RNG = Random.new()
+
 export type Module = {
   id: string,
   display: { name: string, icon: string?, order: number? },
@@ -350,7 +352,7 @@ local function queueOf(
   end
 
   if lanes ~= nil then
-    return homedOf(lanes, row), true, under
+    return homedOf(mods.played(lanes), row), true, under
   end
 
   local children = childrenOf(state)
@@ -1212,6 +1214,21 @@ wrap = function(state: State, source: string, name: string, row: knob.Knob, rest
   return table.freeze(setmetatable(track, TRACK_META)) :: any
 end
 
+-- a ranged row's value drawn up to the longest stored beside it, once per
+-- emit's read. the shortest when no longer one is stored
+const function drawnOf(state: State, name: string, row: knob.Knob, rest: any): any
+  const longest = state.map[knob.maxOf(name)]
+
+  if typeof(rest) ~= "number" or typeof(longest) ~= "number" or not (longest > rest) or longest == math.huge then
+    return rest
+  end
+
+  const rng = mods.random or RNG
+  const drawn = rest + rng:NextNumber() * (longest - rest)
+
+  return knob.clamp(drawn, row.lower, row.upper)
+end
+
 local function resolveRow(
   state: State,
   out: any,
@@ -1233,6 +1250,13 @@ local function resolveRow(
   pending[name] = true
 
   local rest = plainOf(state, source, name, row)
+
+  -- an emit's read draws; one with no emit behind it (the plugin's panel, a
+  -- module reading another instance's rows) reads the shortest
+  if row.isRanged and source == "attribute" and state.ctx.scope ~= nil then
+    rest = drawnOf(state, name, row, rest)
+  end
+
   local v = rest
 
   -- a mod row pulled while the duration rule is still deciding is built over

@@ -189,6 +189,117 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
   return if lanes ~= nil and not legacy_mods.isHeldStillLane(ref, name, lanes) then lanes else nil
 end
 
+-- an entry the plugin's convert wrote for an old tween child on an effect whose
+-- pieces played that child nested: each piece plays it as the child played,
+-- on a driver of its own from the moment the effect emits the piece's
+-- children, and the piece stays up until it ends. its number tells the
+-- children of one name apart, each of which drove on its own
+local function outlasts(m: any): boolean
+  return typeof(m.outlast) == "number"
+end
+
+-- each map with every outlasting entry taken out, and a lane left empty by
+-- that dropped, since an empty lane silences its default; true for a map that
+-- holds none. never the map itself: a weak key its own value names is never
+-- collected
+const WITHOUT: { [any]: { [string]: { any } } | true } = setmetatable({}, { __mode = "k" }) :: any
+
+function mods.applied(lanes: { [string]: { any } }): { [string]: { any } }
+  const known = WITHOUT[lanes]
+
+  if known == true then
+    return lanes
+  elseif known ~= nil then
+    return known
+  end
+
+  local found = false
+
+  for _, queue in lanes do
+    for _, m in queue do
+      if outlasts(m) then
+        found = true
+      end
+    end
+  end
+
+  local out = lanes
+
+  if found then
+    out = {}
+
+    for lane, queue in lanes do
+      const kept = {}
+
+      for _, m in queue do
+        if not outlasts(m) then
+          table.insert(kept, m)
+        end
+      end
+
+      if #kept > 0 then
+        out[lane] = table.freeze(kept)
+      end
+    end
+
+    table.freeze(out)
+  end
+
+  WITHOUT[lanes] = if found then out else true
+
+  return out
+end
+
+-- what a row's own track plays of a map: its outlasting entries only when it
+-- holds nothing else, as the old read played a row's tween children only when
+-- no quad or map stood before them, and the rest of it otherwise
+function mods.played(lanes: { [string]: { any } }): { [string]: { any } }
+  const out = mods.applied(lanes)
+
+  return if next(out) == nil then lanes else out
+end
+
+-- a map's outlasting entries, one queue per child they came from, in the
+-- order of their numbers. they sit on whichever lane the row is played from,
+-- and every child ran from the emit of the piece's children whatever lane its
+-- row was read onto. nil when there is none
+function mods.outlasting(lanes: { [string]: { any } }): { { any } }?
+  local groups: { [number]: { any } }? = nil
+
+  for _, queue in lanes do
+    for _, m in queue do
+      if outlasts(m) then
+        groups = groups or {}
+
+        const group = (groups :: any)[m.outlast] or {}
+
+        table.insert(group, m);
+        (groups :: any)[m.outlast] = group
+      end
+    end
+  end
+
+  if groups == nil then
+    return nil
+  end
+
+  const order = {}
+
+  for n in groups do
+    table.insert(order, n)
+  end
+
+  table.sort(order)
+
+  const out = {}
+
+  for _, n in order do
+    table.insert(out, (groups :: any)[n])
+  end
+
+  return out
+end
+
 -- the second return says whether the lanes came out of the framed attribute, so
 -- a caller that has to tell an authored row from an old one does not pay the
 -- decode a second time to ask
@@ -277,13 +388,15 @@ function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
     local finishDrawn = m.finish ~= nil and value.isDraw(m.finish)
     local waitDrawn = type(m.wait) == "table" and value.isDraw(m.wait)
     local rateDrawn = modifiers.drawsRate(m)
+    local lengthDrawn = modifiers.drawsLength(m)
 
-    if startDrawn or finishDrawn or waitDrawn or rateDrawn then
+    if startDrawn or finishDrawn or waitDrawn or rateDrawn or lengthDrawn then
       picks[i] = {
         start = if startDrawn then rng:NextNumber() else nil,
         finish = if finishDrawn then rng:NextNumber() else nil,
         wait = if waitDrawn then rng:NextNumber() else nil,
         fps = if rateDrawn then rng:NextNumber() else nil,
+        duration = if lengthDrawn then rng:NextNumber() else nil,
       }
     end
   end
@@ -957,7 +1070,7 @@ local function perPiece(queue: { any }, event: boolean): boolean
       return true
     end
 
-    if modifiers.drawsRate(m) then
+    if modifiers.drawsRate(m) or modifiers.drawsLength(m) then
       return true
     end
 
@@ -1566,6 +1679,7 @@ local function simpleOf(default: any, span: number, lanes: { [string]: { any } }
     or m.envelope ~= nil
     or m.speed ~= nil
     or m.reset ~= nil
+    or m.durationMax ~= nil
   then
     return nil
   end
@@ -1844,6 +1958,10 @@ function mods.scaleTime(lanes: { [string]: { any } }, factor: number)
     for _, m in queue do
       if typeof(m.duration) == "number" then
         m.duration *= factor
+      end
+
+      if typeof(m.durationMax) == "number" then
+        m.durationMax *= factor
       end
 
       if type(m.wait) == "table" then

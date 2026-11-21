@@ -107,11 +107,12 @@ mesh.constant = true
 
 mesh.attributes = {
   EmitCount = knob(1):min(0):label("Count"):hint("The amount of effects to emit."),
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the effect starts emitting."),
   EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
   DestroyDelay = knob(0)
     :min(0)
     :unit("seconds")
+    :ranged()
     :label("DestroyDelay")
     :hint("Extra seconds to keep the part alive after the effect finishes."),
   EffectDuration = knob(NumberRange.new(1, 1))
@@ -202,6 +203,7 @@ mesh.attributes = {
     end)
     :aliases("Flipbook_Change_Duration")
     :unit("seconds")
+    :ranged()
     :hidden(noFrames)
     :label("Duration")
     :hint("Seconds the frames play over."),

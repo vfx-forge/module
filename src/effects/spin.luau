@@ -107,7 +107,7 @@ const function shownTurn(ctx: any): boolean
 end
 
 spin.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the effect starts emitting."),
   ResetDelay = knob(0)
     :min(0)
     :unit("seconds")

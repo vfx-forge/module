@@ -26,6 +26,30 @@ harness.suite(function()
       expect(mods.span({ { kind = "sequence", duration = 4 }, { kind = "tween", duration = 1 } }, 9)).toBe(4)
     end)
 
+    -- a v2 Tween Property child's Duration range drew one length per emit: the
+    -- entry names its shortest and its longest, a roll lands the length
+    -- between them for that emit, and with no roll it runs its shortest, as
+    -- every runtime before the draw ran it
+    test("draws a duration between its two lengths once per roll", function()
+      const queue = { { kind = "tween", duration = 0.2, durationMax = 0.6 } }
+
+      mods.random = Random.new(3)
+
+      const rolls = mods.roll(queue)
+      const pick = rolls.picks[1].duration
+
+      mods.random = nil
+
+      expect(mods.span(queue, 9)).toBe(0.2)
+      expect(math.abs(mods.span(queue, 9, rolls) - (0.2 + 0.4 * pick)) < 1e-9).toBe(true)
+
+      const scaled = { start = { { kind = "tween", duration = 0.2, durationMax = 0.6 } } }
+
+      mods.scaleTime(scaled, 2)
+
+      expect(scaled.start[1].durationMax).toBe(1.2)
+    end)
+
     test("falls back when every modifier is linked", function()
       expect(mods.span({ { chain = false }, { chain = true } }, 9)).toBe(9)
     end)
