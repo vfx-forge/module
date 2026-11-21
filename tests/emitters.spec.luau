@@ -137,6 +137,44 @@ harness.suite(function()
       expect(near(part.Transparency, 0.2)).toBe(true)
     end)
 
+    -- a card reads an animator's duration with no emit, and the declaration
+    -- answers it there without its play module: the two must agree
+    test("an animator's duration read with no emit is what its play module answers", function()
+      local play = require("@root/play/animator") :: any
+      local held = harness.make("RayValue", harness.make("Part"))
+
+      held:AddTag(utility.PROPERTY_ANIMATOR_TAG)
+
+      local function both(property: string, delay: number): (number, number)
+        local attrs = { Property = property, EmitDelay = delay }
+        local ctx = { ref = held, obj = held }
+
+        return animator.duration(ctx, attrs), play.duration(ctx, attrs)
+      end
+
+      local a, b = both("", 0.5)
+
+      expect(a).toBe(b)
+
+      held:SetAttribute(
+        mods.attrName("property", "Transparency"),
+        frame.frame(codec.encode({
+          lanes = {
+            start = {
+              { kind = "tween", chain = true, duration = 1.5, finish = value.lit(1) },
+              { kind = "delay", duration = 0.25 },
+            },
+            ["end"] = { { kind = "tween", chain = true, duration = 2, finish = value.lit(0) } },
+          },
+        }))
+      )
+
+      a, b = both("Transparency", 0.5)
+
+      expect(a).toBe(b)
+      expect(a > 0.5).toBe(true)
+    end)
+
     -- an earlier plugin made such a child a Property Animator holding a tween
     -- with no start and no chain, which held the target until halfway and then
     -- jumped to the end

@@ -227,6 +227,12 @@ harness.suite(function()
       expect(result.runtimeFail.torn).toEqual({ "effects.deinit", "enabled_effects.clear", "mover.clear" })
     end)
 
+    test("reading an animator's rows with no emit loads nothing it plays", function()
+      local result = probe("deferred")
+
+      expect(result.animatorReadLoaded).toBe(false)
+    end)
+
     test("a unit that fails is said once, and every emit of it after ends quietly", function()
       local _, get = deferred(function()
         error("its play module did not compile")

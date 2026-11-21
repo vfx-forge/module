@@ -66,6 +66,16 @@ local needs = vfx.init({ discover = false })
 local after = lazy.pending()
 local startedAtInit = table.clone(started)
 
+-- an animator's rows read with no emit, as a card or the emit window reads
+-- them: what the plugin does on a selection
+local reader = require("@mod/reader")
+local animatorRay = harness.make("RayValue")
+local animatorModule = vfx.effects.get("animator")
+
+reader.resolve(animatorModule, { ref = animatorRay, obj = animatorRay, effect = animatorModule })
+
+local animatorReadLoaded = lazy.loaded("animator")
+
 -- a unit whose start throws, needed once the loader is live
 local startFail = nil
 
@@ -119,6 +129,7 @@ end
 print(serde.encode("json", {
   startFail = startFail,
   runtimeFail = runtimeFail,
+  animatorReadLoaded = animatorReadLoaded,
   required = required,
   before = before,
   needs = needs,

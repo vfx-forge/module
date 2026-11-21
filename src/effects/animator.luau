@@ -1,5 +1,6 @@
 local knob = require("@mod/knob")
 local lazy = require("@mod/lazy")
+local mods = require("@mod/mods")
 local utility = require("@mod/utility")
 
 local animator = {}
@@ -28,8 +29,22 @@ animator.layout = {
   { title = "Animation", entries = { "Target", "Property", "ResetOnFinish" } },
 }
 
+-- read with no emit (a card, the emit window), there is no host to place an
+-- end lane against, so only the start lane counts: what play.duration
+-- answers then, kept here so a read never loads what an emit plays
 function animator.duration(ctx: any, attrs: any)
-  return play().duration(ctx, attrs)
+  if ctx.scope ~= nil then
+    return play().duration(ctx, attrs)
+  end
+
+  local lanes = if attrs.Property ~= "" then mods.read(ctx.ref, "property", attrs.Property) else nil
+  local start = if lanes ~= nil then lanes.start else nil
+
+  if start == nil or #start == 0 or mods.inert(start) then
+    return attrs.EmitDelay
+  end
+
+  return attrs.EmitDelay + mods.span(start, 1)
 end
 
 function animator.emit(ctx: any, attrs: any)
