@@ -245,6 +245,44 @@ harness.suite(function()
       expect(start.v).toBe(color)
     end)
 
+    test("an enum item endpoint round trips as the item it is", function()
+      for _, item in { Enum.Material.Neon, Enum.Material.Leather, Enum.ParticleOrientation.VelocityPerpendicular } do
+        local back = roundTrip(item)
+
+        expect(typeof(back)).toBe("EnumItem")
+        expect(back).toBe(item)
+      end
+    end)
+
+    -- Z's own enum encoding writes the item's place among its enum's items,
+    -- which an item the engine adds with a smaller value shifts, so a stored
+    -- endpoint would read back as another material
+    test("an enum item endpoint is stored by its value, not its place in the enum", function()
+      local buf = codec.encode({
+        lanes = { start = { { kind = "tween", chain = false, start = value.lit(Enum.Material.Glass) } } },
+      })
+
+      local modifier = Z.schema({
+        kind = Z.str8,
+        chain = Z.bool,
+        duration = Z.some(Z.f64),
+        wait = Z.some(Z.table),
+        start = Z.some(Z.table),
+        finish = Z.some(Z.table),
+        curve = Z.some(Z.buffer16),
+        weight = Z.some(Z.buffer16),
+        envelope = Z.some(Z.buffer16),
+        extra = Z.some(Z.table),
+      })
+
+      local layout = Z.schema({ v = Z.u8, lanes = Z.schema8({ [Z.str8] = Z.schema8({ modifier }) }) })
+      local held = Z.des(layout, buf, 0, true).lanes.start[1].start.v.EnumItem
+
+      expect(typeof(held)).toBe("buffer")
+      expect(buffer.readu32(held, 0)).toBe(Enum.Material.Glass.Value)
+      expect(buffer.readstring(held, 4, buffer.len(held) - 4)).toBe("Material")
+    end)
+
     test("a table beside a color in an unknown tag round trips as the table it is", function()
       local q = {
         lanes = {
