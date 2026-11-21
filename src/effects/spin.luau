@@ -1,4 +1,5 @@
 local mod = require("@mod/mod")
+local mods = require("@mod/mods")
 local clock = require("@mod/clock")
 local knob = require("@mod/knob")
 local curve = require("@mod/curve")
@@ -26,6 +27,46 @@ spin.display = { name = "Model", icon = "model_spin", order = 10 }
 -- End part directly under it
 spin.classifier = "Model:not(Model:has(> BasePart#Start):has(> BasePart#End))"
 
+-- a model stores a rate, degrees a second for SpinDuration, when it was saved
+-- before Turn was a row, or when something older wrote one since: an older
+-- plugin's Rotation row, an old script, a v2 randomizer child. a stored rate
+-- is the newest intent there is, so it plays whatever turn is stored beside it
+const function onRate(ref: Instance): boolean
+  return ref:GetAttribute("SpinRotation") ~= nil
+end
+
+-- the rows a turn is worked out of, the rate and its duration
+const RATE_ROWS = { "SpinRotation", "SpinDuration" }
+
+-- a model whose rate or duration something drives: a lane the applier plays
+-- onto the attribute, or a v2 tween or randomizer child. the rate it plays is
+-- whatever that driver has left on the attribute when the spin reads it, which
+-- no stored turn reproduces, so such a model stays on its rate
+const function driven(ref: Instance): boolean
+  for _, name in RATE_ROWS do
+    if ref:GetAttribute(mods.attrName("attribute", name)) ~= nil then
+      return true
+    end
+
+    for _, child in ref:GetChildren() do
+      if child.Name == name and child:IsA("RayValue") then
+        return true
+      end
+    end
+  end
+
+  return false
+end
+
+-- the card shows the row that plays: a model on its rate edits the rate
+const function shownRate(ctx: any): boolean
+  return ctx ~= nil and typeof(ctx.ref) == "Instance" and onRate(ctx.ref)
+end
+
+const function shownTurn(ctx: any): boolean
+  return not shownRate(ctx)
+end
+
 spin.attributes = {
   EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
   ResetDelay = knob(0)
@@ -42,9 +83,15 @@ spin.attributes = {
       return attrs.SpinRotation * attrs.SpinDuration
     end)
     :label("Turn")
-    :hint("Degrees the model turns in all over its duration, per axis."),
-  -- degrees a second for SpinDuration, as every model before Turn stored it
-  SpinRotation = knob(vector.zero):unit("perSecond"):hidden(always),
+    :hint("Degrees the model turns in all over its duration, per axis.")
+    :hidden(shownRate),
+  -- degrees a second for SpinDuration, as every model before Turn stored it,
+  -- shown only on a model still playing one
+  SpinRotation = knob(vector.zero)
+    :unit("perSecond")
+    :label("Rotation")
+    :hint("Degrees a second the model turns for its duration, per axis. A modifier or an older version drives it.")
+    :hidden(shownTurn),
   SpinDuration = knob(0.5)
     :min(0)
     :unit("seconds")
@@ -68,19 +115,11 @@ spin.properties = {}
 
 spin.layout = {
   { title = "Emit", entries = { "EmitDelay", "ResetDelay", "ResetOnFinish" } },
-  { title = "Spin", entries = { "SpinTurn", "SpinDuration", "SpinSpeed", "SyncPosition", "Scale" } },
+  { title = "Spin", entries = { "SpinTurn", "SpinRotation", "SpinDuration", "SpinSpeed", "SyncPosition", "Scale" } },
 }
 
 function spin.duration(_, attrs: any)
   return attrs.SpinDuration
-end
-
--- a model stores a rate, degrees a second for SpinDuration, when it was saved
--- before Turn was a row, or when something older wrote one since: an older
--- plugin's Rotation row, an old script, a v2 randomizer child. a stored rate
--- is the newest intent there is, so it plays whatever turn is stored beside it
-const function onRate(ref: Instance): boolean
-  return ref:GetAttribute("SpinRotation") ~= nil
 end
 
 -- the turn as a vector, none for a stored value that is not one: the row's
@@ -93,9 +132,10 @@ end
 
 -- what saving the model the current way writes and removes: the turn its
 -- stored rate makes over its duration, written over any turn stored beside it,
--- and the rate gone. nil for a model storing no rate
+-- and the rate gone. nil for a model storing no rate, and for one whose rate
+-- or duration something drives, which keeps playing its rate
 function spin.upgrade(ref: Instance): ({ [string]: any }?, { string }?)
-  if not onRate(ref) then
+  if not onRate(ref) or driven(ref) then
     return nil, nil
   end
 

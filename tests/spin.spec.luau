@@ -371,5 +371,58 @@ harness.suite(function()
       effects.init({ setup = true } :: any)
       check(play(m, 3, nil), "the folded turn")
     end)
+
+    test("a rate something drives stays a rate: converting leaves it, and every emit turns as it did before", function()
+      -- the pre-change spin's yaw every 0.25 s, the same on both emits
+      const RANDOMIZED = { 17.0717, 34.9647, 52.8576, 70.7506, 71.5719 }
+      const LANED = { 21.4673, 43.9673, 66.4673, 88.9673, 90 }
+
+      const rate =
+        { start = { tween(0, 1, { start = value.lit(Vector3.new()), finish = value.lit(Vector3.new(0, 400, 0)) }) } }
+      const CASES = {
+        {
+          name = "a v2 randomizer child",
+          yaw = RANDOMIZED,
+          child = true,
+          attrs = { SpinRotation = Vector3.new(0, 10, 0) },
+        },
+        { name = "a rate lane", yaw = LANED, mods = { SpinRotation = rate } },
+        {
+          name = "a rate lane and a duration lane",
+          yaw = LANED,
+          mods = { SpinRotation = rate, SpinDuration = { start = { tween(1, 3) } } },
+        },
+      }
+
+      for _, case in CASES do
+        const m = model(
+          { SpinRotation = (case.attrs or {}).SpinRotation or Vector3.new(0, 90, 0), SpinDuration = 1 },
+          case.mods
+        )
+
+        if case.child then
+          const child = harness.make("RayValue", m)
+          child.Name = "SpinRotation"
+          child:AddTag("AttributeRandomizer")
+          child:SetAttribute("_START_VALUE", Vector3.new())
+          child:SetAttribute("_END_VALUE", Vector3.new(0, 170, 0))
+        end
+
+        const sets, removes = spin.upgrade(m)
+
+        expect(sets).toBe(nil)
+        expect(removes).toBe(nil)
+
+        for emit = 1, 2 do
+          effects.init({ setup = true } :: any)
+
+          for i, s in play(m, 3, nil) do
+            const yaw = case.yaw[i] or case.yaw[#case.yaw]
+
+            samePose(s.pivot, CFrame.fromOrientation(0, math.rad(yaw), 0), `{case.name}, emit {emit} at {s.t} s`)
+          end
+        end
+      end
+    end)
   end)
 end)
