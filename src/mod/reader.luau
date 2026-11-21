@@ -1074,10 +1074,16 @@ local function trackOf(
   -- somewhere, so the build is told where rather than left to read it off a
   -- lead that is not there. a drawn range names both its corners and every
   -- other row takes the shared option table
-  local opts: { ownStart: boolean?, value: any?, home: string? }? = if declared ~= nil
+  local opts: { ownStart: boolean?, value: any?, home: string?, whole: boolean? }? = if declared ~= nil
     then { ownStart = seeded, value = rest, home = row.homeLane }
     elseif seeded then SEEDED
     else nil
+
+  -- a whole number row draws whole numbers, its ends included
+  if row.isWhole then
+    opts = if opts ~= nil then table.clone(opts) else {}
+    opts.whole = true
+  end
   -- an attribute row builds under the name its queue was found under, since
   -- that is where the value it chains from and the range it draws inside are
   -- stored too; a property row's base is the property, whatever the spelling

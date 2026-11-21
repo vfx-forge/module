@@ -95,6 +95,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
       Count = sdk
         .knob(1)
         :min(1)
+        :whole()
         :mod()
         :label("Count")
         :hint("Bolts each emit makes, each with its own shape and timing. 1 to 5 reads as one storm."),
@@ -150,6 +151,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         .knob(16)
         :min(2)
         :max(32)
+        :whole()
         :mod()
         :label("Detail")
         :hint("Segments in the main bolt. More makes finer zigzags; 8 to 24 looks right."),
@@ -175,6 +177,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
         .knob(3)
         :min(0)
         :max(8)
+        :whole()
         :mod()
         :label("Amount")
         :hint("Branches leaving the middle of the bolt. 0 makes none."),
@@ -256,6 +259,7 @@ function rows.params(sdk: any): { attributes: { [string]: any } }
       Restrikes = sdk
         .knob(1)
         :min(0)
+        :whole()
         :mod()
         :label("Restrikes")
         :hint("Times the bolt blinks out and strikes again in a new shape while it holds. 0 to 3."),

@@ -40,6 +40,8 @@ export type Knob = {
   instance: (self: Knob, classes: { string }?) -> Knob,
   -- a number param drawn as a slider, dragged from low to high (its min and max when left out); a typed value still clamps to min and max
   slider: (self: Knob, low: number?, high: number?) -> Knob,
+  -- a number param the effect reads as a whole number: a randomizer on it draws each whole number between its ends alike, its ends included
+  whole: (self: Knob) -> Knob,
   -- a number param drawn as a seed: a field and a reroll button; any number is a seed, within the knob's own min and max when it has them
   seed: (self: Knob) -> Knob,
   -- a value modifiers can animate, read as a Track, with default modifiers made by sdk.mod
