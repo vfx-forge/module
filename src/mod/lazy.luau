@@ -54,8 +54,22 @@ local function fail(unit: Unit, err: any)
   logger.warn(`{unit.name} is unavailable for this session: {unit.reason}`)
 end
 
+-- what every need after a failure raises: a refusal the effect's run lets
+-- end it quietly, since the failure was said once already, where an emit
+-- warning on every play, and an enabled loop on every tick, said it again
+-- and again
+const Refusal = {
+  __tostring = function(self: { message: string }): string
+    return self.message
+  end,
+}
+
 local function refuse(unit: Unit)
-  logger.error(`{unit.name} is unavailable for this session: {unit.reason}`)
+  error(setmetatable({ message = `{unit.name} is unavailable for this session: {unit.reason}` }, Refusal))
+end
+
+function lazy.refused(err: any): boolean
+  return type(err) == "table" and getmetatable(err) == Refusal
 end
 
 local function start(unit: Unit)

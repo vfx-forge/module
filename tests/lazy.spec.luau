@@ -4,6 +4,7 @@ local process = require("@lune/process")
 local lazy = require("@mod/lazy")
 local harness = require("@tests/harness")
 local registry = require("@mod/registry")
+local lifetime = require("@mod/lifetime")
 local test, expect = harness.test, harness.expect
 
 -- the order init starts the runtime's services in, deferred or not
@@ -224,6 +225,34 @@ harness.suite(function()
 
       expect(result.runtimeFail.failed).toBe(true)
       expect(result.runtimeFail.torn).toEqual({ "effects.deinit", "enabled_effects.clear", "mover.clear" })
+    end)
+
+    test("a unit that fails is said once, and every emit of it after ends quietly", function()
+      local _, get = deferred(function()
+        error("its play module did not compile")
+      end)
+
+      local warnings = harness.captureWarnings(function()
+        pcall(get)
+
+        for _ = 1, 3 do
+          local fx = lifetime.effect(lifetime.emit(nil), 0, nil)
+
+          lifetime.run(fx, function()
+            get().emit()
+          end)
+        end
+      end)
+
+      local said = 0
+
+      for _, line in warnings do
+        if string.find(line, "unavailable for this session", 1, true) then
+          said += 1
+        end
+      end
+
+      expect(said).toBe(1)
     end)
 
     test("a name nothing declared is refused, never answered with nil", function()

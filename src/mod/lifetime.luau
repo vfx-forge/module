@@ -1,3 +1,4 @@
+local lazy = require("@mod/lazy")
 local attr = require("@mod/attributes")
 local clock = require("@mod/clock")
 local logger = require("@mod/logger")
@@ -180,7 +181,7 @@ local HOOKED = setmetatable({} :: { [WriteHook]: target }, { __mode = "k" })
 local HALT = table.freeze({})
 
 local function trace(err: any)
-  if err == HALT then
+  if err == HALT or lazy.refused(err) then
     return err
   end
 
@@ -1013,7 +1014,7 @@ function lifetime.run(fx: effect, body: (effect) -> ())
   local thread = coroutine.create(function()
     local ok, err = xpcall(body, trace, fx)
 
-    if not ok and err ~= HALT then
+    if not ok and err ~= HALT and not lazy.refused(err) then
       logger.warn(`effect failed with error: {err}`)
     end
 
@@ -1215,7 +1216,7 @@ function lifetime.spawn(join: join, body: (...any) -> (), ...: any)
   local thread = coroutine.create(function(...)
     local ok, err = xpcall(body, trace, ...)
 
-    if not ok and err ~= HALT then
+    if not ok and err ~= HALT and not lazy.refused(err) then
       logger.warn(`a piece failed with error: {err}`)
     end
 
