@@ -688,7 +688,8 @@ local function emitChildren(
   from: string,
   hosted: boolean?,
   piece: Instance?,
-  source: Instance?
+  source: Instance?,
+  span: number?
 )
   if not api_ref or not api_ref.setup then
     return
@@ -712,7 +713,12 @@ local function emitChildren(
     const fx = lifetime.effect(emit, depth, effects)
 
     lifetime.run(fx, function(scope)
-      emitters.outlast(piece :: Instance, lasting, scope, if parentScope ~= nil then parentScope.span else nil)
+      emitters.outlast(
+        piece :: Instance,
+        lasting,
+        scope,
+        if span ~= nil then span elseif parentScope ~= nil then parentScope.span else nil
+      )
     end)
   end
 
@@ -728,15 +734,18 @@ local function emitChildren(
 end
 
 -- `source` is the instance `part` was copied from, or `part` itself, whose
--- outlasting entries play on it beside its children
+-- outlasting entries play on it beside its children. `span` is what the
+-- piece's own row tracks run over when that is not the effect's, a copy's
+-- drawn life, which an outlasting entry naming no duration runs over too
 function effects.emitNested(
   part: Instance,
   depth: number,
   parentScope: types.scope?,
   join: lifetime.join?,
-  source: Instance?
+  source: Instance?,
+  span: number?
 )
-  emitChildren(part:GetChildren(), depth, parentScope, join, "", true, part, source)
+  emitChildren(part:GetChildren(), depth, parentScope, join, "", true, part, source, span)
 end
 
 -- one instance emitted under an effect, on its clock, counted into the join

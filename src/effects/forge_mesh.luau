@@ -1976,7 +1976,8 @@ const function piece(
   const children = lifetime.join(scope)
   const emitOnFinish = scope.effects.prepareEmitOnFinish(obj, scope)
 
-  scope.effects.emitNested(obj, scope.depth + 1, scope, children, template)
+  -- its outlasting entries run over the copy's own drawn life, as its rows do
+  scope.effects.emitNested(obj, scope.depth + 1, scope, children, template, duration)
 
   look.play()
 
