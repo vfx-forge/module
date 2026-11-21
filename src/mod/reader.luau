@@ -1215,7 +1215,7 @@ wrap = function(state: State, source: string, name: string, row: knob.Knob, rest
 end
 
 -- a ranged row's value drawn up to the longest stored beside it, once per
--- read, which is once per emit. the shortest when no longer one is stored
+-- emit's read. the shortest when no longer one is stored
 const function drawnOf(state: State, name: string, row: knob.Knob, rest: any): any
   const longest = state.map[knob.maxOf(name)]
 
@@ -1251,7 +1251,9 @@ local function resolveRow(
 
   local rest = plainOf(state, source, name, row)
 
-  if row.isRanged and source == "attribute" then
+  -- an emit's read draws; one with no emit behind it (the plugin's panel, a
+  -- module reading another instance's rows) reads the shortest
+  if row.isRanged and source == "attribute" and state.ctx.scope ~= nil then
     rest = drawnOf(state, name, row, rest)
   end
 
