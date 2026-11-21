@@ -73,7 +73,12 @@ line.components = "Instance"
 line.events = { "despawn" }
 
 line.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("EmitDelay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0)
+    :min(0)
+    :unit("seconds")
+    :ranged()
+    :label("EmitDelay")
+    :hint("Seconds before the effect starts emitting."),
   Duration = knob(1):min(0):unit("seconds"):label("Duration"):hint("How long the raycast sweep takes, in seconds."),
   Lifetime = knob(NumberRange.new(2, 3))
     :min(0)

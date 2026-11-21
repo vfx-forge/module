@@ -1,4 +1,5 @@
 local attr = require("@mod/attributes")
+local knob = require("@mod/knob")
 local mods = require("@mod/mods")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
@@ -182,6 +183,11 @@ function retime.walk(
       for _, key in keys do
         if f ~= nil then
           visit(source, name, key, f)
+        end
+
+        -- the longest a ranged row draws up to is the same quantity
+        if f ~= nil and row.isRanged and source == "attribute" then
+          utility.scaleAttribute(obj, f, knob.maxOf(key))
         end
 
         if not row.isMod then

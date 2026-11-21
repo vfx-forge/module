@@ -26,7 +26,7 @@ spin.display = { name = "Model", icon = "model_spin", order = 10 }
 spin.classifier = "Model:not(Model:has(> BasePart#Start):has(> BasePart#End))"
 
 spin.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the effect starts emitting."),
   ResetDelay = knob(0)
     :min(0)
     :unit("seconds")

@@ -43,7 +43,7 @@ beam.components = "Instance"
 beam.copies = true
 
 beam.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the effect starts emitting."),
   EffectDuration = knob(NumberRange.new(1, 1))
     :min(0)
     :aliases("Duration")

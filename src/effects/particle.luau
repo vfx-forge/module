@@ -21,7 +21,12 @@ local function rows()
       end)
       :label("Count")
       :hint("The amount of effects to emit."),
-    EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+    EmitDelay = knob(0)
+      :min(0)
+      :unit("seconds")
+      :ranged()
+      :label("Delay")
+      :hint("Seconds before the effect starts emitting."),
     EmitDuration = knob(0):min(0):unit("seconds"):label("Duration"):hint("Duration of the emit cycle in seconds."),
   }
 

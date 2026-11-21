@@ -73,7 +73,12 @@ ring.components = "Instance"
 ring.events = { "despawn" }
 
 ring.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("EmitDelay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0)
+    :min(0)
+    :unit("seconds")
+    :ranged()
+    :label("EmitDelay")
+    :hint("Seconds before the effect starts emitting."),
   Radius = knob(5):min(0):unit("studs"):label("Radius"):hint("Radius of the effect."),
   Segments = knob(7):min(1):label("Segments"):hint("Number of raycasts distributed evenly around the ring."),
   Lifetime = knob(NumberRange.new(2, 3))

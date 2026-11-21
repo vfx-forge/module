@@ -15,7 +15,7 @@ trail.display = { name = "Trail", icon = "trail", order = 75 }
 trail.classifier = "Trail"
 
 trail.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the effect starts emitting."),
   -- 0 is what an emit did before trails had a window, and stays the default
   -- so every trail saved then plays as it did, a nested one switched on by
   -- its parent's emit included

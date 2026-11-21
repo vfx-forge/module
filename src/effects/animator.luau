@@ -21,7 +21,7 @@ animator.display = { name = "Property Animator", icon = "animator", order = 95 }
 animator.classifier = `RayValue.{utility.PROPERTY_ANIMATOR_TAG}`
 
 animator.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the animation starts."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the animation starts."),
   Target = knob():instance():label("Target"):hint("The instance animated. Empty animates the parent."),
   Property = knob(""):label("Property"):hint("The property of the target that is animated."),
   ResetOnFinish = knob(true)

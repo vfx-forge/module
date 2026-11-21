@@ -964,7 +964,7 @@ forge_mesh.components = "Instance"
 
 forge_mesh.attributes = {
   EmitCount = knob(1):min(0):label("Count"):hint("Pieces emitted at once."),
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the effect starts emitting."),
   EmitDuration = knob(0)
     :min(0)
     :unit("seconds")
@@ -973,6 +973,7 @@ forge_mesh.attributes = {
   DestroyDelay = knob(0)
     :min(0)
     :unit("seconds")
+    :ranged()
     :label("DestroyDelay")
     :hint("Extra seconds each piece keeps its look and nested effects after its motion ends."),
 
@@ -1084,6 +1085,7 @@ forge_mesh.attributes = {
       return ctx.duration
     end)
     :unit("seconds")
+    :ranged()
     :label("Duration")
     :hint("Seconds one pass of the frames takes, a PingPong pass running there and back."),
   SyncDuration = knob(true):label("SyncDuration"):hint("Play the frames' cycles over the piece's life."),

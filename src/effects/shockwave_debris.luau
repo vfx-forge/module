@@ -54,7 +54,12 @@ debris.events = { "despawn" }
 -- would scale the dwell and the shrink and leave the flight alone, which reads
 -- worse than having no knob at all
 debris.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("EmitDelay"):hint("Seconds before the effect starts emitting."),
+  EmitDelay = knob(0)
+    :min(0)
+    :unit("seconds")
+    :ranged()
+    :label("EmitDelay")
+    :hint("Seconds before the effect starts emitting."),
   Amount = knob(NumberRange.new(5, 10)):min(0):label("Amount"):hint("Random range for how many debris pieces spawn."),
   Lifetime = knob(NumberRange.new(2, 3))
     :min(0)
