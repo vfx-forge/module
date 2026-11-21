@@ -272,12 +272,14 @@ function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
     local startDrawn = m.start ~= nil and value.isDraw(m.start)
     local finishDrawn = m.finish ~= nil and value.isDraw(m.finish)
     local waitDrawn = type(m.wait) == "table" and value.isDraw(m.wait)
+    local lengthDrawn = modifiers.drawsLength(m)
 
-    if startDrawn or finishDrawn or waitDrawn then
+    if startDrawn or finishDrawn or waitDrawn or lengthDrawn then
       picks[i] = {
         start = if startDrawn then rng:NextNumber() else nil,
         finish = if finishDrawn then rng:NextNumber() else nil,
         wait = if waitDrawn then rng:NextNumber() else nil,
+        duration = if lengthDrawn then rng:NextNumber() else nil,
       }
     end
   end
@@ -948,6 +950,10 @@ local function perPiece(queue: { any }, event: boolean): boolean
       return true
     end
 
+    if modifiers.drawsLength(m) then
+      return true
+    end
+
     if event and m.kind ~= "delay" and not modifiers.BASE_KINDS[m.kind] and typeof(m.duration) ~= "number" then
       return true
     end
@@ -1537,6 +1543,7 @@ local function simpleOf(default: any, span: number, lanes: { [string]: { any } }
     or m.envelope ~= nil
     or m.speed ~= nil
     or m.reset ~= nil
+    or m.durationMax ~= nil
   then
     return nil
   end
@@ -1815,6 +1822,10 @@ function mods.scaleTime(lanes: { [string]: { any } }, factor: number)
     for _, m in queue do
       if typeof(m.duration) == "number" then
         m.duration *= factor
+      end
+
+      if typeof(m.durationMax) == "number" then
+        m.durationMax *= factor
       end
 
       if type(m.wait) == "table" then
