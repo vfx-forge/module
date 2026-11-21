@@ -1,5 +1,6 @@
 local fs = require("@lune/fs")
 local luau = require("@lune/luau")
+local reader = require("@mod/reader")
 local harness = require("@tests/harness")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
@@ -356,6 +357,39 @@ harness.suite(function()
       expect(near(camera.CFrame, BASE)).toBe(true)
 
       finish(fx)
+    end)
+
+    -- v2 fell off over Falloff studs with no switch. a shake storing what
+    -- only v2 wrote, Falloff or a Speed quad, and no switch falls off so; any
+    -- other reads the switch as a new shake does, off unless stored on
+    test("a shake carrying what only v2 wrote falls off as v2 did, any other as stored", function()
+      for _, case in
+        {
+          { attrs = {}, on = false, distance = 30 },
+          { attrs = { Falloff = 30 }, on = true, distance = 30 },
+          { attrs = { Falloff = 50 }, on = true, distance = 50 },
+          { attrs = { Speed_Start = 0.5, Speed_End = 1 }, on = true, distance = 30 },
+          { attrs = { Speed_Duration = 0.4 }, on = true, distance = 30 },
+          { attrs = { Falloff = -5 }, on = false, distance = 0 },
+          { attrs = { Falloff = "-5" }, on = false, distance = 0 },
+          { attrs = { Falloff = 30, FalloffEnabled = false }, on = false, distance = 30 },
+          { attrs = { FalloffDistance = 20 }, on = false, distance = 20 },
+          { attrs = { FalloffEnabled = true, FalloffDistance = 20 }, on = true, distance = 20 },
+        }
+      do
+        local ref = Instance.new("RayValue")
+
+        for k, v in case.attrs do
+          ref:SetAttribute(k, v)
+        end
+
+        local attrs = reader.resolve(camera_shake :: any, { ref = ref, obj = ref, effect = camera_shake } :: any)
+        local writes = camera_shake.legacyValues(ref:GetAttributes())
+
+        expect(attrs.FalloffEnabled).toBe(case.on)
+        expect(attrs.FalloffDistance).toBe(case.distance)
+        expect(writes ~= nil).toBe(case.on and case.attrs.FalloffEnabled == nil)
+      end
     end)
 
     test("with falloff off a camera far from the shake shakes all the same", function()

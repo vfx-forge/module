@@ -1,5 +1,7 @@
 local attr = require("@mod/attributes")
 local value = require("@mod/value")
+local codec = require("@mod/modifier_codec")
+local frame = require("@mod/modifier_frame")
 local curves = require("@mod/curves")
 local logger = require("@mod/logger")
 local numeric_common = require("@mod/common/numeric")
@@ -520,7 +522,115 @@ for _, rows in legacy_mods.MOVING_ONLY do
   end
 end
 
-local function heldStill(ref: Instance, name: string, startV: any, finishV: any): boolean
+-- a beam's still length scale moved its attachments only where the texture
+-- length started away from 1: v2.4.0 (effects/beam.luau) asked
+-- Length_Texture_Start, or the beam's TextureLength, where it meant to ask
+-- the length scale. a v2 bug, kept for what v2 shaped: only the old spelling
+-- is gated, so a LengthScale written under its own name always applies
+const GATED = "Length_Scale"
+
+STILL_NAMES[GATED] = true
+
+-- the maps an earlier plugin's convert made of the two quads, under the old
+-- spellings it kept (mods.PREFIX, which this module cannot require)
+const SCALE_LANE = "ForgeAttrMods_Length_Scale"
+const TEXTURE_LANE = "ForgePropMods_Length_Texture"
+
+-- each framed map decoded once, false for one that does not decode
+const LANES: { [string]: { [string]: { any } } | false } = {}
+const LANES_CAP = 1024
+local laneCount = 0
+
+const function lanesOf(raw: any): { [string]: { any } }?
+  if not frame.isFramed(raw) then
+    return nil
+  end
+
+  const known = LANES[raw]
+
+  if known ~= nil then
+    return if known == false then nil else known
+  end
+
+  const body = frame.unframe(raw)
+  local ok, decoded = false, nil
+
+  if body ~= nil then
+    ok, decoded = pcall(codec.decode, body)
+  end
+
+  const lanes = if ok and decoded ~= nil then decoded.lanes else nil
+
+  if laneCount >= LANES_CAP then
+    table.clear(LANES)
+    laneCount = 0
+  end
+
+  LANES[raw] = lanes or false
+  laneCount += 1
+
+  return lanes
+end
+
+-- the start the texture lane an earlier convert made names, which is the
+-- Length_Texture_Start it was made from; nil where there is none
+const function laneStart(ref: Instance, map: { [string]: any }?): number?
+  const lanes = lanesOf(stored(ref, TEXTURE_LANE, map))
+  const first = if lanes ~= nil and lanes.start ~= nil then lanes.start[1] else nil
+
+  if first == nil or first.kind ~= "tween" or first.start == nil or not value.isLit(first.start) then
+    return nil
+  end
+
+  return if type(first.start.v) == "number" then first.start.v else nil
+end
+
+-- whether the beam's texture length started at 1 as v2.4.0 read it, so its
+-- still length scale did nothing: Length_Texture_Start, or the lane an
+-- earlier convert made of it, or else the beam's TextureLength. a lane that
+-- convert made of the length scale cannot say what a still texture quad it
+-- took off held, so with no texture lane left it applies, as it has played
+-- since that convert
+const function gateShut(ref: Instance, map: { [string]: any }?, converted: boolean): boolean
+  local start = stored(ref, "Length_Texture_Start", map)
+
+  if start == nil then
+    start = laneStart(ref, map)
+  end
+
+  if start == nil and not converted then
+    start = (ref :: any).TextureLength
+  end
+
+  return start == 1
+end
+
+-- the one value a drawn endpoint lands on every emit, nil where it draws a
+-- spread: v2.4.0 drew each end of the quad on its own, so a spread moved
+const function fixedOf(v: any): any
+  if typeof(v) == "NumberRange" then
+    return if v.Min == v.Max then v.Min else nil
+  end
+
+  return v
+end
+
+-- the value both ends of a gated still quad hold, nil for any other quad
+const function gatedAt(ref: Instance, name: string, startV: any, finishV: any): any
+  if name ~= GATED or ref.ClassName ~= "Beam" or startV == nil or finishV == nil then
+    return nil
+  end
+
+  const at = fixedOf(startV)
+
+  return if at ~= nil and at == fixedOf(finishV) then at else nil
+end
+
+local function heldStill(ref: Instance, name: string, startV: any, finishV: any, map: { [string]: any }?): boolean
+  if name == GATED then
+    return gatedAt(ref, name, startV, finishV) ~= nil and gateShut(ref, map, false)
+  end
+
   const rows = legacy_mods.MOVING_ONLY[ref.ClassName]
 
   return rows ~= nil and rows[name] == true and startV ~= nil and startV == finishV
@@ -535,18 +645,107 @@ function legacy_mods.isHeldStill(ref: Instance, name: string, map: { [string]: a
     ref,
     name,
     legacy_mods.alias(ref, keys.start, nil, map),
-    legacy_mods.alias(ref, keys.finish, nil, map)
+    legacy_mods.alias(ref, keys.finish, nil, map),
+    map
   )
+end
+
+-- the value a gated still quad under `name` plays at where its gate is open,
+-- nil for any other quad and where the gate is shut. the convert writes it as
+-- the row's own value, which applies wherever the texture length goes after
+function legacy_mods.gatedValue(ref: Instance, name: string, map: { [string]: any }?): any
+  const keys = keysOf(name)
+  const at =
+    gatedAt(ref, name, legacy_mods.alias(ref, keys.start, nil, map), legacy_mods.alias(ref, keys.finish, nil, map))
+
+  return if at ~= nil and not gateShut(ref, map, false) then at else nil
+end
+
+-- whether the map stores any key of the old quad under `name`, which only the
+-- old format ever wrote
+function legacy_mods.quadded(map: { [string]: any }, name: string): boolean
+  const keys = keysOf(name)
+
+  return map[keys.start] ~= nil or map[keys.finish] ~= nil or map[keys.duration] ~= nil or map[keys.curve] ~= nil
+end
+
+-- the one value a lone seedable tween on the start lane holds at both ends,
+-- the shape the plugin converted a still quad into, nil for any other map. a
+-- drawn end counts where it draws one value, as a converted length scale's do
+const function stillLaneAt(lanes: { [string]: { any } }, drawn: boolean): any
+  for lane in lanes do
+    if lane ~= "start" then
+      return nil
+    end
+  end
+
+  const queue = lanes.start
+
+  if queue == nil or #queue ~= 1 then
+    return nil
+  end
+
+  const m = queue[1]
+
+  if m.kind ~= "tween" or m.seedable ~= true or m.chain == true or m.partial ~= nil then
+    return nil
+  end
+
+  const function endOf(v: value.Value?): any
+    if v == nil then
+      return nil
+    end
+
+    if value.isLit(v) then
+      return v.v
+    end
+
+    if drawn and value.isDraw(v) and v.a == v.b then
+      return v.a
+    end
+
+    return nil
+  end
+
+  const at = endOf(m.start)
+
+  return if at ~= nil and at == endOf(m.finish) then at else nil
+end
+
+-- the lane an earlier plugin's convert made of a gated still quad, for the
+-- convert to settle once: the attribute it sits under, the old spelling, the
+-- value it holds and whether its gate is shut. nil where the beam holds none
+function legacy_mods.gatedLane(
+  ref: Instance,
+  map: { [string]: any }?
+): { key: string, spelling: string, at: any, shut: boolean }?
+  if ref.ClassName ~= "Beam" then
+    return nil
+  end
+
+  const lanes = lanesOf(stored(ref, SCALE_LANE, map))
+  const at = if lanes ~= nil then stillLaneAt(lanes, true) else nil
+
+  if at == nil then
+    return nil
+  end
+
+  return { key = SCALE_LANE, spelling = GATED, at = at, shut = gateShut(ref, map, true) }
 end
 
 -- whether a framed map is one the plugin converted out of such a still quad
 -- before the quad read as none: a lone seedable tween on the start lane, its
 -- ends one literal. it reads as no map, so the row keeps the instance's own
 -- value as v2 did. only the convert marks a lane seedable, never one the
--- modifier window adds
+-- modifier window adds. a length scale an earlier plugin converted is gated
+-- as gateShut says
 function legacy_mods.isHeldStillLane(ref: Instance, name: string, lanes: { [string]: { any } }): boolean
   if not STILL_NAMES[name] then
     return false
+  end
+
+  if name == GATED then
+    return ref.ClassName == "Beam" and stillLaneAt(lanes, true) ~= nil and gateShut(ref, nil, true)
   end
 
   const rows = legacy_mods.MOVING_ONLY[ref.ClassName]
@@ -555,26 +754,7 @@ function legacy_mods.isHeldStillLane(ref: Instance, name: string, lanes: { [stri
     return false
   end
 
-  for lane in lanes do
-    if lane ~= "start" then
-      return false
-    end
-  end
-
-  const queue = lanes.start
-
-  if queue == nil or #queue ~= 1 then
-    return false
-  end
-
-  const m = queue[1]
-  const from, to = m.start, m.finish
-
-  if m.kind ~= "tween" or m.seedable ~= true or m.chain == true or m.partial ~= nil then
-    return false
-  end
-
-  return from ~= nil and to ~= nil and value.isLit(from) and value.isLit(to) and from.v == to.v
+  return stillLaneAt(lanes, false) ~= nil
 end
 
 function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: { [string]: any }?): { any }?
@@ -586,7 +766,7 @@ function legacy_mods.readQuad(ref: Instance, source: string, name: string, map: 
     return nil
   end
 
-  if heldStill(ref, name, startV, finishV) then
+  if heldStill(ref, name, startV, finishV, map) then
     return nil
   end
 

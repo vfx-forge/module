@@ -1,5 +1,7 @@
 local knob = require("@mod/knob")
 local lazy = require("@mod/lazy")
+local reader = require("@mod/reader")
+local legacy_mods = require("@mod/legacy_mods")
 
 local camera_shake = {}
 
@@ -19,6 +21,28 @@ end
 
 const function noFalloff(_, attrs: any)
   return attrs.FalloffEnabled ~= true
+end
+
+-- v2 had no switch: every shake fell off over Falloff studs, 30 where it
+-- stored none, and a negative Falloff never weakened it. only v2 wrote Falloff
+-- or a Speed quad on a shake, so one storing either and no switch of its own
+-- is one v2 made. a v2 shake storing neither is the same instance a new one
+-- is, and rests off as a new one does
+const function madeInV2(map: { [string]: any }): boolean
+  if map.FalloffEnabled ~= nil then
+    return false
+  end
+
+  const falloff = map.Falloff
+
+  -- read as the reader reads it, a number stored as text included
+  const distance = if type(falloff) == "string" then tonumber(falloff) else falloff
+
+  if type(distance) == "number" and distance < 0 then
+    return false
+  end
+
+  return falloff ~= nil or legacy_mods.quadded(map, "Speed")
 end
 
 camera_shake.attributes = {
@@ -45,9 +69,12 @@ camera_shake.attributes = {
     :label("Sustain")
     :hint("Seconds the shake holds at full strength."),
   FadeOutTime = knob(2):min(0):unit("seconds"):label("Fade out"):hint("Seconds the shake takes to die away."),
-  FalloffEnabled = knob(false):label("Enabled"):hint(
-    "Whether the shake weakens as the camera gets farther from it. Off, every camera shakes at full strength."
-  ),
+  FalloffEnabled = knob
+    .legacy(knob(false), function(ctx: reader.Ctx)
+      return madeInV2(reader.source(ctx.ref))
+    end)
+    :label("Enabled")
+    :hint("Whether the shake weakens as the camera gets farther from it. Off, every camera shakes at full strength."),
   FalloffDistance = knob(30)
     :min(0)
     :aliases("Falloff")
@@ -72,6 +99,12 @@ camera_shake.layout = {
   { title = "Envelope", entries = { "FadeInTime", "SustainTime", "FadeOutTime" } },
   { title = "Falloff", entries = { "FalloffEnabled", "FalloffDistance" } },
 }
+
+-- what the plugin writes when it converts a shake v2 made, so the shake keeps
+-- falling off once the old shapes that mark it are gone
+function camera_shake.legacyValues(map: { [string]: any }): { [string]: any }?
+  return if madeInV2(map) then { FalloffEnabled = true } else nil
+end
 
 -- how long the shake runs: its own envelope, or the emit window and the fade
 -- out after it
