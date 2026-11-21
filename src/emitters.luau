@@ -533,14 +533,19 @@ end
 -- the outlasting queues stored on the instance a piece was copied from,
 -- driven on the piece as the old child each came from drove: a driver of its
 -- own on the emit of the piece's children, holding the piece up until it ends
--- and putting back what its reset says as it does
+-- and putting back what its reset says as it does. an entry naming no
+-- duration runs over `span`, the effect's, as it would on the row's own track,
+-- and a share is a share of it
 function emitters.outlast(
   piece: Instance,
   queues: { { source: string, name: string, queue: { any } } },
-  scope: types.scope
+  scope: types.scope,
+  span: number?
 )
+  const over = if typeof(span) == "number" and span > 0 and span ~= math.huge then span else 1
+
   for _, held in queues do
-    drive(piece, held.source, held.name, held.queue, scope, 1)
+    drive(piece, held.source, held.name, held.queue, scope, over)
   end
 end
 

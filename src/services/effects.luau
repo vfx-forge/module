@@ -712,7 +712,7 @@ local function emitChildren(
     const fx = lifetime.effect(emit, depth, effects)
 
     lifetime.run(fx, function(scope)
-      emitters.outlast(piece :: Instance, lasting, scope)
+      emitters.outlast(piece :: Instance, lasting, scope, if parentScope ~= nil then parentScope.span else nil)
     end)
   end
 
