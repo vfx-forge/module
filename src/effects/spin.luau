@@ -94,9 +94,16 @@ const function driven(ref: Instance): boolean
   return false
 end
 
+-- whether the model plays a rate: one it stores, or one something drives,
+-- whatever turn is stored, since the driver writes the rate an emit reads.
+-- a turn stored beside a driven rate and no rate does nothing
+const function rated(ref: Instance): boolean
+  return onRate(ref) or driven(ref)
+end
+
 -- the card shows the row that plays: a model on its rate edits the rate
 const function shownRate(ctx: any): boolean
-  return ctx ~= nil and typeof(ctx.ref) == "Instance" and onRate(ctx.ref)
+  return ctx ~= nil and typeof(ctx.ref) == "Instance" and rated(ctx.ref)
 end
 
 const function shownTurn(ctx: any): boolean
@@ -113,8 +120,8 @@ spin.attributes = {
   ResetOnFinish = knob(true):label("ResetOnFinish"):hint("Whether to reset the effect state after it finishes."),
   -- how far the model turns in all, so a new duration or a retime changes how
   -- fast it gets there and never how far. a model storing a rate plays that
-  -- instead (onRate), the same turn as before, until the plugin folds it in
-  -- (spin.upgrade)
+  -- instead, the same turn as before, until the plugin folds it in
+  -- (spin.upgrade), and one whose rate something drives always does (rated)
   SpinTurn = knob(function(_, attrs)
       return attrs.SpinRotation * attrs.SpinDuration
     end)
@@ -161,7 +168,7 @@ end
 -- the turn as a vector, none for a stored value that is not one: the row's
 -- rule takes no type, so the reader checks nothing it reads under it
 const function turnOf(ref: Instance, attrs: any): vector
-  const turn = if onRate(ref) then attrs.SpinRotation * attrs.SpinDuration else attrs.SpinTurn
+  const turn = if rated(ref) then attrs.SpinRotation * attrs.SpinDuration else attrs.SpinTurn
 
   return if knob.kindOf(turn) == "Vector3" then turn else vector.zero
 end

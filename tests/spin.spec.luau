@@ -481,6 +481,72 @@ harness.suite(function()
       end
     )
 
+    test(
+      "a turn stored beside a driven rate and no rate plays the rate from the first emit, and the card shows Rotation",
+      function()
+        const RANDOMIZED = { 17.0717, 34.9647, 52.8576, 70.7506, 71.5719 }
+        const STILL = { 0 }
+
+        -- the rate an emit reads: the child's draw lands before it, the folder's
+        -- after it, and a lane is not read at all, so with no rate stored the
+        -- folder's first emit and every laned one turn by Rotation's zero
+        const CASES = {
+          { name = "a randomizer child", holder = "model", yaw = { RANDOMIZED, RANDOMIZED } },
+          { name = "a randomizer in a folder", holder = "folder", yaw = { STILL, RANDOMIZED } },
+          {
+            name = "a rate lane",
+            mods = {
+              SpinRotation = {
+                start = {
+                  tween(0, 1, { start = value.lit(Vector3.new()), finish = value.lit(Vector3.new(0, 400, 0)) }),
+                },
+              },
+            },
+            yaw = { STILL, STILL },
+          },
+        }
+
+        for _, case in CASES do
+          const m = model({ SpinTurn = Vector3.new(0, 10, 0), SpinDuration = 1 }, case.mods)
+
+          if case.holder ~= nil then
+            const child = harness.make("RayValue", if case.holder == "folder" then harness.make("Folder", m) else m)
+            child.Name = "SpinRotation"
+            child:AddTag("AttributeRandomizer")
+            child:SetAttribute("_START_VALUE", Vector3.new())
+            child:SetAttribute("_END_VALUE", Vector3.new(0, 170, 0))
+          end
+
+          const ctx = { ref = m, obj = m, effect = spin }
+
+          expect(spin.attributes.SpinTurn.hiddenRule(ctx, {}, {})).toBe(true)
+          expect(spin.attributes.SpinRotation.hiddenRule(ctx, {}, {})).toBe(false)
+
+          for emit = 1, 2 do
+            PIVOT[m] = nil
+            effects.emit(0, m)
+
+            for i = 1, math.round(3 / FRAME) do
+              scheduler.frame(FRAME)
+
+              if i % EVERY == 0 then
+                const turned = case.yaw[emit]
+                const yaw = turned[i // EVERY] or turned[#turned]
+
+                samePose(
+                  PIVOT[m] or CFrame.new(),
+                  CFrame.fromOrientation(0, math.rad(yaw), 0),
+                  `{case.name}, emit {emit} at {i * FRAME} s`
+                )
+              end
+            end
+          end
+
+          effects.deinit()
+        end
+      end
+    )
+
     test("a rate something drives stays a rate: converting leaves it, and every emit turns as it did before", function()
       -- the pre-change spin's yaw every 0.25 s, the same on both emits
       const RANDOMIZED = { 17.0717, 34.9647, 52.8576, 70.7506, 71.5719 }
