@@ -3,6 +3,7 @@ local mods = require("@mod/mods")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
+local value_curve = require("@mod/value_curve")
 local debris = require("@vfx/shockwave_debris")
 local resize = require("@mod/resize")
 local retime = require("@mod/retime")
@@ -205,6 +206,45 @@ harness.suite(function()
       expect(obj.Rate).toBe(20)
     end)
 
+    test("an engine property's lanes scale by its unit as the property does", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+
+      local obj = Instance.new("ParticleEmitter")
+      local animator = Instance.new("RayValue")
+
+      framed(obj, "property", "Lifetime", {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = value.lit(NumberRange.new(2, 4)),
+          finish = value.lit(NumberRange.new(4, 4)),
+        },
+      })
+
+      effectStub("animator", "RayValue.PropertyAnimator", {})
+      animator:AddTag("PropertyAnimator")
+      animator.Parent = obj
+      animator:SetAttribute("Property", "Rate")
+      framed(animator, "property", "Rate", {
+        { kind = "tween", chain = false, duration = 1, start = value.lit(10), finish = value.lit(30) },
+      })
+
+      retime.apply(obj, 2, 0.5)
+      retime.apply(animator, 2, 0.5)
+
+      local lifetime = queueOf(obj, "property", "Lifetime") :: any
+      local rate = queueOf(animator, "property", "Rate") :: any
+
+      expect(lifetime[1].start.v == NumberRange.new(1, 2)).toBe(true)
+      expect(lifetime[1].finish.v == NumberRange.new(2, 2)).toBe(true)
+      expect(lifetime[1].duration).toBe(0.5)
+      expect(rate[1].start.v).toBe(20)
+      expect(rate[1].finish.v).toBe(60)
+      expect(rate[1].duration).toBe(0.5)
+    end)
+
     test("a custom effect's emitter scales by its rows alone, a shared property once", function()
       local obj = customEmitter() :: any
 
@@ -387,6 +427,106 @@ harness.suite(function()
 
       expect(obj.Size.Keypoints[1].Value).toBe(2)
       expect(obj.Size.Keypoints[2].Value).toBe(4)
+    end)
+
+    -- the window wrote the property and left its lanes: the row kept showing
+    -- the old start and end, and editing its curve wrote the old size back
+    test("an engine property's lanes scale with it, a sequence end's drawn curve too", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+
+      local obj = Instance.new("ParticleEmitter") :: any
+      local ends = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1, 0.5), NumberSequenceKeypoint.new(1, 3) })
+
+      obj.Size = NumberSequence.new(1)
+      framed(obj, "property", "Size", {
+        {
+          kind = "sequence",
+          chain = false,
+          start = value.lit(0.5),
+          finish = value.lit(1.5),
+          curve = buffer.fromstring("CURVE"),
+        },
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = value.lit(ends),
+          finish = value.draw(ends, NumberSequence.new(2)),
+          start_curve = value_curve.encode(value_curve.flat(1, 1)),
+        },
+      })
+      framed(obj, "property", "Speed", {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = value.lit(NumberRange.new(1, 2)),
+          finish = value.lit(3),
+        },
+      })
+      framed(obj, "property", "Transparency", {
+        { kind = "tween", chain = false, duration = 1, start = value.lit(0.25), finish = value.lit(1) },
+      })
+
+      resize.apply(obj, 2)
+
+      local size = queueOf(obj, "property", "Size") :: any
+      local start = size[2].start.v.Keypoints
+
+      expect(size[1].start.v).toBe(1)
+      expect(size[1].finish.v).toBe(3)
+      expect(size[1].kind).toBe("sequence")
+      expect(start[1].Value).toBe(2)
+      expect(start[1].Envelope).toBe(1)
+      expect(start[2].Value).toBe(6)
+      expect(size[2].finish.a.Keypoints[2].Value).toBe(6)
+      expect(size[2].finish.b.Keypoints[1].Value).toBe(4)
+      expect((value_curve.decode(size[2].start_curve) :: any).keys[1].value[1]).toBe(2)
+      expect(size[2].duration).toBe(1)
+
+      local speed = queueOf(obj, "property", "Speed") :: any
+
+      expect(speed[1].start.v == NumberRange.new(2, 4)).toBe(true)
+      expect(speed[1].finish.v).toBe(6)
+      expect((queueOf(obj, "property", "Transparency") :: any)[1].start.v).toBe(0.25)
+    end)
+
+    test("a property animator's lanes scale when the property it drives is a length", function()
+      effectStub("animator", "RayValue.PropertyAnimator", {})
+
+      local emitter = Instance.new("ParticleEmitter")
+      local sized = Instance.new("RayValue")
+      local faded = Instance.new("RayValue")
+
+      for _, animator in { sized, faded } do
+        animator:AddTag("PropertyAnimator")
+        animator.Parent = emitter
+      end
+
+      sized:SetAttribute("Property", "Size")
+      faded:SetAttribute("Property", "Transparency")
+      framed(sized, "property", "Size", {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = value.lit(NumberSequence.new(1)),
+          finish = value.lit(2),
+        },
+      })
+      framed(faded, "property", "Transparency", {
+        { kind = "tween", chain = false, duration = 1, start = value.lit(0.25), finish = value.lit(1) },
+      })
+
+      resize.apply(sized, 2)
+      resize.apply(faded, 2)
+
+      local size = queueOf(sized, "property", "Size") :: any
+
+      expect(size[1].start.v.Keypoints[1].Value).toBe(2)
+      expect(size[1].finish.v).toBe(4)
+      expect((queueOf(faded, "property", "Transparency") :: any)[1].start.v).toBe(0.25)
     end)
 
     test("a custom effect's emitter keeps the engine sizes no row of its names", function()

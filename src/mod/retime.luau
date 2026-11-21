@@ -3,6 +3,7 @@ local mods = require("@mod/mods")
 local logger = require("@mod/logger")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
+local value_curve = require("@mod/value_curve")
 local numeric_common = require("@mod/common/numeric")
 
 local retime = {}
@@ -64,10 +65,113 @@ local function scaleProperty(obj: any, name: string, f: number)
   end
 end
 
-const function scaleValues(obj: Instance, source: string, key: string, f: number)
+-- the fields a NumberSequence tween end keeps the curve it was drawn as in
+-- (the plugin's sequence_ends)
+const DRAWN_ENDS = { "start_curve", "finish_curve" }
+
+-- a lane endpoint scaled as scaleProperty scales the value it stands for
+const function scaleEndpoint(v: any, f: number): any
+  const kind = typeof(v)
+
+  if kind == "number" or kind == "Vector3" or kind == "Vector2" or kind == "vector" then
+    return v * f
+  end
+
+  if kind == "NumberRange" then
+    return NumberRange.new(v.Min * f, v.Max * f)
+  end
+
+  if kind == "NumberSequence" then
+    return utility.scaleNumberSequence(v, f)
+  end
+
+  return v
+end
+
+-- a row's lanes, every endpoint scaled as the row's value is. a NumberSequence
+-- tween end carries the curve it was drawn as beside it, which the plugin edits
+-- the end as only while the end is still its bake, so that curve scales too
+function retime.scaleLanes(obj: Instance, source: string, key: string, f: number)
   utility.rescaleQueue(obj, source, key, function(lanes)
-    mods.scaleValues(lanes, f)
+    mods.scaleValues(lanes, f, scaleEndpoint)
+
+    for _, queue in lanes do
+      for _, m in queue do
+        for _, field in DRAWN_ENDS do
+          const drawn = if type(m[field]) == "string" then value_curve.decode(m[field]) else nil
+
+          if drawn ~= nil then
+            m[field] = value_curve.encode(value_curve.multiply(drawn, f))
+          end
+        end
+      end
+    end
   end)
+end
+
+-- the unit an engine property is measured in on `target`: its effect's
+-- property row's, else what `units` (a tool's PROPERTY_UNITS) names for its
+-- class. a custom effect's instance is its own, so only its rows say
+const function unitOf(target: Instance, name: string, units: { [string]: { [string]: string } }): string?
+  const module = registry.of(target)
+  const row = if module ~= nil then module.properties[name] else nil
+
+  if row ~= nil then
+    return row.units
+  end
+
+  if module ~= nil and registry.isCustom(module) then
+    return nil
+  end
+
+  for class, names in units do
+    if target:IsA(class) and names[name] ~= nil then
+      return names[name]
+    end
+  end
+
+  return nil
+end
+
+-- the instance an animator drives: its Target, else its parent past Folders,
+-- the way the animator finds it
+const function animatedOf(animator: Instance): Instance?
+  const handle = animator:GetAttribute("Target")
+
+  if typeof(handle) == "InstanceHandle" then
+    const named = (handle :: any):Get()
+
+    if named ~= nil and named:IsDescendantOf(game) then
+      return named
+    end
+  end
+
+  return utility.getTarget(animator)
+end
+
+-- a Property Animator holds its property's lanes on itself rather than on the
+-- instance the property belongs to, so they scale with the animator, by the
+-- unit the property has there. `factorOf` is the tool's, `units` its table of
+-- engine properties
+function retime.scaleAnimator(
+  animator: Instance,
+  factor: number,
+  units: { [string]: { [string]: string } },
+  factorOf: (unit: string, factor: number) -> number?
+)
+  const name = animator:GetAttribute("Property")
+  const target = animatedOf(animator)
+
+  if type(name) ~= "string" or name == "" or target == nil then
+    return
+  end
+
+  const unit = unitOf(target, name, units)
+  const f = if unit ~= nil then factorOf(unit, factor) else nil
+
+  if f ~= nil then
+    retime.scaleLanes(animator, "property", name, f)
+  end
 end
 
 local QUAD = { "_Start", "_End", "_Min", "_Max" }
@@ -218,10 +322,10 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
     -- timing does below
     retime.walk(obj, module, factor, retime.factorOf, invFactor, function(source, name, key, f)
       utility.scaleAttribute(obj, f, key)
-      scaleValues(obj, source, key, f)
+      retime.scaleLanes(obj, source, key, f)
 
       if source == "property" then
-        scaleValues(obj, "attribute", key, f)
+        retime.scaleLanes(obj, "attribute", key, f)
 
         if key == name then
           scaleProperty(obj, name, f)
@@ -243,8 +347,13 @@ function retime.apply(obj: Instance, factor: number, invFactor: number)
 
       if f ~= nil then
         scaleProperty(obj, name, f)
+        retime.scaleLanes(obj, "property", name, f)
       end
     end
+  end
+
+  if module ~= nil and module.id == "animator" then
+    retime.scaleAnimator(obj, factor, retime.PROPERTY_UNITS, retime.factorOf)
   end
 
   -- a lane is time whatever it targets, so every one on the instance scales
