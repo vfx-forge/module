@@ -1,4 +1,3 @@
---!native
 --!optimize 2
 local path = require("@mod/common/path")
 local curves = require("@mod/curves")
@@ -66,16 +65,19 @@ local held = 0
 local clock = 0
 
 -- the linear preset's value is its time, so it is answered without a solve
+@native
 local function linear(t: number): number
   return math.clamp(t, 0, 1)
 end
 
+@native
 local function cubic(a: number, b: number, c: number, d: number, s: number): number
   local r = 1 - s
 
   return r * r * r * a + 3 * r * r * s * b + 3 * r * s * s * c + s * s * s * d
 end
 
+@native
 local function slope(a: number, b: number, c: number, d: number, s: number): number
   local r = 1 - s
 
@@ -301,6 +303,7 @@ local function shapeOf(shape: any): Shape
 end
 
 -- the segment whose anchors hold t, the first that does, else the last
+@native
 local function segmentOf(xs: { number }, last: number, t: number): number
   for k = 0, last do
     if t >= xs[k * 3 + 1] and t < xs[k * 3 + 4] then
@@ -314,6 +317,7 @@ end
 -- the value at time t solved outright: the segment's parameter by newton from
 -- a straight guess inside it, the way the editor's curves were always solved,
 -- run until it settles. the slope of the value over time is the second answer
+@native
 local function exact(shape: Shape, t: number): (number, number)
   local xs, ys = shape.xs, shape.ys
   local i = segmentOf(xs, shape.segments - 1, t) * 3 + 1
@@ -409,6 +413,7 @@ end
 
 -- the value at time t: its step's cubic where that follows the curve, else the
 -- curve solved outright
+@native
 local function solve(shape: Shape, t: number): number
   if t ~= t then
     return t
@@ -480,21 +485,24 @@ end
 
 -- a shape's value at t with no curve made, for a caller sampling a row's
 -- curve once per value
+@native
 function curve.sample(shape: string | buffer | { vector }, t: number): number
   return solve(shapeOf(shape), t)
 end
 
 -- the same read as curve.sample with the shape looked up once, for a caller
 -- sampling one shape every frame
+@native
 function curve.sampler(shape: string | buffer | { vector })
   local resolved = shapeOf(shape)
 
-  return function(t: number)
+  return @native function(t: number)
     return solve(resolved, t)
   end
 end
 
 -- the value at t, 0 to 1 over the curve
+@native
 function Curve.at(self: Curve, t: number): number
   if t ~= t then
     return t

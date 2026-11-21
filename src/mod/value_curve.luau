@@ -1,4 +1,3 @@
---!native
 --!optimize 2
 local value_curve = {}
 
@@ -234,13 +233,15 @@ function value_curve.draw(curve: Curve, rng: Random): { number }
   return draws
 end
 
-const function cubic(p0: number, p1: number, p2: number, p3: number, s: number)
+@native
+local function cubic(p0: number, p1: number, p2: number, p3: number, s: number)
   const r = 1 - s
 
   return r * r * r * p0 + 3 * r * r * s * p1 + 3 * r * s * s * p2 + s * s * s * p3
 end
 
-const function slope(p0: number, p1: number, p2: number, p3: number, s: number)
+@native
+local function slope(p0: number, p1: number, p2: number, p3: number, s: number)
   const r = 1 - s
 
   return 3 * (r * r * (p1 - p0) + 2 * r * s * (p2 - p1) + s * s * (p3 - p2))
@@ -248,7 +249,8 @@ end
 
 -- the curve parameter whose time is t. time control points sit inside the
 -- segment, so time rises with s and the root is unique
-const function solve(t0: number, x1: number, x2: number, t1: number, t: number)
+@native
+local function solve(t0: number, x1: number, x2: number, t1: number, t: number)
   local s = (t - t0) / (t1 - t0)
 
   for _ = 1, 6 do
@@ -284,6 +286,7 @@ end
 -- the returned table is the sampler's own and is rewritten by the next call,
 -- so a frame loop allocates nothing; copy it to keep a reading. the second
 -- return says whether every t reads the same, so a caller can write it once
+@native
 function value_curve.sampler(curve: Curve, draws: { number }?): ((t: number) -> { number }, boolean)
   const keys = curve.keys
   const channels = curve.channels
@@ -301,7 +304,8 @@ function value_curve.sampler(curve: Curve, draws: { number }?): ((t: number) -> 
   const ty2 = table.create(count * channels)
 
   -- the weighted draws a mix's pairs sum to
-  const function drawn(pairs: { number }): number
+  @native
+  local function drawn(pairs: { number }): number
     local sum = 0
 
     for at = 1, #pairs, 2 do
@@ -365,7 +369,7 @@ function value_curve.sampler(curve: Curve, draws: { number }?): ((t: number) -> 
 
   const last = count * channels - channels
 
-  return function(t: number)
+  return @native function(t: number)
     -- nan reads as the start
     t = if t == t then math.clamp(t, 0, 1) else 0
 
@@ -412,6 +416,7 @@ function value_curve.sampler(curve: Curve, draws: { number }?): ((t: number) -> 
 end
 
 -- builds a whole sampler per call, so not for a frame loop; use sampler there
+@native
 function value_curve.at(curve: Curve, t: number, draws: { number }?): { number }
   return table.clone(value_curve.sampler(curve, draws)(t))
 end
