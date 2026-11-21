@@ -398,6 +398,34 @@ harness.suite(function()
       expect(attributes.InCurve.default).toBe(curves.PRESETS.easeIn)
     end)
 
+    -- a whole row reaches the registry through the loader as it does from a built-in
+    test("a whole param loads whole, and a param not marked so does not", function()
+      fresh()
+
+      local ok, found = custom.add(
+        "a",
+        effect({
+          params = function(sdk: any)
+            return {
+              attributes = {
+                Count = sdk.knob(1):min(1):whole():mod(),
+                Width = sdk.knob(0.5):min(0):mod(),
+              },
+            }
+          end,
+        }),
+        "ReplicatedStorage.A"
+      )
+
+      expect(ok).toBe(true)
+      expect(found).toEqual({})
+
+      local attributes = registry.get("my_effect").attributes
+
+      expect(attributes.Count.isWhole).toBe(true)
+      expect(attributes.Width.isWhole).toBe(false)
+    end)
+
     test("duration is asked through the facade, and becomes the ctx's", function()
       fresh()
 
