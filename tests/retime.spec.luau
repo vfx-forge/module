@@ -498,7 +498,7 @@ harness.suite(function()
       expect(surface.Range).toBe(20)
     end)
 
-    test("a Property Animator on a light's range scales its lanes, past the engine's 60 too", function()
+    test("a Property Animator on a light's range scales its lanes", function()
       local animator = require("@vfx/animator")
 
       registry.clear()
@@ -535,7 +535,7 @@ harness.suite(function()
       expect(brightness[1].finish.v).toBe(100)
     end)
 
-    test("an old tween child on a light's range scales its values, past the engine's 60 too", function()
+    test("an old tween child on a light's range scales its values", function()
       registry.clear()
 
       local light = harness.make("PointLight")

@@ -33,8 +33,7 @@ resize.PROPERTY_UNITS = {
   ParticleEmitter = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
   ParticleEmitter2D = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
   Sound = { RollOffMaxDistance = "studs" },
-  -- a light's reach, which the engine holds at 60 studs as it is written, so
-  -- a stored value past it is kept for a resize back to come down from
+  -- a light's reach
   Light = { Range = "studs" },
 }
 
