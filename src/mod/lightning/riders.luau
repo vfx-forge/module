@@ -1,3 +1,6 @@
+const lifetime = require("@mod/lifetime")
+
+const cores = require("@mod/lightning/cores")
 const kinds = require("@mod/lightning/kinds")
 const geometry = require("@mod/lightning/geometry")
 const timeline = require("@mod/lightning/timeline")
@@ -50,12 +53,12 @@ const function copy(child: Instance): any
   return made
 end
 
-const function attach(sdk: any, ctx: any, name: string): Attachment
-  const attachment = sdk.hold(ctx, Instance.new("Attachment"))
+const function attach(scope: lifetime.effect, name: string): Attachment
+  const attachment = lifetime.hold(scope, Instance.new("Attachment"))
 
   attachment.Name = name
   attachment.Archivable = false
-  attachment.Parent = sdk.container(ctx)
+  attachment.Parent = cores.container()
 
   return attachment
 end
@@ -115,7 +118,7 @@ const function move(r: Riders, attachment: Attachment, at: Vector3)
   end
 end
 
-function riders.build(sdk: any, ctx: any, sorted: kinds.Sorted, perChain: { number }): Riders?
+function riders.build(scope: lifetime.effect, sorted: kinds.Sorted, perChain: { number }): Riders?
   if sorted.found == 0 then
     return nil
   end
@@ -142,7 +145,7 @@ function riders.build(sdk: any, ctx: any, sorted: kinds.Sorted, perChain: { numb
     end
 
     for i = 1, total do
-      r.joints[i] = attach(sdk, ctx, "BoltJoint")
+      r.joints[i] = attach(scope, "BoltJoint")
     end
   end
 
@@ -177,7 +180,7 @@ function riders.build(sdk: any, ctx: any, sorted: kinds.Sorted, perChain: { numb
     const picked = spread(perChain)
 
     for _, joint in picked do
-      const attachment = attach(sdk, ctx, "BoltPoint")
+      const attachment = attach(scope, "BoltPoint")
       const emitters = {}
 
       for _, template in sorted.emitter do
@@ -194,7 +197,7 @@ function riders.build(sdk: any, ctx: any, sorted: kinds.Sorted, perChain: { numb
   end
 
   if #sorted.light > 0 then
-    const holder = attach(sdk, ctx, "BoltLight")
+    const holder = attach(scope, "BoltLight")
 
     r.holder = holder
 
@@ -208,7 +211,7 @@ function riders.build(sdk: any, ctx: any, sorted: kinds.Sorted, perChain: { numb
   end
 
   if #sorted.trail > 0 then
-    r.head = { attach(sdk, ctx, "BoltHead"), attach(sdk, ctx, "BoltHead") }
+    r.head = { attach(scope, "BoltHead"), attach(scope, "BoltHead") }
 
     for _, template in sorted.trail do
       const trail = copy(template)

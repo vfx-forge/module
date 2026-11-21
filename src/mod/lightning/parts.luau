@@ -1,3 +1,6 @@
+const lifetime = require("@mod/lifetime")
+
+const cores = require("@mod/lightning/cores")
 const gradient = require("@mod/lightning/gradient")
 const geometry = require("@mod/lightning/geometry")
 
@@ -29,10 +32,10 @@ const GLOW_WIDTH = geometry.GLOW.scale / geometry.CORE.scale
 
 const parts = {}
 
-const function make(sdk: any, ctx: any, name: string, color: Color3, parent: Instance): piece
+const function make(scope: lifetime.effect, name: string, color: Color3, parent: Instance): piece
   const part = Instance.new("Part")
 
-  sdk.hold(ctx, part)
+  lifetime.hold(scope, part)
 
   part.Name = name
   part.Archivable = false
@@ -77,7 +80,7 @@ end
 
 -- the cores go in the caller's holder, which a Highlight can adorn; the glows stay outside it in the effect's container; each core
 -- and glow takes the gradient where its segment sat along the bolt as it was made, so a reshape never recolors it
-function parts.build(sdk: any, ctx: any, joints: { geometry.Joint }, perChain: { number }, looks: looks): PartsDrawn
+function parts.build(scope: lifetime.effect, joints: { geometry.Joint }, perChain: { number }, looks: looks): PartsDrawn
   const drawn: PartsDrawn = {
     segments = {},
     keys = looks.keys,
@@ -102,8 +105,8 @@ function parts.build(sdk: any, ctx: any, joints: { geometry.Joint }, perChain: {
         fade = (joints[from].fade + joints[from + 1].fade) / 2,
         color = WHITE,
         glowColor = WHITE,
-        core = make(sdk, ctx, "LightningCore", WHITE, looks.holder),
-        glow = if looks.glow then make(sdk, ctx, "LightningGlow", WHITE, sdk.container(ctx)) else nil,
+        core = make(scope, "LightningCore", WHITE, looks.holder),
+        glow = if looks.glow then make(scope, "LightningGlow", WHITE, cores.container()) else nil,
       }
 
       tint(drawn, segment, true)

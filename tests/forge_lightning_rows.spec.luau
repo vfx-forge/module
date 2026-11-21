@@ -1,29 +1,12 @@
 -- the harness installs NumberRange, Vector2 and Color3 as globals, so it is required before rows
 const harness = require("@tests/harness")
 const rows = require("@mod/lightning/rows")
+const curves = require("@mod/curves")
 const describe, test, expect = harness.describe, harness.test, harness.expect
 
 const Color3 = harness.datatypes.Color3
 const Vector2 = harness.datatypes.Vector2
 const NumberRange = harness.datatypes.NumberRange
-
-const KNOB_METHODS = {
-  "min",
-  "max",
-  "aliases",
-  "options",
-  "label",
-  "hint",
-  "curve",
-  "unit",
-  "hidden",
-  "readonly",
-  "slider",
-  "whole",
-  "seed",
-  "mod",
-  "instance",
-}
 
 const EXPECTED = {
   EmitDelay = { label = "Delay", default = 0, unit = "seconds" },
@@ -58,45 +41,60 @@ const EXPECTED = {
   LightColor = { label = "Color", default = Color3.new(1, 1, 1), mod = true },
   Appear = { label = "Mode", default = "Strike" },
   AppearTime = { label = "Time", default = NumberRange.new(0.06, 0.1), unit = "seconds" },
-  AppearCurve = { label = "Curve", default = "linear" },
+  AppearCurve = { label = "Curve", default = curves.PRESETS.linear },
   Hold = { label = "Time", default = NumberRange.new(0.2, 0.3), unit = "seconds" },
   Restrikes = { label = "Restrikes", default = 1, mod = true },
   Disappear = { label = "Mode", default = "Thin" },
   DisappearTime = { label = "Time", default = 0.25, unit = "seconds", mod = true },
-  DisappearCurve = { label = "Curve", default = "easeIn" },
+  DisappearCurve = { label = "Curve", default = curves.PRESETS.easeIn },
   ImpactFacing = { label = "Facing", default = "Surface" },
 }
 
 type recorder = { default: any, calls: { [string]: { any } } }
 
--- every knob method records what it was handed and answers the knob, as the real chain does
-const function recorder(default: any): recorder
-  const knob = { default = default, calls = {} }
+-- what each row was declared with, read off its knob by the builder method that set it
+const function calls(row: any): { [string]: { any } }
+  const out = {}
 
-  for _, name in KNOB_METHODS do
-    knob[name] = function(self: any, ...: any)
-      self.calls[name] = { ... }
-
-      return self
+  const function put(name: string, value: any)
+    if value ~= nil then
+      out[name] = { value }
     end
   end
 
-  return knob :: any
-end
+  put("label", row.title)
+  put("hint", row.details)
+  put("unit", row.units)
+  put("min", row.lower)
+  put("max", row.upper)
+  put("options", row.choices)
+  put("curve", row.preset)
+  put("hidden", row.hiddenRule)
+  put("instance", row.classes)
 
-const function stubSdk(): any
-  const function spec(value: any)
-    return recorder(value)
+  if row.isMod then
+    out.mod = {}
   end
 
-  return {
-    knob = recorder,
-    mod = { from = spec, to = spec },
-  }
+  if row.isSlider then
+    out.slider = {}
+  end
+
+  if row.isWhole then
+    out.whole = {}
+  end
+
+  return out
 end
 
 const function params(): { [string]: recorder }
-  return rows.params(stubSdk()).attributes :: any
+  const out = {}
+
+  for name, row in rows.attributes do
+    out[name] = { default = row.default, calls = calls(row) }
+  end
+
+  return out
 end
 
 const function hides(knob: recorder, attrs: { [string]: any }): boolean

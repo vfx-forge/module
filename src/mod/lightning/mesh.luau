@@ -1,5 +1,8 @@
 const AssetService = game:GetService("AssetService")
 
+const lifetime = require("@mod/lifetime")
+
+const cores = require("@mod/lightning/cores")
 const gradient = require("@mod/lightning/gradient")
 const geometry = require("@mod/lightning/geometry")
 
@@ -70,8 +73,7 @@ const function shade(look: Look)
 end
 
 const function make(
-  sdk: any,
-  ctx: any,
+  scope: lifetime.effect,
   name: string,
   positions: { vector },
   alphas: { number },
@@ -89,7 +91,7 @@ const function make(
     return nil
   end
 
-  sdk.hold(ctx, function()
+  lifetime.hold(scope, function()
     editable:Destroy()
   end)
 
@@ -130,7 +132,7 @@ const function make(
     return nil
   end
 
-  sdk.hold(ctx, part)
+  lifetime.hold(scope, part)
 
   part.Name = name
   part.Archivable = false
@@ -170,7 +172,7 @@ const function recolor(drawn: Drawn)
 end
 
 -- the core goes in the caller's holder, which a Highlight can adorn; the glow stays outside it in the effect's container
-function mesh.build(sdk: any, ctx: any, joints: { geometry.Joint }, perChain: { number }, looks: looks): Drawn?
+function mesh.build(scope: lifetime.effect, joints: { geometry.Joint }, perChain: { number }, looks: looks): Drawn?
   const core = geometry.CORE
   const positions = {}
   const count = geometry.tube(joints, core.sides, core.scale, positions)
@@ -190,8 +192,7 @@ function mesh.build(sdk: any, ctx: any, joints: { geometry.Joint }, perChain: { 
   geometry.alphas(joints, ONES, 1, look.fades)
 
   const coreLayer = make(
-    sdk,
-    ctx,
+    scope,
     "LightningCore",
     positions,
     table.create(count, 1),
@@ -220,15 +221,14 @@ function mesh.build(sdk: any, ctx: any, joints: { geometry.Joint }, perChain: { 
     geometry.along(joints, glow.sides, looks.longest, look.glowAlong, looks.restart)
 
     glowLayer = make(
-      sdk,
-      ctx,
+      scope,
       "LightningGlow",
       shell,
       alphas,
       gradient.colors(look.keys, look.glowAlong, look.glowColors),
       geometry.faces(perChain, glow.sides, true),
       GLOW_TRANSPARENCY,
-      sdk.container(ctx),
+      cores.container(),
       true
     )
   end

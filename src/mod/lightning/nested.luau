@@ -1,3 +1,7 @@
+const lifetime = require("@mod/lifetime")
+
+const cores = require("@mod/lightning/cores")
+
 const nested = {}
 
 const NAMES = { "EmitOnStart", "EmitOnImpact", "EmitAtTip", "EmitAlong", "Bolt", "EmitOnFinish" }
@@ -16,15 +20,27 @@ function nested.slots(ref: Instance): { [string]: Folder }
   return found
 end
 
-function nested.host(sdk: any, ctx: any, children: { Instance }, name: string, cframe: CFrame): Attachment
-  const host = sdk.hold(ctx, Instance.new("Attachment"))
+-- a nested emit is a child of the effect's, counted into `children`, which the effect waits for once its bolts are
+-- done
+const function emit(scope: lifetime.effect, children: lifetime.join, host: Attachment)
+  scope.effects.emitInstance(host, scope.depth + 1, scope, children)
+end
+
+function nested.host(
+  scope: lifetime.effect,
+  children: lifetime.join,
+  copies: { Instance },
+  name: string,
+  cframe: CFrame
+): Attachment
+  const host = lifetime.hold(scope, Instance.new("Attachment"))
 
   host.Name = name
   host.Archivable = false
-  host.Parent = sdk.container(ctx)
+  host.Parent = cores.container()
   host.WorldCFrame = cframe
 
-  for _, child in children do
+  for _, child in copies do
     const copy = child:Clone()
 
     if copy then
@@ -33,14 +49,14 @@ function nested.host(sdk: any, ctx: any, children: { Instance }, name: string, c
   end
 
   -- a nested emit scans the host and its descendants for effects (registry.scan in services/effects.luau), so emitting the host plays the clones
-  sdk.emit(ctx, host)
+  emit(scope, children, host)
 
   return host
 end
 
-function nested.again(sdk: any, ctx: any, host: Attachment, cframe: CFrame)
+function nested.again(scope: lifetime.effect, children: lifetime.join, host: Attachment, cframe: CFrame)
   host.WorldCFrame = cframe
-  sdk.emit(ctx, host)
+  emit(scope, children, host)
 end
 
 return nested

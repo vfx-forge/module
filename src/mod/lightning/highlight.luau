@@ -1,3 +1,5 @@
+const lifetime = require("@mod/lifetime")
+
 const cores = require("@mod/lightning/cores")
 
 type entry = { visible: boolean, opacity: number }
@@ -16,9 +18,9 @@ export type Cover = {
 const highlight = {}
 
 -- one per emit, so a Count of 3 takes one of the 31 Highlights the engine draws at once, not three
-function highlight.make(sdk: any, ctx: any, template: Highlight, bolts: number): Cover
-  const model = cores.model(sdk, ctx)
-  const made = sdk.hold(ctx, template:Clone())
+function highlight.make(scope: lifetime.effect, template: Highlight, bolts: number): Cover
+  const model = cores.model(scope)
+  const made = lifetime.hold(scope, template:Clone())
 
   for _, tag in made:GetTags() do
     made:RemoveTag(tag)

@@ -1,24 +1,23 @@
 local lazy = require("@mod/lazy")
 
-const SDK = require("@root/sdk/v1/types")
-
 const rows = require("@mod/lightning/rows")
 const timeline = require("@mod/lightning/timeline")
 
 const NO_TIME = { Min = 0, Max = 0 }
-const effect = {}
+const forge_lightning = {}
 
-effect.sdk_version = 1
-effect.id = "forge_lightning"
-effect.display = { name = "Lightning", icon = "lightning", category = "paths" }
-effect.classifier = "Attachment.ForgeLightning"
-effect.components = "> #End, > #EmitOnStart, > #EmitOnImpact, > #EmitAtTip, > #Bolt, > #EmitAlong, > #EmitOnFinish"
-effect.constant = true
-effect.layout = rows.layout
-effect.params = rows.params
+forge_lightning.id = "forge_lightning"
+forge_lightning.display = { name = "Lightning", icon = "lightning", category = "paths" }
+forge_lightning.classifier = "Attachment.ForgeLightning"
+forge_lightning.components =
+  "> #End, > #EmitOnStart, > #EmitOnImpact, > #EmitAtTip, > #Bolt, > #EmitAlong, > #EmitOnFinish"
+forge_lightning.constant = true
+forge_lightning.layout = rows.layout
+forge_lightning.attributes = rows.attributes
+forge_lightning.properties = {}
 
 const function sample(track: any, elapsed: number)
-  return if track.animated then track:at(elapsed) else track.value
+  return if track.animated then track.at(elapsed) else track.value
 end
 
 -- an Instant bolt has no appear phase, so its hidden time rows add nothing, and a continuous one holds until it is
@@ -43,11 +42,11 @@ const play = lazy.unit("forge_lightning", function()
 end)
 
 -- a window's last tick can start as it closes and plays a whole bolt after it
-function effect.duration(_: SDK.V1, attrs: any)
+function forge_lightning.duration(_: any, attrs: any)
   return attrs.EmitDelay + attrs.EmitDuration + timeline.duration(timing(attrs))
 end
 
-function effect.template(_: SDK.V1)
+function forge_lightning.template()
   const attachment = Instance.new("Attachment")
 
   attachment.Name = "ForgeLightning"
@@ -69,8 +68,8 @@ function effect.template(_: SDK.V1)
   return attachment
 end
 
-function effect.emit(sdk: any, ctx: any, attrs: any)
-  return play().emit(sdk, ctx, attrs)
+function forge_lightning.emit(ctx: any, attrs: any)
+  return play().emit(ctx, attrs)
 end
 
-return effect
+return forge_lightning
