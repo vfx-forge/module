@@ -82,6 +82,39 @@ harness.suite(function()
       stop(fake)
     end)
 
+    test("a hook on a piece stays with it through a release, and reads the next holder's writes", function()
+      local fake = start()
+      local part = source("Part")
+
+      part.Transparency = 0.25
+
+      local emit = lifetime.emit(nil)
+      local fx = lifetime.effect(emit, 0, nil)
+      local taken = pool.take(fx, part) :: any
+      local hook = lifetime.hook(taken, "property", "Transparency")
+
+      lifetime.set(lifetime.write(fx, taken, "property", "Transparency"), 0.5)
+
+      expect(hook.Value).toBe(0.5)
+
+      lifetime.clear(emit)
+
+      local again = lifetime.emit(nil)
+      local next = lifetime.effect(again, 0, nil)
+
+      expect(pool.take(next, part)).toBe(taken)
+
+      lifetime.set(lifetime.write(next, taken, "property", "Transparency"), 0.75)
+
+      expect(hook.Connected).toBe(true)
+      expect(hook.Value).toBe(0.75)
+      expect(taken.Transparency).toBe(0.25)
+
+      hook:Disconnect()
+      lifetime.clear(again)
+      stop(fake)
+    end)
+
     test("releasing twice files the instance once", function()
       local fake = start()
       local part = source("Part")

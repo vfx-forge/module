@@ -708,6 +708,8 @@ end
 -- back, since the pool resets the piece itself. A writer left on it (a
 -- randomizer's, whose give-back waits a frame) owned it against the next
 -- holder's writes, and its late leave wrote over the next holder's piece.
+-- A target game code hooks stays, since a hook lives until it disconnects or
+-- the instance is destroyed, and the next holder's writes reach it there.
 -- Only the pool calls this, for a piece it keeps: nothing else changes
 function lifetime.drop(obj: any)
   local sources = TARGETS[obj]
@@ -716,10 +718,10 @@ function lifetime.drop(obj: any)
     return
   end
 
-  TARGETS[obj] = nil
+  local kept = false
 
   for _, names in sources do
-    for _, target in names do
+    for name, target in names do
       for _, w in target.writers do
         w.left = true
 
@@ -732,11 +734,20 @@ function lifetime.drop(obj: any)
 
       table.clear(target.writers)
       target.owner = nil
+      target.first = nil
 
-      if target.hooks ~= nil then
-        quiet(target)
+      if target.hooks == nil then
+        names[name] = nil
+        continue
       end
+
+      kept = true
+      quiet(target)
     end
+  end
+
+  if not kept then
+    TARGETS[obj] = nil
   end
 end
 
