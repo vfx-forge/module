@@ -858,7 +858,10 @@ function harness.query(root: Instance, selector: string): { Instance }
   local out = {}
 
   for _, inst in pool do
-    if inst == root or not inst:IsDescendantOf(root) then
+    -- a destroyed instance stays in the pool, and asking it anything throws
+    local ok, under = pcall(inst.IsDescendantOf, inst, root)
+
+    if inst == root or not ok or not under then
       continue
     end
 
