@@ -682,5 +682,66 @@ harness.suite(function()
         end
       end
     )
+
+    test("an emit while the last one still holds the model is dropped, and one after it ends plays", function()
+      const ATTRS = {
+        SpinTurn = Vector3.new(0, 90, 0),
+        SpinDuration = 2,
+        SpinSpeed = 2,
+        SpinSpeed_Duration = 0,
+        ResetDelay = 0.5,
+        ResetOnFinish = true,
+      }
+      const LANES = { Scale = { start = { tween(1, 0.2) } } }
+
+      -- each frame's pose and scale over three seconds, emitting again after
+      -- frame `again`, and whether that second emit was still running at the end
+      const function run(again: number?): ({ { pivot: CFrame, scale: number } }, boolean)
+        const m = model(ATTRS, LANES)
+        const out = {}
+        local second = nil
+
+        effects.emit(0, m)
+
+        for i = 1, math.round(3 / FRAME) do
+          scheduler.frame(FRAME)
+          table.insert(out, { pivot = PIVOT[m] or CFrame.new(), scale = SCALE[m] or 1 })
+
+          if i == again then
+            second = effects.emit(0, m)
+          end
+        end
+
+        const running = second ~= nil and second.Finished:getStatus() == "Started"
+
+        effects.deinit()
+
+        return out, running
+      end
+
+      const solo = run(nil)
+      const ENDS = math.round(2 / FRAME)
+
+      -- at 1.5 s the first still holds the model until its scale ends at 2.0 s
+      const held, dropped = run(math.round(1.5 / FRAME))
+
+      expect(dropped).toBe(false)
+
+      for i, s in held do
+        samePose(s.pivot, solo[i].pivot, `dropped emit, frame {i}`)
+        near(s.scale, solo[i].scale, `dropped emit, scale at frame {i}`)
+      end
+
+      -- at 2.0 s the first has ended and put the model back, so the second
+      -- plays from the start, frame for frame as the first did
+      const replayed, played = run(ENDS)
+
+      expect(played).toBe(true)
+
+      for i = ENDS + 1, #replayed do
+        samePose(replayed[i].pivot, solo[i - ENDS].pivot, `second emit, frame {i}`)
+        near(replayed[i].scale, solo[i - ENDS].scale, `second emit, scale at frame {i}`)
+      end
+    end)
   end)
 end)
