@@ -8,6 +8,7 @@ local effects = require("@srv/effects")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
 local retime = require("@mod/retime")
+local controller = require("@vfx/controller")
 local spin = require("@vfx/spin")
 local test, expect = harness.test, harness.expect
 
@@ -298,11 +299,11 @@ harness.suite(function()
 
         const turn = setup.attrs.SpinRotation * (setup.attrs.SpinDuration or 0.5)
 
-        samePose(
-          CFrame.fromOrientation(sets.SpinTurn.X, sets.SpinTurn.Y, sets.SpinTurn.Z),
-          CFrame.fromOrientation(turn.X, turn.Y, turn.Z),
-          `setup {n}'s turn`
-        )
+        -- component by component, since a pose cannot tell a turn from one a
+        -- whole turn longer
+        near(sets.SpinTurn.X, turn.X, `setup {n}'s turn in X`)
+        near(sets.SpinTurn.Y, turn.Y, `setup {n}'s turn in Y`)
+        near(sets.SpinTurn.Z, turn.Z, `setup {n}'s turn in Z`)
 
         for key, v in sets do
           m:SetAttribute(key, v)
@@ -321,17 +322,67 @@ harness.suite(function()
       end
     end)
 
-    test("its Turn is how far it turns in all, whatever the duration or a retime makes of its pace", function()
+    test("its Turn is how far it turns in all: a new duration or a retime changes the pace, never how far", function()
       for _, duration in { 1, 2, 3 } do
-        const m = model({ SpinDuration = duration, SpinTurn = Vector3.new(0, 90, 0) })
-        const samples = play(m, 4, nil)
+        const m = model({ SpinDuration = duration, SpinTurn = Vector3.new(0, 90, 0), SpinSpeed_Duration = 0 })
 
-        samePose(samples[#samples].pivot, CFrame.fromOrientation(0, math.pi / 2, 0), `the turn over {duration} s`)
+        -- at a constant Speed of 1 the turn is linear in time
+        const function check(over: number, what: string)
+          for _, s in play(m, 4, nil) do
+            samePose(s.pivot, CFrame.fromOrientation(0, math.rad(90 * math.min(s.t / over, 1)), 0), `{what} at {s.t} s`)
+          end
+        end
+
+        check(duration, `the turn over {duration} s`)
 
         retime.apply(m, 2, 0.5)
+        effects.init({ setup = true } :: any)
+        check(duration / 2, `the turn over {duration} s retimed twice as fast`)
+      end
+    end)
 
-        expect(m:GetAttribute("SpinDuration")).toBe(duration / 2)
-        expect(m:GetAttribute("SpinTurn")).toBe(Vector3.new(0, 90, 0))
+    test("a controller's TimeScale reaches the scale and the rotation alike", function()
+      for _, case in { { scale = 0.5, ends = 4 }, { scale = 2, ends = 1 } } do
+        const m = model({
+          SpinDuration = 2,
+          SpinTurn = Vector3.new(0, 90, 0),
+          SpinSpeed_Duration = 0,
+        }, { Scale = SCALE_LANES })
+
+        registry.register(controller)
+
+        const rule = harness.make("RayValue", m.Parent)
+        rule:AddTag("Controller")
+        rule:SetAttribute("Scope", "ParentAndDescendants")
+        rule:SetAttribute("TimeScale", case.scale)
+        rule:SetAttribute("EmitDuration", 10)
+
+        const env = effects.emit(0, m, rule)
+        const what = `under a TimeScale of {case.scale}`
+
+        for i = 1, math.round(5 / FRAME) do
+          scheduler.frame(FRAME)
+
+          const t = i * FRAME
+          const spun = t * case.scale
+
+          if i % EVERY == 0 then
+            near(SCALE[m], scaleAt(spun), `{what}, the scale at {t} s`)
+            samePose(
+              PIVOT[m],
+              CFrame.fromOrientation(0, math.rad(45 * math.min(spun, 2)), 0),
+              `{what}, the pose at {t} s`
+            )
+          end
+
+          -- the scale's last frame before the end is short of it
+          if math.abs(t - (case.ends - FRAME)) < 1e-9 then
+            assert(SCALE[m] > 0.01, `{what} the scale was done at {t} s`)
+          end
+        end
+
+        env:Clear()
+        effects.deinit()
       end
     end)
   end)
