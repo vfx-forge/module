@@ -367,9 +367,12 @@ local function applyRandomizer(target: Instance, child: legacy_mods.Child, scope
 
   -- an effect of its own on the same emit, so the draw outlives the dispatch
   -- that made it until the next frame and a clear still gives it back. It
-  -- writes the instance dispatch was handed, before the effect reads it and
-  -- before any copy of it is made, so no pooled copy is ever its target and
-  -- it has no holder to end it early (a copy's own queues go through drive)
+  -- writes the instance dispatch was handed, before the effect reads it,
+  -- which may sit in a copy another effect took (a mesh's, a bezier's or a
+  -- shockwave piece's emitNested) and ends before that next frame. Such a
+  -- copy holds this randomizer, a child, so the pool clones it whole for its
+  -- holder and destroys it as the holder lets go: the late give-back lands on
+  -- a copy nobody holds, never on one another effect took (emitters.spec)
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
   local rule = endOf(queue)
   local writer = lifetime.write(fx, target, child.source, child.name, rule)

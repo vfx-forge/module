@@ -14,6 +14,8 @@ local emitters = require("@root/emitters")
 local animator = require("@vfx/animator")
 local lifetime = require("@mod/lifetime")
 local registry = require("@mod/registry")
+local pool = require("@srv/pool")
+local fake_pool = require("@tests/fake_pool")
 local test, expect = harness.test, harness.expect
 
 frame.configure(harness.fakeEncoding, harness.fakeCompression)
@@ -380,6 +382,50 @@ harness.suite(function()
       harness.render(0.25)
 
       expect(near(part.Transparency, 0.75)).toBe(true)
+    end)
+
+    -- a randomizer's give-back is deferred a frame, and dispatch is handed
+    -- what an effect copied from the pool (a mesh's, a bezier's or a
+    -- shockwave piece's emitNested), which can end first. A copy holding a
+    -- randomizer has a child, so the pool clones it whole for its holder and
+    -- destroys it as the holder lets go: no other effect ever takes it, and
+    -- the late give-back lands on a copy nobody holds
+    test("a randomizer's late give-back never lands on a pooled copy another effect took", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      harness.reset()
+
+      local fake = fake_pool.start({ Part = { "Transparency" } })
+      local source = harness.make("Part")
+
+      source.Transparency = 0.5
+
+      local child = tweener(source, "Transparency", 0.9, 0.9, 1)
+      child:AddTag("PropertyRandomizer")
+
+      local first = {}
+      local copy = pool.take(first, source) :: any
+
+      emit(copy)
+
+      expect(near(copy.Transparency, 0.9)).toBe(true)
+
+      -- the piece ends before the next frame, where the give-back waits
+      lifetime.releasePlain(first)
+
+      local second = {}
+      local again = pool.take(second, source) :: any
+
+      expect(again ~= copy).toBe(true)
+      expect(copy.Parent).toBe(nil)
+
+      task.wait()
+      harness.render(0.1)
+
+      expect(again.Transparency).toBe(0.5)
+
+      lifetime.releasePlain(second)
+      fake_pool.stop(fake)
     end)
 
     test("a randomizer is drawn once, by the prologue of the dispatch that finds it", function()
