@@ -34,15 +34,22 @@ spin.attributes = {
     :label("ResetDelay")
     :hint("Extra seconds to hold the finished pose before resetting."),
   ResetOnFinish = knob(true):label("ResetOnFinish"):hint("Whether to reset the effect state after it finishes."),
-  SpinRotation = knob(vector.zero)
-    :unit("perSecond")
-    :label("Rotation")
-    :hint("Per-axis spin speed in degrees per second."),
+  -- how far the model turns in all, so a new duration or a retime changes how
+  -- fast it gets there and never how far. a model saved before Turn was a row
+  -- stores a rate instead, which the rule turns into the same turn until the
+  -- plugin writes one (spin.upgrade)
+  SpinTurn = knob(function(_, attrs)
+      return attrs.SpinRotation * attrs.SpinDuration
+    end)
+    :label("Turn")
+    :hint("Degrees the model turns in all over its duration, per axis."),
+  -- degrees a second for SpinDuration, as every model before Turn stored it
+  SpinRotation = knob(vector.zero):unit("perSecond"):hidden(always),
   SpinDuration = knob(0.5)
     :min(0)
     :unit("seconds")
     :label("Duration")
-    :hint("Seconds the rotation sweep takes to complete."),
+    :hint("Seconds the model takes to make its turn at a Speed of 1."),
   SyncPosition = knob(false):label("SyncPosition"):hint("Whether the effect follows the emitter's position."),
   Scale = knob(1):min(MIN_SCALE):mod():label("Scale"):hint("Model scale factor over the spin."),
   -- an unauthored model rests on a ramp from nought to one, and that ramp is
@@ -53,7 +60,7 @@ spin.attributes = {
       return attrs.SpinSpeedDuration
     end))
     :label("Speed")
-    :hint("Multiplier on the spin's clock over its duration."),
+    :hint("Multiplier on how fast the model makes its turn. It ramps in from 0 by default."),
   SpinSpeedDuration = knob(0.1):min(0):aliases("SpinSpeed_Duration"):unit("seconds"):hidden(always),
 }
 
@@ -61,20 +68,41 @@ spin.properties = {}
 
 spin.layout = {
   { title = "Emit", entries = { "EmitDelay", "ResetDelay", "ResetOnFinish" } },
-  { title = "Spin", entries = { "SpinRotation", "SpinDuration", "SpinSpeed", "SyncPosition", "Scale" } },
+  { title = "Spin", entries = { "SpinTurn", "SpinDuration", "SpinSpeed", "SyncPosition", "Scale" } },
 }
 
 function spin.duration(_, attrs: any)
   return attrs.SpinDuration
 end
 
--- a model nothing moves: no rotation, a scale resting at one, no following.
--- a speed alone turns nothing
+-- the turn as a vector, none for a stored value that is not one: the row's
+-- rule takes no type, so the reader checks nothing it reads under it
+const function turnOf(attrs: any): vector
+  const turn = attrs.SpinTurn
+
+  return if knob.kindOf(turn) == "Vector3" then turn else vector.zero
+end
+
+-- what saving the model the current way writes and removes: the turn its rate
+-- makes over its duration, where it stores a rate and no turn. nil for a model
+-- stored the current way. an instance whose turn and rate are both stored keeps
+-- both, the turn playing, since the rate is then what an older plugin wrote
+-- after the conversion and nothing says which of the two to trust
+function spin.upgrade(ref: Instance): ({ [string]: any }?, { string }?)
+  if ref:GetAttribute("SpinTurn") ~= nil or ref:GetAttribute("SpinRotation") == nil then
+    return nil, nil
+  end
+
+  const attrs = reader.resolve(spin, { ref = ref, obj = ref, effect = spin })
+  const turn = turnOf(attrs)
+
+  return { SpinTurn = Vector3.new(turn.X, turn.Y, turn.Z) }, { "SpinRotation" }
+end
+
+-- a model nothing moves: no turn, a scale resting at one, no following. a
+-- speed alone turns nothing
 function spin.static(attrs: any)
-  return attrs.SpinRotation == vector.zero
-    and not attrs.Scale.animated
-    and attrs.Scale.value == 1
-    and not attrs.SyncPosition
+  return turnOf(attrs) == vector.zero and not attrs.Scale.animated and attrs.Scale.value == 1 and not attrs.SyncPosition
 end
 
 function spin.emit(ctx: reader.Ctx, attrs: any)
@@ -85,7 +113,7 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
     return
   end
 
-  local rotation = attrs.SpinRotation * utility.DEG_TO_RAD
+  local turn = turnOf(attrs) * utility.DEG_TO_RAD
 
   local resetDelay = attrs.ResetDelay
   local resetOnFinish = attrs.ResetOnFinish
@@ -137,12 +165,10 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
     end)
   end
 
-  rotation *= duration
-
   tween.play(scope, curve.new(duration + resetDelay, "linear"), function(_, _, elapsed: number)
     local alpha = timing_common.progress(elapsed, duration)
 
-    local r = rotation * alpha
+    local r = turn * alpha
     local cf = (if parent and sync then utility.getTransformedOriginExtents(parent) else originalPivot)
       * CFrame.fromOrientation(r.X, r.Y, r.Z)
 

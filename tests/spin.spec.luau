@@ -7,6 +7,7 @@ local harness = require("@tests/harness")
 local effects = require("@srv/effects")
 local registry = require("@mod/registry")
 local scheduler = require("@mod/scheduler")
+local retime = require("@mod/retime")
 local spin = require("@vfx/spin")
 local test, expect = harness.test, harness.expect
 
@@ -58,6 +59,8 @@ const TURNED = {
   fast = { 0.148935880, 0.391654051, 0.641654001, 0.891653951 },
   -- SpinDuration 1.5, ResetDelay 0.5, a stored speed lane 0.5 to 1.5 over 1 s
   laned = { 0.106770826, 0.255208330, 0.445312511, 0.677083331, 0.927083357 },
+  -- SpinDuration and the speed left unset, ResetOnFinish on
+  unset = { 0.477050616, 0.977050820 },
 }
 
 local function tween(a: number, b: number, opts: { [string]: any }?)
@@ -168,6 +171,43 @@ local function poseAt(rate: Vector3, duration: number, turned: number): CFrame
   return CFrame.fromOrientation(r.X, r.Y, r.Z)
 end
 
+-- models saved as a rate, each with how far the pre-change spin had turned
+-- every 0.25 s and where it stood once that list ran out
+const RATED = {
+  {
+    turned = TURNED.ramped,
+    attrs = {
+      SpinDuration = 2,
+      SpinRotation = Vector3.new(360, 360, 360),
+      SpinSpeed = 1,
+      SpinSpeed_Duration = 2,
+    },
+  },
+  { turned = TURNED.plain, attrs = { SpinDuration = 2, SpinRotation = Vector3.new(0, 45, 0) } },
+  {
+    turned = TURNED.fast,
+    attrs = {
+      SpinDuration = 2,
+      SpinRotation = Vector3.new(20, 45, -10),
+      SpinSpeed = 2,
+      SpinSpeed_Duration = 0.5,
+    },
+  },
+  {
+    turned = TURNED.laned,
+    attrs = { SpinDuration = 1.5, ResetDelay = 0.5, SpinRotation = Vector3.new(0, 60, 0) },
+    mods = { SpinSpeed = { start = { tween(0.5, 1.5, { duration = 1 }) } } },
+  },
+  -- no duration stored, so the default half second, and put back at the end
+  { turned = TURNED.unset, rest = 0, attrs = { ResetOnFinish = true, SpinRotation = Vector3.new(0, 180, 0) } },
+}
+
+local function poseOf(setup: any, i: number): CFrame
+  const turned = setup.turned[i] or setup.rest or 1
+
+  return poseAt(setup.attrs.SpinRotation, setup.attrs.SpinDuration or 0.5, turned)
+end
+
 harness.suite(function()
   harness.describe("a spin model's clocks", function()
     test("its Scale runs SpinDuration of real time while a ramping Speed stretches only the rotation", function()
@@ -235,42 +275,59 @@ harness.suite(function()
       end
     end)
 
-    test("its rotation is the pre-change rotation at every sampled time", function()
-      const SETUPS = {
-        {
-          turned = TURNED.ramped,
-          attrs = {
-            SpinDuration = 2,
-            SpinRotation = Vector3.new(360, 360, 360),
-            SpinSpeed = 1,
-            SpinSpeed_Duration = 2,
-          },
-        },
-        { turned = TURNED.plain, attrs = { SpinDuration = 2, SpinRotation = Vector3.new(0, 45, 0) } },
-        {
-          turned = TURNED.fast,
-          attrs = {
-            SpinDuration = 2,
-            SpinRotation = Vector3.new(20, 45, -10),
-            SpinSpeed = 2,
-            SpinSpeed_Duration = 0.5,
-          },
-        },
-        {
-          turned = TURNED.laned,
-          attrs = { SpinDuration = 1.5, ResetDelay = 0.5, SpinRotation = Vector3.new(0, 60, 0) },
-          mods = { SpinSpeed = { start = { tween(0.5, 1.5, { duration = 1 }) } } },
-        },
-      }
-
-      for n, setup in SETUPS do
+    test("a model saved as a rate turns as it did before Turn was a row", function()
+      for n, setup in RATED do
         const m = model(setup.attrs, setup.mods)
-        const rate = setup.attrs.SpinRotation
-        const duration = setup.attrs.SpinDuration
 
         for i, s in play(m, 4, nil) do
-          samePose(s.pivot, poseAt(rate, duration, setup.turned[i] or 1), `setup {n} at {s.t} s`)
+          samePose(s.pivot, poseOf(setup, i), `setup {n} at {s.t} s`)
         end
+      end
+    end)
+
+    test("converting a model saved as a rate writes its turn and plays the same pose at every sampled time", function()
+      for n, setup in RATED do
+        const m = model(setup.attrs, setup.mods)
+        const sets, removes = spin.upgrade(m)
+
+        assert(sets ~= nil and removes ~= nil, `setup {n} was not converted`)
+
+        const turn = setup.attrs.SpinRotation * (setup.attrs.SpinDuration or 0.5)
+
+        samePose(
+          CFrame.fromOrientation(sets.SpinTurn.X, sets.SpinTurn.Y, sets.SpinTurn.Z),
+          CFrame.fromOrientation(turn.X, turn.Y, turn.Z),
+          `setup {n}'s turn`
+        )
+
+        for key, v in sets do
+          m:SetAttribute(key, v)
+        end
+
+        for _, key in removes do
+          m:SetAttribute(key, nil)
+        end
+
+        expect(m:GetAttribute("SpinRotation")).toBe(nil)
+        expect(spin.upgrade(m)).toBe(nil)
+
+        for i, s in play(m, 4, nil) do
+          samePose(s.pivot, poseOf(setup, i), `converted setup {n} at {s.t} s`)
+        end
+      end
+    end)
+
+    test("its Turn is how far it turns in all, whatever the duration or a retime makes of its pace", function()
+      for _, duration in { 1, 2, 3 } do
+        const m = model({ SpinDuration = duration, SpinTurn = Vector3.new(0, 90, 0) })
+        const samples = play(m, 4, nil)
+
+        samePose(samples[#samples].pivot, CFrame.fromOrientation(0, math.pi / 2, 0), `the turn over {duration} s`)
+
+        retime.apply(m, 2, 0.5)
+
+        expect(m:GetAttribute("SpinDuration")).toBe(duration / 2)
+        expect(m:GetAttribute("SpinTurn")).toBe(Vector3.new(0, 90, 0))
       end
     end)
   end)
