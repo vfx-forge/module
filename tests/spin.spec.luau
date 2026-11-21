@@ -425,4 +425,87 @@ harness.suite(function()
       end
     end)
   end)
+
+  harness.describe("a spin model's end", function()
+    test("SyncPosition follows the parent for the whole emit, after a fast rotation has ended too", function()
+      const m = model({
+        SpinTurn = Vector3.new(0, 90, 0),
+        SpinDuration = 2,
+        SpinSpeed = 2,
+        SpinSpeed_Duration = 0,
+        SyncPosition = true,
+      }, { Scale = { start = { tween(1, 0.2) } } })
+
+      const part = harness.make("Part", m.Parent) :: Part
+      part.Anchored = true
+      m.Parent = part
+
+      const env = effects.emit(0, m)
+      local followed = 0
+
+      for i = 1, 64 do
+        part.CFrame = CFrame.new(i * FRAME * 10, 0, 0)
+        scheduler.frame(FRAME)
+
+        if env.Finished:getStatus() ~= "Started" then
+          break
+        end
+
+        near(PIVOT[m].X, part.CFrame.X, `the model's X at {i * FRAME} s`)
+        followed = i
+      end
+
+      -- the rotation ended at 1 s; the scale holds the emit to 2 s
+      assert(followed * FRAME >= 1.96875, `followed only to {followed * FRAME} s`)
+
+      effects.deinit()
+    end)
+
+    test(
+      "the emit ends, and ResetOnFinish puts the model back, once both the scale and the rotation have ended",
+      function()
+        for _, case in
+          {
+            { speed = 0.5, delay = 0, ends = 4 },
+            { speed = 0.5, delay = 0.5, ends = 5 },
+            { speed = 1, delay = 0, ends = 2 },
+            { speed = 1, delay = 0.5, ends = 2.5 },
+            { speed = 2, delay = 0, ends = 2 },
+            { speed = 2, delay = 0.5, ends = 2 },
+          }
+        do
+          const m = model({
+            SpinTurn = Vector3.new(0, 90, 0),
+            SpinDuration = 2,
+            SpinSpeed = case.speed,
+            SpinSpeed_Duration = 0,
+            ResetDelay = case.delay,
+            ResetOnFinish = true,
+          }, { Scale = { start = { tween(1, 0.2) } } })
+
+          const env = effects.emit(0, m)
+          const what = `Speed {case.speed}, ResetDelay {case.delay}`
+          local endedAt: number? = nil
+
+          for i = 1, math.round(6 / FRAME) do
+            scheduler.frame(FRAME)
+
+            if env.Finished:getStatus() ~= "Started" then
+              endedAt = i * FRAME
+              break
+            end
+
+            -- held at the end pose, never put back early
+            assert(SCALE[m] < 1, `{what}: the scale was put back at {i * FRAME} s`)
+          end
+
+          expect(endedAt).toBe(case.ends)
+          near(SCALE[m], 1, `{what}: the scale put back`)
+          samePose(PIVOT[m], CFrame.new(), `{what}: the pose put back`)
+
+          effects.deinit()
+        end
+      end
+    )
+  end)
 end)

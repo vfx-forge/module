@@ -214,15 +214,42 @@ function spin.emit(ctx: reader.Ctx, attrs: any)
     end)
   end
 
-  tween.play(scope, curve.new(duration + resetDelay, "linear"), function(_, _, elapsed: number)
-    local alpha = timing_common.progress(elapsed, duration)
+  -- where the turn stands, which a synced model keeps following its parent
+  -- with once the rotation is done and the scale still runs
+  local turned = CFrame.identity
+  local done = false
+  const rotated = lifetime.add(ended)
 
-    local r = turn * alpha
-    local cf = (if parent and sync then utility.getTransformedOriginExtents(parent) else originalPivot)
-      * CFrame.fromOrientation(r.X, r.Y, r.Z)
+  local function base(): CFrame
+    return if parent and sync then utility.getTransformedOriginExtents(parent) else originalPivot
+  end
 
-    ref:PivotTo(cf)
-  end, scope.depth, lifetime.add(ended), turning)
+  tween.play(
+    scope,
+    curve.new(duration + resetDelay, "linear"),
+    function(_, _, elapsed: number)
+      local alpha = timing_common.progress(elapsed, duration)
+
+      local r = turn * alpha
+      turned = CFrame.fromOrientation(r.X, r.Y, r.Z)
+
+      ref:PivotTo(base() * turned)
+    end,
+    scope.depth,
+    function()
+      done = true
+      rotated()
+    end,
+    turning
+  )
+
+  if parent and sync then
+    lifetime.step(scope, function()
+      if done then
+        ref:PivotTo(base() * turned)
+      end
+    end, "follow")
+  end
 
   lifetime.awaitJoin(ended)
 end
