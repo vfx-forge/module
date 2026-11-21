@@ -86,7 +86,7 @@ function rows.glowing(style: string, glow: { value: number, animated: boolean })
 end
 
 rows.attributes = {
-  EmitDelay = knob(0):min(0):unit("seconds"):label("Delay"):hint("Seconds before the first bolt strikes."),
+  EmitDelay = knob(0):min(0):unit("seconds"):ranged():label("Delay"):hint("Seconds before the first bolt strikes."),
   EmitDuration = knob(0)
     :min(0)
     :unit("seconds")

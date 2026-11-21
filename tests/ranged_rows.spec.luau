@@ -126,6 +126,39 @@ harness.suite(function()
       end
     end)
 
+    test("the lightning's delay is ranged, and its length counts the delay it drew", function()
+      const lightning = require("@vfx/forge_lightning") :: any
+      const obj = Instance.new("Attachment")
+
+      obj:SetAttribute("EmitDelay", 0.2)
+      obj:SetAttribute(knob.maxOf("EmitDelay"), 0.6)
+
+      expect(lightning.attributes.EmitDelay.isRanged).toBe(true)
+
+      const bare = Instance.new("Attachment")
+      const plain = reader.resolve(lightning, { ref = bare, obj = bare, effect = lightning })
+      const seen: { [number]: boolean } = {}
+      local kinds = 0
+
+      for _ = 1, 16 do
+        const ctx = { ref = obj, obj = obj, effect = lightning }
+        const attrs = reader.resolve(lightning, ctx)
+        const delay = attrs.EmitDelay
+
+        expect(delay >= 0.2 and delay <= 0.6).toBe(true)
+        expect(math.abs(lightning.duration(ctx, attrs, {}) - lightning.duration(ctx, plain, {}) - delay) < 1e-9).toBe(
+          true
+        )
+
+        if not seen[delay] then
+          seen[delay] = true
+          kinds += 1
+        end
+      end
+
+      expect(kinds > 1).toBe(true)
+    end)
+
     test("a retime scales the longest with the row", function()
       registry.clear()
       registry.configure({ query = harness.query })
