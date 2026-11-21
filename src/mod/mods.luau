@@ -269,12 +269,14 @@ function mods.roll(queue: { any }, env: { [string]: any }?): Rolls
     local startDrawn = m.start ~= nil and value.isDraw(m.start)
     local finishDrawn = m.finish ~= nil and value.isDraw(m.finish)
     local waitDrawn = type(m.wait) == "table" and value.isDraw(m.wait)
+    local rateDrawn = modifiers.drawsRate(m)
 
-    if startDrawn or finishDrawn or waitDrawn then
+    if startDrawn or finishDrawn or waitDrawn or rateDrawn then
       picks[i] = {
         start = if startDrawn then rng:NextNumber() else nil,
         finish = if finishDrawn then rng:NextNumber() else nil,
         wait = if waitDrawn then rng:NextNumber() else nil,
+        fps = if rateDrawn then rng:NextNumber() else nil,
       }
     end
   end
@@ -942,6 +944,10 @@ local function perPiece(queue: { any }, event: boolean): boolean
     end
 
     if type(m.wait) == "table" and value.isDraw(m.wait) then
+      return true
+    end
+
+    if modifiers.drawsRate(m) then
       return true
     end
 

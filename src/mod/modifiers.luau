@@ -5,8 +5,9 @@ local value = require("@mod/value")
 local modifiers = {}
 
 -- the [0,1] draw behind each drawn endpoint of one modifier, made once per
--- emitted instance beside ctx.draws. a delay's wait is drawn the same way
-export type Picks = { start: number?, finish: number?, wait: number? }
+-- emitted instance beside ctx.draws. a delay's wait is drawn the same way, and
+-- so is a rate drawn between two
+export type Picks = { start: number?, finish: number?, wait: number?, fps: number? }
 
 -- a randomizer's draw is one alpha, except over a Vector3, where it is one
 -- alpha PER COMPONENT: a legacy Min/Max pair over a size means three
@@ -258,6 +259,31 @@ local function progressAtPhase(ramp: any, area: { number }?, steps: number): num
   return (lo + (steps - a) / (b - a)) / PHASE_SAMPLES
 end
 
+-- whether a modifier draws its rate once per emitted instance: `fps` is the
+-- slowest it steps and `fpsMax` the fastest. the field rides the codec's
+-- `extra`, so a runtime that predates it steps at `fps` every emit. only a
+-- plain rate draws; a ramp names its own two ends and draws nothing
+function modifiers.drawsRate(m: any): boolean
+  local a, b = m.fps, m.fpsMax
+
+  if typeof(a) ~= "number" or typeof(b) ~= "number" or a == b then
+    return false
+  end
+
+  return a == a and b == b and a > 0 and b > 0 and a ~= math.huge and b ~= math.huge
+end
+
+-- the rate a modifier steps at, its draw landed on `pick` when it draws one.
+-- with no pick it steps at `fps`, which is what a caller with no rolls, such as
+-- the plugin's bake, reads
+function modifiers.rateOf(m: any, pick: number?): any
+  if pick == nil or not modifiers.drawsRate(m) then
+    return m.fps
+  end
+
+  return m.fps + (m.fpsMax - m.fps) * pick
+end
+
 -- how often a modifier is allowed to move, in steps per second. a knob with no
 -- fps runs at whatever rate its effect steps at, which is the frame rate; naming
 -- one holds it on each step until the next is due, which is what a stylized
@@ -268,9 +294,9 @@ end
 -- 12fps steps at 0, and 1/12 is past the end, so the knob would sit at 83% of
 -- its travel and stay there. a modifier that never reaches what it was told to
 -- reach is worse than one that arrives a fraction of a step early
-local function steppedProgress(m: any, d: number?, elapsed: number): number
+local function steppedProgress(m: any, d: number?, elapsed: number, pick: number?): number
   local progress = progressOf(d, elapsed)
-  local fps = m.fps
+  local fps = modifiers.rateOf(m, pick)
 
   if progress >= 1 then
     return progress
@@ -659,7 +685,7 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
 
     startVal, finishVal = unfed(m, startVal, finishVal)
 
-    local progress = steppedProgress(m, durationOf(m, i, ctx, lengths), elapsed - offset)
+    local progress = steppedProgress(m, durationOf(m, i, ctx, lengths), elapsed - offset, picks and picks.fps)
     local alpha: number
 
     if m.kind == "randomizer" then
@@ -853,7 +879,9 @@ function modifiers.sample(steps: { Step }, ctx: Ctx, elapsed: number, base: any)
 
     -- with no rate named, steppedProgress is the plain progress
     if m.fps ~= nil then
-      progress = steppedProgress(m, d, since)
+      local picks = if ctx.picks then ctx.picks[step.index] else nil
+
+      progress = steppedProgress(m, d, since, picks and picks.fps)
     elseif d == nil then
       progress = if since < 0 then 0 else 1
     else

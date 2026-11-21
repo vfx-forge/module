@@ -1,5 +1,6 @@
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
+local modifiers = require("@mod/modifiers")
 local codec = require("@mod/modifier_codec")
 local frame = require("@mod/modifier_frame")
 local value = require("@mod/value")
@@ -304,5 +305,102 @@ harness.suite(function()
     expect(mods.kindOf(vector.create(1, 2, 3))).toBe("Vector3")
     expect(mods.kindOf(Vector3.new(1, 2, 3))).toBe("Vector3")
     expect(mods.kindOf(1)).toBe("number")
+  end)
+
+  -- a rate drawn between two: `fps` is the slowest and `fpsMax`, riding the
+  -- codec's extra fields, the fastest. a runtime that predates the draw
+  -- ignores fpsMax and steps at fps, so an entry never stores its rate as a
+  -- table a runtime could not step
+  harness.describe("a rate drawn between two", function()
+    local function stepped(fpsMax: number?)
+      return {
+        {
+          kind = "tween",
+          chain = false,
+          duration = 1,
+          start = value.lit(0),
+          finish = value.lit(100),
+          fps = 12,
+          fpsMax = fpsMax,
+        },
+      }
+    end
+
+    -- the rate a row steps at, read off its first step, and whether every
+    -- frame of the run sits on that one grid
+    local function rateOf(track: any): (number, boolean)
+      local first = 0
+
+      for f = 1, 600 do
+        local v = track.at(f / 600)
+
+        if v > 0 then
+          first = v
+
+          break
+        end
+      end
+
+      local rate = 100 / first
+
+      for f = 0, 599 do
+        local t = f / 600
+
+        if math.abs(track.at(t) - 100 * math.floor(t * rate + 1e-9) / rate) > 1e-6 then
+          return rate, false
+        end
+      end
+
+      return rate, true
+    end
+
+    local function emit(queue: { any }, seed: number): any
+      local obj = authored("Width", queue)
+
+      mods.random = Random.new(seed)
+
+      local track = mods.track(obj, "attribute", "Width", 0, 1)
+
+      mods.random = nil
+
+      return track
+    end
+
+    -- what a runtime before the draw reads of the entry is a plain fps, so it
+    -- steps at the slowest; a caller with no rolls, such as the bake, does too
+    test("plays the slowest rate where nothing draws", function()
+      local decoded = codec.decode(codec.encode({ v = 1, queue = stepped(30) })).lanes.start[1]
+
+      expect(decoded.fps).toBe(12)
+      expect(decoded.fpsMax).toBe(30)
+      expect(near(modifiers.evaluate(stepped(30), 0.1, { duration = 1 }) :: number, 100 / 12)).toBe(true)
+      expect(
+        near(
+          modifiers.evaluate(stepped(30), 0.1, { duration = 1 }) :: number,
+          modifiers.evaluate(stepped(nil), 0.1, { duration = 1 }) :: number
+        )
+      ).toBe(true)
+    end)
+
+    test("draws within its two rates and holds the draw for the whole emit", function()
+      local seen = {}
+
+      for seed = 1, 8 do
+        local rate, onOneGrid = rateOf(emit(stepped(30), seed))
+
+        expect(rate >= 12 - 1e-6 and rate <= 30 + 1e-6).toBe(true)
+        expect(onOneGrid).toBe(true)
+
+        seen[math.round(rate * 1000)] = true
+      end
+
+      local kinds = 0
+
+      for _ in seen do
+        kinds += 1
+      end
+
+      expect(kinds > 1).toBe(true)
+    end)
   end)
 end)
