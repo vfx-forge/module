@@ -908,6 +908,10 @@ finish = function(inst: Instance, record: Taken)
     return
   end
 
+  -- kept for another holder: what still writes it from the last use lets
+  -- it go now, not a frame later on the next holder's piece
+  lifetime.drop(inst)
+
   for _, child in pool.engine.children(inst) do
     if not rescue(child) then
       child:Destroy()

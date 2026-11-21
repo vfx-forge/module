@@ -428,6 +428,79 @@ harness.suite(function()
       fake_pool.stop(fake)
     end)
 
+    -- lightning's Head mode takes its first segment alone, a single the
+    -- pool keeps on its stack, moves the nested children onto it and emits
+    -- them from it: a randomizer there writes the stacked piece, which the
+    -- bolt's end gives back and another effect can take in the same frame.
+    -- The randomizer's writer, still on the piece and of a higher priority
+    -- than the new holder's, held it a frame against the new holder's writes
+    test("a randomizer on a stacked piece lets it go with the piece, before another effect takes it", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      harness.reset()
+
+      local fake = fake_pool.start({ Part = { "Transparency" } })
+      local source = harness.make("Part")
+
+      source.Transparency = 0.5
+
+      local randomizer = tweener(source, "Transparency", 0.9, 0.9, 1)
+      randomizer:AddTag("PropertyRandomizer")
+
+      local function emitAt(root: Instance, priority: number)
+        local em = lifetime.emit(nil)
+        em.priority = priority
+
+        lifetime.run(lifetime.effect(em, 0, nil), function(scope)
+          emitters.dispatch(root, scope, { unc = {}, ref = {}, held = {} }, registry.of(root))
+        end)
+
+        for _, hit in registry.scan(root, registry.of(root)) do
+          lifetime.run(lifetime.effect(em, 0, nil), function(scope)
+            emitters.dispatch(hit.instance, scope, { unc = {}, ref = {}, held = {} }, hit.effect)
+          end)
+        end
+
+        lifetime.seal(em)
+      end
+
+      local first = {}
+      local whole = pool.take(first, source) :: any
+      local piece = pool.take(first, source, true) :: any
+
+      for _, child in whole:GetChildren() do
+        child.Parent = piece
+      end
+
+      emitAt(piece, 1)
+
+      expect(near(piece.Transparency, 0.9)).toBe(true)
+
+      lifetime.releasePlain(first)
+
+      local second = {}
+      local again = pool.take(second, source, true) :: any
+
+      expect(again).toBe(piece)
+
+      local own = tweener(again, "Transparency", 0.2, 0.2, 1)
+      own:AddTag("PropertyRandomizer")
+
+      emitAt(again, 0)
+
+      expect(near(again.Transparency, 0.2)).toBe(true)
+
+      -- a frame on, the new holder's own randomizer gives back what the
+      -- piece was when it took it, and nothing of the last use is left
+      task.wait()
+      harness.render(0.1)
+
+      expect(near(again.Transparency, 0.5)).toBe(true)
+
+      lifetime.releasePlain(second)
+      fake_pool.stop(fake)
+    end)
+
     test("a randomizer is drawn once, by the prologue of the dispatch that finds it", function()
       registry.clear()
       registry.configure({ query = harness.query })

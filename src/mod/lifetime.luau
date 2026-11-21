@@ -703,6 +703,43 @@ function lifetime.set(w: writer, v: any)
   return land(target, v)
 end
 
+-- a pooled piece given back to its stack, which another effect may take in
+-- the same frame: every writer still on it leaves at once and puts nothing
+-- back, since the pool resets the piece itself. A writer left on it (a
+-- randomizer's, whose give-back waits a frame) owned it against the next
+-- holder's writes, and its late leave wrote over the next holder's piece.
+-- Only the pool calls this, for a piece it keeps: nothing else changes
+function lifetime.drop(obj: any)
+  local sources = TARGETS[obj]
+
+  if sources == nil then
+    return
+  end
+
+  TARGETS[obj] = nil
+
+  for _, names in sources do
+    for _, target in names do
+      for _, w in target.writers do
+        w.left = true
+
+        local writers = w.fx.emit.writers
+
+        if writers then
+          swapRemove(writers, w)
+        end
+      end
+
+      table.clear(target.writers)
+      target.owner = nil
+
+      if target.hooks ~= nil then
+        quiet(target)
+      end
+    end
+  end
+end
+
 -- the writer gives the target up, and the next owner takes it from where
 -- that one is. the last to leave puts back what the target goes back to
 function lifetime.leave(w: writer)
