@@ -123,6 +123,10 @@ type Sample = { t: number, scale: number, pivot: CFrame, running: boolean }
 
 -- emits the model and samples it every 0.25 s for `seconds`
 local function play(m: Model, seconds: number, before: ((env: any) -> ())?): { Sample }
+  -- each play starts from the pose and scale the model was made with
+  PIVOT[m] = nil
+  SCALE[m] = nil
+
   const env = effects.emit(0, m)
 
   if before ~= nil then
@@ -329,6 +333,43 @@ harness.suite(function()
         expect(m:GetAttribute("SpinDuration")).toBe(duration / 2)
         expect(m:GetAttribute("SpinTurn")).toBe(Vector3.new(0, 90, 0))
       end
+    end)
+  end)
+
+  harness.describe("a spin model's turn and its rate", function()
+    test("a rate stored beside a turn is what plays, and converting folds it into the turn", function()
+      const m = model({
+        SpinTurn = Vector3.new(0, 90, 0),
+        SpinRotation = Vector3.new(0, 10, 0),
+        SpinDuration = 2,
+        SpinSpeed_Duration = 0,
+      })
+
+      const function check(samples: { Sample }, what: string)
+        for _, s in samples do
+          samePose(s.pivot, CFrame.fromOrientation(0, math.rad(10 * math.min(s.t, 2)), 0), `{what} at {s.t} s`)
+        end
+      end
+
+      check(play(m, 3, nil), "the rate beside a turn")
+
+      const sets, removes = spin.upgrade(m)
+
+      assert(sets ~= nil and removes ~= nil, "the rate was not folded in")
+      near(sets.SpinTurn.Y, 20, "the folded turn")
+
+      for key, v in sets do
+        m:SetAttribute(key, v)
+      end
+
+      for _, key in removes do
+        m:SetAttribute(key, nil)
+      end
+
+      expect(spin.upgrade(m)).toBe(nil)
+
+      effects.init({ setup = true } :: any)
+      check(play(m, 3, nil), "the folded turn")
     end)
   end)
 end)

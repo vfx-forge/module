@@ -35,9 +35,9 @@ spin.attributes = {
     :hint("Extra seconds to hold the finished pose before resetting."),
   ResetOnFinish = knob(true):label("ResetOnFinish"):hint("Whether to reset the effect state after it finishes."),
   -- how far the model turns in all, so a new duration or a retime changes how
-  -- fast it gets there and never how far. a model saved before Turn was a row
-  -- stores a rate instead, which the rule turns into the same turn until the
-  -- plugin writes one (spin.upgrade)
+  -- fast it gets there and never how far. a model storing a rate plays that
+  -- instead (onRate), the same turn as before, until the plugin folds it in
+  -- (spin.upgrade)
   SpinTurn = knob(function(_, attrs)
       return attrs.SpinRotation * attrs.SpinDuration
     end)
@@ -75,45 +75,54 @@ function spin.duration(_, attrs: any)
   return attrs.SpinDuration
 end
 
+-- a model stores a rate, degrees a second for SpinDuration, when it was saved
+-- before Turn was a row, or when something older wrote one since: an older
+-- plugin's Rotation row, an old script, a v2 randomizer child. a stored rate
+-- is the newest intent there is, so it plays whatever turn is stored beside it
+const function onRate(ref: Instance): boolean
+  return ref:GetAttribute("SpinRotation") ~= nil
+end
+
 -- the turn as a vector, none for a stored value that is not one: the row's
 -- rule takes no type, so the reader checks nothing it reads under it
-const function turnOf(attrs: any): vector
-  const turn = attrs.SpinTurn
+const function turnOf(ref: Instance, attrs: any): vector
+  const turn = if onRate(ref) then attrs.SpinRotation * attrs.SpinDuration else attrs.SpinTurn
 
   return if knob.kindOf(turn) == "Vector3" then turn else vector.zero
 end
 
--- what saving the model the current way writes and removes: the turn its rate
--- makes over its duration, where it stores a rate and no turn. nil for a model
--- stored the current way. an instance whose turn and rate are both stored keeps
--- both, the turn playing, since the rate is then what an older plugin wrote
--- after the conversion and nothing says which of the two to trust
+-- what saving the model the current way writes and removes: the turn its
+-- stored rate makes over its duration, written over any turn stored beside it,
+-- and the rate gone. nil for a model storing no rate
 function spin.upgrade(ref: Instance): ({ [string]: any }?, { string }?)
-  if ref:GetAttribute("SpinTurn") ~= nil or ref:GetAttribute("SpinRotation") == nil then
+  if not onRate(ref) then
     return nil, nil
   end
 
   const attrs = reader.resolve(spin, { ref = ref, obj = ref, effect = spin })
-  const turn = turnOf(attrs)
+  const turn = turnOf(ref, attrs)
 
   return { SpinTurn = Vector3.new(turn.X, turn.Y, turn.Z) }, { "SpinRotation" }
 end
 
 -- a model nothing moves: no turn, a scale resting at one, no following. a
 -- speed alone turns nothing
-function spin.static(attrs: any)
-  return turnOf(attrs) == vector.zero and not attrs.Scale.animated and attrs.Scale.value == 1 and not attrs.SyncPosition
+function spin.static(attrs: any, ref: Instance)
+  return turnOf(ref, attrs) == vector.zero
+    and not attrs.Scale.animated
+    and attrs.Scale.value == 1
+    and not attrs.SyncPosition
 end
 
 function spin.emit(ctx: reader.Ctx, attrs: any)
   local ref = ctx.ref :: Model
   local scope = ctx.scope
 
-  if lifetime.lock(scope, ref) or spin.static(attrs) then
+  if lifetime.lock(scope, ref) or spin.static(attrs, ref) then
     return
   end
 
-  local turn = turnOf(attrs) * utility.DEG_TO_RAD
+  local turn = turnOf(ref, attrs) * utility.DEG_TO_RAD
 
   local resetDelay = attrs.ResetDelay
   local resetOnFinish = attrs.ResetOnFinish
