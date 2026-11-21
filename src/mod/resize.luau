@@ -1,8 +1,11 @@
 local attr = require("@mod/attributes")
 local mods = require("@mod/mods")
+local reader = require("@mod/reader")
 local retime = require("@mod/retime")
 local utility = require("@mod/utility")
 local registry = require("@mod/registry")
+local legacy_mods = require("@mod/legacy_mods")
+local instance_value = require("@mod/instance_value")
 local path_curve = require("@mod/common/path_curve")
 local state_list = require("@mod/common/state_list")
 local value_curve = require("@mod/value_curve")
@@ -30,7 +33,14 @@ resize.PROPERTY_UNITS = {
   ParticleEmitter = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
   ParticleEmitter2D = { Size = "studs", Speed = "studsPerSecond", Acceleration = "studsPerSecondSquared" },
   Sound = { RollOffMaxDistance = "studs" },
+  -- a light's reach
+  Light = { Range = "studs" },
 }
+
+-- the classes above no effect owns, whose lengths are scaled where a Property
+-- Animator or an old tween child plays them too. an animator on an emitter
+-- or a sound is left as a resize has always left it
+const DRIVEN = { "Light" }
 
 -- ratios resize scales as if they were lengths. the flag says whether the
 -- resting value scales with them: a model's scale is its absolute size. a
@@ -151,6 +161,50 @@ const function scalePathRow(obj: Instance, name: string, row: any, f: number)
 
   if not stored and path_curve.is(row.default) then
     attr.set(obj, name, path_curve.encode(path_curve.scaled(row.default, f)))
+  end
+end
+
+-- the instance and the property a Property Animator or an old property tween
+-- child plays, whichever `obj` is
+const function drivenOf(obj: Instance, module: registry.Module?): (Instance?, string?)
+  if module ~= nil and module.id == "animator" then
+    const target = instance_value.accept(reader.liveOf(obj, "Target"), nil, reader.probe)
+
+    return target or utility.getTarget(obj), attr.get(obj, "Property", nil, true)
+  end
+
+  if module == nil and obj:IsA("RayValue") and legacy_mods.childSource(obj) == "property" then
+    return utility.getTarget(obj), obj.Name
+  end
+
+  return nil, nil
+end
+
+-- what an animator's lanes or a tween child's values play on a length of a
+-- class DRIVEN names, scaled as the property is
+const function scaleDriven(obj: Instance, module: registry.Module?, factor: number)
+  const target, name = drivenOf(obj, module)
+
+  if target == nil or type(name) ~= "string" then
+    return
+  end
+
+  for _, class in DRIVEN do
+    const unit = resize.PROPERTY_UNITS[class][name]
+    const f = if unit ~= nil and target:IsA(class) then factorOf(unit, factor) else nil
+
+    if f == nil then
+      continue
+    end
+
+    if module ~= nil then
+      scaleQueue(obj, "property", name, f)
+    else
+      utility.scaleAttribute(obj, f, "_START_VALUE")
+      utility.scaleAttribute(obj, f, "_END_VALUE")
+    end
+
+    return
   end
 end
 
@@ -336,6 +390,8 @@ function resize.apply(obj: Instance, factor: number, pass: Pass?)
       retime.scaleAnimator(obj, factor, resize.PROPERTY_UNITS, factorOf)
     end
   end
+
+  scaleDriven(obj, module, factor)
 
   -- a custom effect's instance is its own: only its rows say what scales
   local engine = module == nil or not registry.isCustom(module)
