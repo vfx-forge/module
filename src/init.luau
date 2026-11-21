@@ -130,7 +130,10 @@ local ServerContext = utility.SERVER_CONTEXT
 
 -- `discover` false leaves tagged custom effects to a host that registers them
 -- itself, as the plugin does to reload them as they are edited
-type params = { discover: boolean? }
+-- `step`, for a deferred init: called between batches of the place's
+-- enabled instances as it reads their kinds, a host's pace step that may
+-- wait a frame and answers whether to stop
+type params = { discover: boolean?, step: (() -> boolean)? }
 
 local api = {}
 
@@ -202,7 +205,7 @@ end
 -- deferred, nothing loads here: the runtime at the first emit or the first
 -- instance tagged after this, each kind at its first emit, and what the
 -- place starts with at the host's prepare of each name this answers
-local function deferredInit(): { string }
+local function deferredInit(step: (() -> boolean)?): { string }
   shared.vfx = api
 
   -- live before anything that can wait: the sound's init may yield (its dock
@@ -214,7 +217,7 @@ local function deferredInit(): { string }
   Sound.init()
 
   if lazy.loaded("runtime") then
-    return lazy.needs(CollectionService:GetTagged(utility.ENABLED_VFX_TAG), 0, kindOf)
+    return lazy.needs(CollectionService:GetTagged(utility.ENABLED_VFX_TAG), 0, kindOf, step)
   end
 
   for _, tag in { utility.ENABLED_VFX_TAG, utility.TEXTURE_LOAD_TAG } do
@@ -229,7 +232,8 @@ local function deferredInit(): { string }
   return lazy.needs(
     CollectionService:GetTagged(utility.ENABLED_VFX_TAG),
     #CollectionService:GetTagged(utility.TEXTURE_LOAD_TAG),
-    kindOf
+    kindOf,
+    step
   )
 end
 
@@ -279,7 +283,7 @@ function api.init(params: params?)
   scheduler.start()
 
   if lazy.deferred() then
-    return deferredInit()
+    return deferredInit(if params ~= nil then params.step else nil)
   end
 
   local services = runtime()

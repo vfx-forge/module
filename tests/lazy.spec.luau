@@ -230,7 +230,7 @@ harness.suite(function()
     -- only once the loader is live, so the deferred init goes live first
     test("the deferred init makes the loader live before anything in it can wait", function()
       local source = fs.readFile("src/init.luau")
-      local body = string.match(source, "local function deferredInit%(%).-\nend\n")
+      local body = string.match(source, "local function deferredInit%(.-\nend\n")
 
       assert(body, "no deferredInit in src/init.luau")
 
@@ -285,6 +285,38 @@ harness.suite(function()
       expect(names[2]).toBe(meshName)
       expect(#names == 2 or names[3] == "runtime").toBe(true)
       expect(#lazy.needs({}, 0, kindOf)).toBe(0)
+    end)
+
+    test("steps the host's pace every few hundred instances, and stops reading at its word", function()
+      local model = harness.make("Model")
+
+      for _ = 1, 600 do
+        harness.make("Folder", model)
+      end
+
+      local steps = 0
+
+      lazy.needs({ model }, 0, function()
+        return nil
+      end, function(): boolean
+        steps += 1
+
+        return false
+      end)
+
+      expect(steps).toBe(2)
+
+      local read = 0
+
+      lazy.needs({ model }, 0, function()
+        read += 1
+
+        return nil
+      end, function(): boolean
+        return true
+      end)
+
+      expect(read).toBe(256)
     end)
   end)
 

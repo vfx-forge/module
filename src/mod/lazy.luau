@@ -265,11 +265,30 @@ end
 -- every enabled instance and of what it holds, in the place's order, then
 -- the runtime, whose start begins their loops and the texture preloads, when
 -- anything is enabled or preloaded
-function lazy.needs(enabled: { Instance }, preloads: number, kindOf: (obj: Instance) -> string?): { string }
+-- A place's enabled effects can hold thousands of descendants (60 ms for
+-- 4,000 under lune), so `step`, when given, is called every STEP_EVERY of
+-- them: a host's pace step, which may wait a frame, and a true from it ends
+-- the read with what it found
+local STEP_EVERY = 256
+
+function lazy.needs(
+  enabled: { Instance },
+  preloads: number,
+  kindOf: (obj: Instance) -> string?,
+  step: (() -> boolean)?
+): { string }
   local names = {}
   local seen = {}
+  local read = 0
+  local stopped = false
 
   local function add(obj: Instance)
+    read += 1
+
+    if step ~= nil and read % STEP_EVERY == 0 and step() then
+      stopped = true
+    end
+
     local name = kindOf(obj)
     local unit = if name ~= nil then Named[name] else nil
 
@@ -282,9 +301,17 @@ function lazy.needs(enabled: { Instance }, preloads: number, kindOf: (obj: Insta
   end
 
   for _, obj in enabled do
+    if stopped then
+      break
+    end
+
     add(obj)
 
     for _, child in obj:GetDescendants() do
+      if stopped then
+        break
+      end
+
       add(child)
     end
   end
