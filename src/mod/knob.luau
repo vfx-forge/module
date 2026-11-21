@@ -75,6 +75,7 @@ type Fields = {
   dragLower: number?,
   dragUpper: number?,
   isSeed: boolean,
+  isRanged: boolean,
   isMod: boolean,
   modDefault: any,
   homeLane: string?,
@@ -117,6 +118,7 @@ local function make(default: any): Knob
     dragLower = nil,
     dragUpper = nil,
     isSeed = false,
+    isRanged = false,
     isMod = false,
     modDefault = nil,
     homeLane = nil,
@@ -227,6 +229,21 @@ end
 function Knob.seed(self: Knob): Knob
   self.isSeed = true
   return self
+end
+
+-- a number row read once per emit that may be drawn instead: a `<name>Max`
+-- attribute above the row's value makes each emit draw between the two. the
+-- longest rides an attribute of its own rather than a NumberRange in the row,
+-- since a runtime before this one reads a range there as a mistyped value and
+-- plays the default, while it never reads the longest and plays the shortest
+function Knob.ranged(self: Knob): Knob
+  self.isRanged = true
+  return self
+end
+
+-- the attribute a ranged row keeps its longest under
+function knob.maxOf(name: string): string
+  return `{name}Max`
 end
 
 -- a row may declare more than one default modifier, since its phases can run
