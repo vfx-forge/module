@@ -8,6 +8,7 @@ local test, expect = harness.test, harness.expect
 local Color3 = harness.datatypes.Color3
 local Instance = harness.datatypes.Instance
 local ColorSequence = harness.datatypes.ColorSequence
+local Vector3 = harness.datatypes.Vector3
 
 local WHITE = Color3.new(1, 1, 1)
 local RED = Color3.new(1, 0, 0)
@@ -184,6 +185,45 @@ harness.suite(function()
       expect(same(goal.Color, BLUE)).toBe(true)
       expect(same(other.Color, RED)).toBe(true)
       expect(same(loose.Color, RED)).toBe(true)
+    end)
+
+    -- a textured special mesh shows its texture tinted by VertexColor and
+    -- never the part's Color, so the tint is the color a piece plays
+    test("a legacy mesh's textured special mesh has its tint recolored, overbright kept", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(mesh)
+
+      local model = harness.make("Model", harness.make("Folder"))
+      local start = harness.make("Part", model)
+      local goal = harness.make("Part", model)
+      local other = harness.make("Part", model)
+
+      start.Name = "Start"
+      goal.Name = "End"
+
+      local tints = {}
+
+      for _, part in { start, goal, other } do
+        local special = harness.make("SpecialMesh", part) :: any
+        special.TextureId = "rbxassetid://1"
+        special.VertexColor = Vector3.new(1, 1, 1)
+        tints[part] = special
+      end
+
+      tints[goal].VertexColor = Vector3.new(2, 2, 2)
+
+      recolor(BLUE, "replace", model)
+
+      expect(tints[start].VertexColor == Vector3.new(0, 0, 1)).toBe(true)
+      expect(tints[goal].VertexColor == Vector3.new(0, 0, 2)).toBe(true)
+      expect(tints[other].VertexColor == Vector3.new(1, 1, 1)).toBe(true)
+
+      -- untextured, the part's Color shows and the tint is left
+      tints[start].TextureId = ""
+      recolor(RED, "replace", model)
+
+      expect(tints[start].VertexColor == Vector3.new(0, 0, 1)).toBe(true)
     end)
 
     test("a descendant of a recolored root is classified and recolored too", function()

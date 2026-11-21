@@ -89,7 +89,32 @@ const function meshEnd(obj: Instance): boolean
   return module ~= nil and module.id == "mesh"
 end
 
+-- the special mesh of a legacy mesh's Start or End when it wears a texture:
+-- the texture shows tinted by its VertexColor and never by the part's Color,
+-- so the tint is the color its pieces play
+const function meshTint(obj: Instance): boolean
+  if not obj:IsA("SpecialMesh") or (obj :: SpecialMesh).TextureId == "" then
+    return false
+  end
+
+  const parent = obj.Parent
+
+  return parent ~= nil and parent:IsA("BasePart") and meshEnd(parent)
+end
+
 local function recolorObj(obj: Instance, color: Color3, mode: string, isDirect: boolean)
+  -- the tint as a color, unclamped, so an overbright one keeps its factor
+  if meshTint(obj) then
+    const special = obj :: SpecialMesh
+    const v = special.VertexColor
+    const c = Color3.new(v.X, v.Y, v.Z)
+    const out = if mode == "multiply" then multiplyColor(c, color) else multiplyRGB(color, (normalizeColor(c)))
+
+    special.VertexColor = Vector3.new(out.R, out.G, out.B)
+
+    return
+  end
+
   if not isDirect and obj:IsA("BasePart") and not meshEnd(obj) then
     return
   end
