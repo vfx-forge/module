@@ -193,42 +193,10 @@ lazy.onStart("runtime", function(services: any)
   services.enabled_effects.init(api.scope, services.effects)
 end)
 
--- the units a deferred init leaves for the host to load now, at its pace: the
--- kinds of every enabled instance in the place and of what they hold, then
--- the runtime, whose start begins their loops and the texture preloads
-local function needed(): { string }
-  local names = {}
-  local seen = {}
+local function kindOf(obj: Instance): string?
+  local module = registry.of(obj)
 
-  local function add(obj: Instance)
-    local module = registry.of(obj)
-    local name = if module ~= nil then module.id else nil
-
-    if name == nil or seen[name] or not lazy.declared(name) or lazy.loaded(name) then
-      return
-    end
-
-    seen[name] = true
-    table.insert(names, name)
-  end
-
-  local enabled = CollectionService:GetTagged(utility.ENABLED_VFX_TAG)
-
-  for _, obj in enabled do
-    add(obj)
-
-    for _, child in obj:GetDescendants() do
-      add(child)
-    end
-  end
-
-  local preloads = CollectionService:GetTagged(utility.TEXTURE_LOAD_TAG)
-
-  if (#enabled > 0 or #preloads > 0) and not lazy.loaded("runtime") then
-    table.insert(names, "runtime")
-  end
-
-  return names
+  return if module ~= nil then module.id else nil
 end
 
 -- deferred, nothing loads here: the runtime at the first emit or the first
@@ -242,7 +210,7 @@ local function deferredInit(): { string }
   lazy.begin()
 
   if lazy.loaded("runtime") then
-    return needed()
+    return lazy.needs(CollectionService:GetTagged(utility.ENABLED_VFX_TAG), 0, kindOf)
   end
 
   for _, tag in { utility.ENABLED_VFX_TAG, utility.TEXTURE_LOAD_TAG } do
@@ -254,7 +222,11 @@ local function deferredInit(): { string }
     )
   end
 
-  return needed()
+  return lazy.needs(
+    CollectionService:GetTagged(utility.ENABLED_VFX_TAG),
+    #CollectionService:GetTagged(utility.TEXTURE_LOAD_TAG),
+    kindOf
+  )
 end
 
 function api.init(params: params?)

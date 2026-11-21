@@ -191,6 +191,43 @@ function lazy.pending(): { string }
   return names
 end
 
+-- the units a deferred init leaves for its host to load now: the kind of
+-- every enabled instance and of what it holds, in the place's order, then
+-- the runtime, whose start begins their loops and the texture preloads, when
+-- anything is enabled or preloaded
+function lazy.needs(enabled: { Instance }, preloads: number, kindOf: (obj: Instance) -> string?): { string }
+  local names = {}
+  local seen = {}
+
+  local function add(obj: Instance)
+    local name = kindOf(obj)
+    local unit = if name ~= nil then Named[name] else nil
+
+    if unit == nil or seen[unit] or unit.state == "loaded" then
+      return
+    end
+
+    seen[unit] = true
+    table.insert(names, unit.name)
+  end
+
+  for _, obj in enabled do
+    add(obj)
+
+    for _, child in obj:GetDescendants() do
+      add(child)
+    end
+  end
+
+  local runtime = Named.runtime
+
+  if (#enabled > 0 or preloads > 0) and runtime ~= nil and runtime.state ~= "loaded" then
+    table.insert(names, runtime.name)
+  end
+
+  return names
+end
+
 function lazy.all()
   for _, unit in Units do
     load(unit)
@@ -220,8 +257,8 @@ end
 
 -- before the index is required: every unit declared from here loads at its
 -- first need, at a host's prepare or at init for what the place starts with
-function lazy.defer()
-  deferred = true
+function lazy.defer(on: boolean?)
+  deferred = on ~= false
 end
 
 function lazy.deferred(): boolean
