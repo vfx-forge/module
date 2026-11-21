@@ -1,3 +1,4 @@
+--!native
 --!optimize 2
 const knob = require("@mod/knob")
 const lazy = require("@mod/lazy")

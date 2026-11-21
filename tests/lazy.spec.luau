@@ -235,6 +235,26 @@ harness.suite(function()
     end)
   end)
 
+  harness.describe("native code", function()
+    -- a game runs the declaration half too (its engine seams, its knobs'
+    -- default functions), so an effect split in two keeps native code in
+    -- both halves when it had it before
+    test("an effect whose play half is native has a native declaration half", function()
+      local lost = {}
+
+      for _, entry in fs.readDir("src/play") do
+        local play = fs.readFile(`src/play/{entry}`)
+        local decl = fs.readFile(`src/effects/{entry}`)
+
+        if string.find(play, "^%-%-!native") and not string.find(decl, "^%-%-!native") then
+          table.insert(lost, entry)
+        end
+      end
+
+      expect(lost).toEqual({})
+    end)
+  end)
+
   harness.describe("what reaches a play module", function()
     test("only the unit its effect declares requires it", function()
       local found = {}
