@@ -675,6 +675,38 @@ harness.suite(function()
       expect(groups[2][1].finish.v).toBe(2)
     end)
 
+    -- the memo of what a map holds without its outlasting entries is weak by
+    -- the map, so a map read once and dropped goes: a memo naming the map
+    -- itself as its answer would keep every map it ever saw, every decoded
+    -- string's and every legacy queue's alike
+    test("a map asked about and dropped is collected", function()
+      const asked = setmetatable({}, { __mode = "k" }) :: any
+      const control = setmetatable({}, { __mode = "k" }) :: any
+
+      for i = 1, 200 do
+        const plain = { start = { tween(i) } }
+        const marked = { start = { tween(i), tween(i, 1) } }
+
+        mods.played(plain)
+        mods.played(marked)
+        mods.outlasting(marked)
+        asked[plain] = true
+        asked[marked] = true
+        control[{}] = true
+      end
+
+      for _ = 1, 5000 do
+        if next(control) == nil then
+          break
+        end
+
+        const _ = table.create(100000, 1)
+      end
+
+      expect(next(control)).toBe(nil)
+      expect(next(asked)).toBe(nil)
+    end)
+
     test("beside an entry of its own the row plays that alone, and a lane left empty goes", function()
       const lanes = { start = { tween(1, 1) }, ["end"] = { tween(5) } }
       const own = mods.played(lanes)

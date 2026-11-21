@@ -2,6 +2,10 @@
   "name": "forge-vfx",
   "tree": {
     "$path": "src",
+    "$attributes": {
+      "Version": "3.0.2",
+      "Capabilities": "outlast"
+    },
 
     "pkg": {
       "$path": "pkg"
