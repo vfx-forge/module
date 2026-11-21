@@ -1468,15 +1468,17 @@ end
 
 -- an instance's resolved attrs and props, through its module. a caller that
 -- already has the module in hand passes it and skips classifying the
--- instance a second time; left nil, the module is found the usual way
-function registry.read(inst: Instance, module: Module?): (any, any)
+-- instance a second time; left nil, the module is found the usual way. a
+-- caller whose emit plays what it reads passes that emit's scope, so its
+-- ranged rows draw as an emit's own read does
+function registry.read(inst: Instance, module: Module?, scope: any?): (any, any)
   module = if module ~= nil then module else registry.of(inst)
 
   if module == nil then
     return nil, nil
   end
 
-  return reader.resolve(module, { ref = inst, obj = inst, effect = module })
+  return reader.resolve(module, { ref = inst, obj = inst, effect = module, scope = scope })
 end
 
 return registry

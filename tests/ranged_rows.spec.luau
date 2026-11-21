@@ -73,15 +73,66 @@ harness.suite(function()
       expect(kinds > 1).toBe(true)
     end)
 
-    test("one emit reads one draw however often the row is read", function()
+    test("one emit reads one draw, whichever row asks for it", function()
       const obj = Instance.new("Part")
       obj:SetAttribute("Delay", 0.2)
       obj:SetAttribute(knob.maxOf("Delay"), 0.6)
 
-      const attrs = reader.resolve(module({ Delay = knob(0):ranged() }), ctxFor(obj))
-      const first = attrs.Delay
+      -- a rule row reading the delay, as a span rule adds it to the effect's
+      const m = module({
+        Delay = knob(0):ranged(),
+        Echo = knob(function(_, attrs: any)
+          return attrs.Delay
+        end),
+      })
 
-      expect(attrs.Delay).toBe(first)
+      const seen: { [number]: boolean } = {}
+      local kinds = 0
+
+      for _ = 1, 16 do
+        const attrs = reader.resolve(m, ctxFor(obj))
+        const echo = attrs.Echo
+
+        expect(attrs.Delay).toBe(echo)
+
+        if not seen[echo] then
+          seen[echo] = true
+          kinds += 1
+        end
+      end
+
+      expect(kinds > 1).toBe(true)
+    end)
+
+    test("a read through the registry draws when handed the emit's scope, as a pooled sound's pick is", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+
+      const m = module({ Delay = knob(0):ranged() })
+
+      registry.register(m)
+
+      const obj = Instance.new("Part")
+      obj:SetAttribute("Delay", 0.2)
+      obj:SetAttribute(knob.maxOf("Delay"), 0.6)
+
+      const seen: { [number]: boolean } = {}
+      local kinds = 0
+
+      for _ = 1, 16 do
+        const v = (registry.read(obj, m, {}))
+        const d = v.Delay
+
+        expect(d >= 0.2 and d <= 0.6).toBe(true)
+
+        if not seen[d] then
+          seen[d] = true
+          kinds += 1
+        end
+      end
+
+      expect(kinds > 1).toBe(true)
+      expect((registry.read(obj, m)).Delay).toBe(0.2)
     end)
 
     test("a longest at or below the value, or on a row not ranged, changes nothing", function()
