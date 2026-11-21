@@ -368,12 +368,6 @@ local function applyRandomizer(target: Instance, child: legacy_mods.Child, scope
   -- an effect of its own on the same emit, so the draw outlives the dispatch
   -- that made it until the next frame and a clear still gives it back
   local fx = lifetime.effect(scope.emit, scope.depth, scope.effects)
-
-  if opts ~= nil and opts.owner ~= nil then
-    before(opts.owner, function()
-      lifetime.kill(fx)
-    end)
-  end
   local rule = endOf(queue)
   local writer = lifetime.write(fx, target, child.source, child.name, rule)
 
@@ -490,26 +484,48 @@ end
 
 emitters.drive = drive
 
--- every outlasting queue stored on `from`, as the target each drives
-function emitters.outlasting(from: Instance): { { source: string, name: string, queue: { any } } }?
-  local out = nil
+type Lasting = { { source: string, name: string, queue: { any } } }
 
-  for key in attr.map(from) do
+-- the attributes each instance's last dispatch read, which every piece it
+-- copies asks its outlasting entries of, and what those are, worked out once
+-- per such read: false when there is none. both weak, the second by the map,
+-- which nothing in its answer names
+const READ: { [Instance]: { [string]: any } } = setmetatable({}, { __mode = "k" }) :: any
+const LASTING: { [any]: Lasting | false } = setmetatable({}, { __mode = "k" }) :: any
+
+-- every outlasting queue stored on `from`, as the target each drives
+function emitters.outlasting(from: Instance): Lasting?
+  const map = READ[from] or attr.map(from)
+  const known = LASTING[map]
+
+  if known ~= nil then
+    return if known == false then nil else known
+  end
+
+  local out: Lasting? = nil
+
+  for key, raw in map do
+    if type(raw) ~= "string" then
+      continue
+    end
+
     for source, prefix in mods.PREFIX do
       if string.sub(key, 1, #prefix) ~= prefix then
         continue
       end
 
       const name = string.sub(key, #prefix + 1)
-      const lanes = mods.framed(from, source, name)
+      const lanes = mods.framed(from, source, name, map)
       const groups = if lanes ~= nil then mods.outlasting(lanes) else nil
 
       for _, queue in groups or {} do
         out = out or {}
-        table.insert(out, { source = source, name = name, queue = queue })
+        table.insert(out :: Lasting, { source = source, name = name, queue = queue })
       end
     end
   end
+
+  LASTING[map] = out or false
 
   return out
 end
@@ -712,6 +728,7 @@ function emitters.dispatch(
     end
 
     SPANS[obj] = ctx.duration
+    READ[obj] = map
     scope.span = ctx.duration
 
     local claimed = emitters.claims(obj)
