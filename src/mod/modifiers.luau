@@ -27,6 +27,8 @@ export type Ctx = {
   -- each fed randomizer's value for this emitted instance, by id, which
   -- modifiers.compile works out once. evaluate works it out per call without it
   fed: { [string]: any }?,
+  -- the row is read as a whole number, so a randomizer draws whole numbers
+  whole: boolean?,
 }
 
 -- a base entry stores the row's authored value rather than modifying it. the
@@ -563,6 +565,27 @@ local function unfed(m: any, startVal: any, finishVal: any): (any, any)
   return startVal, finishVal
 end
 
+-- what a randomizer between two values lands on at `alpha`. on a whole number
+-- row each whole number between the ends is as likely as the next, the ends
+-- included: a plain lerp read back down to a whole number never reached the
+-- far end, so 1 to 3 restruck once or twice and never three times
+function modifiers.drawn(startVal: any, finishVal: any, alpha: number, whole: boolean?): any
+  if not whole or type(startVal) ~= "number" or type(finishVal) ~= "number" then
+    return lerp.any(startVal, finishVal, alpha)
+  end
+
+  const low = math.ceil(math.min(startVal, finishVal))
+  const high = math.floor(math.max(startVal, finishVal))
+
+  if high < low then
+    return lerp.any(startVal, finishVal, alpha)
+  end
+
+  const steps = math.min(math.floor(alpha * (high - low + 1)), high - low)
+
+  return if startVal <= finishVal then low + steps else high - steps
+end
+
 -- what randomizer `i` lands on for this emitted instance, the value it sets
 -- where it sits on the clock and the one it feeds
 local function drawnValue(m: any, i: number, ctx: Ctx): any
@@ -582,7 +605,7 @@ local function drawnValue(m: any, i: number, ctx: Ctx): any
 
   local d: number = if type(draw) == "number" then draw else 0.5
 
-  return lerp.any(startVal, finishVal, if m.weight then modifiers.alphaFromCurve(m.weight, d) else d)
+  return modifiers.drawn(startVal, finishVal, if m.weight then modifiers.alphaFromCurve(m.weight, d) else d, ctx.whole)
 end
 
 local function fedValues(queue: { any }, sources: { [string]: number }?, ctx: Ctx): { [string]: any }?
@@ -698,7 +721,9 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
       alpha = math.clamp(alpha + envelopeAt(m.envelope, progress) * ctx.envelope, 0, 1)
     end
 
-    prevOut = lerp.any(startVal, finishVal, alpha)
+    prevOut = if m.kind == "randomizer"
+      then modifiers.drawn(startVal, finishVal, alpha, ctx.whole)
+      else lerp.any(startVal, finishVal, alpha)
     haveOut = true
   end
 
@@ -905,7 +930,9 @@ function modifiers.sample(steps: { Step }, ctx: Ctx, elapsed: number, base: any)
       alpha = math.clamp(alpha + envelopeAt(m.envelope, progress) * ctx.envelope, 0, 1)
     end
 
-    prevOut = lerp.any(startVal, finishVal, alpha)
+    prevOut = if kind == "randomizer"
+      then modifiers.drawn(startVal, finishVal, alpha, ctx.whole)
+      else lerp.any(startVal, finishVal, alpha)
     haveOut = true
   end
 

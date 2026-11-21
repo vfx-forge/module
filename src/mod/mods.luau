@@ -12,6 +12,10 @@ local legacy_mods = require("@mod/legacy_mods")
 
 local mods = {}
 
+-- the build options of a whole number row that says nothing else, shared so
+-- the build can tell them from options that rule out its fast path
+mods.WHOLE = table.freeze({ whole = true })
+
 -- split by target source so the runtime knows whether to write ref[name] or
 -- ref:SetAttribute(name, v), and so an instance carrying both a property and
 -- an attribute of one name never confuses the two
@@ -297,7 +301,8 @@ local function samplerOf(
   left: number?,
   offsets: { [number]: number }?,
   resolved: number,
-  lengths: { [number]: number }?
+  lengths: { [number]: number }?,
+  whole: boolean?
 ): (((elapsed: number, own: any?, left: number?) -> any)?, number)
   if #queue == 0 then
     return nil, 0
@@ -342,6 +347,7 @@ local function samplerOf(
     linked = resolved,
     env = rolled.env,
     envelope = rolled.envelope,
+    whole = whole,
   }
 
   local steps = modifiers.compile(queue, ctx)
@@ -380,7 +386,8 @@ function mods.sampler(
   queue: { any },
   rolls: Rolls?,
   linked: number?,
-  left: number?
+  left: number?,
+  whole: boolean?
 ): (((elapsed: number, own: any?, left: number?) -> any)?, number)
   if #queue == 0 then
     return nil, 0
@@ -393,7 +400,7 @@ function mods.sampler(
   local lent = if linked ~= nil then linked else duration
   local offsets, _, resolved, lengths = modifiers.schedule(queue, rolled.picks, lent, rolled.env, left)
 
-  return samplerOf(ref, source, name, duration, queue, rolled, lent, left, offsets, resolved, lengths)
+  return samplerOf(ref, source, name, duration, queue, rolled, lent, left, offsets, resolved, lengths, whole)
 end
 
 export type Track = {
@@ -973,14 +980,16 @@ local function laneOf(
   span: number,
   env: { [string]: any }?,
   probe: any,
-  lane: string
+  lane: string,
+  whole: boolean?
 ): (((elapsed: number, own: any?, left: number?) -> any)?, number, number, number)
   -- the end lane plays out as the effect ends, so a modifier on it naming no
   -- duration has nothing left to run for and snaps to its finish
   local left = if lane == "end" then 0 else nil
   local rolls = if perPiece(queue, false) then mods.roll(queue, env) else unrolled(env)
   local reach, linked, length, offsets, resolved, lengths = spanned(queue, span, rolls, left)
-  local sample, lead = samplerOf(ref, source, name, reach, queue, rolls, linked, left, offsets, resolved, lengths)
+  local sample, lead =
+    samplerOf(ref, source, name, reach, queue, rolls, linked, left, offsets, resolved, lengths, whole)
 
   if sample == nil then
     return nil, span, 0, 0
@@ -1112,7 +1121,8 @@ local function eventLaneOf(
   probe: any,
   lane: string,
   order: number,
-  draws: boolean
+  draws: boolean,
+  whole: boolean?
 ): Lane
   local rolls: Rolls? = if draws then mods.roll(queue, env) elseif env ~= nil then unrolled(env) else nil
   local reach, linked, length, offsets, resolved, lengths = spanned(queue, span, rolls, nil)
@@ -1145,10 +1155,22 @@ local function eventLaneOf(
     local sample, lead
 
     if env ~= nil then
-      sample, lead = mods.sampler(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil)
+      sample, lead = mods.sampler(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil, whole)
     else
-      sample, lead =
-        samplerOf(ref, source, name, reach, queue, rolls or unrolled(env), linked, nil, offsets, resolved, lengths)
+      sample, lead = samplerOf(
+        ref,
+        source,
+        name,
+        reach,
+        queue,
+        rolls or unrolled(env),
+        linked,
+        nil,
+        offsets,
+        resolved,
+        lengths,
+        whole
+      )
     end
 
     if sample == nil or (sample(0) == nil and (probe == nil or sample(0, probe) == nil)) then
@@ -1173,7 +1195,7 @@ local function buildNow(
   env: { [string]: any }?,
   lanes: { [string]: { any } }?,
   framed: boolean,
-  opts: { ownStart: boolean?, value: any?, home: string? }?,
+  opts: { ownStart: boolean?, value: any?, home: string?, whole: boolean? }?,
   piece: Piece?
 ): (Track, ((other: Piece) -> Track?)?)
   -- a table is a map of lanes, unless it is a value curve the row rests at
@@ -1227,6 +1249,7 @@ local function buildNow(
   local footing: any = if rest ~= nil then rest elseif stated ~= nil then stated else seed
 
   local seeded = opts ~= nil and opts.ownStart == true
+  const whole = opts ~= nil and opts.whole == true
 
   -- the authored lanes that could not be read at all, which say nothing and so
   -- leave the default lane of the same name running. nil until one of them
@@ -1261,7 +1284,7 @@ local function buildNow(
           varies = draws or perPiece(entries, true)
         end
 
-        table.insert(out, eventLaneOf(ref, source, name, entries, span, env, seed, lane, order, draws))
+        table.insert(out, eventLaneOf(ref, source, name, entries, span, env, seed, lane, order, draws, whole))
         continue
       end
 
@@ -1283,7 +1306,7 @@ local function buildNow(
           return level
         end
       elseif entries ~= nil then
-        sample, reach, first, length = laneOf(ref, source, name, entries, span, env, seed, lane)
+        sample, reach, first, length = laneOf(ref, source, name, entries, span, env, seed, lane, whole)
       end
 
       if sample ~= nil and not flat and not varies then
@@ -1506,7 +1529,7 @@ end
 -- lanes know as a flat lane and never animate. nil for every other row,
 -- which the lanes build
 local function simpleOf(default: any, span: number, lanes: { [string]: { any } }?, opts: any?): Track?
-  if opts ~= nil or lanes == nil or default == nil or type(default) == "table" then
+  if (opts ~= nil and opts ~= mods.WHOLE) or lanes == nil or default == nil or type(default) == "table" then
     return nil
   end
 
@@ -1624,7 +1647,7 @@ function mods.build(
   env: { [string]: any }?,
   lanes: { [string]: { any } }?,
   framed: boolean,
-  opts: { ownStart: boolean?, value: any?, home: string? }?,
+  opts: { ownStart: boolean?, value: any?, home: string?, whole: boolean? }?,
   piece: Piece?
 ): (Track, ((other: Piece) -> Track?)?)
   local simple = simpleOf(default, span, lanes, opts)
@@ -1772,7 +1795,7 @@ function mods.track(
   default: any,
   span: number,
   env: { [string]: any }?,
-  opts: { ownStart: boolean?, value: any?, home: string? }?,
+  opts: { ownStart: boolean?, value: any?, home: string?, whole: boolean? }?,
   piece: Piece?
 ): Track
   local lanes, framed = mods.read(ref, source, name)

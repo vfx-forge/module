@@ -71,6 +71,7 @@ type Fields = {
   readonlyKeeps: boolean,
   alphaRow: string?,
   isSlider: boolean,
+  isWhole: boolean,
   dragLower: number?,
   dragUpper: number?,
   isSeed: boolean,
@@ -112,6 +113,7 @@ local function make(default: any): Knob
     readonlyKeeps = false,
     alphaRow = nil,
     isSlider = false,
+    isWhole = false,
     dragLower = nil,
     dragUpper = nil,
     isSeed = false,
@@ -207,6 +209,15 @@ function Knob.slider(self: Knob, low: number?, high: number?): Knob
   self.isSlider = true
   self.dragLower = low
   self.dragUpper = high
+  return self
+end
+
+-- a number row the effect reads as a whole number, so a randomizer on it
+-- draws each whole number between its ends alike, its ends included. the
+-- built-in effects' own for now: sdk 1 is frozen, so it is left out of its
+-- types until it is published
+function Knob.whole(self: Knob): Knob
+  self.isWhole = true
   return self
 end
 

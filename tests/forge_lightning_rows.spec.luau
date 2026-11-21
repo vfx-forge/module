@@ -19,6 +19,7 @@ const KNOB_METHODS = {
   "hidden",
   "readonly",
   "slider",
+  "whole",
   "seed",
   "mod",
   "instance",
