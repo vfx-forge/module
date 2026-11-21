@@ -80,29 +80,96 @@ local function isSource(sources: { [string]: number }?, m: any, i: number): bool
   return sources ~= nil and m.kind == "randomizer" and sources[m.id] == i
 end
 
+-- what an envelope buffer reads as, worked out on its first read: its widths
+-- as numbers, and the times they sit at when its curve's points are not
+-- evenly spaced (nil when they are, or when the counts disagree). Weak keyed
+-- by the buffer; the curve it was read against is kept to notice another
+local Envelopes: { [buffer]: { curve: any, widths: { number }, times: { number }? } } = setmetatable(
+  {},
+  { __mode = "k" }
+) :: any
+
+local function envelopeOf(buf: buffer, shape: any)
+  local found = Envelopes[buf]
+
+  if found ~= nil and found.curve == shape then
+    return found
+  end
+
+  local n = math.floor(buffer.len(buf) / 4)
+  local widths = table.create(n)
+
+  for i = 1, n do
+    widths[i] = buffer.readf32(buf, (i - 1) * 4)
+  end
+
+  local times: { number }? = nil
+
+  if shape ~= nil and n > 1 then
+    local anchors, even = curve.anchors(shape)
+
+    if not even and #anchors == n then
+      times = anchors
+    end
+  end
+
+  found = { curve = shape, widths = widths, times = times }
+  Envelopes[buf] = found
+
+  return found
+end
+
 -- envelope widths are f32 per keypoint in ALPHA units, because the authoring
 -- side divides each NumberSequenceKeypoint.Envelope by the value range before
--- storing it. sampling walks the array linearly across [0,1]
-local function envelopeAt(buf: buffer, progress: number): number
-  local n = math.floor(buffer.len(buf) / 4)
+-- storing it. One width a point of the curve, read linearly in time between
+-- the points' own times, which is how the editor draws the band (its
+-- envelope_geometry) and how the engine reads a NumberSequence keypoint's
+-- envelope; the value between them follows the curve's cubic, the width does
+-- not. It once spread the widths evenly across the run whatever the times,
+-- which a curve with evenly spaced points (and any one width everywhere)
+-- still reads exactly as before, so those take the even read unchanged
+local function envelopeAt(buf: buffer, progress: number, shape: any): number
+  local read = envelopeOf(buf, shape)
+  local widths = read.widths
+  local n = #widths
 
   if n == 0 then
     return 0
   end
 
   if n == 1 then
-    return buffer.readf32(buf, 0)
+    return widths[1]
+  end
+
+  local times = read.times
+
+  if times ~= nil then
+    local x = math.clamp(progress, 0, 1)
+
+    -- the first span holding x, both ends counted, as the editor finds it
+    for i = 1, n - 1 do
+      local x1, x2 = times[i], times[i + 1]
+
+      if x >= x1 and x <= x2 then
+        local a, b = widths[i], widths[i + 1]
+        local width = x2 - x1
+
+        return a + (b - a) * (if width > 0 then (x - x1) / width else 0)
+      end
+    end
+
+    return 0
   end
 
   local pos = math.clamp(progress, 0, 1) * (n - 1)
   local i = math.floor(pos)
 
   if i >= n - 1 then
-    return buffer.readf32(buf, (n - 1) * 4)
+    return widths[n]
   end
 
-  local a = buffer.readf32(buf, i * 4)
-  local b = buffer.readf32(buf, (i + 1) * 4)
+  local a = widths[i + 1]
+  local b = widths[i + 2]
 
   return a + (b - a) * (pos - i)
 end
@@ -721,7 +788,7 @@ function modifiers.evaluate(queue: { any }, elapsed: number, ctx: Ctx): any
     end
 
     if m.envelope and ctx.envelope then
-      alpha = math.clamp(alpha + envelopeAt(m.envelope, progress) * ctx.envelope, 0, 1)
+      alpha = math.clamp(alpha + envelopeAt(m.envelope, progress, m.curve) * ctx.envelope, 0, 1)
     end
 
     prevOut = lerp.any(startVal, finishVal, alpha)
@@ -930,7 +997,7 @@ function modifiers.sample(steps: { Step }, ctx: Ctx, elapsed: number, base: any)
     end
 
     if m.envelope and ctx.envelope then
-      alpha = math.clamp(alpha + envelopeAt(m.envelope, progress) * ctx.envelope, 0, 1)
+      alpha = math.clamp(alpha + envelopeAt(m.envelope, progress, m.curve) * ctx.envelope, 0, 1)
     end
 
     prevOut = lerp.any(startVal, finishVal, alpha)
