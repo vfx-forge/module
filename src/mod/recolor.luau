@@ -75,8 +75,22 @@ local function multiplyColor(c: Color3, color: Color3): Color3
   return multiplyRGB(Color3.fromHSV(h2, s2, v2), f)
 end
 
+-- a legacy mesh's Start, which every piece is a copy of, and its End beside
+-- it: the parts of an effect whose colors are the effect's own, where any
+-- other part under a recolored root keeps its color
+const function meshEnd(obj: Instance): boolean
+  if obj.Name ~= "Start" and obj.Name ~= "End" then
+    return false
+  end
+
+  const parent = obj.Parent
+  const module = if parent ~= nil then registry.of(parent) else nil
+
+  return module ~= nil and module.id == "mesh"
+end
+
 local function recolorObj(obj: Instance, color: Color3, mode: string, isDirect: boolean)
-  if not isDirect and obj:IsA("BasePart") then
+  if not isDirect and obj:IsA("BasePart") and not meshEnd(obj) then
     return
   end
 

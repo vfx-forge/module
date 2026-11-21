@@ -1,5 +1,6 @@
 local attr = require("@mod/attributes")
 local knob = require("@mod/knob")
+local mesh = require("@vfx/mesh")
 local harness = require("@tests/harness")
 local recolor = require("@mod/recolor")
 local registry = require("@mod/registry")
@@ -155,6 +156,34 @@ harness.suite(function()
 
       expect(same(colorOf(obj, "Tint"), BLUE)).toBe(true)
       expect(same(colorOf(obj, "Outline"), RED)).toBe(true)
+    end)
+
+    test("a legacy mesh's Start and End parts are recolored, any other part under the root is not", function()
+      registry.clear()
+      registry.configure({ query = harness.query })
+      registry.register(mesh)
+
+      local root = harness.make("Folder")
+      local model = harness.make("Model", root)
+      local start = harness.make("Part", model) :: any
+      local goal = harness.make("Part", model) :: any
+      local other = harness.make("Part", model) :: any
+      local loose = harness.make("Part", harness.make("Model", root)) :: any
+
+      start.Name = "Start"
+      goal.Name = "End"
+      loose.Name = "Start"
+
+      for _, part in { start, goal, other, loose } do
+        part.Color = RED
+      end
+
+      recolor(BLUE, "replace", root)
+
+      expect(same(start.Color, BLUE)).toBe(true)
+      expect(same(goal.Color, BLUE)).toBe(true)
+      expect(same(other.Color, RED)).toBe(true)
+      expect(same(loose.Color, RED)).toBe(true)
     end)
 
     test("a descendant of a recolored root is classified and recolored too", function()
