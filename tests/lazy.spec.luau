@@ -219,6 +219,13 @@ harness.suite(function()
       expect(result.startFail.failed).toBe(true)
     end)
 
+    test("a runtime whose start threw half way is still torn down at deinit", function()
+      local result = probe("runtimefail")
+
+      expect(result.runtimeFail.failed).toBe(true)
+      expect(result.runtimeFail.torn).toEqual({ "effects.deinit", "enabled_effects.clear", "mover.clear" })
+    end)
+
     test("a name nothing declared is refused, never answered with nil", function()
       expect(function()
         lazy.need("spec_never_declared")

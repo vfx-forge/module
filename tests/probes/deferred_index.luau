@@ -24,6 +24,21 @@ for _, name in { "pool", "effects", "frame_store", "texture_loader", "enabled_ef
 
   service.init = function()
     table.insert(started, name)
+
+    if process.args[1] == "runtimefail" and name == "enabled_effects" then
+      error("the loops would not start")
+    end
+  end
+end
+
+-- what the index's deinit tears down of the runtime, in the order it does
+local torn = {}
+
+for _, teardown in { { "effects", "deinit" }, { "enabled_effects", "clear" }, { "mover", "clear" } } do
+  local service = require(`@srv/{teardown[1]}`) :: any
+
+  service[teardown[2]] = function()
+    table.insert(torn, `{teardown[1]}.{teardown[2]}`)
   end
 end
 
@@ -75,19 +90,35 @@ local prepared = {}
 for _, name in needs or {} do
   local started = os.clock()
 
-  lazy.prepare(name)
+  if process.args[1] == "runtimefail" then
+    pcall(lazy.prepare, name)
+  else
+    lazy.prepare(name)
+  end
+
   table.insert(prepared, { name = name, seconds = os.clock() - started })
+end
+
+-- a runtime whose start threw half way, torn down at unload
+local runtimeFail = nil
+
+if process.args[1] == "runtimefail" then
+  local failed = lazy.failed("runtime") ~= nil
+
+  vfx.deinit()
+  runtimeFail = { failed = failed, torn = torn }
 end
 
 local rest = os.clock()
 local count = 0
 
-while lazy.prepare() ~= nil do
+while process.args[1] ~= "runtimefail" and lazy.prepare() ~= nil do
   count += 1
 end
 
 print(serde.encode("json", {
   startFail = startFail,
+  runtimeFail = runtimeFail,
   required = required,
   before = before,
   needs = needs,

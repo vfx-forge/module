@@ -211,6 +211,15 @@ function lazy.loaded(name: string): boolean
   return unit ~= nil and unit.state == "loaded"
 end
 
+-- what a unit's load answered, whether its start then ran or threw: a
+-- teardown's way to what a start that failed half way had made. nil before
+-- the load returns, and after a load that threw, which started nothing
+function lazy.module(name: string): any
+  local unit = Named[name]
+
+  return if unit ~= nil then unit.module else nil
+end
+
 -- the reason a unit is unavailable, nil while it is not
 function lazy.failed(name: string): string?
   local unit = Named[name]

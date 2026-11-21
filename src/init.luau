@@ -323,8 +323,10 @@ function api.deinit()
 
   stopWaiting()
 
-  -- nothing of the runtime's to stop before it has loaded
-  local services = if lazy.loaded("runtime") then runtime() else nil
+  -- nothing of the runtime's to stop before it has loaded, and everything
+  -- after, a start that threw half way included: what it started before the
+  -- throw (the reset, a live emit, a loop) is torn down as any other's
+  local services = lazy.module("runtime")
 
   -- the live emits are cleared first, while the pool their parts go back to
   -- still stands, a loop's ticks among them
