@@ -56,6 +56,17 @@ harness.suite(function()
       expect(value.resolve((b :: any).start[1].finish)).toBe(3)
     end)
 
+    test("a framed string that cannot be decoded warns once however often it is read", function()
+      const raw = frame.frame(buffer.fromstring("not a queue"))
+      const warnings = harness.captureWarnings(function()
+        for _ = 1, 3 do
+          expect(mods.framed(authored(raw), "attribute", "Width")).toBe(nil)
+        end
+      end)
+
+      expect(#warnings).toBe(1)
+    end)
+
     test("two instances storing one old quad read as one frozen queue", function()
       local a = legacy_mods.read(quad(1, 2), "attribute", "Width")
       local b = legacy_mods.read(quad(1, 2), "attribute", "Width")
