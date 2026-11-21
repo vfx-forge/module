@@ -87,6 +87,7 @@ local RunService = game:GetService("RunService")
 local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local lazy = require("@mod/lazy")
 local clock = require("@mod/clock")
 local logger = require("@mod/logger")
 local retime = require("@mod/retime")
@@ -118,13 +119,8 @@ local ShockwaveRing = require("@vfx/shockwave_ring")
 local ShockwaveLine = require("@vfx/shockwave_line")
 local ShockwaveDebris = require("@vfx/shockwave_debris")
 
-local pool = require("@srv/pool")
-local mover = require("@srv/mover")
-local effects = require("@srv/effects")
+local runtime = require("@srv/runtime")
 local containers = require("@srv/containers")
-local frame_store = require("@srv/frame_store")
-local texture_loader = require("@srv/texture_loader")
-local enabled_effects = require("@srv/enabled_effects")
 
 local load = require("@root/sdk/load")
 local watch = require("@root/sdk/watch")
@@ -142,6 +138,10 @@ api.scope = {}
 api.setup = false
 
 local warnedScale = false
+
+-- a deferred init's wait for the place's first tagged instance, which the
+-- runtime's own listeners take over from as it starts
+local waiting: { RBXScriptConnection } = {}
 
 -- the built-ins register once, when the module loads
 registry.register(Beam)
@@ -172,6 +172,89 @@ do
   else
     logger.error(`the bundled lightning did not load:\n{table.concat(found, "\n")}`)
   end
+end
+
+local function stopWaiting()
+  for _, connection in waiting do
+    connection:Disconnect()
+  end
+
+  table.clear(waiting)
+end
+
+-- deferred, the runtime starts as it loads, in the order init starts it
+lazy.onStart("runtime", function(services: any)
+  stopWaiting()
+
+  services.pool.init(api.scope)
+  services.effects.init(api)
+  services.frame_store.init(api.scope)
+  services.texture_loader.init(api.scope)
+  services.enabled_effects.init(api.scope, services.effects)
+end)
+
+-- the units a deferred init leaves for the host to load now, at its pace: the
+-- kinds of every enabled instance in the place and of what they hold, then
+-- the runtime, whose start begins their loops and the texture preloads
+local function needed(): { string }
+  local names = {}
+  local seen = {}
+
+  local function add(obj: Instance)
+    local module = registry.of(obj)
+    local name = if module ~= nil then module.id else nil
+
+    if name == nil or seen[name] or not lazy.declared(name) or lazy.loaded(name) then
+      return
+    end
+
+    seen[name] = true
+    table.insert(names, name)
+  end
+
+  local enabled = CollectionService:GetTagged(utility.ENABLED_VFX_TAG)
+
+  for _, obj in enabled do
+    add(obj)
+
+    for _, child in obj:GetDescendants() do
+      add(child)
+    end
+  end
+
+  local preloads = CollectionService:GetTagged(utility.TEXTURE_LOAD_TAG)
+
+  if (#enabled > 0 or #preloads > 0) and not lazy.loaded("runtime") then
+    table.insert(names, "runtime")
+  end
+
+  return names
+end
+
+-- deferred, nothing loads here: the runtime at the first emit or the first
+-- instance tagged after this, each kind at its first emit, and what the
+-- place starts with at the host's prepare of each name this answers
+local function deferredInit(): { string }
+  shared.vfx = api
+
+  Sound.init()
+
+  lazy.begin()
+
+  if lazy.loaded("runtime") then
+    return needed()
+  end
+
+  for _, tag in { utility.ENABLED_VFX_TAG, utility.TEXTURE_LOAD_TAG } do
+    table.insert(
+      waiting,
+      CollectionService:GetInstanceAddedSignal(tag):Connect(function()
+        runtime()
+      end)
+    )
+  end
+
+  return needed()
 end
 
 function api.init(params: params?)
@@ -219,17 +302,23 @@ function api.init(params: params?)
 
   scheduler.start()
 
-  pool.init(api.scope)
+  if lazy.deferred() then
+    return deferredInit()
+  end
+
+  local services = runtime()
+
+  services.pool.init(api.scope)
 
   shared.vfx = api
 
   -- init services
-  effects.init(api)
+  services.effects.init(api)
 
   -- before the loader, which warms every tagged instance inside its own init
-  frame_store.init(api.scope)
-  texture_loader.init(api.scope)
-  enabled_effects.init(api.scope, effects)
+  services.frame_store.init(api.scope)
+  services.texture_loader.init(api.scope)
+  services.enabled_effects.init(api.scope, services.effects)
 
   -- init effects
   Sound.init()
@@ -252,18 +341,30 @@ function api.deinit()
     return
   end
 
+  stopWaiting()
+
+  -- nothing of the runtime's to stop before it has loaded
+  local services = if lazy.loaded("runtime") then runtime() else nil
+
   -- the live emits are cleared first, while the pool their parts go back to
   -- still stands, a loop's ticks among them
-  effects.deinit()
-  enabled_effects.clear()
+  if services then
+    services.effects.deinit()
+    services.enabled_effects.clear()
+  end
 
   utility.cleanupScope(api.scope)
 
-  mover.clear()
+  if services then
+    services.mover.clear()
+  end
 
   Sound.deinit()
   CameraShake.deinit()
   ShockwaveDebris.deinit()
+
+  -- a later init starts again what is loaded
+  lazy.finish()
 
   -- after the shake has put the camera back, and before the plugin unloads, so
   -- no effect resumes into what is torn down
@@ -284,7 +385,7 @@ local function fullEmit(depth: number, ...: any)
     logger.error("not initialized")
   end
 
-  return effects.emit(depth, ...)
+  return runtime().effects.emit(depth, ...)
 end
 
 -- a leading number was the old scale argument, which never reached an effect
@@ -313,11 +414,11 @@ function api.setBudget(seconds: number?)
     return
   end
 
-  effects.budget = seconds
+  runtime().effects.budget = seconds
 end
 
 function api.getBudget(): number?
-  return effects.budget
+  return runtime().effects.budget
 end
 
 -- the textures (one map of one frame) the authored frame sets of mesh effects may
@@ -328,11 +429,11 @@ function api.setFrameBudget(textures: number)
     return
   end
 
-  frame_store.setBudget(textures)
+  runtime().frame_store.setBudget(textures)
 end
 
 function api.getFrameBudget(): number
-  return frame_store.getBudget()
+  return runtime().frame_store.getBudget()
 end
 
 function api.cacheAttributes(obj: Instance, shallow: boolean)
@@ -381,7 +482,7 @@ local function setEnabled(obj: Instance, enabled: boolean)
     return
   end
 
-  enabled_effects.switch(obj, enabled)
+  runtime().enabled_effects.switch(obj, enabled)
 end
 
 function api.enable(obj: Instance)

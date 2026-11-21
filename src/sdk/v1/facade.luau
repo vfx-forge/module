@@ -16,8 +16,8 @@ local adapters = require("@mod/adapters")
 local lifetime = require("@mod/lifetime")
 local scheduler = require("@mod/scheduler")
 
+local runtime = require("@srv/runtime")
 local containers = require("@srv/containers")
-local enabled_effects = require("@srv/enabled_effects")
 
 local color = require("@mod/color/color")
 
@@ -719,7 +719,7 @@ function v1.window(view: any, seconds: number)
     error("sdk.window opens from a single emit, never a tick of the loop; check ctx.constant first", 2)
   end
 
-  enabled_effects.window(ctx, module, seconds, UNSCALED :: any)
+  runtime().enabled_effects.window(ctx, module, seconds, UNSCALED :: any)
 end
 
 function v1.apply(view: any, given: any, write: (value: any) -> ())
@@ -871,7 +871,7 @@ end
 function v1.looping(view: any): boolean
   local ctx = ctxOf(view, "looping")
 
-  return ctx.constant == true and enabled_effects.ticking(ctx.scope.emit)
+  return ctx.constant == true and runtime().enabled_effects.ticking(ctx.scope.emit)
 end
 
 function v1.warn(view: any, text: string)

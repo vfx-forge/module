@@ -1,10 +1,14 @@
 local RunService = game:GetService("RunService")
 
+local lazy = require("@mod/lazy")
 local reader = require("@mod/reader")
 
 local Particle = require("@vfx/particle")
 
 local particle_2d = {}
+
+-- it plays through the 3D emitter's emit
+lazy.alias("particle_2d", "particle")
 
 particle_2d.id = "particle_2d"
 particle_2d.display = { name = "Particle 2D", icon = "particle_2d", order = 21 }
