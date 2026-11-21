@@ -40,8 +40,9 @@ const function module(attributes: { [string]: any })
   }
 end
 
+-- an emit's read, which a scope stands for
 const function ctxFor(obj: Instance)
-  return { ref = obj, obj = obj }
+  return { ref = obj, obj = obj, scope = {} }
 end
 
 -- every emit's reading of the row, `n` emits over
@@ -116,6 +117,18 @@ harness.suite(function()
 
         expect(attrs.Delay).toBe(0.5)
         expect(attrs.Plain).toBe(0.2)
+      end
+    end)
+
+    test("a read with no emit behind it reads the shortest", function()
+      const obj = Instance.new("Part")
+      obj:SetAttribute("Delay", 0.2)
+      obj:SetAttribute(knob.maxOf("Delay"), 0.6)
+
+      const m = module({ Delay = knob(0):ranged() })
+
+      for i = 1, 8 do
+        expect(reader.resolve(m, { ref = obj, obj = obj }).Delay).toBe(0.2)
       end
     end)
 
