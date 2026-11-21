@@ -187,6 +187,21 @@ harness.suite(function()
       end).toThrow()
     end)
 
+    -- the sound's init can wait in Studio (its dock widget), which lune cannot
+    -- make it do: an emit in that wait loads the runtime, whose start runs
+    -- only once the loader is live, so the deferred init goes live first
+    test("the deferred init makes the loader live before anything in it can wait", function()
+      local source = fs.readFile("src/init.luau")
+      local body = string.match(source, "local function deferredInit%(%).-\nend\n")
+
+      assert(body, "no deferredInit in src/init.luau")
+
+      local live = string.find(body, "lazy.begin()", 1, true)
+      local sound = string.find(body, "Sound.init()", 1, true)
+
+      expect(live ~= nil and sound ~= nil and live < sound).toBe(true)
+    end)
+
     test("a runtime loaded before init starts at init, and not before", function()
       local result = probe("early")
 

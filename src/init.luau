@@ -205,9 +205,13 @@ end
 local function deferredInit(): { string }
   shared.vfx = api
 
-  Sound.init()
-
+  -- live before anything that can wait: the sound's init may yield (its dock
+  -- widget), and an emit in that wait loads the runtime, which starts only
+  -- while live. camera_shake's and shockwave_debris' inits are their units'
+  -- starts, which run as they load from here
   lazy.begin()
+
+  Sound.init()
 
   if lazy.loaded("runtime") then
     return lazy.needs(CollectionService:GetTagged(utility.ENABLED_VFX_TAG), 0, kindOf)
