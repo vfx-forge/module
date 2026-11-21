@@ -7,7 +7,7 @@ export type Unit = {
   -- runs once the unit is loaded while the module is live
   start: ((module: any) -> ())?,
   module: any,
-  state: "pending" | "loading" | "loaded" | "failed",
+  state: "pending" | "loading" | "loaded" | "failed" | "threw",
 
   -- why it failed, which every later need is refused with
   reason: string?,
@@ -83,6 +83,12 @@ local function start(unit: Unit)
     local ok, err = pcall(unit.start, unit.module)
 
     if not ok then
+      -- the default path raises the start's own error, as init did before
+      -- there were units, and keeps no refusal
+      if not unit.deferred then
+        error(err, 0)
+      end
+
       fail(unit, err)
       refuse(unit)
     end
@@ -96,6 +102,13 @@ local function load(unit: Unit): any
 
   if unit.state == "failed" then
     refuse(unit)
+  end
+
+  -- THE DEFAULT PATH KEEPS NO FAILURE, as a require before there were units
+  -- kept none: a need after the load threw loads it again, and Roblox
+  -- answers a module that threw with its own error, a string, every time
+  if unit.state == "threw" then
+    unit.state = "pending"
   end
 
   if unit.state == "loading" then
@@ -129,13 +142,11 @@ local function load(unit: Unit): any
   else
     -- the default path loads where the unit is declared, as the require it
     -- replaced did, and an error there is that require's, traceback and all,
-    -- unwrapped. Marked failed for its length, so a need of it after a throw
-    -- is refused rather than left waiting on a load that will never end
-    unit.state = "failed"
-    unit.reason = "its module threw as it loaded"
+    -- unwrapped. Marked "threw" for its length, so a need of it after a
+    -- throw loads it again rather than waiting on a load that will never end
+    unit.state = "threw"
     result = if host then host(unit.name, unit.load) else unit.load()
     unit.state = "loading"
-    unit.reason = nil
   end
 
   unit.thread = nil

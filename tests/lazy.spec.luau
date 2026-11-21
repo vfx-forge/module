@@ -69,7 +69,28 @@ harness.suite(function()
 
       expect(ok).toBe(false)
       expect(err).toBe("the module did not compile")
-      expect(lazy.failed("spec_unit_default_throws") ~= nil).toBe(true)
+    end)
+
+    -- in a game nothing defers, and a need after the throw raised what a
+    -- require of the module raised before there were units, every time: a
+    -- refusal table there broke a game's `"..." .. err` and went quiet
+    test("a need after a default load threw requires it again and raises its own error, a string", function()
+      local loads = 0
+
+      pcall(lazy.unit, "spec_unit_default_again", function()
+        loads += 1
+        error("Requested module experienced an error while loading", 0)
+      end)
+
+      for _ = 1, 2 do
+        local ok, err = pcall(lazy.need, "spec_unit_default_again")
+
+        expect(ok).toBe(false)
+        expect(err).toBe("Requested module experienced an error while loading")
+      end
+
+      expect(loads).toBe(3)
+      expect(lazy.failed("spec_unit_default_again")).toBe(nil)
     end)
 
     test("every unit the index declares is loaded once it is required", function()
