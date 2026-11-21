@@ -478,6 +478,43 @@ function curve.frozen(duration: number, shape: string | buffer | { vector } | (t
   return table.freeze(made)
 end
 
+-- each shape's point times, and whether they fall evenly across the run,
+-- worked out once a shape. Weak keyed, beside the shape rather than on it,
+-- since a preset's shape is frozen
+local Anchors: { [Shape]: { times: { number }, even: boolean } } = setmetatable({}, { __mode = "k" }) :: any
+
+-- the times of a shape's points (the anchors its handles sit between), 0 to
+-- 1, and whether they are evenly spaced: what a reader of one number per
+-- point, such as a tween's envelope, interpolates between
+function curve.anchors(shape: string | buffer | { vector }): ({ number }, boolean)
+  local resolved = shapeOf(shape)
+  local found = Anchors[resolved]
+
+  if found == nil then
+    local xs = resolved.xs
+    local times = {}
+
+    for i = 1, #xs, 3 do
+      table.insert(times, xs[i])
+    end
+
+    local last = #times - 1
+    local even = true
+
+    for i, t in times do
+      if math.abs(t - (i - 1) / math.max(last, 1)) > 1e-6 then
+        even = false
+        break
+      end
+    end
+
+    found = { times = times, even = even }
+    Anchors[resolved] = found
+  end
+
+  return found.times, found.even
+end
+
 -- a shape's value at t with no curve made, for a caller sampling a row's
 -- curve once per value
 function curve.sample(shape: string | buffer | { vector }, t: number): number
