@@ -470,7 +470,8 @@ function sound.emit(ctx: reader.Ctx, attrs: any, props: any)
     local picked = selectRandomSound(ref, attrs.SoundPoolTag)
 
     if picked ~= nil and picked ~= ref then
-      local pickedAttrs, pickedProps = registry.read(picked)
+      -- read as this emit's own, so its ranged rows draw
+      local pickedAttrs, pickedProps = registry.read(picked, nil, scope)
 
       if pickedAttrs ~= nil then
         ref = picked
