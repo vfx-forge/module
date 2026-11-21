@@ -12,6 +12,10 @@ local legacy_mods = require("@mod/legacy_mods")
 
 local mods = {}
 
+-- the build options of a whole number row that says nothing else, shared so
+-- the build can tell them from options that rule out its fast path
+mods.WHOLE = table.freeze({ whole = true })
+
 -- split by target source so the runtime knows whether to write ref[name] or
 -- ref:SetAttribute(name, v), and so an instance carrying both a property and
 -- an attribute of one name never confuses the two
@@ -1522,7 +1526,7 @@ end
 -- lanes know as a flat lane and never animate. nil for every other row,
 -- which the lanes build
 local function simpleOf(default: any, span: number, lanes: { [string]: { any } }?, opts: any?): Track?
-  if opts ~= nil or lanes == nil or default == nil or type(default) == "table" then
+  if (opts ~= nil and opts ~= mods.WHOLE) or lanes == nil or default == nil or type(default) == "table" then
     return nil
   end
 

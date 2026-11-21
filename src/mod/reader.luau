@@ -1079,10 +1079,15 @@ local function trackOf(
     elseif seeded then SEEDED
     else nil
 
-  -- a whole number row draws whole numbers, its ends included
+  -- a whole number row draws whole numbers, its ends included. the shared
+  -- option table alone keeps the build's fast path for a lone tween
   if row.isWhole then
-    opts = if opts ~= nil then table.clone(opts) else {}
-    opts.whole = true
+    if opts == nil then
+      opts = mods.WHOLE
+    else
+      opts = table.clone(opts)
+      opts.whole = true
+    end
   end
   -- an attribute row builds under the name its queue was found under, since
   -- that is where the value it chains from and the range it draws inside are

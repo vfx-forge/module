@@ -84,6 +84,21 @@ harness.suite(function()
       expect(math.abs(plain.at(0) - 2.9) < 1e-9).toBe(true)
     end)
 
+    test("a lone tween on a whole number row keeps the build's fast path", function()
+      const tween = { kind = "tween", chain = false, duration = 1, start = value.lit(1), finish = value.lit(3) }
+      const lanes = { start = { tween } }
+
+      -- the reader hands a whole row that says nothing else this one table
+      expect(mods.WHOLE.whole).toBe(true)
+
+      const track, share =
+        mods.build(Instance.new("Attachment"), "attribute", "Count", 1, 1, nil, lanes, true, mods.WHOLE)
+
+      -- the fast path hands every piece its one track
+      expect((share :: any)(mods.piece())).toBe(track)
+      expect(track.at(0.5)).toBe(2)
+    end)
+
     test("lightning's counted rows are whole and its measured ones are not", function()
       const attrs = rows.params({ knob = knob }).attributes
 
