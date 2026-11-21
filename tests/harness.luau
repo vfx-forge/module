@@ -100,6 +100,9 @@ end
 -- once at load; under lune the answer is "a plain client", which is also the
 -- context where a write-back must never happen
 -- selene: allow(unscoped_variables, incorrect_standard_library_use)
+-- every instance the specs made, filled in below once the pool exists
+local madeSoFar: () -> { Instance }
+
 do
   local runService = {
     IsServer = function()
@@ -172,8 +175,18 @@ do
 
   local tags: any = inertService("CollectionService")
 
-  tags.GetTagged = function()
-    return {}
+  -- what the specs made carrying the tag, so a lookup by tag finds the
+  -- instances a spec tagged the way Studio's would
+  tags.GetTagged = function(_, tag: string)
+    local found = {}
+
+    for _, inst in madeSoFar() do
+      if inst:HasTag(tag) then
+        table.insert(found, inst)
+      end
+    end
+
+    return found
   end
 
   tags.GetInstanceAddedSignal = function()
@@ -539,6 +552,10 @@ end
 -- instance has to be served the wrappers the spec itself holds. like the
 -- engine, it never matches a chain's leftmost compound against the root
 local pool: { Instance } = {}
+
+madeSoFar = function()
+  return pool
+end
 
 function harness.reset()
   table.clear(pool)

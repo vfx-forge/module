@@ -19,7 +19,7 @@ function play.emit(ctx: reader.Ctx, attrs: any)
   local anc = ref:FindFirstAncestorOfClass("Model")
   local ancModule = if anc then registry.of(anc) else nil
 
-  if anc and ancModule == Spin and not Spin.static((registry.read(anc, ancModule))) then
+  if anc and ancModule == Spin and not Spin.static((registry.read(anc, ancModule)), anc) then
     return
   end
 

@@ -408,13 +408,11 @@ local function processRandomizers(obj: Instance, scope: types.scope)
       continue
     end
 
-    local read = legacy_mods.readChild(child)
+    local target, read = utility.driverOf(child)
 
     if read == nil or not read.random then
       continue
     end
-
-    local target = utility.getTarget(child)
 
     if target then
       utility.try(`failed to apply a randomizer with error: %s`, applyRandomizer, target, read, scope)
@@ -616,13 +614,11 @@ end
 -- the same target twice. a randomizer RayValue is applied by the prologue of
 -- its parent's dispatch and does nothing here
 function emitters.legacy_child(obj: RayValue, scope: types.scope)
-  local read = legacy_mods.readChild(obj)
+  local target, read = utility.driverOf(obj)
 
   if read == nil or read.random then
     return
   end
-
-  local target = utility.getTarget(obj)
 
   if not target or lifetime.lock(scope, obj) then
     return
