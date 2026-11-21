@@ -30,11 +30,7 @@ local function deferred(load: () -> any, start: ((module: any) -> ())?): (string
 
   local name = `spec_unit_{count}`
 
-  lazy.defer(true)
-
-  local ok, get = pcall(lazy.unit, name, load, start)
-
-  lazy.defer(false)
+  local ok, get = pcall(lazy.unit, name, load, start, true)
 
   assert(ok, get)
 
@@ -92,6 +88,19 @@ harness.suite(function()
 
       expect(pending).toEqual({})
       expect(lazy.declared("forge_mesh") and lazy.declared("runtime")).toBe(true)
+    end)
+  end)
+
+  harness.describe("deferring", function()
+    test("is refused once a unit is declared, since that one loaded where it was declared", function()
+      registry.clear()
+      require("@root")
+      registry.clear()
+
+      expect(function()
+        lazy.defer()
+      end).toThrow()
+      expect(lazy.deferred()).toBe(false)
     end)
   end)
 

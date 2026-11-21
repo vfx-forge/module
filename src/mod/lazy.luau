@@ -135,7 +135,8 @@ end
 
 -- declares a unit and answers what loads it, a getter that costs one check
 -- once it has: every need of the unit goes through it or `need`
-function lazy.unit(name: string, loader: () -> any, starter: ((module: any) -> ())?): () -> any
+-- `alone` declares this one unit deferred whatever the mode, for a spec
+function lazy.unit(name: string, loader: () -> any, starter: ((module: any) -> ())?, alone: boolean?): () -> any
   local unit: Unit = {
     name = name,
     load = loader,
@@ -144,7 +145,7 @@ function lazy.unit(name: string, loader: () -> any, starter: ((module: any) -> (
     state = "pending",
     thread = nil,
     started = false,
-    deferred = deferred,
+    deferred = deferred or alone == true,
   }
 
   -- a second copy of the module that declares it (lune loads one under each
@@ -160,7 +161,7 @@ function lazy.unit(name: string, loader: () -> any, starter: ((module: any) -> (
     table.insert(Units, unit)
   end
 
-  if not deferred then
+  if not unit.deferred then
     load(unit)
   end
 
@@ -326,7 +327,14 @@ end
 
 -- before the index is required: every unit declared from here loads at its
 -- first need, at a host's prepare or at init for what the place starts with
+-- A unit declared before would have loaded where it was declared, and in
+-- the release a play module compiled that early is one the host blanked:
+-- deferring after any unit exists is refused, loudly
 function lazy.defer(on: boolean?)
+  if on ~= false and not deferred and #Units > 0 then
+    logger.error(`lazy.defer came after {#Units} unit(s) were declared, the first {Units[1].name}`)
+  end
+
   deferred = on ~= false
 end
 
