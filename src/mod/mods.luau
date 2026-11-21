@@ -115,8 +115,9 @@ end
 -- template carries the same string, and the lanes are read and never written
 -- past this point, so one frozen table answers them all and a build keyed on
 -- it is a build keyed on the content. cleared whole once it holds more strings
--- than a place authors, rather than weighed entry by entry
-local DECODED: { [string]: { [string]: { any } } } = {}
+-- than a place authors, rather than weighed entry by entry. a string that does
+-- not decode is kept as false, so it warns once rather than on every read
+local DECODED: { [string]: { [string]: { any } } | false } = {}
 local DECODED_CAP = 2048
 local decodedCount = 0
 
@@ -146,40 +147,42 @@ function mods.framed(ref: Instance, source: string, name: string, map: { [string
 
   local known = DECODED[raw :: string]
 
+  if known == false then
+    return nil
+  end
+
   if known ~= nil then
     return if legacy_mods.isHeldStillLane(ref, name, known) then nil else known
   end
 
   local body = frame.unframe(raw)
+  local ok, decoded = false, nil
 
-  if body == nil then
-    logger.warn(`{name} carries a framed modifier queue that could not be read`)
-    return nil
+  if body ~= nil then
+    ok, decoded = pcall(codec.decode, body)
   end
 
-  local ok, decoded = pcall(codec.decode, body)
+  -- a tween an earlier plugin converted with its start lost plays from its
+  -- target's own value, as the child it came from did
+  local lanes = if ok and decoded then legacy_mods.repaired(decoded.lanes) else nil
 
-  if ok and decoded then
-    -- a tween an earlier plugin converted with its start lost plays from its
-    -- target's own value, as the child it came from did
-    local lanes = legacy_mods.repaired(decoded.lanes)
-
+  if lanes ~= nil then
     deepFreeze(lanes)
-
-    if decodedCount >= DECODED_CAP then
-      table.clear(DECODED)
-      decodedCount = 0
-    end
-
-    DECODED[raw :: string] = lanes
-    decodedCount += 1
-
-    return if legacy_mods.isHeldStillLane(ref, name, lanes) then nil else lanes
+  elseif body == nil then
+    logger.warn(`{name} carries a framed modifier queue that could not be read`)
+  else
+    logger.warn(`failed to decode the modifier queue on {name}`)
   end
 
-  logger.warn(`failed to decode the modifier queue on {name}`)
+  if decodedCount >= DECODED_CAP then
+    table.clear(DECODED)
+    decodedCount = 0
+  end
 
-  return nil
+  DECODED[raw :: string] = lanes or false
+  decodedCount += 1
+
+  return if lanes ~= nil and not legacy_mods.isHeldStillLane(ref, name, lanes) then lanes else nil
 end
 
 -- the second return says whether the lanes came out of the framed attribute, so
