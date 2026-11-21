@@ -539,6 +539,14 @@ function legacy_mods.isHeldStill(ref: Instance, name: string, map: { [string]: a
   )
 end
 
+-- whether the map stores any key of the old quad under `name`, which only the
+-- old format ever wrote
+function legacy_mods.quadded(map: { [string]: any }, name: string): boolean
+  const keys = keysOf(name)
+
+  return map[keys.start] ~= nil or map[keys.finish] ~= nil or map[keys.duration] ~= nil or map[keys.curve] ~= nil
+end
+
 -- whether a framed map is one the plugin converted out of such a still quad
 -- before the quad read as none: a lone seedable tween on the start lane, its
 -- ends one literal. it reads as no map, so the row keeps the instance's own

@@ -178,6 +178,16 @@ function Knob.hidden(self: Knob, rule: Rule): Knob
   return self
 end
 
+-- what the row rests at where the instance stores nothing usable for it,
+-- decided by the rule, for old content that rested somewhere else. the
+-- default stays what a new instance rests at, what the plugin shows and the
+-- kind a stored value is checked against, so the rule answers the default
+-- for anything it does not know as old
+function Knob.legacy(self: Knob, rule: Rule): Knob
+  self.rule = rule
+  return self
+end
+
 -- a row the rule makes read only, `reason` the plugin's tooltip on it then
 function Knob.readonly(self: Knob, rule: Rule, reason: string?): Knob
   self.readonlyRule = rule
