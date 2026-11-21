@@ -81,5 +81,6 @@ require("@tests/forge_lightning_rows.spec")
 require("@tests/forge_lightning_gradient.spec")
 require("@tests/forge_lightning_kinds.spec")
 require("@tests/forge_lightning_walls.spec")
+require("@tests/forge_lightning_failures.spec")
 
 process.exit(harness.run())

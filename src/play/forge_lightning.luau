@@ -21,6 +21,7 @@ const nested = require("@mod/lightning/nested")
 const riders = require("@mod/lightning/riders")
 const strike = require("@mod/lightning/strike")
 const impacts = require("@mod/lightning/impacts")
+const failures = require("@mod/lightning/failures")
 const gradient = require("@mod/lightning/gradient")
 const geometry = require("@mod/lightning/geometry")
 const timeline = require("@mod/lightning/timeline")
@@ -55,9 +56,6 @@ local timing: (attrs: any, mine: any?, staying: boolean?) -> any = nil :: any
 
 -- every ref whose loop already has a continuous bolt standing, so the loop's later ticks start none beside it
 const Staying: { [Instance]: { any } } = {}
-
--- the texts already warned about for each ref, so a loop warns once
-const Warned: { [Instance]: { [string]: boolean } } = setmetatable({}, { __mode = "k" }) :: any
 
 -- the rows that decide how a bolt is built, which a standing bolt cannot take on
 const REBUILT = {
@@ -136,20 +134,7 @@ const function apart(attrs: any): { [string]: any }
 end
 
 const function warnOnce(ctx: any, text: string)
-  const ref = ctx.ref
-  local texts = Warned[ref]
-
-  if texts == nil then
-    texts = {}
-    Warned[ref] = texts
-  end
-
-  if texts[text] then
-    return
-  end
-
-  texts[text] = true
-  logger.warn(`lightning on {ref:GetFullName()}: {text}`)
+  failures.once(ctx.ref, text)
 end
 
 -- a preset's name or a curve row's value; a row's value is binary and starts with four zero bytes, so any other text
@@ -1020,10 +1005,14 @@ function play.emit(ctx: any, attrs: any)
 
     local elapsed = 0
 
-    const step = lifetime.step(scope, function(deltaTime: number)
-      elapsed += deltaTime
-      frame(deltaTime, elapsed)
-    end, "screen")
+    const step = lifetime.step(
+      scope,
+      failures.step(ref, scope, function(deltaTime: number)
+        elapsed += deltaTime
+        frame(deltaTime, elapsed)
+      end),
+      "screen"
+    )
 
     -- the total is read on every wait, since a continuous bolt's is set only once it is let go
     local passed = 0
@@ -1073,7 +1062,7 @@ function play.emit(ctx: any, attrs: any)
   end
 
   for i, seed in timings do
-    lifetime.spawn(bolts, bolt, seed, mines[i])
+    lifetime.spawn(bolts, failures.body, ref, bolt, seed, mines[i])
   end
 
   lifetime.awaitJoin(bolts)
