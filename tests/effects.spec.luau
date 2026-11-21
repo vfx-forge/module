@@ -2507,6 +2507,93 @@ harness.suite(function()
       built.restore()
     end)
 
+    -- v2.4.0 applied a still Length_Scale only where the texture length
+    -- started away from 1, its Length_Texture_Start or else the beam's own,
+    -- since it compared the texture length where it meant the length scale
+    test("an old still LengthScale applies only where the texture length starts away from 1", function()
+      const NumberRange = harness.datatypes.NumberRange
+      const two = NumberRange.new(2, 2)
+
+      for _, case in
+        {
+          { texture = 1, extra = {}, want = 1 },
+          { texture = 3, extra = {}, want = 2 },
+          { texture = 1, extra = { Length_Texture_Start = 3, Length_Texture_End = 3 }, want = 2 },
+          { texture = 1, extra = { Length_Texture_Start = 3, Length_Texture_End = 5 }, want = 2 },
+          { texture = 3, extra = { Length_Texture_Start = 1, Length_Texture_End = 5 }, want = 1 },
+        }
+      do
+        const attributes = { Length_Scale_Start = two, Length_Scale_End = two }
+
+        for k, v in case.extra do
+          attributes[k] = v
+        end
+
+        local beam, built = beamOf(attributes)
+        beam.TextureLength = case.texture
+
+        const module = require("@vfx/beam")
+        const attrs = reader.resolve(module :: any, { ref = beam, obj = beam, effect = module } :: any)
+
+        expect(attrs.LengthScale.at(0)).toBe(case.want)
+        expect(attrs.LengthScale.at(0.5)).toBe(case.want)
+
+        built.restore()
+      end
+    end)
+
+    -- a lane an earlier plugin converted the same quad into, its ends draws of
+    -- one value, under the old spelling the convert kept
+    test("a converted still LengthScale lane under the old spelling is gated alike", function()
+      for texture, want in { [1] = 1, [3] = 2 } do
+        const entry = {
+          kind = "tween",
+          chain = false,
+          start = value.draw(2, 2),
+          finish = value.draw(2, 2),
+          seedable = true,
+        }
+
+        local beam, built = beamOf({
+          [mods.attrName("attribute", "Length_Scale")] = frame.frame(codec.encode({ lanes = { start = { entry } } })),
+        })
+
+        beam.TextureLength = texture
+
+        const module = require("@vfx/beam")
+        const attrs = reader.resolve(module :: any, { ref = beam, obj = beam, effect = module } :: any)
+
+        expect(attrs.LengthScale.at(0)).toBe(want)
+
+        built.restore()
+      end
+    end)
+
+    -- the card writes LengthScale under its own name, a value or a lane, and
+    -- neither is old: both apply at any texture length, as before
+    test("a LengthScale written under its own name applies at a texture length of 1", function()
+      const entry = { kind = "tween", chain = false, start = value.lit(2), finish = value.lit(2) }
+
+      for _, attributes in
+        {
+          { LengthScale = 2 },
+          {
+            [mods.attrName("attribute", "LengthScale")] = frame.frame(codec.encode({ lanes = { start = { entry } } })),
+          },
+        }
+      do
+        local beam, built = beamOf(attributes)
+        beam.TextureLength = 1
+
+        const module = require("@vfx/beam")
+        const attrs = reader.resolve(module :: any, { ref = beam, obj = beam, effect = module } :: any)
+
+        expect(attrs.LengthScale.at(0)).toBe(2)
+
+        built.restore()
+      end
+    end)
+
     test("a still old width quad is still applied, as v2 applied it", function()
       local rows, built = beamRows({ Width0 = 1 }, { Width0_Start = 3, Width0_End = 3 })
 
