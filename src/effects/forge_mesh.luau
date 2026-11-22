@@ -1,11 +1,14 @@
 --!native
 --!optimize 2
 const knob = require("@mod/knob")
+const mods = require("@mod/mods")
+const value = require("@mod/value")
 const lazy = require("@mod/lazy")
 const reader = require("@mod/reader")
 const utility = require("@mod/utility")
 const value_curve = require("@mod/value_curve")
 const force_rows = require("@mod/common/force_rows")
+const launch_common = require("@mod/common/launch")
 const state_list = require("@mod/common/state_list")
 const path_curve = require("@mod/common/path_curve")
 const material_rows = require("@mod/common/material_rows")
@@ -306,9 +309,6 @@ forge_mesh.attributes = {
     :hidden(stated)
     :label("Rotation")
     :hint("Initial rotation of each piece per axis, in degrees, drawn per piece."),
-  RotationRandom = knob(vector.zero):mod():hidden(stated):label("RotationRandom"):hint(
-    "Random extra rotation per axis, in degrees: each piece adds a value between minus and plus this to Rotation."
-  ),
   RotSpeed = knob(vector.zero)
     :unit("perSecond")
     :mod()
@@ -561,7 +561,6 @@ forge_mesh.layout = {
       "Lifetime",
       "Rate",
       "Rotation",
-      "RotationRandom",
       "RotSpeed",
       "Speed",
       "SpreadAngle",
@@ -677,6 +676,42 @@ function forge_mesh.duration(_, attrs: any)
 end
 
 forge_mesh.constant = true
+
+-- what saving the mesh the current way writes and removes: a RotationRandom
+-- stored while the row was here folded into Rotation as a range drawing each
+-- axis apart, from Rotation minus it to Rotation plus it, which plays the
+-- same even draw per axis, and the attribute gone. one at 0 only goes. nil
+-- where no range plays the same: a Rotation a modifier already draws or moves,
+-- whose sum with an even draw no range holds, and a RotationRandom a modifier
+-- drove; the emit's fallback (launch_common.reachOf) keeps playing those
+function forge_mesh.upgrade(ref: Instance): ({ [string]: any }?, { string }?, { [string]: any }?)
+  const name = launch_common.LEGACY_JITTER
+
+  if ref:GetAttribute(name) == nil or ref:GetAttribute(mods.attrName("attribute", name)) ~= nil then
+    return nil, nil, nil
+  end
+
+  const reach = launch_common.reachOf(ref)
+
+  if reach == nil then
+    return {}, { name }, nil
+  end
+
+  const attrs = reader.resolve(forge_mesh :: any, { ref = ref, obj = ref, effect = forge_mesh } :: any)
+  const row = attrs.Rotation
+
+  if row.has("start") or row.has("end") then
+    return nil, nil, nil
+  end
+
+  const at = row.value
+  const low = Vector3.new(at.X - reach.X, at.Y - reach.Y, at.Z - reach.Z)
+  const high = Vector3.new(at.X + reach.X, at.Y + reach.Y, at.Z + reach.Z)
+  const range =
+    { kind = "randomizer", chain = false, start = value.lit(low), finish = value.lit(high), perComponent = true }
+
+  return {}, { name }, { Rotation = { start = { range } } }
+end
 
 function forge_mesh.emit(ctx: any, attrs: any)
   return play().emit(ctx, attrs)
