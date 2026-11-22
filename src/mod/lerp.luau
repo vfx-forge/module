@@ -39,12 +39,15 @@ function lerp.UDim(a: UDim, b: UDim, t: number)
   )
 end
 
+-- each end blended on its own. a curve that overshoots (back, elastic, or one
+-- leaving 0 to 1) between ranges of different widths can carry the low end
+-- past the high one, where the engine's NumberRange.new throws, so the ends are
+-- put in order; between 0 and 1 they never cross, and the blend is exact
 function lerp.NumberRange(a: NumberRange, b: NumberRange, t: number)
-  -- stylua: ignore
-  return NumberRange.new(
-    lerp.number(a.Min, b.Min, t),
-    lerp.number(a.Max, b.Max, t)
-  )
+  local low = lerp.number(a.Min, b.Min, t)
+  local high = lerp.number(a.Max, b.Max, t)
+
+  return NumberRange.new(math.min(low, high), math.max(low, high))
 end
 
 function lerp.Color3(a: Color3, b: Color3, t: number)
@@ -96,11 +99,13 @@ function lerp.NumberSequence(a: NumberSequence, b: NumberSequence, t: number)
       bEnvelope = (closestAbove.Envelope - closestBelow.Envelope) * p + closestBelow.Envelope
     end
 
+    -- an envelope is never below 0, which only an overshooting curve's
+    -- blend could carry it to
     keylength += 1
     keypoints[keylength] = NumberSequenceKeypoint.new(
       ap.Time,
       (bValue - ap.Value) * t + ap.Value,
-      (bEnvelope - ap.Envelope) * t + ap.Envelope
+      math.max((bEnvelope - ap.Envelope) * t + ap.Envelope, 0)
     )
 
     addedTimes[ap.Time] = true
@@ -132,8 +137,11 @@ function lerp.NumberSequence(a: NumberSequence, b: NumberSequence, t: number)
       end
 
       keylength += 1
-      keypoints[keylength] =
-        NumberSequenceKeypoint.new(bp.Time, (bp.Value - aValue) * t + aValue, (bp.Envelope - aEnvelope) * t + aEnvelope)
+      keypoints[keylength] = NumberSequenceKeypoint.new(
+        bp.Time,
+        (bp.Value - aValue) * t + aValue,
+        math.max((bp.Envelope - aEnvelope) * t + aEnvelope, 0)
+      )
     end
   end
 
