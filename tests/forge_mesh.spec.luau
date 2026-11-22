@@ -22,6 +22,7 @@ const frame_store = require("@srv/frame_store")
 const enabled_effects = require("@srv/enabled_effects")
 const value_curve = require("@mod/value_curve")
 const particle_motion = require("@mod/particle_motion")
+const shape = require("@mod/shape")
 const test, expect = harness.test, harness.expect
 
 const look_common = require("@mod/common/look")
@@ -43,6 +44,9 @@ const NumberRange = harness.datatypes.NumberRange
 const EPSILON = 1e-4
 const LOOSE = 1e-3
 const FRAME = 1 / 60
+
+-- Random's own constructor, as the spec loads, before any case stands one in
+const UNSEEDED = Random.new
 
 -- the draws one States piece of no randomizers makes
 const PIECE_DRAWS = 6
@@ -73,9 +77,14 @@ const function staged(body: (fake: fake_pool.Fake) -> (), lists: { [string]: { s
     return env
   end
 
+  -- the shape's unseeded points drawn as if this case ran first, by a
+  -- generator no seeding or counting stand-in made
+  shape.random = UNSEEDED()
+
   const fake = fake_pool.start(lists or {})
   const ok, err = pcall(body, fake)
 
+  shape.random = nil
   effects.emit = emit
 
   for _, env in emitted do
@@ -3085,6 +3094,38 @@ harness.suite(function()
       end)
     end)
 
+    test("a folded mesh draws the turns its RotationRandom drew", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Rotation = Vector3.new(10, 20, 30), RotationRandom = Vector3.new(5, 0, -15) })
+        const low, high = Vector3.new(5, 20, 15), Vector3.new(15, 20, 45)
+
+        evenPerAxis(turnsOf(part, 4000), low, high)
+        upgraded(part)
+
+        expect(launch_common.reachOf(part)).toBe(nil)
+        evenPerAxis(turnsOf(part, 4000), low, high)
+      end)
+
+      -- and the pieces an emit flies turn as far about z, before and after
+      const rows = { Rotation = Vector3.new(0, 0, 90), RotationRandom = Vector3.new(0, 0, 20) }
+      const before = turnsAboutZ(rows, 40)
+      const after = turnsAboutZ(rows, 40, upgraded)
+
+      for _, list in { before, after } do
+        expect(#list).toBe(40)
+
+        local low, high = math.huge, -math.huge
+
+        for _, angle in list do
+          expect(angle >= 70 - LOOSE and angle <= 110 + LOOSE).toBe(true)
+          low, high = math.min(low, angle), math.max(high, angle)
+        end
+
+        expect(high - low > 20).toBe(true)
+      end
+    end)
+
     test("the upgrade drops a RotationRandom at 0 and leaves one it cannot fold exactly", function()
       staged(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
@@ -3710,38 +3751,6 @@ harness.suite(function()
 
           env:Clear()
         end)
-      end
-    end)
-
-    test("a folded mesh draws the turns its RotationRandom drew", function()
-      staged(function()
-        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
-        const part = template(parent, { Rotation = Vector3.new(10, 20, 30), RotationRandom = Vector3.new(5, 0, -15) })
-        const low, high = Vector3.new(5, 20, 15), Vector3.new(15, 20, 45)
-
-        evenPerAxis(turnsOf(part, 4000), low, high)
-        upgraded(part)
-
-        expect(launch_common.reachOf(part)).toBe(nil)
-        evenPerAxis(turnsOf(part, 4000), low, high)
-      end)
-
-      -- and the pieces an emit flies turn as far about z, before and after
-      const rows = { Rotation = Vector3.new(0, 0, 90), RotationRandom = Vector3.new(0, 0, 20) }
-      const before = turnsAboutZ(rows, 40)
-      const after = turnsAboutZ(rows, 40, upgraded)
-
-      for _, list in { before, after } do
-        expect(#list).toBe(40)
-
-        local low, high = math.huge, -math.huge
-
-        for _, angle in list do
-          expect(angle >= 70 - LOOSE and angle <= 110 + LOOSE).toBe(true)
-          low, high = math.min(low, angle), math.max(high, angle)
-        end
-
-        expect(high - low > 20).toBe(true)
       end
     end)
   end)
