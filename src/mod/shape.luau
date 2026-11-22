@@ -24,11 +24,16 @@ local shape = {}
 -- the one generator every unseeded point is drawn from
 local rng = Random.new()
 
+-- a generator lent in its place, nil for the module's own: a spec lends a
+-- fresh one per case, so where a case's points land never hangs on the cases
+-- that ran before it
+shape.random = nil :: Random?
+
 local function randomOf(options: Options): Random
   local seed = options.seed
 
   if seed == nil then
-    return rng
+    return shape.random or rng
   end
 
   return Random.new(seed)

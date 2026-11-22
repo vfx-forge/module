@@ -1843,6 +1843,10 @@ function play.emit(ctx: reader.Ctx, attrs: any)
   const cleared = not listed and modified(rows.Transparency)
   const colored = not listed and modified(rows.Color)
 
+  -- a RotationRandom stored before its row left; a States piece plays no
+  -- Rotation, so it never drew one
+  const reach = if rows.Motion ~= "States" then launch_common.reachOf(template) else nil
+
   const census = forge_mesh.pieces
 
   for _ = 1, rows.EmitCount do
@@ -1863,10 +1867,7 @@ function play.emit(ctx: reader.Ctx, attrs: any)
     -- and the time it flies on
     const roll, offset, flightTime, pace = path_motion.draw(flight.path, flight.rng, spawn)
 
-    -- a States piece plays no Rotation, so it draws no RotationRandom either
-    const turn = if rows.Motion ~= "States"
-      then rotation + launch_common.jitter(rows, spawned, flight.rng)
-      else rotation
+    const turn = if reach ~= nil then rotation + launch_common.jitter(reach, flight.rng) else rotation
 
     const launch: Launch = {
       spawn = spawn,

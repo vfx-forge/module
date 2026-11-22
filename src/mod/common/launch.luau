@@ -1,3 +1,4 @@
+const attr = require("@mod/attributes")
 const particle_motion = require("@mod/particle_motion")
 
 const WORLD_UP = vector.create(0, 1, 0)
@@ -49,20 +50,32 @@ function common.draw(attrs: any, spawned: number): (number, number, vector, vect
     inheritance
 end
 
--- one piece's draw of its RotationRandom row, between minus and plus the row
--- on each axis, from the emit's rng; an axis at 0 draws nothing, so a row at
--- rest leaves every other draw where it was
-function common.jitter(attrs: any, spawned: number, rng: Random): vector
-  const row = attrs.RotationRandom
-  const reach = if row ~= nil then row().at(spawned) else nil
+-- the attribute the mesh's RotationRandom row stored, before a range on
+-- Rotation drawing each axis apart took its place
+common.LEGACY_JITTER = "RotationRandom"
 
-  if not isVector(reach) then
-    return vector.zero
+-- how far a RotationRandom the instance still stores turns each piece about
+-- each axis, read once per emit: nil when none is stored, it is no vector or
+-- every axis is 0. the plugin folds it into Rotation (forge_mesh.upgrade), and
+-- this keeps a place published before that playing as it did
+function common.reachOf(ref: Instance): vector?
+  const stored = attr.get(ref, common.LEGACY_JITTER, nil :: any)
+
+  if not isVector(stored) then
+    return nil
   end
 
-  const function pick(r: number): number
-    const span = math.abs(numberOr(r, 0))
+  const reach =
+    vector.create(math.abs(numberOr(stored.X, 0)), math.abs(numberOr(stored.Y, 0)), math.abs(numberOr(stored.Z, 0)))
 
+  return if reach == vector.zero then nil else reach
+end
+
+-- one piece's draw within `reach`, between minus and plus it on each axis,
+-- from the emit's rng; an axis at 0 draws nothing, so the draws on either side
+-- of it stay where they were
+function common.jitter(reach: vector, rng: Random): vector
+  const function pick(span: number): number
     return if span > 0 then rng:NextNumber(-span, span) else 0
   end
 

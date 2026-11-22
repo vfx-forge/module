@@ -22,6 +22,7 @@ const frame_store = require("@srv/frame_store")
 const enabled_effects = require("@srv/enabled_effects")
 const value_curve = require("@mod/value_curve")
 const particle_motion = require("@mod/particle_motion")
+const shape = require("@mod/shape")
 const test, expect = harness.test, harness.expect
 
 const look_common = require("@mod/common/look")
@@ -43,6 +44,9 @@ const NumberRange = harness.datatypes.NumberRange
 const EPSILON = 1e-4
 const LOOSE = 1e-3
 const FRAME = 1 / 60
+
+-- Random's own constructor, as the spec loads, before any case stands one in
+const UNSEEDED = Random.new
 
 -- the draws one States piece of no randomizers makes
 const PIECE_DRAWS = 6
@@ -73,9 +77,14 @@ const function staged(body: (fake: fake_pool.Fake) -> (), lists: { [string]: { s
     return env
   end
 
+  -- the shape's unseeded points drawn as if this case ran first, by a
+  -- generator no seeding or counting stand-in made
+  shape.random = UNSEEDED()
+
   const fake = fake_pool.start(lists or {})
   const ok, err = pcall(body, fake)
 
+  shape.random = nil
   effects.emit = emit
 
   for _, env in emitted do
@@ -2934,8 +2943,9 @@ harness.suite(function()
 
   harness.describe("a mesh's flight", function()
     -- the turns about z of `count` still pieces on an unturned attachment
-    -- under Orientation None, in degrees, `rows` over them
-    const function turnsAboutZ(rows: { [string]: any }, count: number): { number }
+    -- under Orientation None, in degrees, `rows` over them and `prepare` run
+    -- on the template before it emits
+    const function turnsAboutZ(rows: { [string]: any }, count: number, prepare: ((BasePart) -> ())?): { number }
       const seen = {}
 
       seeding(function()
@@ -2944,6 +2954,10 @@ harness.suite(function()
 
           for name, v in rows do
             part:SetAttribute(name, v)
+          end
+
+          if prepare ~= nil then
+            prepare(part)
           end
 
           spawning(function(spawned)
@@ -2966,69 +2980,243 @@ harness.suite(function()
       return seen
     end
 
-    test("RotationRandom adds a draw between minus and plus itself to each piece's Rotation", function()
-      const loose = turnsAboutZ({ RotationRandom = Vector3.new(0, 0, 30) }, 12)
-      const offset = turnsAboutZ({ Rotation = Vector3.new(0, 0, 90), RotationRandom = Vector3.new(0, 0, -10) }, 12)
+    -- what the mesh's upgrade does to `part`, as the plugin applies it: each
+    -- lane map framed under its row and each attribute it removes gone
+    const function upgraded(part: BasePart)
+      const sets, removes, lanes = (forge_mesh :: any).upgrade(part)
 
-      expect(#loose).toBe(12)
-      expect(#offset).toBe(12)
-
-      local low, high = math.huge, -math.huge
-
-      for _, angle in loose do
-        expect(math.abs(angle) <= 30 + LOOSE).toBe(true)
-        low, high = math.min(low, angle), math.max(high, angle)
+      for name, map in lanes or {} do
+        part:SetAttribute(mods.attrName("attribute", name), frame.frame(codec.encode({ lanes = map })))
       end
 
-      -- twelve draws over sixty degrees spread out
-      expect(high - low > 10).toBe(true)
-
-      for _, angle in offset do
-        expect(angle >= 80 - LOOSE and angle <= 100 + LOOSE).toBe(true)
-      end
-    end)
-
-    test("RotationRandom at 0 draws nothing, an axis at 0 draws nothing, and a States piece never draws it", function()
-      const function drawsOf(rows: { [string]: any }): number
-        return counted(function()
-          framed(function()
-            const part = attached({ EmitCount = 3, Speed = STILL })
-
-            for name, v in rows do
-              part:SetAttribute(name, v)
-            end
-
-            if rows.Motion == "States" then
-              part:SetAttribute("Lifetime", NumberRange.new(2, 2))
-            end
-
-            const env = effects.emit(0, part)
-
-            frames(1)
-            env:Clear()
-          end)
-        end)
+      for _, name in removes or {} do
+        part:SetAttribute(name, nil)
       end
 
-      const today = drawsOf({})
+      for name, v in sets or {} do
+        part:SetAttribute(name, v)
+      end
+    end
 
-      expect(drawsOf({ RotationRandom = Vector3.zero })).toBe(today)
-      expect(drawsOf({ RotationRandom = Vector3.new(10, 0, 20) })).toBe(today + 3 * 2)
+    -- `count` turns pieces draw at their launch one after another, seeded,
+    -- the stored RotationRandom added as an emit adds it
+    const function turnsOf(part: BasePart, count: number): { vector }
+      const out = table.create(count)
 
-      const stated = drawsOf({ Motion = "States" })
+      seeding(function()
+        const rows = rowsOf(part)
+        const reach = launch_common.reachOf(part)
+        const rng = Random.new()
 
-      expect(drawsOf({ Motion = "States", RotationRandom = Vector3.new(10, 10, 10) })).toBe(stated)
-    end)
+        for i = 1, count do
+          const _, _, _, turn = launch_common.draw(rows, 0)
 
-    test("RotationRandom hides under States as Rotation does", function()
+          out[i] = if reach ~= nil then turn + launch_common.jitter(reach, rng) else turn
+        end
+      end)
+
+      return out
+    end
+
+    -- each axis of `turns` drawn evenly between `low` and `high` on its own:
+    -- inside the ends, with an even draw's mean and variance, and the moving
+    -- axes not following each other. an axis whose ends meet never moves
+    const function evenPerAxis(turns: { vector }, low: Vector3, high: Vector3)
+      const n = #turns
+      const means = {}
+
+      for _, axis in { "X", "Y", "Z" } do
+        const a, b = (low :: any)[axis], (high :: any)[axis]
+        local sum, squares = 0, 0
+
+        for _, t in turns do
+          const v = (t :: any)[axis]
+
+          expect(v >= a - LOOSE and v <= b + LOOSE).toBe(true)
+          sum += v
+        end
+
+        const mean = sum / n
+
+        for _, t in turns do
+          squares += ((t :: any)[axis] - mean) ^ 2
+        end
+
+        const width = b - a
+
+        means[axis] = mean
+
+        if width == 0 then
+          expect(squares / n < EPSILON).toBe(true)
+        else
+          expect(math.abs(mean - (a + b) / 2) < width * 0.03).toBe(true)
+          expect(math.abs((squares / n) / (width * width / 12) - 1) < 0.08).toBe(true)
+        end
+      end
+
+      local cross, sx, sz = 0, 0, 0
+
+      for _, t in turns do
+        const dx, dz = t.X - means.X, t.Z - means.Z
+
+        cross += dx * dz
+        sx += dx * dx
+        sz += dz * dz
+      end
+
+      expect(math.abs(cross / math.sqrt(sx * sz)) < 0.08).toBe(true)
+    end
+
+    test("the upgrade folds a plain Rotation and RotationRandom into a randomizer drawing each axis apart", function()
       staged(function()
         const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Rotation = Vector3.new(10, 20, 30), RotationRandom = Vector3.new(5, 0, -15) })
+        const sets, removes, lanes = (forge_mesh :: any).upgrade(part)
 
-        expect(hiddenOf(template(parent, {})).RotationRandom).toBe(false)
-        expect(hiddenOf(template(parent, { Motion = "States" })).RotationRandom).toBe(true)
-        expect(rowsOf(template(parent, {})).RotationRandom.value).toEqual(vector.zero)
+        expect(next(sets or {})).toBe(nil)
+        expect(removes).toEqual({ "RotationRandom" })
+        expect(#lanes.Rotation.start).toBe(1)
+
+        const m = lanes.Rotation.start[1]
+
+        expect(m.kind).toBe("randomizer")
+        expect(m.chain).toBe(false)
+        expect(m.perComponent).toBe(true)
+
+        -- a negative reach reaches as far, and an axis at 0 holds equal ends
+        expect(m.start.v).toEqual(Vector3.new(5, 20, 15))
+        expect(m.finish.v).toEqual(Vector3.new(15, 20, 45))
+
+        upgraded(part)
+
+        expect(part:GetAttribute("RotationRandom")).toBe(nil)
+        expect((forge_mesh :: any).upgrade(part)).toBe(nil)
       end)
     end)
+
+    test("a folded mesh draws the turns its RotationRandom drew", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const part = template(parent, { Rotation = Vector3.new(10, 20, 30), RotationRandom = Vector3.new(5, 0, -15) })
+        const low, high = Vector3.new(5, 20, 15), Vector3.new(15, 20, 45)
+
+        evenPerAxis(turnsOf(part, 4000), low, high)
+        upgraded(part)
+
+        expect(launch_common.reachOf(part)).toBe(nil)
+        evenPerAxis(turnsOf(part, 4000), low, high)
+      end)
+
+      -- and the pieces an emit flies turn as far about z, before and after
+      const rows = { Rotation = Vector3.new(0, 0, 90), RotationRandom = Vector3.new(0, 0, 20) }
+      const before = turnsAboutZ(rows, 40)
+      const after = turnsAboutZ(rows, 40, upgraded)
+
+      for _, list in { before, after } do
+        expect(#list).toBe(40)
+
+        local low, high = math.huge, -math.huge
+
+        for _, angle in list do
+          expect(angle >= 70 - LOOSE and angle <= 110 + LOOSE).toBe(true)
+          low, high = math.min(low, angle), math.max(high, angle)
+        end
+
+        expect(high - low > 20).toBe(true)
+      end
+    end)
+
+    test("the upgrade drops a RotationRandom at 0 and leaves one it cannot fold exactly", function()
+      staged(function()
+        const _, parent = parentPart(CFrame.new(0, 10, 0), Vector3.new(4, 2, 4))
+        const upgrade = (forge_mesh :: any).upgrade
+
+        expect(upgrade(template(parent, {}))).toBe(nil)
+
+        const _, still, stillLanes = upgrade(template(parent, { RotationRandom = Vector3.zero }))
+
+        expect(still).toEqual({ "RotationRandom" })
+        expect(stillLanes).toBe(nil)
+
+        -- a range already on Rotation adds to the draw as two even draws add,
+        -- which no one range holds, and a tween over the emit moves its ends
+        const ranged = template(parent, { RotationRandom = Vector3.new(0, 0, 10) })
+
+        randomized(ranged, "Rotation", Vector3.zero, Vector3.new(0, 0, 90))
+        expect(upgrade(ranged)).toBe(nil)
+
+        const moving = template(parent, { RotationRandom = Vector3.new(0, 0, 10) })
+
+        tweened(moving, "Rotation", Vector3.zero, Vector3.new(0, 0, 90))
+        expect(upgrade(moving)).toBe(nil)
+
+        -- nor one a modifier drove while it had a row
+        const driven = template(parent, { RotationRandom = Vector3.new(0, 0, 10) })
+
+        tweened(driven, "RotationRandom", Vector3.zero, Vector3.new(0, 0, 90))
+        expect(upgrade(driven)).toBe(nil)
+      end)
+    end)
+
+    test(
+      "a RotationRandom stored before its row left adds a draw between minus and plus itself to each piece's Rotation",
+      function()
+        const loose = turnsAboutZ({ RotationRandom = Vector3.new(0, 0, 30) }, 12)
+        const offset = turnsAboutZ({ Rotation = Vector3.new(0, 0, 90), RotationRandom = Vector3.new(0, 0, -10) }, 12)
+
+        expect(#loose).toBe(12)
+        expect(#offset).toBe(12)
+
+        local low, high = math.huge, -math.huge
+
+        for _, angle in loose do
+          expect(math.abs(angle) <= 30 + LOOSE).toBe(true)
+          low, high = math.min(low, angle), math.max(high, angle)
+        end
+
+        -- twelve draws over sixty degrees spread out
+        expect(high - low > 10).toBe(true)
+
+        for _, angle in offset do
+          expect(angle >= 80 - LOOSE and angle <= 100 + LOOSE).toBe(true)
+        end
+      end
+    )
+
+    test(
+      "a stored RotationRandom at 0 draws nothing, an axis at 0 draws nothing, and a States piece never draws it",
+      function()
+        const function drawsOf(rows: { [string]: any }): number
+          return counted(function()
+            framed(function()
+              const part = attached({ EmitCount = 3, Speed = STILL })
+
+              for name, v in rows do
+                part:SetAttribute(name, v)
+              end
+
+              if rows.Motion == "States" then
+                part:SetAttribute("Lifetime", NumberRange.new(2, 2))
+              end
+
+              const env = effects.emit(0, part)
+
+              frames(1)
+              env:Clear()
+            end)
+          end)
+        end
+
+        const today = drawsOf({})
+
+        expect(drawsOf({ RotationRandom = Vector3.zero })).toBe(today)
+        expect(drawsOf({ RotationRandom = Vector3.new(10, 0, 20) })).toBe(today + 3 * 2)
+
+        const stated = drawsOf({ Motion = "States" })
+
+        expect(drawsOf({ Motion = "States", RotationRandom = Vector3.new(10, 10, 10) })).toBe(stated)
+      end
+    )
 
     test("a piece flies the particle formula", function()
       staged(function(fake)
