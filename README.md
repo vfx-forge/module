@@ -19,7 +19,7 @@ The emit module is licensed under a custom source-available copyleft license whi
 Add it under `[dependencies]` in your `wally.toml`:
 
 ```toml
-ForgeVFX = "zilibobi/forge-vfx@3.0.2"
+ForgeVFX = "zilibobi/forge-vfx@3.1.0"
 ```
 
 #### npm (TypeScript)
